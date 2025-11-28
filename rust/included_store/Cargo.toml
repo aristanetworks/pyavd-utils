@@ -1,0 +1,10 @@
+[package]
+name = "included_store"
+version.workspace = true
+edition = "2024"
+license.workspace = true
+
+[dependencies]
+avdschema = { path = "../avdschema" }
+avdschema_macros = { path = "../avdschema_macros" }
+log = { workspace = true }
