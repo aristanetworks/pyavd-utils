@@ -54,7 +54,7 @@ jobs:
         # Not using working-directory because manylinux uses a container
         # and will not copy the parent Cargo.toml and we will be sad
         run: |-
-          python -m cibuildwheel --output-dir dist pyavd-utils
+          python -m cibuildwheel --output-dir dist
       - uses: actions/upload-artifact@v5
         with:
           name: pyavd-utils-wheels-${{ matrix.os }}
