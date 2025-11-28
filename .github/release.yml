@@ -1,0 +1,71 @@
+changelog:
+  exclude:
+    labels:
+      - 'rn: Test(requirements)'
+      - 'rn: CI(requirements)'
+      - 'rn: Test(pyavd-utils)'
+      - 'rn: CI(pyavd-utils)'
+      - 'rn: Test(rust)'
+      - 'rn: CI(rust)'
+      - 'rn: Test'
+      - 'rn: CI'
+  categories:
+    - title: Breaking Changes
+      labels:
+        - 'rn: Feat(requirements)!'
+        - 'rn: Feat(pyavd-utils)!'
+        - 'rn: Feat(rust)!'
+        - 'rn: Fix(requirements)!'
+        - 'rn: Fix(pyavd-utils)!'
+        - 'rn: Fix(rust)!'
+        - 'rn: Cut(requirements)!'
+        - 'rn: Cut(pyavd-utils)!'
+        - 'rn: Cut(rust)!'
+        - 'rn: Revert(requirements)!'
+        - 'rn: Revert(pyavd-utils)!'
+        - 'rn: Revert(rust)!'
+        - 'rn: Refactor(requirements)!'
+        - 'rn: Refactor(pyavd-utils)!'
+        - 'rn: Refactor(rust)!'
+        - 'rn: Bump(requirements)!'
+        - 'rn: Bump(pyavd-utils)!'
+        - 'rn: Bump(rust)!'
+        - 'rn: Feat!'
+        - 'rn: Fix!'
+        - 'rn: Cut!'
+        - 'rn: Revert!'
+        - 'rn: Refactor!'
+        - 'rn: Bump!'
+    - title: Fixed issues in requirements
+      labels:
+        - 'rn: Fix(requirements)'
+    - title: Fixed issues in pyavd-utils
+      labels:
+        - 'rn: Fix(pyavd-utils)'
+    - title: Fixed issues in rust
+      labels:
+        - 'rn: Fix(rust)'
+    - title: Other Fixed issues
+      labels:
+        - 'rn: Fix'
+    - title: New features and enhancements in requirements
+      labels:
+        - 'rn: Fix(requirements)'
+    - title: New features and enhancements in pyavd-utils
+      labels:
+        - 'rn: Fix(pyavd-utils)'
+    - title: New features and enhancements in rust
+      labels:
+        - 'rn: Fix(rust)'
+    - title: Other new features and enhancements
+      labels:
+        - 'rn: Feat'
+    - title: Documentation
+      labels:
+        - 'rn: Doc(requirements)'
+        - 'rn: Doc(pyavd-utils)'
+        - 'rn: Doc(rust)'
+        - 'rn: Doc'
+    - title: Other Changes
+      labels:
+        - '*'
