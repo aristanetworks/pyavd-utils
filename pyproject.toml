@@ -98,6 +98,10 @@ repair-wheel-command = [
   "pipx run abi3audit --strict --report {wheel}",
 ]
 
+[tool.cibuildwheel.macos.environment]
+# Needed for intel wheel as otherwise cibuildwheel use 10.9 which does not work for Rust
+MACOSX_DEPLOYMENT_TARGET = "10.12"
+
 [tool.cibuildwheel.windows]
 repair-wheel-command = [
   "copy {wheel} {dest_dir}",
