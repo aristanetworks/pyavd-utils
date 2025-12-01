@@ -1,0 +1,128 @@
+---
+name: "Publish Python package"
+
+"on":
+  release:
+    types:
+      - published
+  # Allow for manual trigger on the selected branch in UI
+  # Reducing it to only execute on devel branch today.
+  workflow_dispatch:
+    inputs:
+      TESTPYPI_VERSION:
+        description: "Version string to use for manual push to test Pypi"
+        required: true
+        type: string
+
+# For now only pyavd-utils
+jobs:
+  target_version:
+    name: Set target version
+    runs-on: ubuntu-latest
+    outputs:
+      target_version: ${{ steps.target_version.outputs.TARGET_VERSION }}
+    steps:
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install `bump-my-version`
+        run: |-
+          pip install bump-my-version
+      - name: Set target version
+        id: target_version
+        run: echo "TARGET_VERSION=${{ inputs.TESTPYPI_VERSION || bump-my-version show current_version }}" >> $GITHUB_OUTPUT
+
+  build-pyavd-utils-wheels:
+    name: Build and test pyavd-utils wheel on ${{ matrix.os }}
+    # if: github.repository == 'aristanetworks/pyavd-utils'
+    permissions:
+      contents: read
+      actions: write  # Needed to trigger workflows
+      pull-requests: write
+    strategy:
+      matrix:
+        os:
+          - ubuntu-latest
+          - ubuntu-24.04-arm
+          - windows-latest
+          - macos-15-intel
+          - macos-latest
+    uses: ./.github/workflows/build-pyavd-wheel.yml
+    with:
+      runner: ${{ matrix.os }}
+      # Default value to '' to not overwrite the version in the child workflow
+      TESTPYPI_VERSION: ${{ inputs.TESTPYPI_VERSION || '' }}
+
+  publish-pyavd-utils-testpypi:
+    name: Publish pyavd-utils to Test PyPI
+    needs: [build-pyavd-utils-wheels]
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'release'
+      || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+    environment:
+      name: test
+      url: https://test.pypi.org/p/pyavd-utils
+    permissions:
+      id-token: write
+    steps:
+      - name: Download pyavd-utils wheels
+        uses: actions/download-artifact@v6
+        with:
+          path: dist/
+          merge-multiple: true
+          pattern: pyavd-utils-wheels-*
+      - name: Publish distribution to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+
+  test-pyavd-utils-from-test-pypi:
+    name: Install from test-pypi and test on ${{ matrix.os }} for python ${{ matrix.python }}
+    needs: [target_version, publish-pyavd-utils-testpypi]
+    runs-on: ${{ matrix.os }}
+    if: |
+      github.event_name == 'release'
+      || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+    strategy:
+      matrix:
+        os:
+          - ubuntu-latest
+          - ubuntu-24.04-arm
+          - windows-latest
+          - macos-15-intel
+          - macos-latest
+        python: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install `pyavd-utils` from test Pypi
+        run: |-
+          pip install -i https://test.pypi.org/simple/ "pyavd-utils==${{ needs.target_version.outputs.target_version }}"
+      - name: Install `pyavd-utils` from test Pypi
+        # TODO: Find better tests to run
+        run: |-
+          python -c "from pyavd_utils.passwords import sha512_crypt"
+          python -c "from pyavd_utils.validation import get_validated_data"
+
+  publish-pyavd-utils-pypi:
+    name: Publish pyavd-utils to Test PyPI
+    needs: [build-pyavd-utils-wheels]
+    runs-on: ubuntu-latest
+    # We can only publish to Pypi if running on a published release, not with workflow_dispatch
+    if: github.event_name == 'release'
+    environment:
+      name: production
+      url: https://pypi.org/p/pyavd-utils
+    permissions:
+      id-token: write
+    steps:
+      - name: Download pyavd-utils wheels
+        uses: actions/download-artifact@v6
+        with:
+          path: dist/
+          merge-multiple: true
+          pattern: pyavd-utils-wheels-*
+      - name: Publish distribution to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1

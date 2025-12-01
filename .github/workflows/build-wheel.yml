@@ -1,0 +1,86 @@
+---
+name: "Build pyvad-utils wheel for a specific runner"
+
+"on":
+  workflow_call:
+    inputs:
+      runner:
+        description: The runner to use to run the workflow
+        required: true
+        type: string
+      TESTPYPI_VERSION:
+        description: "Version string to use for manual push to test pypi"
+        type: string
+
+env:
+  # Do the same for CIBW to be able to troubleshoot errors from CI
+  CIBW_BUILD_VERBOSITY: ${{ secrets.ACTIONS_STEP_DEBUG && 3 || 0 }}
+  PY_COLORS: 1 # allows molecule colors to be passed to GitHub Actions
+  # rust
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # ------------------------------------------------------------ #
+  # Build cross platform pyavd-utils wheels and upload artifacts
+  # ------------------------------------------------------------ #
+  pyavd_utils_build_wheels:
+    name: Build pyavd-utils wheel on ${{ inputs.runner }}
+    runs-on: ${{ inputs.runner }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Update version to ${{ inputs.TESTPYPI_VERSION }}
+        if: ${{ inputs.TESTPYPI_VERSION != '' }}
+        shell: bash # For our Windows friend
+        run: |-
+          pip install bump-my-version
+          bump-my-version replace \
+            --regex \
+            --search "__version__ = \"[^\n]*\"" \
+            --replace "__version__ = \"${{ inputs.TESTPYPI_VERSION }}\"" \
+            --no-configured-files \
+            -v \
+            pyavd-utils/pyavd_utils/__init__.py
+      - name: Install cibuildwheel
+        # See pyproject.toml for config
+        run: |
+          pip install --group build_wheel
+      - name: Build wheels
+        # Not using working-directory because manylinux uses a container
+        # and will not copy the parent Cargo.toml and we will be sad
+        run: |-
+          python -m cibuildwheel --output-dir dist
+      - uses: actions/upload-artifact@v5
+        with:
+          name: pyavd-utils-wheels-${{ inputs.runner }}
+          path: dist/*.whl
+
+  # ------------------------------------------- #
+  # pyavd-utils test on platforms using wheels
+  # ------------------------------------------- #
+  pyavd_utils_test_cross_platform:
+    name: pyavd-utils ${{ matrix.python }} on ${{ inputs.runner }}
+    runs-on: ${{ inputs.runner }}
+    needs: [pyavd_utils_build_wheels]
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@v5
+      - name: Download {{ inputs.runner }} wheel
+        uses: actions/download-artifact@v6
+        with:
+          name: pyavd-utils-wheels-${{ inputs.runner }}
+          path: pyavd-utils/dist
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install tox
+        run: |
+          pip install tox --upgrade
+      - name: Run pytest via tox for the wheel
+        run: |-
+          tox run
