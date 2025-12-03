@@ -13,19 +13,7 @@ jobs:
   ###################################################
   # Basic Triage
   ###################################################
-  pr_triage:
-    name: "PR Labeller"
-    # https://github.com/actions/labeler
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      pull-requests: write
-    steps:
-      - uses: actions/labeler@v6
-        with:
-          repo-token: "${{ secrets.GITHUB_TOKEN }}"
-          configuration-path: '.github/labeler.yml'
-          sync-labels: true
+
   assign_author:
     name: "Assign Author to PR"
     # https://github.com/marketplace/actions/auto-author-assign
@@ -62,18 +50,9 @@ jobs:
             Revert
           # Configure which scopes are allowed.
           scopes: |
-            anta_runner
-            build_output_folders
-            cv_deploy
-            eos_cli_config_gen
-            eos_config_deploy_eapi
-            eos_designs
-            eos_snapshot
-            plugins
-            requirements
-            pyavd
             pyavd-utils
-            containers
+            rust
+            requirements
           # Configure that a scope must always be provided.
           requireScope: false
           # Configure additional validation for the subject based on a regex.
