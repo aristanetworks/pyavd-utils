@@ -261,4 +261,3 @@ serialize = [
     "{major}.{minor}.{patch}.{pre_l}{pre_n}",
     "{major}.{minor}.{patch}",
 ]
-
