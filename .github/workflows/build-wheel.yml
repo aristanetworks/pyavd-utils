@@ -80,7 +80,7 @@ jobs:
           python-version: ${{ matrix.python }}
       - name: Install tox
         run: |
-          pip install tox --upgrade
+          pip install tox tox-gh-actions --upgrade
       - name: Run pytest via tox for the wheel
         run: |-
           WHEEL_NAME=$(ls dist/*.whl | xargs basename)
