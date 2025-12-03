@@ -74,7 +74,7 @@ jobs:
         uses: actions/download-artifact@v6
         with:
           name: pyavd-utils-wheels-${{ inputs.runner }}
-          path: pyavd-utils/dist
+          path: dist
       - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python }}
@@ -83,4 +83,4 @@ jobs:
           pip install tox --upgrade
       - name: Run pytest via tox for the wheel
         run: |-
-          tox run
+          tox run --installpkg dist/
