@@ -169,6 +169,7 @@ docstring-code-format = true
 exclude = [
   # Excluded
   ".tox",
+  ".github",
 ]
 pythonVersion = "3.10"
 

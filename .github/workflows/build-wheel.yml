@@ -83,5 +83,5 @@ jobs:
           pip install tox --upgrade
       - name: Run pytest via tox for the wheel
         run: |-
-          WHEEL_NAME=$(ls wheelhouse/*.whl | xargs basename)
+          WHEEL_NAME=$(ls dist/*.whl | xargs basename)
           tox run --installpkg dist/$WHEEL_NAME
