@@ -58,7 +58,7 @@ jobs:
       - name: Upload pytest coverage data
         uses: actions/upload-artifact@v5
         with:
-          name: coverage-data-${{ matrix.suite.id }}
+          name: pytest-coverage
           path: coverage.xml
 
   # ----------------------------------- #
