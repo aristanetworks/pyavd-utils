@@ -181,7 +181,6 @@ mod tests {
         INIT_PY.call_once(|| {
             pyo3::append_to_inittab!(validation);
             pyo3::Python::initialize();
-            test_schema_store::initialize();
         })
     }
 
