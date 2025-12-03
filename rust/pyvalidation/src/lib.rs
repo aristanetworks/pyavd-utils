@@ -4,29 +4,35 @@
 
 // When running from Python we wish to cache Store inside Rust,
 // to avoid sending the huge object back and forth.
-// The store is initialized on first access with the included store (built from YAML fragments during compilation).
-// It is possible to replace the store by calling `init_store_from_fragments` which will replace the inner option of the Mutex.
+// The store must be initialized before running validation by calling
+// `init_store_from_file` which will load the store from the given file and store it for use by future validations.
+#![deny(unused_crate_dependencies)]
 
 use std::sync::OnceLock;
 
 use avdschema::Store;
-use included_store::get_store as get_included_store;
 use pyo3::pymodule;
 
 static STORE: OnceLock<Store> = OnceLock::new();
 
-fn get_store() -> &'static Store {
-    STORE.get_or_init(get_included_store)
-}
-
 #[pymodule]
 mod validation {
-    use super::{STORE, get_store};
-    use avdschema::{LoadFromFragments, Store, any::AnySchema, resolve_schema};
+    use super::STORE;
+    use avdschema::{Load as _, Store, any::AnySchema};
     use log::info;
     use pyo3::{Bound, PyResult, exceptions::PyRuntimeError, pyclass, pyfunction, types::PyModule};
     use std::path::PathBuf;
     use validation::{Coercion as _, Context, StoreValidate as _, Validation as _};
+
+    fn get_store() -> PyResult<&'static Store> {
+        STORE.get().ok_or_else(|| {
+            PyRuntimeError::new_err(
+                "The schema store was not initialized. \
+             Initialization can only happen once, and must be done before running any validations."
+                    .to_string(),
+            )
+        })
+    }
 
     #[pyclass(frozen, get_all)]
     #[derive(Clone)]
@@ -89,35 +95,16 @@ mod validation {
     }
 
     #[pyfunction]
-    pub fn init_store_from_fragments(
-        eos_cli_config_gen: PathBuf,
-        eos_designs: PathBuf,
-    ) -> PyResult<()> {
-        let mut eos_cli_config_gen_schema =
-            AnySchema::from_fragments(eos_cli_config_gen).map_err(|err| {
+    pub fn init_store_from_file(file: PathBuf) -> PyResult<()> {
+        // Load the store from paths including resolving the $refs where applicable.
+        let store = Store::from_file(Some(file)).map(|store| store.as_resolved())
+            .map_err(|err| {
                 pyo3::exceptions::PyRuntimeError::new_err(format!(
                     "Error while reading the EosCliConfigGen schema fragments: {err}",
                 ))
             })?;
-        let mut eos_designs_schema = AnySchema::from_fragments(eos_designs).map_err(|err| {
-            pyo3::exceptions::PyRuntimeError::new_err(format!(
-                "Error while reading the EosDesigns schema fragments: {err}",
-            ))
-        })?;
 
-        // First create the store without resolving schemas.
-        let mut store = Store {
-            eos_cli_config_gen: eos_cli_config_gen_schema.clone(),
-            eos_designs: eos_designs_schema.clone(),
-        };
-
-        // Next resolve all $ref in each schema, updating the store as we go, to avoid re-resolving nested refs many times.
-        let _ = resolve_schema(&mut eos_cli_config_gen_schema, &store);
-        store.eos_cli_config_gen = eos_cli_config_gen_schema;
-        let _ = resolve_schema(&mut eos_designs_schema, &store);
-        store.eos_designs = eos_designs_schema;
-
-        // Finally insert the resolved store into the OnceLock.
+        // Insert the resolved store into the OnceLock.
         STORE.set(store).map_err(|_| {
             PyRuntimeError::new_err(
                 "Unable to initialize the schema store. \
@@ -129,7 +116,7 @@ mod validation {
 
     #[pyfunction]
     pub fn validate_json(data_as_json: &str, schema_name: &str) -> PyResult<ValidationResult> {
-        get_store()
+        get_store()?
             .validate_json(data_as_json, schema_name, None)
             .map(|result| result.into())
             .map_err(|err| PyRuntimeError::new_err(format!("Invalid JSON in data: {err}")))
@@ -144,7 +131,7 @@ mod validation {
         let mut data_as_value = serde_json::from_str::<serde_json::Value>(data_as_json)
             .map_err(|err| PyRuntimeError::new_err(format!("Invalid JSON in data: {err}")))?;
 
-        let validation_result = get_store().validate_value(&mut data_as_value, schema_name, None);
+        let validation_result = get_store()?.validate_value(&mut data_as_value, schema_name, None);
         let validated_data = if validation_result.violations.is_empty() {
             Some(serde_json::to_string(&data_as_value).map_err(|err| {
                 PyRuntimeError::new_err(format!("Invalid JSON in coerced data: {err}"))
@@ -171,7 +158,7 @@ mod validation {
         let mut data: serde_json::Value = serde_json::from_str(data_as_json)
             .map_err(|err| PyRuntimeError::new_err(format!("Invalid JSON in data: {err}")))?;
 
-        let mut ctx = Context::new(get_store(), None);
+        let mut ctx = Context::new(get_store()?, None);
         schema.coerce(&mut data, &mut ctx);
         schema.validate_value(&data, &mut ctx);
 
@@ -186,23 +173,16 @@ mod validation {
 mod tests {
     use super::validation;
     use pyo3::types::PyAnyMethods as _;
-    const CRATE_DIR: &str = env!("CARGO_MANIFEST_DIR");
-    const EOS_CLI_CONFIG_GEN_FRAGMENTS_DIR: &str =
-        "../../../python-avd/pyavd/_eos_cli_config_gen/schema/schema_fragments";
-    const EOS_DESIGNS_FRAGMENTS_DIR: &str =
-        "../../../python-avd/pyavd/_eos_designs/schema/schema_fragments";
 
     // Initializing python only once. Otherwise things may crash when running in multiple threads.
+    // Also downloading the test schema and extracting to fragments.
     static INIT_PY: std::sync::Once = std::sync::Once::new();
     fn setup() {
         INIT_PY.call_once(|| {
             pyo3::append_to_inittab!(validation);
             pyo3::Python::initialize();
+            test_schema_store::initialize();
         })
-    }
-
-    fn get_dir(fragments_dir: &str) -> std::path::PathBuf {
-        std::path::PathBuf::from(CRATE_DIR).join(fragments_dir)
     }
 
     // Initialize the store and ignoring errors for duplicate initialization.
@@ -212,16 +192,8 @@ mod tests {
         {
             let args = ();
             let kwargs = pyo3::types::PyDict::new(py);
-            kwargs
-                .set_item(
-                    "eos_cli_config_gen",
-                    get_dir(EOS_CLI_CONFIG_GEN_FRAGMENTS_DIR),
-                )
-                .unwrap();
-            kwargs
-                .set_item("eos_designs", get_dir(EOS_DESIGNS_FRAGMENTS_DIR))
-                .unwrap();
-            let _ = module.call_method("init_store_from_fragments", args, Some(&kwargs));
+            kwargs.set_item("file", test_schema_store::get_store_gz_path()).unwrap();
+            let _ = module.call_method("init_store_from_file", args, Some(&kwargs));
         };
     }
 
@@ -283,53 +255,6 @@ mod tests {
     }
 
     #[test]
-    fn init_store_py_invalid_fragment_paths_err() {
-        setup();
-        pyo3::Python::attach(|py| {
-            let module = py.import("validation").unwrap();
-
-            // Test with invalid eos_cli_config_gen path
-            let err = {
-                let args = ();
-                let kwargs = pyo3::types::PyDict::new(py);
-                kwargs
-                    .set_item("eos_cli_config_gen", "invalid_path")
-                    .unwrap();
-                kwargs
-                    .set_item("eos_designs", get_dir(EOS_DESIGNS_FRAGMENTS_DIR))
-                    .unwrap();
-                module
-                    .call_method("init_store_from_fragments", args, Some(&kwargs))
-                    .unwrap_err()
-            };
-            assert_eq!(
-                err.value(py).to_string(),
-                "Error while reading the EosCliConfigGen schema fragments: No files found."
-            );
-
-            // Test with invalid eos_designs path
-            let err = {
-                let args = ();
-                let kwargs = pyo3::types::PyDict::new(py);
-                kwargs
-                    .set_item(
-                        "eos_cli_config_gen",
-                        get_dir(EOS_CLI_CONFIG_GEN_FRAGMENTS_DIR),
-                    )
-                    .unwrap();
-                kwargs.set_item("eos_designs", "invalid_path").unwrap();
-                module
-                    .call_method("init_store_from_fragments", args, Some(&kwargs))
-                    .unwrap_err()
-            };
-            assert_eq!(
-                err.value(py).to_string(),
-                "Error while reading the EosDesigns schema fragments: No files found."
-            );
-        });
-    }
-
-    #[test]
     fn init_store_py_twice_err() {
         setup();
         pyo3::Python::attach(|py| {
@@ -339,17 +264,9 @@ mod tests {
             let err = {
                 let args = ();
                 let kwargs = pyo3::types::PyDict::new(py);
-                kwargs
-                    .set_item(
-                        "eos_cli_config_gen",
-                        get_dir(EOS_CLI_CONFIG_GEN_FRAGMENTS_DIR),
-                    )
-                    .unwrap();
-                kwargs
-                    .set_item("eos_designs", get_dir(EOS_DESIGNS_FRAGMENTS_DIR))
-                    .unwrap();
+                kwargs.set_item("file", test_schema_store::get_store_gz_path()).unwrap();
                 module
-                    .call_method("init_store_from_fragments", args, Some(&kwargs))
+                    .call_method("init_store_from_file", args, Some(&kwargs))
                     .unwrap_err()
             };
 
