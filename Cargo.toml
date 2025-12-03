@@ -20,7 +20,7 @@ pyo3 = { version = "0.26.0" }
 pyo3-build-config = { version = "0.26.0"}
 pyo3-log = { version = "0.13.1" }
 regex = { version = "1.11.1" }
-reqwest = { version = "0.12.24", default-features = true }
+reqwest = { version = "0.12.24", default-features = false }
 serde = { version = "1.0.217" }
 serde_json = { version = "1.0.135" }
 serde_yaml = { version = "0.9.33" }
