@@ -27,7 +27,7 @@ repository = "https://github.com/aristanetworks/avd"
 
 [build-system]
 requires = [
-    "setuptools",
+    "setuptools>=71.0",
     "setuptools-rust>=1.12.0",
 ]
 build-backend = "setuptools.build_meta"

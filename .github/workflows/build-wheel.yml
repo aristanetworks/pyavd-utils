@@ -69,7 +69,7 @@ jobs:
       matrix:
         python: ["3.10", "3.11", "3.12", "3.13", "3.14"]
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - name: Download ${{ inputs.runner }} wheel
         uses: actions/download-artifact@v6
         with:
@@ -82,16 +82,7 @@ jobs:
         run: |
           pip install tox tox-gh-actions --upgrade
       - name: Run pytest via tox for the wheel
+        shell: bash
         run: |-
           WHEEL_NAME=$(ls dist/*.whl | xargs basename)
           tox run --installpkg dist/$WHEEL_NAME
-      - name: Generate coverage report
-        if: matrix.python == '3.11' && inputs.runner == 'ubuntu-latest'
-        run: |-
-          tox run -e report
-      - name: Upload pytest coverage data
-        if: matrix.python == '3.11' && inputs.runner == 'ubuntu-latest'
-        uses: actions/upload-artifact@v5
-        with:
-          name: coverage-data-${{ matrix.suite.id }}
-          path: coverage.xml
