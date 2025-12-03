@@ -96,8 +96,11 @@ mod validation {
 
     #[pyfunction]
     pub fn init_store_from_file(file: PathBuf) -> PyResult<()> {
+        info!("Initialize the schema store from file.");
+
         // Load the store from path including resolving the $refs where applicable.
-        let store = Store::from_file(Some(file)).map(|store| store.as_resolved())
+        let store = Store::from_file(Some(file))
+            .map(|store| store.as_resolved())
             .map_err(|err| {
                 pyo3::exceptions::PyRuntimeError::new_err(format!(
                     "Error while loading the Schema Store from file: {err}",
@@ -111,7 +114,7 @@ mod validation {
                  Initialization can only happen once, and must be done before running any validations."
                     .to_string(),
             )
-            }).inspect(|_| info!("Initialized the schema store from fragments."))
+            }).inspect(|_| info!("Initialized the schema store from file."))
     }
 
     #[pyfunction]
@@ -171,27 +174,36 @@ mod validation {
 // and that we can catch issues in Rust without building the Python first.
 #[cfg(test)]
 mod tests {
-    use super::validation;
+    use std::sync::OnceLock;
+
+    use super::{STORE, validation};
     use pyo3::types::PyAnyMethods as _;
 
     // Initializing python only once. Otherwise things may crash when running in multiple threads.
     // Also downloading the test schema and extracting to fragments.
-    static INIT_PY: std::sync::Once = std::sync::Once::new();
+    static INIT_PY: OnceLock<()> = OnceLock::new();
     fn setup() {
-        INIT_PY.call_once(|| {
+        INIT_PY.get_or_init(|| {
             pyo3::append_to_inittab!(validation);
             pyo3::Python::initialize();
-        })
+            pyo3::Python::attach(|py| {
+                init_test_store(py);
+            });
+        });
     }
 
     // Initialize the store and ignoring errors for duplicate initialization.
     // This avoids false negatives when multiple tests are executed at once.
-    fn shared_init_store(py: pyo3::Python<'_>) {
+    fn init_test_store(py: pyo3::Python<'_>) {
+        if STORE.get().is_some() {
+            panic!("Already set")
+        }
         let module = py.import("validation").unwrap();
         {
             let args = ();
             let kwargs = pyo3::types::PyDict::new(py);
-            kwargs.set_item("file", test_schema_store::get_store_gz_path()).unwrap();
+            let file = py.detach(test_schema_store::get_store_gz_path);
+            kwargs.set_item("file", file).unwrap();
             let _ = module.call_method("init_store_from_file", args, Some(&kwargs));
         };
     }
@@ -200,8 +212,6 @@ mod tests {
     fn validate_json_py_ok() {
         setup();
         pyo3::Python::attach(|py| {
-            shared_init_store(py);
-
             let module = py.import("validation").unwrap();
             let data_as_json_str = serde_json::json!({"ethernet_interfaces": [{"name": "Ethernet1", "description": 12345}, {"name": "Ethernet1"}, {}]}).to_string();
             let validation_result = {
@@ -257,13 +267,12 @@ mod tests {
     fn init_store_py_twice_err() {
         setup();
         pyo3::Python::attach(|py| {
-            shared_init_store(py);
-
             let module = py.import("validation").unwrap();
             let err = {
                 let args = ();
                 let kwargs = pyo3::types::PyDict::new(py);
-                kwargs.set_item("file", test_schema_store::get_store_gz_path()).unwrap();
+                let file = py.detach(test_schema_store::get_store_gz_path);
+                kwargs.set_item("file", file).unwrap();
                 module
                     .call_method("init_store_from_file", args, Some(&kwargs))
                     .unwrap_err()
@@ -281,8 +290,6 @@ mod tests {
     fn validate_json_py_invalid_json_err() {
         setup();
         pyo3::Python::attach(|py| {
-            shared_init_store(py);
-
             let module = py.import("validation").unwrap();
             let err = {
                 let args = ();
@@ -306,8 +313,6 @@ mod tests {
     fn validate_json_with_adhoc_schema_py_ok() {
         setup();
         pyo3::Python::attach(|py| {
-            shared_init_store(py);
-
             let module = py.import("validation").unwrap();
             let validation_result = {
                 let args = ();
@@ -366,8 +371,6 @@ mod tests {
     fn validate_json_with_adhoc_schema_py_invalid_json_err() {
         setup();
         pyo3::Python::attach(|py| {
-            shared_init_store(py);
-
             let module = py.import("validation").unwrap();
             let err = {
                 let args = ();
@@ -394,8 +397,6 @@ mod tests {
     fn validate_json_with_adhoc_schema_py_invalid_schema_err() {
         setup();
         pyo3::Python::attach(|py| {
-            shared_init_store(py);
-
             let module = py.import("validation").unwrap();
             let err = {
                 let args = ();
@@ -422,8 +423,6 @@ mod tests {
     fn get_validated_data_ok() {
         setup();
         pyo3::Python::attach(|py| {
-            shared_init_store(py);
-
             let module = py.import("validation").unwrap();
             let data_as_json_str = serde_json::json!({"ethernet_interfaces": [{"name": "Ethernet1", "description": 12345}]}).to_string();
             let get_validated_data_result = {
@@ -514,8 +513,6 @@ mod tests {
     fn get_validated_data_not_ok() {
         setup();
         pyo3::Python::attach(|py| {
-            shared_init_store(py);
-
             let module = py.import("validation").unwrap();
             let data_as_json_str = serde_json::json!({"ethernet_interfaces": [{"name": "Ethernet1", "unknown": 12345}]}).to_string();
             let get_validated_data_result = {
