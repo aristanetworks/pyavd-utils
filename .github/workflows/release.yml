@@ -31,14 +31,17 @@ jobs:
       - name: Set target version
         id: target_version
         run: |-
-          echo "TARGET_VERSION=${{ inputs.TESTPYPI_VERSION || `bump-my-version show current_version` }}" >> $GITHUB_OUTPUT
+          CURRENT_VERSION=$(bump-my-version show current_version)
+          INPUT_VALUE="${{ inputs.TESTPYPI_VERSION }}"
+          TARGET_VERSION="${INPUT_VALUE:-$CURRENT_VERSION}"
+          echo "TARGET_VERSION=$TARGET_VERSION" >> $GITHUB_OUTPUT
 
   build-pyavd-utils-wheels:
     name: Build and test pyavd-utils wheel on ${{ matrix.os }}
-    # if: github.repository == 'aristanetworks/pyavd-utils'
+    if: github.repository == 'aristanetworks/pyavd-utils'
     permissions:
       contents: read
-      actions: write  # Needed to trigger workflows
+      actions: write
       pull-requests: write
     strategy:
       matrix:
@@ -48,7 +51,7 @@ jobs:
           - windows-latest
           - macos-15-intel
           - macos-latest
-    uses: ./.github/workflows/build-pyavd-wheel.yml
+    uses: ./.github/workflows/build-wheel.yml
     with:
       runner: ${{ matrix.os }}
       # Default value to '' to not overwrite the version in the child workflow

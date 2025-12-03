@@ -106,6 +106,6 @@ jobs:
           - windows-latest
           - macos-15-intel
           - macos-latest
-    uses: .github/workflows/build-wheel.yml
+    uses: ./.github/workflows/build-wheel.yml
     with:
       runner: $ {{ matrix.os }}
