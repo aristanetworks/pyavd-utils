@@ -28,16 +28,15 @@ class GetValidatedDataResult:
     validation_result: ValidationResult
     validated_data: str | None
 
-def init_store_from_fragments(eos_cli_config_gen: Path, eos_designs: Path) -> None:
+def init_store_from_file(file: Path) -> None:
     """
-    Re-initialize the Schema store from Schema YAML fragments.
+    Initialize the Schema store from a file containing the full schema store.
 
-    This will overwrite the builtin-schema that was included in the Rust code during compilation.
+    Ususally this is the schema.json.gz file built with pyavd.
     This must be called before running any validations, since the store is a write-once static.
 
     Args:
-        eos_cli_config_gen: Path to the directory holding the schema fragments for `eos_cli_config_gen`.
-        eos_designs: Path to the directory holding the schema fragments for `eos_designs`.
+        file: Path to the json, yml or json.gz file holding the schema store.
 
     Raises:
         RuntimeError: For any issue hit during loading, deserializing, combining and resolving schemas.

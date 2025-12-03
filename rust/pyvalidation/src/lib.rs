@@ -96,7 +96,7 @@ mod validation {
 
     #[pyfunction]
     pub fn init_store_from_file(file: PathBuf) -> PyResult<()> {
-        // Load the store from paths including resolving the $refs where applicable.
+        // Load the store from path including resolving the $refs where applicable.
         let store = Store::from_file(Some(file)).map(|store| store.as_resolved())
             .map_err(|err| {
                 pyo3::exceptions::PyRuntimeError::new_err(format!(
