@@ -3,21 +3,21 @@
 # that can be found in the LICENSE file.
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, cast
+from pathlib import Path
 
 import pytest
 
-from pyavd_utils.validation import init_store_from_fragments
+from pyavd_utils.validation import init_store_from_file
 
-if TYPE_CHECKING:
-    from pathlib import Path
+ADV_SCHEMA_URL = "https://github.com/aristanetworks/avd/releases/download/v6.0.0-dev3/schemas.json.gz"
 
 
 @pytest.fixture(scope="package")
 def init_store() -> None:
-    from schema_tools.constants import SCHEMAS
+    from urllib.request import urlretrieve
 
-    init_store_from_fragments(
-        eos_cli_config_gen=cast("Path", SCHEMAS["eos_cli_config_gen"].fragments_dir),
-        eos_designs=cast("Path", SCHEMAS["eos_designs"].fragments_dir),
-    )
+    filename = Path(ADV_SCHEMA_URL).name
+    tmp_file = Path(__file__).parent.joinpath("tmp", filename)
+    urlretrieve(ADV_SCHEMA_URL, tmp_file)  # noqa: S310
+
+    init_store_from_file(tmp_file)
