@@ -86,11 +86,11 @@ jobs:
           WHEEL_NAME=$(ls dist/*.whl | xargs basename)
           tox run --installpkg dist/$WHEEL_NAME
       - name: Generate coverage report
-        if: matrix.python == '3.11' and inputs.runner == "ubuntu-latest"
+        if: matrix.python == '3.11' and inputs.runner == 'ubuntu-latest'
         run: |-
           tox run -e report
       - name: Upload pytest coverage data
-        if: matrix.python == '3.11' and inputs.runner == "ubuntu-latest"
+        if: matrix.python == '3.11' and inputs.runner == 'ubuntu-latest'
         uses: actions/upload-artifact@v5
         with:
           name: coverage-data-${{ matrix.suite.id }}
