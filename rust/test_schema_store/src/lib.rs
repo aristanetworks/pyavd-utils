@@ -1,3 +1,7 @@
+// Copyright (c) 2025 Arista Networks, Inc.
+// Use of this source code is governed by the Apache License 2.0
+// that can be found in the LICENSE file.
+
 use std::path::PathBuf;
 
 const CRATE_DIR: &str = env!("CARGO_MANIFEST_DIR");
