@@ -100,7 +100,7 @@ mod validation {
         let store = Store::from_file(Some(file)).map(|store| store.as_resolved())
             .map_err(|err| {
                 pyo3::exceptions::PyRuntimeError::new_err(format!(
-                    "Error while reading the EosCliConfigGen schema fragments: {err}",
+                    "Error while loading the Schema Store from file: {err}",
                 ))
             })?;
 
