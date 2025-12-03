@@ -30,7 +30,8 @@ jobs:
           pip install bump-my-version
       - name: Set target version
         id: target_version
-        run: echo "TARGET_VERSION=${{ inputs.TESTPYPI_VERSION || bump-my-version show current_version }}" >> $GITHUB_OUTPUT
+        run: |-
+          echo "TARGET_VERSION=${{ inputs.TESTPYPI_VERSION || `bump-my-version show current_version` }}" >> $GITHUB_OUTPUT
 
   build-pyavd-utils-wheels:
     name: Build and test pyavd-utils wheel on ${{ matrix.os }}

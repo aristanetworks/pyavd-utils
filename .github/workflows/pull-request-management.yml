@@ -95,7 +95,7 @@ jobs:
   # --------------------------------------------------------------------- #
   # Build and test cross platform pyavd-utils wheels and upload artifacts
   # --------------------------------------------------------------------- #
-  build_and test_pyavd_utils_wheels:
+  build_and_test_pyavd_utils_wheels:
     name: Build pyavd-utils wheel on ${{ matrix.os }}
     strategy:
       fail-fast: false
