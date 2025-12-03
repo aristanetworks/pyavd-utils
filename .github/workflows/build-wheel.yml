@@ -70,7 +70,7 @@ jobs:
         python: ["3.10", "3.11", "3.12", "3.13", "3.14"]
     steps:
       - uses: actions/checkout@v5
-      - name: Download {{ inputs.runner }} wheel
+      - name: Download ${{ inputs.runner }} wheel
         uses: actions/download-artifact@v6
         with:
           name: pyavd-utils-wheels-${{ inputs.runner }}
@@ -83,4 +83,5 @@ jobs:
           pip install tox --upgrade
       - name: Run pytest via tox for the wheel
         run: |-
-          tox run --installpkg dist/
+          WHEEL_NAME=$(ls wheelhouse/*.whl | xargs basename)
+          tox run --installpkg dist/$WHEEL_NAME
