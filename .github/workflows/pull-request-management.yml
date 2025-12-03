@@ -112,4 +112,4 @@ jobs:
           - macos-latest
     uses: ./.github/workflows/build-wheel.yml
     with:
-      runner: $ {{ matrix.os }}
+      runner: ${{ matrix.os }}
