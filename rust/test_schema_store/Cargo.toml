@@ -5,7 +5,7 @@ edition = "2024"
 license.workspace = true
 
 [dependencies]
-reqwest = { workspace = true, features = ["blocking"] }
+reqwest = { workspace = true, features = ["blocking", "default-tls"] }
 
 [lib]
 crate-type = ["cdylib", "lib"]
