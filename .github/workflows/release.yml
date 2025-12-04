@@ -112,8 +112,8 @@ jobs:
           python -c "from pyavd_utils.validation import get_validated_data"
 
   publish-pyavd-utils-pypi:
-    name: Publish pyavd-utils to Test PyPI
-    needs: [build-pyavd-utils-wheels]
+    name: Publish pyavd-utils to PyPI
+    needs: [test-pyavd-utils-from-test-pypi]
     runs-on: ubuntu-latest
     # We can only publish to Pypi if running on a published release, not with workflow_dispatch
     if: github.event_name == 'release'
