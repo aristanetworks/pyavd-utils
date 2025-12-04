@@ -64,7 +64,8 @@ jobs:
     runs-on: ubuntu-latest
     if: |
       github.event_name == 'release'
-      || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+      || (github.event_name == 'workflow_dispatch')
+    # && github.ref == 'refs/heads/main')
     environment:
       name: test
       url: https://test.pypi.org/p/pyavd-utils
@@ -88,7 +89,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     if: |
       github.event_name == 'release'
-      || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+      || (github.event_name == 'workflow_dispatch')
+    # && github.ref == 'refs/heads/main')
     strategy:
       matrix:
         os:
@@ -99,17 +101,21 @@ jobs:
           - macos-latest
         python: ["3.10", "3.11", "3.12", "3.13", "3.14"]
     steps:
+      - name: Checkout only the tests
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: |-
+            tests
+            pyproject.toml
       - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python }}
       - name: Install `pyavd-utils` from test Pypi
         run: |-
-          pip install -i https://test.pypi.org/simple/ "pyavd-utils==${{ needs.target_version.outputs.target_version }}"
-      - name: Install `pyavd-utils` from test Pypi
-        # TODO: Find better tests to run
+          pip install -i https://test.pypi.org/simple/ "pyavd-utils==${{ needs.target_version.outputs.target_version }}" --group test --extra-index-url https://pypi.org/simple
+      - name: Run tests
         run: |-
-          python -c "from pyavd_utils.passwords import sha512_crypt"
-          python -c "from pyavd_utils.validation import get_validated_data"
+          pytest tests
 
   publish-pyavd-utils-pypi:
     name: Publish pyavd-utils to PyPI
