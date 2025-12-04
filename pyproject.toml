@@ -7,17 +7,25 @@ readme = "README.md"
 license = "Apache-2.0"
 license-files = ["pyavd_utils/LICENSE"]
 classifiers = [
-    "Operating System :: OS Independent",
-    "Development Status :: 5 - Production/Stable",
+    "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Natural Language :: English",
+    "Operating System :: OS Independent",
     "Programming Language :: Python",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Rust",
     "Topic :: Software Development :: Libraries :: Python Modules",
-    "Topic :: Software Development :: Testing",
+    "Topic :: Utilities",
 ]
+# TODO: Once we check for free-threading we can add
+# Programming Language :: Python :: Free Threading
+# note that it can have levels from Unstable to Resilien
+
 keywords = ["pyavd", "pyavd-utils"]
 requires-python = ">=3.10"
 
