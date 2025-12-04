@@ -1,15 +1,4 @@
 [MASTER]
-ignore-paths=
-  # We will Pylint for ansible_collections separately since it uses it's own pylintrc in the collection root.
-  ansible_collections,
-  # The cv_client api is generated from proto files, so it should not be linted.
-  python-avd/pyavd/_cv/api,
-  # The schema/__init__.py are generated, so they should not be linted.
-  python-avd/pyavd/_eos_cli_config_gen/schema/__init__.py,
-  python-avd/pyavd/_eos_designs/schema/__init__.py,
-  python-avd/pyavd/_eos_designs/eos_designs_facts/schema/protocol.py,
-  python-avd/tests/pyavd/schema/data_merging_schema_class.py,
-
 # A comma-separated list of package or module names from where C extensions may
 # be loaded. Extensions are loading into the active Python interpreter and may
 # run arbitrary code.
