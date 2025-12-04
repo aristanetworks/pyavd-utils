@@ -14,48 +14,25 @@
 
 ---
 
+## ⚠️ Danger
+
+This package is an **internal dependency** designed solely for the use of the `pyavd` Python library. It exposes low-level functionality and is not intended for direct use by end-users.
+
+> [!CAUTION]
+> **Should not be used directly** and **may not follow semantic versioning**.
+>
+> Changes in minor and patch versions may include breaking API changes without prior notice.
+---
+
 ## Purpose
 
 `pyavd-utils` provides functionalities in **Rust** for the Python package, **PyAVD**.
 
-**PyAVD** is designed to expose the core logic of the Arista Validated Designs (**AVD**) Ansible collection (`arista.avd`) as a standalone, dependency-lite Python library. This allows developers to utilize AVD's complex data processing capabilities—like **input validation**, **AVD facts generation**, and **structured configuration generation**—within custom Python applications without requiring a full Ansible installation or runtime.
+**PyAVD** is designed to expose the core logic of the **AVD** Ansible collection (`arista.avd`) as a standalone, dependency-lite Python library. This allows developers to utilize AVD's complex data processing capabilities—like **input validation**, **AVD facts generation**, and **structured configuration generation**—within custom Python applications without requiring a full Ansible installation or runtime.
 
 This repository, `pyavd-utils`, provides functionalities to PyAVD, specifically handling the heavy lifting of data structure validation and manipulation with the speed and safety guarantees of **Rust**.
 
 ---
-
-## ⚠️ Internal Warning
-
-This package is an **internal dependency** designed solely for the use of the `pyavd` Python library. It exposes low-level functionality and is not intended for direct use by end-users.
-
-> [!WARNING]
-> **Should not be used directly** and **may not follow semantic versioning**.
->
-> Changes in minor and patch versions may include breaking API changes without prior notice.
-
----
-
-## Key Features
-
-This Rust library provides the fundamental, performance-critical components for:
-
-- **Schema Validation:** Efficiently validating input variables against the defined AVD schemas, such as those used by `eos_designs` and `eos_cli_config_gen`.
-- **Type Coercion:** Handling automatic and reliable type conversion for variables during the validation process.
-- **Data Transformation:** Executing the complex logic required to generate intermediate data structures like **AVD Facts** and the device-specific **Structured Configuration**.
-
-By offloading these intensive tasks to compiled Rust code, `pyavd-utils` ensures that PyAVD maintains high performance, making the core AVD logic fast and robust when integrated into custom automation tools.
-
----
-
-## Installation
-
-`pyavd-utils` is installed automatically as a dependency when installing the main `pyavd` library:
-
-```bash
-pip install pyavd
-```
-
-The package is built as a set of Python bindings for the Rust code using `setuptools-rs`, ensuring compatibility and ease of installation across various platforms.
 
 ## Contribution and Development
 
