@@ -6,8 +6,9 @@ use ordermap::OrderMap;
 
 use serde_json::Value;
 
+use crate::dict::DynamicKeyInfo;
 use crate::resolve::{errors::SchemaResolverError, resolve_ref::resolve_ref};
-use crate::{Schema, Store, any::AnySchema, dict::Dict, get_dynamic_keys};
+use crate::{Schema, Store, any::AnySchema, dict::Dict};
 
 // Keys that are accepted by the schema from either keys or dynamic keys.
 #[derive(Debug, PartialEq)]
@@ -59,44 +60,29 @@ impl SchemaKeys {
             .map_err(|_err| SchemaKeysError::SchemaNotDict)?;
         let dict = value.as_object().ok_or(SchemaKeysError::ValueNotADict)?;
         let mut schema_keys = SchemaKeys {
-            keys: OrderMap::from_iter(
-                dict_schema
-                    .keys
-                    .as_ref()
-                    .map(|keys| {
-                        keys.keys()
-                            .map(|key| (key.to_owned(), SchemaKey::StaticKey))
-                            .collect::<Vec<_>>()
-                    })
-                    .unwrap_or_default(),
-            ),
+            keys: OrderMap::from_iter(dict_schema.keys.as_ref().into_iter().flat_map(|keys| {
+                keys.keys()
+                    .map(|key| (key.to_owned(), SchemaKey::StaticKey))
+            })),
         };
 
         schema_keys.keys.extend(
             dict_schema
-                .dynamic_keys
-                .as_ref()
-                .map(|dynamic_keys| {
-                    dynamic_keys
-                        .keys()
-                        .flat_map(|dynamic_key_path| {
-                            get_dynamic_keys(dynamic_key_path, dict)
-                                .iter()
-                                .map(|dynamic_key| {
-                                    (
-                                        dynamic_key.to_owned(),
-                                        SchemaKey::DynamicKey {
-                                            dynamic_key_path: dynamic_key_path.to_owned(),
-                                        },
-                                    )
-                                })
-                                .collect::<Vec<_>>()
-                        })
-                        .collect::<Vec<_>>()
-                })
-                .unwrap_or_default(),
+                .get_dynamic_keys(dict)
+                .unwrap_or_default()
+                .into_iter()
+                .map(|(key, dynamic_key_info)| {
+                    (key.to_owned(), SchemaKey::from(&dynamic_key_info))
+                }),
         );
         Ok(schema_keys)
+    }
+}
+impl From<&DynamicKeyInfo<'_>> for SchemaKey {
+    fn from(value: &DynamicKeyInfo) -> Self {
+        Self::DynamicKey {
+            dynamic_key_path: value.dynamic_key_path.to_owned(),
+        }
     }
 }
 

@@ -24,16 +24,13 @@ impl Validation<i64> for Int {
     fn validate_value(&self, value: &Value, ctx: &mut Context) {
         if let Some(v) = value.as_i64() {
             self.validate(&v, ctx)
+        } else if value.is_null() && !ctx.configuration.restrict_null_values {
         } else {
-            ctx.add_violation(Violation::InvalidType {
+            ctx.add_error(Violation::InvalidType {
                 expected: Type::Int,
                 found: value.into(),
             })
         }
-    }
-
-    fn is_required(&self) -> bool {
-        self.base.required.unwrap_or_default()
     }
 
     fn validate_ref(&self, value: &i64, ctx: &mut Context) {
@@ -46,36 +43,35 @@ impl Validation<i64> for Int {
             }
         }
     }
-
-    fn default_value(&self) -> Option<i64> {
-        self.base.default
-    }
 }
 
 fn validate_min(schema: &Int, input: &i64, ctx: &mut Context) {
     if let Some(min) = schema.min
-        && min > *input {
-            ctx.add_violation(Violation::ValueBelowMinimum {
-                minimum: min,
-                found: *input,
-            });
-        }
+        && min > *input
+    {
+        ctx.add_error(Violation::ValueBelowMinimum {
+            minimum: min,
+            found: *input,
+        });
+    }
 }
 
 fn validate_max(schema: &Int, input: &i64, ctx: &mut Context) {
     if let Some(max) = schema.max
-        && max < *input {
-            ctx.add_violation(Violation::ValueAboveMaximum {
-                maximum: max,
-                found: *input,
-            });
-        }
+        && max < *input
+    {
+        ctx.add_error(Violation::ValueAboveMaximum {
+            maximum: max,
+            found: *input,
+        });
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    use crate::Configuration;
     use crate::coercion::Coercion as _;
     use crate::context::Context;
     use crate::feedback::{CoercionNote, Feedback, Violation};
@@ -88,7 +84,7 @@ mod tests {
         let store = get_test_store();
         let mut ctx = Context::new(&store, None);
         schema.validate_value(&input, &mut ctx);
-        assert!(ctx.violations.is_empty() && ctx.coercions.is_empty());
+        assert!(ctx.result.errors.is_empty() && ctx.result.infos.is_empty());
     }
 
     #[test]
@@ -98,11 +94,11 @@ mod tests {
         let store = get_test_store();
         let mut ctx = Context::new(&store, None);
         schema.validate_value(&input, &mut ctx);
-        assert!(ctx.coercions.is_empty());
+        assert!(ctx.result.infos.is_empty());
         assert_eq!(
-            ctx.violations,
+            ctx.result.errors,
             vec![Feedback {
-                path: vec![],
+                path: vec![].into(),
                 issue: Violation::InvalidType {
                     expected: Type::Int,
                     found: Type::Dict,
@@ -117,14 +113,18 @@ mod tests {
         let schema = Int::default();
         let mut input = "123".into();
         let store = get_test_store();
-        let mut ctx = Context::new(&store, None);
+        let configuration = Configuration {
+            return_coercion_infos: true,
+            ..Default::default()
+        };
+        let mut ctx = Context::new(&store, Some(&configuration));
         schema.coerce(&mut input, &mut ctx);
         schema.validate_value(&input, &mut ctx);
-        assert!(ctx.violations.is_empty());
+        assert!(ctx.result.errors.is_empty());
         assert_eq!(
-            ctx.coercions,
+            ctx.result.infos,
             vec![Feedback {
-                path: vec![],
+                path: vec![].into(),
                 issue: CoercionNote {
                     found: "123".into(),
                     made: 123.into()
@@ -141,11 +141,11 @@ mod tests {
         let store = get_test_store();
         let mut ctx = Context::new(&store, None);
         schema.validate_value(&input, &mut ctx);
-        assert!(ctx.coercions.is_empty());
+        assert!(ctx.result.infos.is_empty());
         assert_eq!(
-            ctx.violations,
+            ctx.result.errors,
             vec![Feedback {
-                path: vec![],
+                path: vec![].into(),
                 issue: Violation::InvalidType {
                     expected: Type::Int,
                     found: Type::Str
@@ -166,7 +166,7 @@ mod tests {
         let store = get_test_store();
         let mut ctx = Context::new(&store, None);
         schema.validate_value(&input, &mut ctx);
-        assert!(ctx.violations.is_empty() && ctx.coercions.is_empty());
+        assert!(ctx.result.errors.is_empty() && ctx.result.infos.is_empty());
     }
 
     #[test]
@@ -180,11 +180,11 @@ mod tests {
         let store = get_test_store();
         let mut ctx = Context::new(&store, None);
         schema.validate_value(&input, &mut ctx);
-        assert!(ctx.coercions.is_empty());
+        assert!(ctx.result.infos.is_empty());
         assert_eq!(
-            ctx.violations,
+            ctx.result.errors,
             vec![Feedback {
-                path: vec![],
+                path: vec![].into(),
                 issue: Violation::InvalidValue {
                     expected: vec![123].into(),
                     found: input.into()
@@ -204,7 +204,7 @@ mod tests {
         let store = get_test_store();
         let mut ctx = Context::new(&store, None);
         schema.validate_value(&input, &mut ctx);
-        assert!(ctx.violations.is_empty() && ctx.coercions.is_empty());
+        assert!(ctx.result.errors.is_empty() && ctx.result.infos.is_empty());
     }
 
     #[test]
@@ -217,11 +217,11 @@ mod tests {
         let store = get_test_store();
         let mut ctx = Context::new(&store, None);
         schema.validate_value(&input, &mut ctx);
-        assert!(ctx.coercions.is_empty());
+        assert!(ctx.result.infos.is_empty());
         assert_eq!(
-            ctx.violations,
+            ctx.result.errors,
             vec![Feedback {
-                path: vec![],
+                path: vec![].into(),
                 issue: Violation::ValueBelowMinimum {
                     minimum: 122,
                     found: 121
@@ -241,7 +241,7 @@ mod tests {
         let store = get_test_store();
         let mut ctx = Context::new(&store, None);
         schema.validate_value(&input, &mut ctx);
-        assert!(ctx.violations.is_empty() && ctx.coercions.is_empty());
+        assert!(ctx.result.errors.is_empty() && ctx.result.infos.is_empty());
     }
 
     #[test]
@@ -254,11 +254,11 @@ mod tests {
         let store = get_test_store();
         let mut ctx = Context::new(&store, None);
         schema.validate_value(&input, &mut ctx);
-        assert!(ctx.coercions.is_empty());
+        assert!(ctx.result.infos.is_empty());
         assert_eq!(
-            ctx.violations,
+            ctx.result.errors,
             vec![Feedback {
-                path: vec![],
+                path: vec![].into(),
                 issue: Violation::ValueAboveMaximum {
                     maximum: 124,
                     found: 125

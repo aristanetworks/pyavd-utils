@@ -1,13 +1,18 @@
 // Copyright (c) 2025 Arista Networks, Inc.
 // Use of this source code is governed by the Apache License 2.0
 // that can be found in the LICENSE file.
+
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-use crate::utils::{
-    dump::Dump,
-    load::{Load, LoadError},
+use crate::{
+    base::Deprecation,
+    delegate_anyschema_method,
+    utils::{
+        dump::Dump,
+        load::{Load, LoadError},
+    },
 };
 
 #[cfg(feature = "dump_load_files")]
@@ -34,9 +39,9 @@ impl AnySchema {
     #[cfg(feature = "dump_load_files")]
     pub fn new_from_path(path: PathBuf) -> Result<Self, LoadError> {
         if path.is_dir() {
-            Self::from_fragments(path)
+            Self::from_fragments(&path)
         } else {
-            Self::from_file(Some(path))
+            Self::from_file(Some(&path))
         }
     }
 }
@@ -56,5 +61,23 @@ impl From<&AnySchema> for String {
             AnySchema::List(_) => "list".to_string(),
             AnySchema::Str(_) => "str".to_string(),
         }
+    }
+}
+
+pub trait Shortcuts {
+    /// Returns a boolean indicating if the schema field is required.
+    fn is_required(&self) -> bool;
+
+    /// Returns the deprecation information from the schema if set.
+    fn deprecation(&self) -> &Option<Deprecation>;
+}
+
+impl Shortcuts for AnySchema {
+    fn is_required(&self) -> bool {
+        delegate_anyschema_method!(self, is_required,)
+    }
+
+    fn deprecation(&self) -> &Option<Deprecation> {
+        delegate_anyschema_method!(self, deprecation,)
     }
 }

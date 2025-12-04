@@ -7,10 +7,10 @@ use serde_json::Value;
 
 use crate::{
     coercion::Coercion,
-    context::{Configuration, Context},
+    context::{Configuration, Context, ValidationResult},
     feedback::Violation,
-    validation_result::ValidationResult,
 };
+use log::debug;
 
 use super::Validation;
 
@@ -54,8 +54,12 @@ impl StoreValidate<Schema> for Store {
         schema_name: Schema,
         configuration: Option<&Configuration>,
     ) -> Result<ValidationResult, StoreValidateError> {
+        debug!("Validating JSON");
         let mut value = serde_json::from_str(json)?;
-        Ok(self.validate_value(&mut value, schema_name, configuration))
+        debug!("Deserialization of JSON Done");
+        let result = self.validate_value(&mut value, schema_name, configuration);
+        debug!("Validating JSON Done");
+        Ok(result)
     }
     fn validate_yaml(
         &self,
@@ -63,10 +67,14 @@ impl StoreValidate<Schema> for Store {
         schema_name: Schema,
         configuration: Option<&Configuration>,
     ) -> Result<ValidationResult, StoreValidateError> {
+        debug!("Validating YAML");
         // todo: remove `serde_yaml` once `saphyr` adds `serde` support
         // https://github.com/saphyr-rs/saphyr/issues/1
         let mut value = serde_yaml::from_str::<Value>(yaml)?;
-        Ok(self.validate_value(&mut value, schema_name, configuration))
+        debug!("Deserialization of YAML Done");
+        let result = self.validate_value(&mut value, schema_name, configuration);
+        debug!("Validating YAML Done");
+        Ok(result)
     }
     fn validate_value(
         &self,
@@ -74,17 +82,22 @@ impl StoreValidate<Schema> for Store {
         schema_name: Schema,
         configuration: Option<&Configuration>,
     ) -> ValidationResult {
+        debug!("Validating serde_json::Value");
         let mut ctx = Context::new(self, configuration);
         let schema = self.get(schema_name);
         schema.coerce(value, &mut ctx);
+        debug!("Validating serde_json::Value Coercion Done");
         schema.validate_value(value, &mut ctx);
-        ctx.into()
+        debug!("Validating serde_json::Value Done");
+        ctx.result
     }
     fn coerce_value(&self, value: &mut Value, schema_name: Schema) -> ValidationResult {
+        debug!("Coercing serde_json::Value");
         let mut ctx = Context::new(self, None);
         let schema = self.get(schema_name);
         schema.coerce(value, &mut ctx);
-        ctx.into()
+        debug!("Coercing serde_json::Value Done");
+        ctx.result
     }
 }
 
@@ -149,10 +162,10 @@ impl SchemaConversionError {
 
     pub fn to_validation_result(&self, store: &Store) -> ValidationResult {
         let mut ctx = Context::new(store, None);
-        ctx.add_violation(Violation::InvalidSchema {
+        ctx.add_error(Violation::InvalidSchema {
             schema: self.get_invalid_schema_name(),
         });
-        ctx.into()
+        ctx.result
     }
 }
 
@@ -191,11 +204,11 @@ mod tests {
         let result = store.validate_yaml(input, "eos_designs", None);
         assert!(result.is_ok());
         let validation_result = result.unwrap();
-        assert!(validation_result.coercions.is_empty());
+        assert!(validation_result.infos.is_empty());
         assert_eq!(
-            validation_result.violations,
+            validation_result.errors,
             vec![Feedback {
-                path: vec!["key3".into()],
+                path: vec!["key3".into()].into(),
                 issue: Violation::InvalidType {
                     expected: Type::Str,
                     found: Type::Dict
@@ -211,11 +224,11 @@ mod tests {
         let result = store.validate_yaml(input, "invalid_schema", None);
         assert!(result.is_ok());
         let validation_result = result.unwrap();
-        assert!(validation_result.coercions.is_empty());
+        assert!(validation_result.warnings.is_empty());
         assert_eq!(
-            validation_result.violations,
+            validation_result.errors,
             vec![Feedback {
-                path: vec![],
+                path: Default::default(),
                 issue: Violation::InvalidSchema {
                     schema: "invalid_schema".to_string()
                 }
@@ -228,11 +241,11 @@ mod tests {
         let mut input = serde_json::json!({});
         let store = get_test_store();
         let validation_result = store.validate_value(&mut input, "invalid_schema", None);
-        assert!(validation_result.coercions.is_empty());
+        assert!(validation_result.warnings.is_empty());
         assert_eq!(
-            validation_result.violations,
+            validation_result.errors,
             vec![Feedback {
-                path: vec![],
+                path: Default::default(),
                 issue: Violation::InvalidSchema {
                     schema: "invalid_schema".to_string()
                 }
