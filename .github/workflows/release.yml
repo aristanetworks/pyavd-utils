@@ -16,26 +16,6 @@ name: "Publish Python package"
 
 # For now only pyavd-utils
 jobs:
-  target_version:
-    name: Set target version
-    runs-on: ubuntu-latest
-    outputs:
-      target_version: ${{ steps.target_version.outputs.TARGET_VERSION }}
-    steps:
-      - uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
-      - name: Install `bump-my-version`
-        run: |-
-          pip install bump-my-version
-      - name: Set target version
-        id: target_version
-        run: |-
-          CURRENT_VERSION=$(bump-my-version show current_version)
-          INPUT_VALUE="${{ inputs.TESTPYPI_VERSION }}"
-          TARGET_VERSION="${INPUT_VALUE:-$CURRENT_VERSION}"
-          echo "TARGET_VERSION=$TARGET_VERSION" >> $GITHUB_OUTPUT
-
   build-pyavd-utils-wheels:
     name: Build and test pyavd-utils wheel on ${{ matrix.os }}
     if: github.repository == 'aristanetworks/pyavd-utils'
@@ -56,6 +36,27 @@ jobs:
       runner: ${{ matrix.os }}
       # Default value to '' to not overwrite the version in the child workflow
       TESTPYPI_VERSION: ${{ inputs.TESTPYPI_VERSION || '' }}
+
+  target_version:
+    name: Set target version
+    runs-on: ubuntu-latest
+    outputs:
+      target_version: ${{ steps.target_version.outputs.TARGET_VERSION }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install `bump-my-version`
+        run: |-
+          pip install bump-my-version
+      - name: Set target version
+        id: target_version
+        run: |-
+          CURRENT_VERSION=$(bump-my-version show current_version | tr '-' '.')
+          INPUT_VALUE="${{ inputs.TESTPYPI_VERSION }}"
+          TARGET_VERSION="${INPUT_VALUE:-$CURRENT_VERSION}"
+          echo "TARGET_VERSION=$TARGET_VERSION" >> $GITHUB_OUTPUT
 
   publish-pyavd-utils-testpypi:
     name: Publish pyavd-utils to Test PyPI
