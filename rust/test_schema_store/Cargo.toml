@@ -1,0 +1,11 @@
+[package]
+name = "test_schema_store"
+version.workspace = true
+edition = "2024"
+license.workspace = true
+
+[dependencies]
+reqwest = { workspace = true, features = ["blocking", "default-tls"] }
+
+[lib]
+crate-type = ["cdylib", "lib"]

@@ -2,10 +2,15 @@
 // Use of this source code is governed by the Apache License 2.0
 // that can be found in the LICENSE file.
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 
 use crate::{
+    resolve_schema,
     schema::any::AnySchema,
-    utils::{dump::Dump, load::Load},
+    utils::{
+        dump::Dump,
+        load::{Load, LoadError},
+    },
 };
 
 /// Schema store containing the AVD schemas.
@@ -21,6 +26,37 @@ impl Store {
             Schema::EosDesigns => &self.eos_designs,
             Schema::EosCliConfigGen => &self.eos_cli_config_gen,
         }
+    }
+    pub fn as_resolved(mut self) -> Self {
+        // Extract copies of each schema so we can resolve them.
+        let mut eos_cli_config_gen_schema = self.eos_cli_config_gen.to_owned();
+        let mut eos_designs_schema = self.eos_designs.to_owned();
+
+        // Next resolve all $ref in each schema, updating the store as we go,
+        // to avoid re-resolving nested refs many times.
+        resolve_schema(&mut eos_cli_config_gen_schema, &self).unwrap();
+        self.eos_cli_config_gen = eos_cli_config_gen_schema;
+        resolve_schema(&mut eos_designs_schema, &self).unwrap();
+        self.eos_designs = eos_designs_schema;
+
+        self
+    }
+
+    /// Create a new store instance based on the schema files in the given paths.
+    /// If a path points to a directory, files matching *.yml will be read and combined
+    /// with a shallow merge, so avoid overlapping keys.
+    /// If a path points to a single .yml or .json file it will be used directly.
+    /// If a path points to a .gz file it will decompressed and the inner file,
+    /// which must be a json file, will then be used.
+    #[cfg(feature = "dump_load_files")]
+    pub fn new_from_paths(
+        eos_designs_schema_path: PathBuf,
+        eos_cli_config_gen_schema_path: PathBuf,
+    ) -> Result<Self, LoadError> {
+        Ok(Store {
+            eos_cli_config_gen: AnySchema::new_from_path(eos_cli_config_gen_schema_path)?,
+            eos_designs: AnySchema::new_from_path(eos_designs_schema_path)?,
+        })
     }
 }
 impl Dump for Store {}

@@ -2,15 +2,13 @@
 name: Analysis with Sonarlint and publish to SonarCloud
 "on":
   workflow_run:
-    # TODO: For now preventing to trigger by using a workflow that does not exist.
-    workflows: ["Collection code testing"]
-    # workflows: ["Build and Test Pull Request and main branch"]
+    workflows: ["Build and Test Pull Request and main branch"]
     types: [completed]
 
 jobs:
   sonarcloud:
     name: Run Sonarlint analysis and upload to SonarCloud.
-    if: github.repository == 'aristanetworks/avd' && github.event.workflow_run.conclusion == 'success'
+    if: github.repository == 'aristanetworks/pyavd-utils' && github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6

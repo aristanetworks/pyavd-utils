@@ -4,6 +4,9 @@ version.workspace = true
 edition = "2024"
 license.workspace = true
 
+[dev-dependencies]
+test_schema_store = { path = "../test_schema_store" }
+
 [dependencies]
 derive_more = { workspace = true, features = [
     "constructor",

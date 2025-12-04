@@ -72,7 +72,7 @@ impl Resolve for AnySchema {
             if !is_same_schema(self, &ref_schema) {
                 return Err(SchemaType {
                     schema_ref: ref_.to_owned(),
-                    expected: self.into(),
+                    expected: (&*self).into(),
                     found: (&ref_schema).into(),
                 }
                 .into());

@@ -4,9 +4,6 @@
   ~ that can be found in the LICENSE file.
   -->
 
-> [!WARNING]
-> This code is work-in-progress and is not currently being used by AVD.
-
 ```mermaid
 ---
 title: Rust crate layout
@@ -14,11 +11,11 @@ title: Rust crate layout
 graph LR
 validation["crate validation"]
 avdschema["crate avdschema"]
-avdschema_macros["crate avdschema_macros"]
-included_store["crate included_store"]
-avdschema_macros --->|depends on| avdschema
-included_store --->|depends on| avdschema
-included_store --->|depends on| avdschema_macros
+pyvalidation["crate pyvalidation"]
 validation --->|depends on| avdschema
-validation --->|depends on| avdschema_macros
+pyvalidation --->|depends on| avdschema
+pyvalidation --->|depends on| validation
+passwords["crate passwords"]
+pypasswords["crate pypasswords"]
+pypasswords --->|depends on| passwords
 ```

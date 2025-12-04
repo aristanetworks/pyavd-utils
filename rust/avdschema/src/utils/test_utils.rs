@@ -4,23 +4,13 @@
 
 use std::{path::PathBuf, sync::OnceLock};
 
-use crate::{LoadFromFragments as _, Store, any::AnySchema, resolve_schema};
+use crate::{Load as _, Store, any::AnySchema};
 use serde::Deserialize as _;
 use serde_json::json;
 
 // Using a tmp path in the crate allows us to inspect the generated artifacts.
 // The files in the path are exempted from git.
 const TMP_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tmp");
-
-pub(crate) const EOS_CLI_CONFIG_GEN_FRAGMENTS: &str = concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../../python-avd/pyavd/_eos_cli_config_gen/schema/schema_fragments/"
-);
-
-pub(crate) const EOS_DESIGNS_FRAGMENTS: &str = concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../../python-avd/pyavd/_eos_designs/schema/schema_fragments/"
-);
 
 pub(crate) fn get_tmp_path() -> PathBuf {
     PathBuf::from(TMP_PATH)
@@ -246,18 +236,7 @@ static AVD_STORE: OnceLock<Store> = OnceLock::new();
 
 fn init_avd_store() -> Store {
     // Load schemas from fragments, resolve all $ref and save in a store we can compare the loaded store with.
-    let mut eos_cli_config_gen_schema =
-        AnySchema::from_fragments(EOS_CLI_CONFIG_GEN_FRAGMENTS.into()).unwrap();
-    let mut eos_designs_schema = AnySchema::from_fragments(EOS_DESIGNS_FRAGMENTS.into()).unwrap();
-    let mut store = Store {
-        eos_cli_config_gen: eos_cli_config_gen_schema.to_owned(),
-        eos_designs: eos_designs_schema.to_owned(),
-    };
-    resolve_schema(&mut eos_cli_config_gen_schema, &store).unwrap();
-    store.eos_cli_config_gen = eos_cli_config_gen_schema;
-    resolve_schema(&mut eos_designs_schema, &store).unwrap();
-    store.eos_designs = eos_designs_schema;
-    store
+    Store::from_file(Some(test_schema_store::get_store_gz_path())).unwrap().as_resolved()
 }
 
 pub(crate) fn get_avd_store() -> &'static Store {

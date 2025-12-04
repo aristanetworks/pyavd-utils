@@ -27,7 +27,7 @@ repository = "https://github.com/aristanetworks/avd"
 
 [build-system]
 requires = [
-    "setuptools",
+    "setuptools>=71.0",
     "setuptools-rust>=1.12.0",
 ]
 build-backend = "setuptools.build_meta"
@@ -169,6 +169,7 @@ docstring-code-format = true
 exclude = [
   # Excluded
   ".tox",
+  ".github",
 ]
 pythonVersion = "3.10"
 
@@ -219,13 +220,13 @@ parse = """(?x)
     (?P<minor>0|[1-9]\\d*)\\.
     (?P<patch>0|[1-9]\\d*)
     (?:
-        .                             # dot separator for pre-release section
+        -                             # dash separator for pre-release section
         (?P<pre_l>[a-zA-Z-]+)         # pre-release label
         (?P<pre_n>0|[1-9]\\d*)        # pre-release version number
     )?                                # pre-release section is optional
 """
 serialize = [
-    "{major}.{minor}.{patch}.{pre_l}{pre_n}",
+    "{major}.{minor}.{patch}-{pre_l}{pre_n}",
     "{major}.{minor}.{patch}",
 ]
 
@@ -236,9 +237,28 @@ values = [
 ]
 optional_value = "final"
 
+[[tool.bumpversion.files]]
+filename = "Cargo.toml"
+search = 'package.version = "{current_version}"'
+replace = 'package.version = "{new_version}"'
+
 ### Bumping version using PEP440 style like x.y.z.dev1
 
 [[tool.bumpversion.files]]
 filename = "pyavd_utils/__init__.py"
 search = '__version__ = "{current_version}"'
 replace = '__version__ = "{new_version}"'
+parse = """(?x)
+    (?P<major>0|[1-9]\\d*)\\.
+    (?P<minor>0|[1-9]\\d*)\\.
+    (?P<patch>0|[1-9]\\d*)
+    (?:
+        \\.                           # dot separator for pre-release section
+        (?P<pre_l>[a-zA-Z-]+)         # pre-release label
+        (?P<pre_n>0|[1-9]\\d*)        # pre-release version number
+    )?                                # pre-release section is optional
+"""
+serialize = [
+    "{major}.{minor}.{patch}.{pre_l}{pre_n}",
+    "{major}.{minor}.{patch}",
+]
