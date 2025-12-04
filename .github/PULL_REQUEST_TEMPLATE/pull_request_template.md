@@ -37,5 +37,4 @@ Fixes #<ISSUE ID>
 <!--- If you're unsure about any of these, don't hesitate to ask. We're here to help! -->
 - [ ] My code has been rebased from main before I start
 - [ ] I have read the [**CONTRIBUTING**](https://avd.arista.com/devel/docs/contribution/overview.html) document.
-- [ ] My change requires a change to the documentation and the documentation has been updated accordingly.
 - [ ] I have updated testing accordingly. (check the box if not applicable)
