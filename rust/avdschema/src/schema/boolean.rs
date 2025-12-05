@@ -9,6 +9,7 @@ use super::{
     base::{Base, documentation_options::DocumentationOptions},
 };
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use serde_with::skip_serializing_none;
 
 /// AVD Schema for boolean data.
@@ -27,6 +28,10 @@ impl Shortcuts for Bool {
     }
     fn deprecation(&self) -> &Option<Deprecation> {
         &self.base.deprecation
+    }
+
+    fn get_default(&self) -> Option<Value> {
+        self.base.default.as_ref().map(|value| Value::Bool(*value))
     }
 }
 

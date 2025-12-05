@@ -5,6 +5,7 @@
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use crate::{
     base::Deprecation,
@@ -70,6 +71,9 @@ pub trait Shortcuts {
 
     /// Returns the deprecation information from the schema if set.
     fn deprecation(&self) -> &Option<Deprecation>;
+
+    /// Returns the default value if any.
+    fn get_default(&self) -> Option<Value>;
 }
 
 impl Shortcuts for AnySchema {
@@ -79,5 +83,9 @@ impl Shortcuts for AnySchema {
 
     fn deprecation(&self) -> &Option<Deprecation> {
         delegate_anyschema_method!(self, deprecation,)
+    }
+
+    fn get_default(&self) -> Option<Value> {
+        delegate_anyschema_method!(self, get_default,)
     }
 }

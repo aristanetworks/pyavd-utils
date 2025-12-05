@@ -6,6 +6,7 @@ use std::sync::OnceLock;
 
 use regex::Regex;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use serde_with::skip_serializing_none;
 
 use crate::{any::Shortcuts, base::Deprecation};
@@ -13,8 +14,8 @@ use crate::{any::Shortcuts, base::Deprecation};
 use super::{
     any::AnySchema,
     base::{
-        Base, convert_types::ConvertTypes, documentation_options::DocumentationOptions,
-        valid_values::ValidValues,
+        convert_types::ConvertTypes, documentation_options::DocumentationOptions,
+        valid_values::ValidValues, Base,
     },
 };
 
@@ -65,6 +66,12 @@ impl Shortcuts for Str {
     fn deprecation(&self) -> &Option<Deprecation> {
         &self.base.deprecation
     }
+    fn get_default(&self) -> Option<Value> {
+        self.base
+            .default
+            .as_ref()
+            .map(|value| Value::String(value.clone()))
+    }
 }
 
 impl<'x> TryFrom<&'x AnySchema> for &'x Str {
@@ -95,7 +102,7 @@ impl Pattern {
     }
     pub fn get_compiled_pattern(&self) -> &Regex {
         self.compiled_pattern
-            .get_or_init(|| Regex::new(format!("^{}$",&self.pattern).as_str()).unwrap())
+            .get_or_init(|| Regex::new(format!("^{}$", &self.pattern).as_str()).unwrap())
     }
 }
 impl PartialEq for Pattern {
