@@ -4,7 +4,7 @@
 
 use avdschema::Store;
 
-use crate::feedback::{Feedback, Issue};
+use crate::feedback::{ErrorIssue, Feedback, InfoIssue, Path, WarningIssue};
 
 /// The Context object is passed along during coercion and validation.
 /// All coercions and violations will be registered in the context with the path carried in the context.
@@ -13,9 +13,8 @@ use crate::feedback::{Feedback, Issue};
 pub struct Context<'a> {
     pub configuration: Configuration,
     pub store: &'a Store,
-    pub path: Vec<String>,
-    pub violations: Vec<Feedback>,
-    pub coercions: Vec<Feedback>,
+    pub result: ValidationResult,
+    pub(crate) state: State,
 }
 
 impl<'a> Context<'a> {
@@ -23,29 +22,54 @@ impl<'a> Context<'a> {
         Self {
             configuration: configuration.cloned().unwrap_or_default(),
             store,
-            path: vec![],
-            violations: vec![],
-            coercions: vec![],
+            result: Default::default(),
+            state: Default::default(),
         }
     }
-
-    pub(crate) fn add_violation(&mut self, violation: impl Into<Issue>) {
-        self.violations.push(Feedback {
-            path: self.path.clone(),
-            issue: violation.into(),
+    pub(crate) fn add_error(&mut self, error: impl Into<ErrorIssue>) {
+        self.result.errors.push(Feedback {
+            path: self.state.path.to_owned(),
+            issue: error.into(),
         });
     }
 
-    pub(crate) fn add_coercion(&mut self, coercion: impl Into<Issue>) {
-        self.coercions.push(Feedback {
-            path: self.path.clone(),
-            issue: coercion.into(),
+    pub(crate) fn add_warning(&mut self, warning: impl Into<WarningIssue>) {
+        self.result.warnings.push(Feedback {
+            path: self.state.path.to_owned(),
+            issue: warning.into(),
         });
     }
+
+    pub(crate) fn add_info(&mut self, info: impl Into<InfoIssue>) {
+        self.result.infos.push(Feedback {
+            path: self.state.path.to_owned(),
+            issue: info.into(),
+        });
+    }
+}
+
+/// Validation state set on Context during validation.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct State {
+    /// Don't validate required keys.
+    /// Used for structured_config where we overload other config, and only the final result should be validated for required keys.
+    pub(crate) relaxed_validation: bool,
+    pub(crate) path: Path,
 }
 
 /// Configuration to use during validation.
 #[derive(Clone, Debug, Default)]
 pub struct Configuration {
     pub ignore_required_keys_on_root_dict: bool,
+    pub return_coercion_infos: bool,
+    /// By default Null/None values are ignored no matter which data type is expected.
+    /// Setting this will instead emit type errors for Null values.
+    pub restrict_null_values: bool,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct ValidationResult {
+    pub errors: Vec<Feedback<ErrorIssue>>,
+    pub warnings: Vec<Feedback<WarningIssue>>,
+    pub infos: Vec<Feedback<InfoIssue>>,
 }

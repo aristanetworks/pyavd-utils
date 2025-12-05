@@ -2,7 +2,8 @@
 // Use of this source code is governed by the Apache License 2.0
 // that can be found in the LICENSE file.
 
-use ordermap::OrderMap;
+use std::collections::HashMap;
+
 use serde_json::Value;
 
 use crate::feedback::{Feedback, Type, Violation};
@@ -21,16 +22,13 @@ impl Validation<Vec<Value>> for List {
     fn validate_value(&self, value: &Value, ctx: &mut Context) {
         if let Some(v) = value.as_array() {
             self.validate(v, ctx)
+        } else if value.is_null() && !ctx.configuration.restrict_null_values {
         } else {
-            ctx.add_violation(Violation::InvalidType {
+            ctx.add_error(Violation::InvalidType {
                 expected: Type::List,
                 found: value.into(),
             })
         }
-    }
-
-    fn is_required(&self) -> bool {
-        self.base.required.unwrap_or_default()
     }
 
     fn validate_ref(&self, value: &Vec<Value>, ctx: &mut Context) {
@@ -43,17 +41,13 @@ impl Validation<Vec<Value>> for List {
             }
         }
     }
-
-    fn default_value(&self) -> Option<Vec<Value>> {
-        self.base.default.to_owned()
-    }
 }
 
 fn validate_min_length(schema: &List, input: &[Value], ctx: &mut Context) {
     if let Some(min_length) = schema.min_length {
         let length = input.len() as u64;
         if min_length > length {
-            ctx.add_violation(Violation::LengthBelowMinimum {
+            ctx.add_error(Violation::LengthBelowMinimum {
                 minimum: min_length,
                 found: length,
             });
@@ -65,7 +59,7 @@ fn validate_max_length(schema: &List, input: &[Value], ctx: &mut Context) {
     if let Some(max_length) = schema.max_length {
         let length = input.len() as u64;
         if max_length < length {
-            ctx.add_violation(Violation::LengthAboveMaximum {
+            ctx.add_error(Violation::LengthAboveMaximum {
                 maximum: max_length,
                 found: length,
             });
@@ -84,45 +78,55 @@ fn validate_unique_keys(schema: &List, items: &[Value], ctx: &mut Context) {
 
     for unique_key in unique_keys {
         let path = unique_key.split('.');
-        let items = items
+        let mut seen_items_trail_map: HashMap<&Value, Vec<Vec<String>>> = HashMap::new();
+        items
             .iter()
             .enumerate()
             .flat_map(|(i, item)| {
                 let mut trail = vec![i.to_string()];
                 item.walk(path.clone(), Some(&mut trail))
             })
-            .collect::<OrderMap<_, _>>();
-
-        for (current_trail, current_item) in &items {
-            for (trail, item) in &items {
-                if current_trail != trail && current_item == item {
-                    ctx.violations.push(Feedback {
-                        path: {
-                            let mut path = ctx.path.clone();
-                            path.extend_from_slice(current_trail);
-                            path
-                        },
-                        issue: Violation::ValueNotUnique {
-                            other_path: {
-                                let mut path = ctx.path.clone();
-                                path.extend_from_slice(trail);
-                                path
-                            },
+            .for_each(|(item_trail, item)| {
+                seen_items_trail_map
+                    .entry(item)
+                    .and_modify(|seen_item_trails| {
+                        // We found at least on other item, so we know we have a duplicate
+                        // Add violations for all duplicates in both directions.
+                        for seen_item_trail in seen_item_trails {
+                            ctx.result.errors.extend([
+                                // One violation from the perspective of the already seen item where the duplicate is this item.
+                                Feedback {
+                                    path: ctx.state.path.clone_with_slice(seen_item_trail),
+                                    issue: Violation::ValueNotUnique {
+                                        other_path: ctx.state.path.clone_with_slice(&item_trail),
+                                    }
+                                    .into(),
+                                },
+                                // One violation from the perspective of this item where the duplicate is the already seen one.
+                                Feedback {
+                                    path: ctx.state.path.clone_with_slice(&item_trail),
+                                    issue: Violation::ValueNotUnique {
+                                        other_path: ctx
+                                            .state
+                                            .path
+                                            .clone_with_slice(seen_item_trail),
+                                    }
+                                    .into(),
+                                },
+                            ]);
                         }
-                        .into(),
-                    });
-                }
-            }
-        }
+                    })
+                    .or_insert(Vec::from_iter([item_trail]));
+            });
     }
 }
 
 fn validate_items(schema: &List, items: &[Value], ctx: &mut Context) {
     for (i, item) in items.iter().enumerate() {
-        ctx.path.push(i.to_string());
+        ctx.state.path.push(i.to_string());
         validate_item_schema(schema, item, ctx);
         validate_item_primary_key(schema, item, ctx);
-        ctx.path.pop();
+        ctx.state.path.pop();
     }
 }
 
@@ -134,11 +138,12 @@ fn validate_item_schema(schema: &List, item: &Value, ctx: &mut Context) {
 
 fn validate_item_primary_key(schema: &List, item: &Value, ctx: &mut Context) {
     if let Some(primary_key) = &schema.primary_key
-        && item.get(primary_key).is_none_or(|value| value.is_null()) {
-            ctx.add_violation(Violation::MissingRequiredKey {
-                key: primary_key.to_owned(),
-            });
-        }
+        && item.get(primary_key).is_none_or(|value| value.is_null())
+    {
+        ctx.add_error(Violation::MissingRequiredKey {
+            key: primary_key.to_owned(),
+        });
+    }
 }
 
 #[cfg(test)]
@@ -148,6 +153,7 @@ mod tests {
 
     use super::*;
     use crate::{
+        Configuration,
         coercion::Coercion as _,
         feedback::{CoercionNote, Feedback},
         validation::test_utils::get_test_store,
@@ -160,7 +166,7 @@ mod tests {
         let store = get_test_store();
         let mut ctx = Context::new(&store, None);
         schema.validate_value(&input, &mut ctx);
-        assert!(ctx.violations.is_empty() && ctx.coercions.is_empty());
+        assert!(ctx.result.errors.is_empty() && ctx.result.infos.is_empty());
     }
 
     #[test]
@@ -170,11 +176,11 @@ mod tests {
         let store = get_test_store();
         let mut ctx = Context::new(&store, None);
         schema.validate_value(&input, &mut ctx);
-        assert!(ctx.coercions.is_empty());
+        assert!(ctx.result.infos.is_empty());
         assert_eq!(
-            ctx.violations,
+            ctx.result.errors,
             vec![Feedback {
-                path: vec![],
+                path: vec![].into(),
                 issue: Violation::InvalidType {
                     expected: Type::List,
                     found: Type::Bool
@@ -194,7 +200,7 @@ mod tests {
         let store = get_test_store();
         let mut ctx = Context::new(&store, None);
         schema.validate_value(&input, &mut ctx);
-        assert!(ctx.violations.is_empty() && ctx.coercions.is_empty());
+        assert!(ctx.result.errors.is_empty() && ctx.result.infos.is_empty());
     }
 
     #[test]
@@ -207,12 +213,12 @@ mod tests {
         let store = get_test_store();
         let mut ctx = Context::new(&store, None);
         schema.validate_value(&input, &mut ctx);
-        assert!(ctx.coercions.is_empty());
+        assert!(ctx.result.infos.is_empty());
         assert_eq!(
-            ctx.violations,
+            ctx.result.errors,
             vec![
                 Feedback {
-                    path: vec!["0".into()],
+                    path: vec!["0".into()].into(),
                     issue: Violation::InvalidType {
                         expected: Type::Str,
                         found: Type::Dict
@@ -220,7 +226,7 @@ mod tests {
                     .into()
                 },
                 Feedback {
-                    path: vec!["1".into()],
+                    path: vec!["1".into()].into(),
                     issue: Violation::InvalidType {
                         expected: Type::Str,
                         found: Type::Dict
@@ -239,13 +245,17 @@ mod tests {
         };
         let mut input = serde_json::json!([1, []]);
         let store = get_test_store();
-        let mut ctx = Context::new(&store, None);
+        let configuration = Configuration {
+            return_coercion_infos: true,
+            ..Default::default()
+        };
+        let mut ctx = Context::new(&store, Some(&configuration));
         schema.coerce(&mut input, &mut ctx);
         schema.validate_value(&input, &mut ctx);
         assert_eq!(
-            ctx.coercions,
+            ctx.result.infos,
             vec![Feedback {
-                path: vec!["0".into()],
+                path: vec!["0".into()].into(),
                 issue: CoercionNote {
                     found: 1.into(),
                     made: "1".into()
@@ -254,9 +264,9 @@ mod tests {
             }]
         );
         assert_eq!(
-            ctx.violations,
+            ctx.result.errors,
             vec![Feedback {
-                path: vec!["1".into()],
+                path: vec!["1".into()].into(),
                 issue: Violation::InvalidType {
                     expected: Type::Str,
                     found: Type::List
@@ -276,7 +286,7 @@ mod tests {
         let store = get_test_store();
         let mut ctx = Context::new(&store, None);
         schema.validate_value(&input, &mut ctx);
-        assert!(ctx.violations.is_empty() && ctx.coercions.is_empty());
+        assert!(ctx.result.errors.is_empty() && ctx.result.infos.is_empty());
     }
 
     #[test]
@@ -289,11 +299,11 @@ mod tests {
         let store = get_test_store();
         let mut ctx = Context::new(&store, None);
         schema.validate_value(&input, &mut ctx);
-        assert!(ctx.coercions.is_empty());
+        assert!(ctx.result.infos.is_empty());
         assert_eq!(
-            ctx.violations,
+            ctx.result.errors,
             vec![Feedback {
-                path: vec![],
+                path: vec![].into(),
                 issue: Violation::LengthBelowMinimum {
                     minimum: 3,
                     found: 2
@@ -313,7 +323,7 @@ mod tests {
         let store = get_test_store();
         let mut ctx = Context::new(&store, None);
         schema.validate_value(&input, &mut ctx);
-        assert!(ctx.violations.is_empty() && ctx.coercions.is_empty());
+        assert!(ctx.result.errors.is_empty() && ctx.result.infos.is_empty());
     }
 
     #[test]
@@ -326,11 +336,11 @@ mod tests {
         let store = get_test_store();
         let mut ctx = Context::new(&store, None);
         schema.validate_value(&input, &mut ctx);
-        assert!(ctx.coercions.is_empty());
+        assert!(ctx.result.infos.is_empty());
         assert_eq!(
-            ctx.violations,
+            ctx.result.errors,
             vec![Feedback {
-                path: vec![],
+                path: vec![].into(),
                 issue: Violation::LengthAboveMaximum {
                     maximum: 2,
                     found: 3
@@ -357,7 +367,7 @@ mod tests {
         let store = get_test_store();
         let mut ctx = Context::new(&store, None);
         schema.validate_value(&input, &mut ctx);
-        assert!(ctx.violations.is_empty() && ctx.coercions.is_empty());
+        assert!(ctx.result.errors.is_empty() && ctx.result.infos.is_empty());
     }
 
     #[test]
@@ -377,11 +387,11 @@ mod tests {
         let store = get_test_store();
         let mut ctx = Context::new(&store, None);
         schema.validate_value(&input, &mut ctx);
-        assert!(ctx.coercions.is_empty());
+        assert!(ctx.result.infos.is_empty());
         assert_eq!(
-            ctx.violations,
+            ctx.result.errors,
             vec![Feedback {
-                path: vec!["0".into()],
+                path: vec!["0".into()].into(),
                 issue: Violation::MissingRequiredKey { key: "foo".into() }.into()
             }]
         );
@@ -404,21 +414,21 @@ mod tests {
         let store = get_test_store();
         let mut ctx = Context::new(&store, None);
         schema.validate_value(&input, &mut ctx);
-        assert!(ctx.coercions.is_empty());
+        assert!(ctx.result.infos.is_empty());
         assert_eq!(
-            ctx.violations,
+            ctx.result.errors,
             vec![
                 Feedback {
-                    path: vec!["0".into(), "foo".into()],
+                    path: vec!["0".into(), "foo".into()].into(),
                     issue: Violation::ValueNotUnique {
-                        other_path: vec!["2".into(), "foo".into()]
+                        other_path: vec!["2".into(), "foo".into()].into()
                     }
                     .into()
                 },
                 Feedback {
-                    path: vec!["2".into(), "foo".into()],
+                    path: vec!["2".into(), "foo".into()].into(),
                     issue: Violation::ValueNotUnique {
-                        other_path: vec!["0".into(), "foo".into()]
+                        other_path: vec!["0".into(), "foo".into()].into()
                     }
                     .into()
                 }
@@ -444,7 +454,7 @@ mod tests {
         let store = get_test_store();
         let mut ctx = Context::new(&store, None);
         schema.validate_value(&input, &mut ctx);
-        assert!(ctx.coercions.is_empty());
-        assert!(ctx.violations.is_empty());
+        assert!(ctx.result.infos.is_empty());
+        assert!(ctx.result.errors.is_empty());
     }
 }

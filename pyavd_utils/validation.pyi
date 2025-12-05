@@ -6,23 +6,37 @@
 from pathlib import Path
 from typing import Literal
 
-class Feedback:
-    """Feedback item carried in the Context under either `coercions`, `insertions` or `violations`."""
-
-    path: list[str]
-    """Path to the data which the feedback concerns."""
+class Violation:
+    """Input data violates the schema."""
 
     message: str
-    """String detailing the feedback."""
+    """String detailing the violation."""
+    path: list[str]
+    """Path to the data which the violation concerns."""
+
+class Deprecation:
+    """Input data model is deprecated."""
+
+    message: str
+    """String detailing the deprecation."""
+    path: list[str]
+    """Path to the data which uses a deprecated data model."""
+    removed: bool
+    """True when the data model is removed."""
+    version: str | None
+    """Version where the model will be removed."""
+    replacement: str | None
+    """New data model to use instead."""
+    url: str | None
+    """Url where more information can be found."""
 
 class ValidationResult:
     """Result of data validation."""
 
-    violations: list[Feedback]
-    coercions: list[Feedback]
-    insertions: list[Feedback]
+    violations: list[Violation]
+    deprecations: list[Deprecation]
 
-class GetValidatedDataResult:
+class ValidatedDataResult:
     """Result of data validation including the validated data as JSON."""
 
     validation_result: ValidationResult
@@ -51,10 +65,10 @@ def validate_json(data_as_json: str, schema_name: Literal["eos_cli_config_gen", 
         schema_name: The name of the schema to validate against.
 
     Returns:
-        ValidationResult holding lists of violations and coercions as Feedback objects.
+        ValidationResult holding lists of violations and deprecations.
     """
 
-def get_validated_data(data_as_json: str, schema_name: Literal["eos_cli_config_gen", "eos_designs"]) -> GetValidatedDataResult:
+def get_validated_data(data_as_json: str, schema_name: Literal["eos_cli_config_gen", "eos_designs"]) -> ValidatedDataResult:
     """
     Validate data against a schema specified by name and return the data after coercion and validation.
 
@@ -65,7 +79,7 @@ def get_validated_data(data_as_json: str, schema_name: Literal["eos_cli_config_g
         schema_name: The name of the schema to validate against.
 
     Returns:
-        CoercionAndValidationResult holding the validated data and the ValidationResult with lists of violations and coercions as Feedback objects.
+        ValidatedDataResult holding the validated data and the ValidationResult with lists of violations and deprecations.
     """
 
 def validate_json_with_adhoc_schema(data_as_json: str, schema_as_json: str) -> ValidationResult:
@@ -77,5 +91,5 @@ def validate_json_with_adhoc_schema(data_as_json: str, schema_as_json: str) -> V
         schema_as_json: A fully resolved schema dumped as JSON.
 
     Returns:
-        ValidationResult holding lists of violations and coercions as Feedback objects.
+        ValidationResult holding lists of violations and deprecations.
     """

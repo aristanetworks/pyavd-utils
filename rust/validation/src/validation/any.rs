@@ -6,6 +6,7 @@ use serde_json::Value;
 
 use crate::context::Context;
 use avdschema::any::AnySchema;
+use avdschema::delegate_anyschema_method;
 
 use super::Validation;
 
@@ -15,35 +16,7 @@ impl Validation<Value> for AnySchema {
     }
 
     fn validate_value(&self, value: &Value, ctx: &mut Context) {
-        match self {
-            Self::Bool(schema) => schema.validate_value(value, ctx),
-            Self::Int(schema) => schema.validate_value(value, ctx),
-            Self::Str(schema) => schema.validate_value(value, ctx),
-            Self::List(schema) => schema.validate_value(value, ctx),
-            Self::Dict(schema) => schema.validate_value(value, ctx),
-        }
-    }
-
-    fn is_required(&self) -> bool {
-        match self {
-            Self::Bool(schema) => schema.is_required(),
-            Self::Int(schema) => schema.is_required(),
-            Self::Str(schema) => schema.is_required(),
-            Self::List(schema) => schema.is_required(),
-            Self::Dict(schema) => schema.is_required(),
-        }
-    }
-
-    fn default_value(&self) -> Option<Value> {
-        match self {
-            Self::Bool(schema) => schema.default_value().map(Value::Bool),
-            Self::Int(schema) => schema
-                .default_value()
-                .map(|value| Value::Number(value.into())),
-            Self::Str(schema) => schema.default_value().map(Value::String),
-            Self::List(schema) => schema.default_value().map(Value::Array),
-            Self::Dict(schema) => schema.default_value().map(Value::Object),
-        }
+        delegate_anyschema_method!(self, validate_value, value, ctx)
     }
 
     fn validate_ref(&self, _value: &Value, _ctx: &mut Context) {}

@@ -8,6 +8,7 @@ license.workspace = true
 pyo3-build-config = { workspace = true }
 
 [dev-dependencies]
+criterion = { version = "0.7.0" }
 test_schema_store = { path = "../test_schema_store" }
 
 [dependencies]
@@ -23,3 +24,7 @@ serde_json = { workspace = true, features = [
 
 [lib]
 crate-type = ["cdylib", "lib"]
+
+[[bench]]
+name = "performance"
+harness = false
