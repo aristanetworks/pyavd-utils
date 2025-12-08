@@ -172,7 +172,7 @@ impl Shortcuts for Dict {
         self.base
             .default
             .as_ref()
-            .map(|value| Value::Object(Map::from_iter(value.clone())))
+            .map(|value| Value::Object(Map::from_iter(value.to_owned())))
     }
 }
 
