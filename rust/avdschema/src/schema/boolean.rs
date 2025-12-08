@@ -6,7 +6,7 @@ use crate::{any::Shortcuts, base::Deprecation};
 
 use super::{
     any::AnySchema,
-    base::{Base, documentation_options::DocumentationOptions},
+    base::{documentation_options::DocumentationOptions, Base},
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -30,7 +30,7 @@ impl Shortcuts for Bool {
         &self.base.deprecation
     }
 
-    fn get_default(&self) -> Option<Value> {
+    fn default_(&self) -> Option<Value> {
         self.base.default.as_ref().map(|value| Value::Bool(*value))
     }
 }

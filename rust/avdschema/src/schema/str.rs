@@ -66,7 +66,7 @@ impl Shortcuts for Str {
     fn deprecation(&self) -> &Option<Deprecation> {
         &self.base.deprecation
     }
-    fn get_default(&self) -> Option<Value> {
+    fn default_(&self) -> Option<Value> {
         self.base
             .default
             .as_ref()

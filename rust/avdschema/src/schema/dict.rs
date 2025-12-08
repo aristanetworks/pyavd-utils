@@ -128,10 +128,9 @@ impl<'a> Dict {
     }
 
     pub(self) fn get_default_for_key(&self, key: &str) -> Option<Value> {
-        self.keys.as_ref().and_then(|keys| {
-            keys.get(key)
-                .and_then(|key_schema| key_schema.get_default())
-        })
+        self.keys
+            .as_ref()
+            .and_then(|keys| keys.get(key).and_then(|key_schema| key_schema.default_()))
     }
 
     // Get all string values from the given key_path. Non-string values are ignored.
@@ -169,7 +168,7 @@ impl Shortcuts for Dict {
     fn deprecation(&self) -> &Option<Deprecation> {
         &self.base.deprecation
     }
-    fn get_default(&self) -> Option<Value> {
+    fn default_(&self) -> Option<Value> {
         self.base
             .default
             .as_ref()

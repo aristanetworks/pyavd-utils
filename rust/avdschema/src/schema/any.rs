@@ -73,7 +73,7 @@ pub trait Shortcuts {
     fn deprecation(&self) -> &Option<Deprecation>;
 
     /// Returns the default value if any.
-    fn get_default(&self) -> Option<Value>;
+    fn default_(&self) -> Option<Value>;
 }
 
 impl Shortcuts for AnySchema {
@@ -85,7 +85,7 @@ impl Shortcuts for AnySchema {
         delegate_anyschema_method!(self, deprecation,)
     }
 
-    fn get_default(&self) -> Option<Value> {
-        delegate_anyschema_method!(self, get_default,)
+    fn default_(&self) -> Option<Value> {
+        delegate_anyschema_method!(self, default_,)
     }
 }
