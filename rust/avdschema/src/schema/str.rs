@@ -70,7 +70,7 @@ impl Shortcuts for Str {
         self.base
             .default
             .as_ref()
-            .map(|value| Value::String(value.clone()))
+            .map(|value| Value::String(value.to_owned()))
     }
 }
 
