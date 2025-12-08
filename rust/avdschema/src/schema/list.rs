@@ -45,7 +45,7 @@ impl Shortcuts for List {
         self.base
             .default
             .as_ref()
-            .map(|value| Value::Array(value.clone()))
+            .map(|value| Value::Array(value.to_owned()))
     }
 }
 
