@@ -19,16 +19,6 @@ use super::{
 type DefaultDynamicKeys = Option<Box<OrderMap<String, Vec<String>>>>;
 type DynamicKeyItem<'a> = (&'a String, &'a AnySchema);
 
-// Helper function to filter removed keys.
-fn is_not_removed(item: &DynamicKeyItem) -> bool {
-    let (_, dynamic_key_schema) = item;
-    dynamic_key_schema
-        .deprecation()
-        .as_ref()
-        .and_then(|deprecation| deprecation.removed.unwrap_or_default().then_some(()))
-        .is_none()
-}
-
 /// AVD Schema for dictionary data.
 #[skip_serializing_none]
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -72,7 +62,7 @@ impl<'a> Dict {
                 .as_ref();
             dynamic_keys
                 .iter()
-                .filter(is_not_removed)
+                .skip_while(|(_, dynamic_key_schema)| dynamic_key_schema.is_removed())
                 .flat_map(|(dynamic_key_path, dynamic_key_schema)| {
                     Dict::get_all(dynamic_key_path, dict)
                         .or_else(|| {
@@ -102,7 +92,7 @@ impl<'a> Dict {
         self.dynamic_keys.as_ref().map(|dynamic_keys| {
             dynamic_keys
                 .iter()
-                .filter(is_not_removed)
+                .skip_while(|(_, dynamic_key_schema)| dynamic_key_schema.is_removed())
                 .flat_map(|(dynamic_key_path, _)| {
                     dynamic_key_path
                         .split('.')

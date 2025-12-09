@@ -64,7 +64,17 @@ impl From<&AnySchema> for String {
         }
     }
 }
-
+impl AnySchema {
+    pub fn is_removed(&self) -> bool {
+        if let Some(deprecation) = self.deprecation()
+            && deprecation.removed.unwrap_or_default()
+        {
+            true
+        } else {
+            false
+        }
+    }
+}
 pub trait Shortcuts {
     /// Returns a boolean indicating if the schema field is required.
     fn is_required(&self) -> bool;

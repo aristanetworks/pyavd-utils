@@ -3,14 +3,16 @@
 // that can be found in the LICENSE file.
 
 use avdschema::{
-    any::{AnySchema, Shortcuts as _}, boolean::Bool, dict::{Dict}, int::Int, list::List, str::Str,
+    any::{AnySchema, Shortcuts as _},
+    boolean::Bool,
+    dict::Dict,
+    int::Int,
+    list::List,
+    str::Str,
 };
 use serde_json::Value;
 
-use crate::{
-    context::Context,
-    feedback::{CoercionNote},
-};
+use crate::{context::Context, feedback::CoercionNote};
 
 pub trait Coercion
 where
@@ -34,9 +36,7 @@ impl Coercion for Dict {
             if let Some(keys) = &self.keys {
                 for (key, key_schema) in keys {
                     // Skip removed keys
-                    if let Some(deprecation) = key_schema.deprecation()
-                        && deprecation.removed.unwrap_or_default()
-                    {
+                    if key_schema.is_removed() {
                         continue;
                     }
                     if let Some(value) = dict.get_mut(key) {
