@@ -17,7 +17,6 @@ use super::{
 };
 
 type DefaultDynamicKeys = Option<Box<OrderMap<String, Vec<String>>>>;
-type DynamicKeyItem<'a> = (&'a String, &'a AnySchema);
 
 /// AVD Schema for dictionary data.
 #[skip_serializing_none]
