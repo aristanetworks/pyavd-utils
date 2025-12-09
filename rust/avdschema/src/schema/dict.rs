@@ -129,9 +129,9 @@ impl<'a> Dict {
         path.next()
             .and_then(|root_key| dict.get_key_value(root_key))
             .map(|(key, value)| {
-                Some(value.walk(path, Some(&mut vec![key.to_string()])))
+                value
+                    .walk(path, Some(&mut vec![key.to_string()]))
                     .into_iter()
-                    .flatten()
                     .flat_map(|(_, value)| match value {
                         Value::String(string) => vec![string.to_owned()],
                         Value::Array(array) => array
@@ -144,7 +144,7 @@ impl<'a> Dict {
                             vec![]
                         }
                     })
-                    .collect::<Vec<_>>()
+                    .collect::<Vec<String>>()
             })
     }
 }

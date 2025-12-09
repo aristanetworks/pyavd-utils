@@ -6,7 +6,7 @@ use serde::de::DeserializeOwned;
 use std::io::BufReader;
 
 #[cfg(feature = "dump_load_files")]
-use std::{ffi::OsStr, fs::File, io, path::PathBuf};
+use std::{ffi::OsStr, fs::File, io, path::Path};
 
 #[cfg(feature = "dump_load_files")]
 use walkdir::WalkDir;
@@ -23,7 +23,7 @@ where
     }
 
     #[cfg(feature = "dump_load_files")]
-    fn from_file(input: Option<&PathBuf>) -> Result<Self, LoadError> {
+    fn from_file(input: Option<&Path>) -> Result<Self, LoadError> {
         // Read input from file / stdin
         match input {
             Some(path) => match path.extension().and_then(OsStr::to_str) {
@@ -43,20 +43,20 @@ where
         Ok(serde_yaml::from_reader(reader)?)
     }
     #[cfg(feature = "dump_load_files")]
-    fn from_yaml_file(path: &PathBuf) -> Result<Self, LoadError> {
+    fn from_yaml_file(path: &Path) -> Result<Self, LoadError> {
         let file = File::open(path)?;
         let reader = BufReader::new(file);
         Ok(serde_yaml::from_reader(reader)?)
     }
     #[cfg(feature = "xz2")]
-    fn from_xz2_file(path: &PathBuf) -> Result<Self, LoadError> {
+    fn from_xz2_file(path: &Path) -> Result<Self, LoadError> {
         let file = File::open(path)?;
         let decompressor = xz2::read::XzDecoder::new(file);
         let reader = BufReader::new(decompressor);
         Ok(serde_json::from_reader(reader)?)
     }
     #[cfg(feature = "dump_load_files")]
-    fn from_json_file(path: &PathBuf) -> Result<Self, LoadError> {
+    fn from_json_file(path: &Path) -> Result<Self, LoadError> {
         let file = File::open(path)?;
         let reader = BufReader::new(file);
         Ok(serde_json::from_reader(reader)?)
@@ -68,7 +68,7 @@ where
         Ok(serde_json::from_reader(reader)?)
     }
     #[cfg(feature = "dump_load_files")]
-    fn from_gz_file(path: &PathBuf) -> Result<Self, LoadError> {
+    fn from_gz_file(path: &Path) -> Result<Self, LoadError> {
         let file = File::open(path)?;
         let decompressor = flate2::read::GzDecoder::new(file);
         let reader = BufReader::new(decompressor);
@@ -86,7 +86,7 @@ pub trait LoadFromFragments
 where
     Self: Load + Inherit + DeserializeOwned,
 {
-    fn from_fragments(glob: &PathBuf) -> Result<Self, LoadError> {
+    fn from_fragments(glob: &Path) -> Result<Self, LoadError> {
         let mut glob_iter = WalkDir::new(glob)
             .max_depth(1)
             .sort_by_file_name()
@@ -99,9 +99,9 @@ where
                     .then_some(entry)
             });
         let first_file = glob_iter.next().ok_or(LoadError::NoFilesFound {})?;
-        let mut combined_data = Self::from_file(Some(&first_file.path().to_path_buf()))?;
+        let mut combined_data = Self::from_file(Some(first_file.path()))?;
         for file in glob_iter {
-            let file_data = Self::from_file(Some(&file.path().to_path_buf()))?;
+            let file_data = Self::from_file(Some(file.path()))?;
             combined_data.inherit(&file_data);
         }
         Ok(combined_data)

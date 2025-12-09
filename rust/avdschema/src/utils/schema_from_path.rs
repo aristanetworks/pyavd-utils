@@ -60,10 +60,15 @@ impl SchemaKeys {
             .map_err(|_err| SchemaKeysError::SchemaNotDict)?;
         let dict = value.as_object().ok_or(SchemaKeysError::ValueNotADict)?;
         let mut schema_keys = SchemaKeys {
-            keys: OrderMap::from_iter(dict_schema.keys.as_ref().into_iter().flat_map(|keys| {
-                keys.keys()
-                    .map(|key| (key.to_owned(), SchemaKey::StaticKey))
-            })),
+            keys: dict_schema
+                .keys
+                .as_ref()
+                .map(|keys| {
+                    keys.keys()
+                        .map(|key| (key.to_owned(), SchemaKey::StaticKey))
+                        .collect()
+                })
+                .unwrap_or_default(),
         };
 
         schema_keys.keys.extend(
