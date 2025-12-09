@@ -41,6 +41,12 @@ impl Shortcuts for List {
     fn deprecation(&self) -> &Option<Deprecation> {
         &self.base.deprecation
     }
+    fn default_(&self) -> Option<Value> {
+        self.base
+            .default
+            .as_ref()
+            .map(|value| Value::Array(value.to_owned()))
+    }
 }
 
 impl<'x> TryFrom<&'x AnySchema> for &'x List {

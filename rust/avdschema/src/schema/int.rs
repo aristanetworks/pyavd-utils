@@ -3,6 +3,7 @@
 // that can be found in the LICENSE file.
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use serde_with::skip_serializing_none;
 
 use crate::{any::Shortcuts, base::Deprecation, schema::base::Base};
@@ -37,6 +38,12 @@ impl Shortcuts for Int {
 
     fn deprecation(&self) -> &Option<Deprecation> {
         &self.base.deprecation
+    }
+    fn default_(&self) -> Option<Value> {
+        self.base
+            .default
+            .as_ref()
+            .map(|value| Value::Number((*value).into()))
     }
 }
 impl<'x> TryFrom<&'x AnySchema> for &'x Int {

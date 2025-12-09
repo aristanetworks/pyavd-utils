@@ -6,9 +6,10 @@ use crate::{any::Shortcuts, base::Deprecation};
 
 use super::{
     any::AnySchema,
-    base::{Base, documentation_options::DocumentationOptions},
+    base::{documentation_options::DocumentationOptions, Base},
 };
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use serde_with::skip_serializing_none;
 
 /// AVD Schema for boolean data.
@@ -27,6 +28,10 @@ impl Shortcuts for Bool {
     }
     fn deprecation(&self) -> &Option<Deprecation> {
         &self.base.deprecation
+    }
+
+    fn default_(&self) -> Option<Value> {
+        self.base.default.as_ref().map(|value| Value::Bool(*value))
     }
 }
 

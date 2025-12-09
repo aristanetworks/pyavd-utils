@@ -17,6 +17,17 @@ use super::{
 };
 
 type DefaultDynamicKeys = Option<Box<OrderMap<String, Vec<String>>>>;
+type DynamicKeyItem<'a> = (&'a String, &'a AnySchema);
+
+// Helper function to filter removed keys.
+fn is_not_removed(item: &DynamicKeyItem) -> bool {
+    let (_, dynamic_key_schema) = item;
+    dynamic_key_schema
+        .deprecation()
+        .as_ref()
+        .and_then(|deprecation| deprecation.removed.unwrap_or_default().then_some(()))
+        .is_none()
+}
 
 /// AVD Schema for dictionary data.
 #[skip_serializing_none]
@@ -61,16 +72,8 @@ impl<'a> Dict {
                 .as_ref();
             dynamic_keys
                 .iter()
-                .filter(|(_, dynamic_key_schema)| {
-                    dynamic_key_schema
-                        .deprecation()
-                        .as_ref()
-                        .and_then(|deprecation| {
-                            deprecation.removed.unwrap_or_default().then_some(())
-                        })
-                        .is_none()
-                })
-                .flat_map(|(dynamic_key_path, _)| {
+                .filter(is_not_removed)
+                .flat_map(|(dynamic_key_path, dynamic_key_schema)| {
                     Dict::get_all(dynamic_key_path, dict)
                         .or_else(|| {
                             default_dynamic_keys.and_then(|default_dynamic_keys| {
@@ -80,10 +83,10 @@ impl<'a> Dict {
                         .map(|keys| {
                             keys.into_iter().map(|key| {
                                 (
-                                    key.clone(),
+                                    key.to_owned(),
                                     DynamicKeyInfo {
                                         dynamic_key_path: dynamic_key_path.clone(),
-                                        schema: dynamic_keys.get(dynamic_key_path).unwrap(),
+                                        schema: dynamic_key_schema,
                                     },
                                 )
                             })
@@ -99,15 +102,7 @@ impl<'a> Dict {
         self.dynamic_keys.as_ref().map(|dynamic_keys| {
             dynamic_keys
                 .iter()
-                .filter(|(_, dynamic_key_schema)| {
-                    dynamic_key_schema
-                        .deprecation()
-                        .as_ref()
-                        .and_then(|deprecation| {
-                            deprecation.removed.unwrap_or_default().then_some(())
-                        })
-                        .is_none()
-                })
+                .filter(is_not_removed)
                 .flat_map(|(dynamic_key_path, _)| {
                     dynamic_key_path
                         .split('.')
@@ -133,35 +128,9 @@ impl<'a> Dict {
     }
 
     pub(self) fn get_default_for_key(&self, key: &str) -> Option<Value> {
-        self.keys.as_ref().and_then(|keys| {
-            keys.get(key).and_then(|key_schema| match key_schema {
-                crate::any::AnySchema::Bool(inner_schema) => inner_schema
-                    .base
-                    .default
-                    .as_ref()
-                    .map(|value| Value::Bool(*value)),
-                crate::any::AnySchema::Int(inner_schema) => inner_schema
-                    .base
-                    .default
-                    .as_ref()
-                    .map(|value| Value::Number((*value).into())),
-                crate::any::AnySchema::Str(inner_schema) => inner_schema
-                    .base
-                    .default
-                    .as_ref()
-                    .map(|value| Value::String(value.clone())),
-                crate::any::AnySchema::List(inner_schema) => inner_schema
-                    .base
-                    .default
-                    .as_ref()
-                    .map(|value| Value::Array(value.clone())),
-                crate::any::AnySchema::Dict(inner_schema) => inner_schema
-                    .base
-                    .default
-                    .as_ref()
-                    .map(|value| Value::Object(Map::from_iter(value.clone()))),
-            })
-        })
+        self.keys
+            .as_ref()
+            .and_then(|keys| keys.get(key).and_then(|key_schema| key_schema.default_()))
     }
 
     // Get all string values from the given key_path. Non-string values are ignored.
@@ -199,7 +168,14 @@ impl Shortcuts for Dict {
     fn deprecation(&self) -> &Option<Deprecation> {
         &self.base.deprecation
     }
+    fn default_(&self) -> Option<Value> {
+        self.base
+            .default
+            .as_ref()
+            .map(|value| Value::Object(Map::from_iter(value.to_owned())))
+    }
 }
+
 impl<'x> TryFrom<&'x AnySchema> for &'x Dict {
     type Error = &'static str;
 
