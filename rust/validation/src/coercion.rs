@@ -2,14 +2,7 @@
 // Use of this source code is governed by the Apache License 2.0
 // that can be found in the LICENSE file.
 
-use avdschema::{
-    any::{AnySchema, Shortcuts as _},
-    boolean::Bool,
-    dict::Dict,
-    int::Int,
-    list::List,
-    str::Str,
-};
+use avdschema::{any::AnySchema, boolean::Bool, dict::Dict, int::Int, list::List, str::Str};
 use serde_json::Value;
 
 use crate::{context::Context, feedback::CoercionNote};
