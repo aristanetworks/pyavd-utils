@@ -93,7 +93,7 @@ fn validate_unique_keys(schema: &List, items: &[Value], ctx: &mut Context) {
                         // We found at least one other item, so we know we have a duplicate
                         // Add violations for all duplicates in both directions.
                         for seen_item_trail in seen_item_trails {
-                            ctx.add_duplicate_violation_pair(&item_trail, seen_item_trail);
+                            ctx.add_duplicate_violation_pair(seen_item_trail, &item_trail);
                         }
                     })
                     .or_insert(Vec::from_iter([item_trail]));
@@ -399,16 +399,16 @@ mod tests {
             ctx.result.errors,
             vec![
                 Feedback {
-                    path: vec!["2".into(), "foo".into()].into(),
+                    path: vec!["0".into(), "foo".into()].into(),
                     issue: Violation::ValueNotUnique {
-                        other_path: vec!["0".into(), "foo".into()].into()
+                        other_path: vec!["2".into(), "foo".into()].into()
                     }
                     .into()
                 },
                 Feedback {
-                    path: vec!["0".into(), "foo".into()].into(),
+                    path: vec!["2".into(), "foo".into()].into(),
                     issue: Violation::ValueNotUnique {
-                        other_path: vec!["2".into(), "foo".into()].into()
+                        other_path: vec!["0".into(), "foo".into()].into()
                     }
                     .into()
                 }
