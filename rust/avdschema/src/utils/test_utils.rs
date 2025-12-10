@@ -241,7 +241,9 @@ static AVD_STORE: OnceLock<Store> = OnceLock::new();
 
 fn init_avd_store() -> Store {
     // Load schemas from fragments, resolve all $ref and save in a store we can compare the loaded store with.
-    Store::from_file(Some(test_schema_store::get_store_gz_path())).unwrap().as_resolved()
+    Store::from_file(Some(test_schema_store::get_store_gz_path()))
+        .unwrap()
+        .as_resolved()
 }
 
 pub(crate) fn get_avd_store() -> &'static Store {

@@ -61,13 +61,13 @@ fn get_dynamic_keys_schemas<'a>(
 ) -> OrderMap<String, &'a AnySchema> {
     schema
         .get_dynamic_keys(input)
-        .into_iter()
-        .flat_map(|dynamic_keys| {
+        .map(|dynamic_keys| {
             dynamic_keys
                 .into_iter()
                 .map(|(key, dynamic_key_info)| (key, dynamic_key_info.schema))
+                .collect()
         })
-        .collect()
+        .unwrap_or_default()
 }
 
 fn validate_keys(schema: &Dict, input: &Map<String, Value>, ctx: &mut Context) {
@@ -615,6 +615,31 @@ mod tests {
                 .into()
             }]
         )
+    }
+
+    // Tests a key that is marked as deprecated but where warning is disabled
+    // does not return any warning.
+    #[test]
+    fn validate_key_deprecated_no_warning_ok() {
+        let schema: Dict = Dict::deserialize(serde_json::json!({
+            "keys": {
+                "foo": {
+                    "type": "str",
+                    "deprecation": {
+                        "warning": false,
+                        "remove_in_version": "1.2.3",
+                    }
+                }
+            }
+        }))
+        .unwrap();
+        let input = serde_json::json!({"foo": "blah"});
+        let store = get_test_store();
+        let mut ctx = Context::new(&store, None);
+        schema.validate_value(&input, &mut ctx);
+        assert!(ctx.result.infos.is_empty());
+        assert!(ctx.result.warnings.is_empty());
+        assert!(ctx.result.errors.is_empty());
     }
 
     #[test]

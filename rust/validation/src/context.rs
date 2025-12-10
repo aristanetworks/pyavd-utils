@@ -4,7 +4,7 @@
 
 use avdschema::Store;
 
-use crate::feedback::{ErrorIssue, Feedback, InfoIssue, Path, WarningIssue};
+use crate::feedback::{ErrorIssue, Feedback, InfoIssue, Path, Violation, WarningIssue};
 
 /// The Context object is passed along during coercion and validation.
 /// All coercions and violations will be registered in the context with the path carried in the context.
@@ -45,6 +45,28 @@ impl<'a> Context<'a> {
             path: self.state.path.to_owned(),
             issue: info.into(),
         });
+    }
+
+    pub(crate) fn add_duplicate_violation_pair(&mut self, trail_a: &[String], trail_b: &[String]) {
+        // Violation from A's perspective (A sees B as duplicate)
+        let violation_a = Feedback {
+            path: self.state.path.clone_with_slice(trail_a),
+            issue: Violation::ValueNotUnique {
+                other_path: self.state.path.clone_with_slice(trail_b),
+            }
+            .into(),
+        };
+
+        // Violation from B's perspective (B sees A as duplicate)
+        let violation_b = Feedback {
+            path: self.state.path.clone_with_slice(trail_b),
+            issue: Violation::ValueNotUnique {
+                other_path: self.state.path.clone_with_slice(trail_a),
+            }
+            .into(),
+        };
+
+        self.result.errors.extend([violation_a, violation_b]);
     }
 }
 

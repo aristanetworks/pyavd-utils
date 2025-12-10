@@ -6,7 +6,7 @@ use std::collections::HashMap;
 
 use serde_json::Value;
 
-use crate::feedback::{Feedback, Type, Violation};
+use crate::feedback::{Type, Violation};
 
 use crate::{context::Context, validation::Validation};
 use avdschema::{Walker, any::AnySchema, list::List, resolve_ref};
@@ -90,30 +90,10 @@ fn validate_unique_keys(schema: &List, items: &[Value], ctx: &mut Context) {
                 seen_items_trail_map
                     .entry(item)
                     .and_modify(|seen_item_trails| {
-                        // We found at least on other item, so we know we have a duplicate
+                        // We found at least one other item, so we know we have a duplicate
                         // Add violations for all duplicates in both directions.
                         for seen_item_trail in seen_item_trails {
-                            ctx.result.errors.extend([
-                                // One violation from the perspective of the already seen item where the duplicate is this item.
-                                Feedback {
-                                    path: ctx.state.path.clone_with_slice(seen_item_trail),
-                                    issue: Violation::ValueNotUnique {
-                                        other_path: ctx.state.path.clone_with_slice(&item_trail),
-                                    }
-                                    .into(),
-                                },
-                                // One violation from the perspective of this item where the duplicate is the already seen one.
-                                Feedback {
-                                    path: ctx.state.path.clone_with_slice(&item_trail),
-                                    issue: Violation::ValueNotUnique {
-                                        other_path: ctx
-                                            .state
-                                            .path
-                                            .clone_with_slice(seen_item_trail),
-                                    }
-                                    .into(),
-                                },
-                            ]);
+                            ctx.add_duplicate_violation_pair(seen_item_trail, &item_trail);
                         }
                     })
                     .or_insert(Vec::from_iter([item_trail]));
