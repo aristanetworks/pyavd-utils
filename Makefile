@@ -66,3 +66,27 @@ install-rust: ## Provides the standard command to install the Rust toolchain usi
 	@echo "  source "$$HOME/.cargo/env""
 	@echo "for the 'cargo' command to be immediately available in your current terminal session."
 	@echo "======================================================================"
+
+################
+# Bump version #
+################
+
+.PHONY: bump-dev
+bump-dev: ## Bump dev release. 6.0.0-dev0 -> 6.0.0-dev1
+	bump-my-version bump pre_n
+
+.PHONY: bump-release
+bump-release: ## Bump from dev to final release. 6.2.0-dev2 -> 6.2.0
+	bump-my-version bump pre_l
+
+.PHONY: bump-minor
+bump-minor: ## Bump minor release. 6.1.4 -> 6.2.0-dev0
+	bump-my-version bump minor
+
+.PHONY: bump-major
+bump-major: ## Bump major release. 6.2.4 -> 7.0.0-dev0
+	bump-my-version bump major
+
+.PHONY: bump-patch
+bump-patch: ## Bump patch release. 6.2.4 -> 6.2.5-dev0
+	bump-my-version bump patch
