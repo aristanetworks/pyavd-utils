@@ -2,11 +2,14 @@
 // Use of this source code is governed by the Apache License 2.0
 // that can be found in the LICENSE file.
 
+use crate::{any::Shortcuts, base::Deprecation};
+
 use super::{
     any::AnySchema,
-    base::{Base, documentation_options::DocumentationOptions},
+    base::{documentation_options::DocumentationOptions, Base},
 };
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use serde_with::skip_serializing_none;
 
 /// AVD Schema for boolean data.
@@ -17,6 +20,19 @@ pub struct Bool {
     #[serde(flatten)]
     pub base: Base<bool>,
     pub documentation_options: Option<DocumentationOptions>,
+}
+
+impl Shortcuts for Bool {
+    fn is_required(&self) -> bool {
+        self.base.required.unwrap_or_default()
+    }
+    fn deprecation(&self) -> &Option<Deprecation> {
+        &self.base.deprecation
+    }
+
+    fn default_(&self) -> Option<Value> {
+        self.base.default.as_ref().map(|value| Value::Bool(*value))
+    }
 }
 
 impl<'x> TryFrom<&'x AnySchema> for &'x Bool {

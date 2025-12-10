@@ -3,9 +3,10 @@
 // that can be found in the LICENSE file.
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use serde_with::skip_serializing_none;
 
-use crate::schema::base::Base;
+use crate::{any::Shortcuts, base::Deprecation, schema::base::Base};
 
 use super::{
     any::AnySchema,
@@ -30,7 +31,21 @@ pub struct Int {
     pub valid_values: ValidValues<i64>,
     pub documentation_options: Option<DocumentationOptions>,
 }
+impl Shortcuts for Int {
+    fn is_required(&self) -> bool {
+        self.base.required.unwrap_or_default()
+    }
 
+    fn deprecation(&self) -> &Option<Deprecation> {
+        &self.base.deprecation
+    }
+    fn default_(&self) -> Option<Value> {
+        self.base
+            .default
+            .as_ref()
+            .map(|value| Value::Number((*value).into()))
+    }
+}
 impl<'x> TryFrom<&'x AnySchema> for &'x Int {
     type Error = &'static str;
 

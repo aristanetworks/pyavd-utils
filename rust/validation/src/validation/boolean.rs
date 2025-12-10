@@ -20,16 +20,13 @@ impl Validation<bool> for Bool {
     fn validate_value(&self, value: &Value, ctx: &mut Context) {
         if let Some(v) = value.as_bool() {
             self.validate(&v, ctx)
+        } else if value.is_null() && !ctx.configuration.restrict_null_values {
         } else {
-            ctx.add_violation(Violation::InvalidType {
+            ctx.add_error(Violation::InvalidType {
                 expected: Type::Bool,
                 found: value.into(),
             })
         }
-    }
-
-    fn is_required(&self) -> bool {
-        self.base.required.unwrap_or_default()
     }
 
     fn validate_ref(&self, value: &bool, ctx: &mut Context) {
@@ -41,9 +38,6 @@ impl Validation<bool> for Bool {
                 ref_schema.validate(value, ctx);
             }
         }
-    }
-    fn default_value(&self) -> Option<bool> {
-        self.base.default
     }
 }
 
@@ -62,7 +56,7 @@ mod tests {
         let store = get_test_store();
         let mut ctx = Context::new(&store, None);
         schema.validate_value(&input, &mut ctx);
-        assert!(ctx.violations.is_empty() && ctx.coercions.is_empty());
+        assert!(ctx.result.errors.is_empty() && ctx.result.infos.is_empty());
     }
 
     #[test]
@@ -72,11 +66,11 @@ mod tests {
         let store = get_test_store();
         let mut ctx = Context::new(&store, None);
         schema.validate_value(&input, &mut ctx);
-        assert!(ctx.coercions.is_empty());
+        assert!(ctx.result.infos.is_empty());
         assert_eq!(
-            ctx.violations,
+            ctx.result.errors,
             vec![Feedback {
-                path: vec![],
+                path: vec![].into(),
                 issue: Violation::InvalidType {
                     expected: Type::Bool,
                     found: Type::List,
