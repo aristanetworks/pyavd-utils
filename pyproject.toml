@@ -39,6 +39,9 @@ requires = [
 ]
 build-backend = "setuptools.build_meta"
 
+[tool.distutils.bdist_wheel]
+py-limited-api = "cp310"
+
 [tool.setuptools.dynamic]
 version = {attr = "pyavd_utils.__version__"}
 
