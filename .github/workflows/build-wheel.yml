@@ -89,8 +89,7 @@ jobs:
 
   pyavd_utils_test_musl_wheels_platform:
     runs-on: ${{ inputs.runner }}
-    if: |-
-      'ubuntu' in inputs.runner
+    if: contains(inputs.runner, 'ubuntu')
     needs: pyavd_utils_build_wheels
     strategy:
       fail-fast: false
