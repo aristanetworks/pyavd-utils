@@ -117,9 +117,42 @@ jobs:
         run: |-
           pytest tests
 
+  test-pyavd-utils-from-test-pypi-musl:
+    runs-on: ${{ matrix.os }}
+    if: |
+      github.event_name == 'release'
+      || (github.event_name == 'workflow_dispatch')
+    # && github.ref == 'refs/heads/main')
+    strategy:
+      matrix:
+        os:
+          - ubuntu-latest
+          - ubuntu-24.04-arm
+        python: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+    needs: [target_version, publish-pyavd-utils-testpypi]
+    container:
+      image: python:${{ matrix.python }}-alpine
+      options: --user root
+    steps:
+      - name: Checkout only the tests
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: |-
+            tests
+            pyproject.toml
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install `pyavd-utils` from test Pypi
+        run: |-
+          pip install -i https://test.pypi.org/simple/ "pyavd-utils==${{ needs.target_version.outputs.target_version }}" --group pytest --extra-index-url https://pypi.org/simple
+      - name: Run tests
+        run: |-
+          pytest tests
+
   publish-pyavd-utils-pypi:
     name: Publish pyavd-utils to PyPI
-    needs: [test-pyavd-utils-from-test-pypi]
+    needs: [test-pyavd-utils-from-test-pypi, test-pyavd-utils-from-test-pypi-musl]
     runs-on: ubuntu-latest
     # We can only publish to Pypi if running on a published release, not with workflow_dispatch
     if: github.event_name == 'release'

@@ -63,14 +63,14 @@ jobs:
   pyavd_utils_test_cross_platform:
     name: pyavd-utils ${{ matrix.python }} on ${{ inputs.runner }}
     runs-on: ${{ inputs.runner }}
-    needs: [pyavd_utils_build_wheels]
+    needs: pyavd_utils_build_wheels
     strategy:
       fail-fast: false
       matrix:
         python: ["3.10", "3.11", "3.12", "3.13", "3.14"]
     steps:
       - uses: actions/checkout@v6
-      - name: Download ${{ inputs.runner }} wheel
+      - name: Download ${{ inputs.runner }} wheel(s)
         uses: actions/download-artifact@v6
         with:
           name: pyavd-utils-wheels-${{ inputs.runner }}
@@ -84,5 +84,37 @@ jobs:
       - name: Run pytest via tox for the wheel
         shell: bash
         run: |-
-          WHEEL_NAME=$(ls dist/*.whl | xargs basename)
+          WHEEL_NAME=$(find . -maxdepth 1 -name "*.whl" ! -name "*musllinux*" -print -quit)
+          tox run --installpkg dist/$WHEEL_NAME
+
+  pyavd_utils_test_musl_wheels_platform:
+    runs-on: ${{ inputs.runner }}
+    if: |-
+      'ubuntu' in inputs.runner
+    needs: pyavd_utils_build_wheels
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.10", "3.11", "3.12", "3.13", "3.14"] # Parallel over Python versions
+
+    container:
+      image: python:${{ matrix.python }}-alpine
+      options: --user root
+    steps:
+      - uses: actions/checkout@v6
+      - name: Download ${{ inputs.runner }} wheel(s)
+        uses: actions/download-artifact@v6
+        with:
+          name: pyavd-utils-wheels-${{ inputs.runner }}
+          path: dist
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install tox
+        run: |
+          pip install tox tox-gh-actions --upgrade
+      - name: Run pytest via tox for the wheel
+        shell: bash
+        run: |-
+          WHEEL_NAME=$(find . -maxdepth 1 -name "*musllinux*.whl" -print -quit)
           tox run --installpkg dist/$WHEEL_NAME
