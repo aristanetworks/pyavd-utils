@@ -88,6 +88,7 @@ jobs:
           tox run --installpkg $WHEEL_PATH
 
   pyavd_utils_test_musl_wheels_platform:
+    # NOTE: Let's track this: https://github.com/actions/runner/issues/801
     runs-on: ${{ inputs.runner }}
     if: contains(inputs.runner, 'ubuntu')
     needs: pyavd_utils_build_wheels
@@ -99,16 +100,24 @@ jobs:
     container:
       image: python:${{ matrix.python }}-alpine
       options: --user root
+      volumes:
+        - /opt:/opt:rw,rshared
+        - /opt:/__e/node20:ro,rshared
     steps:
+      - name: Allow Linux musl containers on ARM64 runners
+        # https://github.com/actions/runner/issues/801#issuecomment-2976165281
+        if: contains(inputs.runner, 'arm')
+        run: |
+          sed -i "/^ID=/s/alpine/NotpineForGHA/" /etc/os-release
+          apk add nodejs --update-cache
+          mkdir /opt/bin
+          ln -s /usr/bin/node /opt/bin/node
       - uses: actions/checkout@v6
       - name: Download ${{ inputs.runner }} wheel(s)
         uses: actions/download-artifact@v6
         with:
           name: pyavd-utils-wheels-${{ inputs.runner }}
           path: dist
-      - uses: actions/setup-python@v6
-        with:
-          python-version: ${{ matrix.python }}
       - name: Install tox
         run: |
           pip install tox tox-gh-actions --upgrade
