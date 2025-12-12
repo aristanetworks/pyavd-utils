@@ -84,8 +84,8 @@ jobs:
       - name: Run pytest via tox for the wheel
         shell: bash
         run: |-
-          WHEEL_NAME=$(find . -maxdepth 1 -name "*.whl" ! -name "*musllinux*" -print -quit)
-          tox run --installpkg dist/$WHEEL_NAME
+          WHEEL_PATH=$(find dist/ -maxdepth 1 -name "*.whl" ! -name "*musllinux*" -print -quit)
+          tox run --installpkg $WHEEL_PATH
 
   pyavd_utils_test_musl_wheels_platform:
     runs-on: ${{ inputs.runner }}
@@ -115,5 +115,5 @@ jobs:
       - name: Run pytest via tox for the wheel
         shell: bash
         run: |-
-          WHEEL_NAME=$(find . -maxdepth 1 -name "*musllinux*.whl" -print -quit)
-          tox run --installpkg dist/$WHEEL_NAME
+          WHEEL_PATH=$(find dist/ -maxdepth 1 -name "*musllinux*.whl" -print -quit)
+          tox run --installpkg $WHEEL_PATH
