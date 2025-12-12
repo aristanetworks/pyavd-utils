@@ -81,7 +81,7 @@ skip = [
     "cp38-*",
     "cp39-*",
     "*-win32",
-    "*-musllinux*",
+    "*-musllinux_i686",
     "*_i686",
     "cp3??t-*", # for now building with cp310 which does not work with free threading
 ]

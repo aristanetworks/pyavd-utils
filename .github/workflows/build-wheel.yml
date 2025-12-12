@@ -63,14 +63,14 @@ jobs:
   pyavd_utils_test_cross_platform:
     name: pyavd-utils ${{ matrix.python }} on ${{ inputs.runner }}
     runs-on: ${{ inputs.runner }}
-    needs: [pyavd_utils_build_wheels]
+    needs: pyavd_utils_build_wheels
     strategy:
       fail-fast: false
       matrix:
         python: ["3.10", "3.11", "3.12", "3.13", "3.14"]
     steps:
       - uses: actions/checkout@v6
-      - name: Download ${{ inputs.runner }} wheel
+      - name: Download ${{ inputs.runner }} wheel(s)
         uses: actions/download-artifact@v6
         with:
           name: pyavd-utils-wheels-${{ inputs.runner }}
@@ -84,5 +84,48 @@ jobs:
       - name: Run pytest via tox for the wheel
         shell: bash
         run: |-
-          WHEEL_NAME=$(ls dist/*.whl | xargs basename)
-          tox run --installpkg dist/$WHEEL_NAME
+          WHEEL_PATH=$(find dist/ -maxdepth 1 -name "*.whl" ! -name "*musllinux*" -print -quit)
+          tox run --installpkg $WHEEL_PATH
+
+  pyavd_utils_test_musl_wheels_platform:
+    # NOTE: Let's track this: https://github.com/actions/runner/issues/801
+    runs-on: ${{ inputs.runner }}
+    if: contains(inputs.runner, 'ubuntu')
+    needs: pyavd_utils_build_wheels
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.10", "3.11", "3.12", "3.13", "3.14"] # Parallel over Python versions
+
+    container:
+      image: python:${{ matrix.python }}-alpine
+      options: --user root
+      volumes:
+        - /opt:/opt:rw,rshared
+        # checkout v6
+        - /opt:/__e/node24:ro,rshared
+        # download-artifact v6
+        - /opt:/__e/node20:ro,rshared
+    steps:
+      - name: Allow Linux musl containers on ARM64 runners
+        # https://github.com/actions/runner/issues/801#issuecomment-2976165281
+        if: contains(inputs.runner, 'arm')
+        run: |
+          sed -i "/^ID=/s/alpine/NotpineForGHA/" /etc/os-release
+          apk add nodejs --update-cache
+          mkdir /opt/bin
+          ln -s /usr/bin/node /opt/bin/node
+      - uses: actions/checkout@v6
+      - name: Download ${{ inputs.runner }} wheel(s)
+        uses: actions/download-artifact@v6
+        with:
+          name: pyavd-utils-wheels-${{ inputs.runner }}
+          path: dist
+      - name: Install tox
+        run: |
+          pip install tox tox-gh-actions --upgrade
+      - name: Run pytest via tox for the wheel
+        shell: sh
+        run: |-
+          WHEEL_PATH=$(find dist/ -maxdepth 1 -name "*musllinux*.whl" -print -quit)
+          tox run --installpkg $WHEEL_PATH
