@@ -102,7 +102,7 @@ jobs:
       options: --user root
       volumes:
         - /opt:/opt:rw,rshared
-        - /opt:/__e/node20:ro,rshared
+        - /opt:/__e/node24:ro,rshared
     steps:
       - name: Allow Linux musl containers on ARM64 runners
         # https://github.com/actions/runner/issues/801#issuecomment-2976165281
