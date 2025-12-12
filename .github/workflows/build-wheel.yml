@@ -122,7 +122,7 @@ jobs:
         run: |
           pip install tox tox-gh-actions --upgrade
       - name: Run pytest via tox for the wheel
-        shell: bash
+        shell: sh
         run: |-
           WHEEL_PATH=$(find dist/ -maxdepth 1 -name "*musllinux*.whl" -print -quit)
           tox run --installpkg $WHEEL_PATH
