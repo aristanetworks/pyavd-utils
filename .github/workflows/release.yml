@@ -10,7 +10,7 @@ name: "Publish Python package"
   workflow_dispatch:
     inputs:
       TESTPYPI_VERSION:
-        description: "Version string to use for manual push to test Pypi"
+        description: "PEP 440 Version string to use for manual push to test Pypi"
         required: true
         type: string
 
