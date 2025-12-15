@@ -63,7 +63,7 @@ jobs:
   pyavd_utils_test_cross_platform:
     name: pyavd-utils ${{ matrix.python }} on ${{ inputs.runner }}
     runs-on: ${{ inputs.runner }}
-    needs: pyavd_utils_build_wheels
+    needs: [pyavd_utils_build_wheels]
     strategy:
       fail-fast: false
       matrix:
@@ -71,7 +71,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - name: Download ${{ inputs.runner }} wheel(s)
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v7
         with:
           name: pyavd-utils-wheels-${{ inputs.runner }}
           path: dist
@@ -104,8 +104,6 @@ jobs:
         - /opt:/opt:rw,rshared
         # checkout v6
         - /opt:/__e/node24:ro,rshared
-        # download-artifact v6
-        - /opt:/__e/node20:ro,rshared
     steps:
       - name: Allow Linux musl containers on ARM64 runners
         # https://github.com/actions/runner/issues/801#issuecomment-2976165281
@@ -117,7 +115,7 @@ jobs:
           ln -s /usr/bin/node /opt/bin/node
       - uses: actions/checkout@v6
       - name: Download ${{ inputs.runner }} wheel(s)
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v7
         with:
           name: pyavd-utils-wheels-${{ inputs.runner }}
           path: dist
