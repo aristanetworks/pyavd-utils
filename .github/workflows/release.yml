@@ -73,7 +73,7 @@ jobs:
       id-token: write
     steps:
       - name: Download pyavd-utils wheels
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v7
         with:
           path: dist/
           merge-multiple: true
@@ -117,9 +117,52 @@ jobs:
         run: |-
           pytest tests
 
+  test-pyavd-utils-from-test-pypi-musl:
+    name: Install from test-pypi and test on musl linux for python ${{ matrix.python }}
+    needs: [target_version, publish-pyavd-utils-testpypi]
+    runs-on: ${{ matrix.os }}
+    if: |
+      github.event_name == 'release'
+      || (github.event_name == 'workflow_dispatch')
+    # && github.ref == 'refs/heads/main')
+    strategy:
+      matrix:
+        os:
+          - ubuntu-latest
+          - ubuntu-24.04-arm
+        python: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+    container:
+      image: python:${{ matrix.python }}-alpine
+      options: --user root
+      volumes:
+        - /opt:/opt:rw,rshared
+        # checkout v6 - download-artifact v7
+        - /opt:/__e/node24:ro,rshared
+    steps:
+      - name: Allow Linux musl containers on ARM64 runners
+        # https://github.com/actions/runner/issues/801#issuecomment-2976165281
+        if: contains(inputs.runner, 'arm')
+        run: |
+          sed -i "/^ID=/s/alpine/NotpineForGHA/" /etc/os-release
+          apk add nodejs --update-cache
+          mkdir /opt/bin
+          ln -s /usr/bin/node /opt/bin/node
+      - name: Checkout only the tests
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: |-
+            tests
+            pyproject.toml
+      - name: Install `pyavd-utils` from test Pypi
+        run: |-
+          pip install -i https://test.pypi.org/simple/ "pyavd-utils==${{ needs.target_version.outputs.target_version }}" --group pytest --extra-index-url https://pypi.org/simple
+      - name: Run tests
+        run: |-
+          pytest tests
+
   publish-pyavd-utils-pypi:
     name: Publish pyavd-utils to PyPI
-    needs: [test-pyavd-utils-from-test-pypi]
+    needs: [test-pyavd-utils-from-test-pypi, test-pyavd-utils-from-test-pypi-musl]
     runs-on: ubuntu-latest
     # We can only publish to Pypi if running on a published release, not with workflow_dispatch
     if: github.event_name == 'release'
@@ -130,7 +173,7 @@ jobs:
       id-token: write
     steps:
       - name: Download pyavd-utils wheels
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v7
         with:
           path: dist/
           merge-multiple: true
