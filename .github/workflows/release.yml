@@ -73,7 +73,7 @@ jobs:
       id-token: write
     steps:
       - name: Download pyavd-utils wheels
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v7
         with:
           path: dist/
           merge-multiple: true
@@ -118,6 +118,8 @@ jobs:
           pytest tests
 
   test-pyavd-utils-from-test-pypi-musl:
+    name: Install from test-pypi and test on musl linux for python ${{ matrix.python }}
+    needs: [target_version, publish-pyavd-utils-testpypi]
     runs-on: ${{ matrix.os }}
     if: |
       github.event_name == 'release'
@@ -129,13 +131,12 @@ jobs:
           - ubuntu-latest
           - ubuntu-24.04-arm
         python: ["3.10", "3.11", "3.12", "3.13", "3.14"]
-    needs: [target_version, publish-pyavd-utils-testpypi]
     container:
       image: python:${{ matrix.python }}-alpine
       options: --user root
       volumes:
         - /opt:/opt:rw,rshared
-        # checkout v6
+        # checkout v6 - download-artifact v7
         - /opt:/__e/node24:ro,rshared
     steps:
       - name: Allow Linux musl containers on ARM64 runners
@@ -172,7 +173,7 @@ jobs:
       id-token: write
     steps:
       - name: Download pyavd-utils wheels
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v7
         with:
           path: dist/
           merge-multiple: true
