@@ -71,7 +71,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - name: Download ${{ inputs.runner }} wheel
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v7
         with:
           name: pyavd-utils-wheels-${{ inputs.runner }}
           path: dist

@@ -73,7 +73,7 @@ jobs:
       id-token: write
     steps:
       - name: Download pyavd-utils wheels
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v7
         with:
           path: dist/
           merge-multiple: true
@@ -130,7 +130,7 @@ jobs:
       id-token: write
     steps:
       - name: Download pyavd-utils wheels
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v7
         with:
           path: dist/
           merge-multiple: true
