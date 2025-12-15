@@ -18,7 +18,7 @@ jobs:
 
       - name: Download coverage from pytest
         continue-on-error: true
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v7
         with:
           name: pytest-coverage
           github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -27,7 +27,7 @@ jobs:
 
       - name: Download coverage report from rust tests
         continue-on-error: true
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v7
         with:
           name: rust-llvm-cov
           github-token: ${{ secrets.GITHUB_TOKEN }}
