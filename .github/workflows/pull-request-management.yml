@@ -56,7 +56,7 @@ jobs:
         run: |-
           tox run -e coverage,report
       - name: Upload pytest coverage data
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: pytest-coverage
           path: coverage.xml
@@ -104,7 +104,7 @@ jobs:
         if: |
           matrix.os == 'ubuntu-latest'
       - name: Upload coverage report
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: rust-llvm-cov
           path: lcov.info
