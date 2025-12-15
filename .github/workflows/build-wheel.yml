@@ -9,7 +9,7 @@ name: "Build pyvad-utils wheel for a specific runner"
         required: true
         type: string
       TESTPYPI_VERSION:
-        description: "Version string to use for manual push to test pypi"
+        description: "PEP 440 Version string to use for manual push to test pypi"
         type: string
 
 env:
@@ -42,7 +42,7 @@ jobs:
             --replace "__version__ = \"${{ inputs.TESTPYPI_VERSION }}\"" \
             --no-configured-files \
             -v \
-            pyavd-utils/pyavd_utils/__init__.py
+            pyavd_utils/__init__.py
       - name: Install cibuildwheel
         # See pyproject.toml for config
         run: |
