@@ -7,6 +7,6 @@ from . import passwords, validation
 __author__ = "Arista Networks"
 __copyright__ = "Copyright 2025 Arista Networks"
 __license__ = "Apache 2.0"
-__version__ = "0.0.1.dev3"
+__version__ = "0.0.1.dev4"
 
 __all__ = ["passwords", "validation"]
