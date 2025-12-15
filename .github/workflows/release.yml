@@ -82,6 +82,7 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           repository-url: https://test.pypi.org/legacy/
+          skip-existing: true
 
   test-pyavd-utils-from-test-pypi:
     name: Install from test-pypi and test on ${{ matrix.os }} for python ${{ matrix.python }}
