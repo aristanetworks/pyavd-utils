@@ -52,7 +52,7 @@ jobs:
         # and will not copy the parent Cargo.toml and we will be sad
         run: |-
           python -m cibuildwheel --output-dir dist
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v6
         with:
           name: pyavd-utils-wheels-${{ inputs.runner }}
           path: dist/*.whl
