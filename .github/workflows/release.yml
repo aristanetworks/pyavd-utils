@@ -142,7 +142,7 @@ jobs:
     steps:
       - name: Allow Linux musl containers on ARM64 runners
         # https://github.com/actions/runner/issues/801#issuecomment-2976165281
-        if: contains(inputs.runner, 'arm')
+        if: contains(matrix.os, 'arm')
         run: |
           sed -i "/^ID=/s/alpine/NotpineForGHA/" /etc/os-release
           apk add nodejs --update-cache
