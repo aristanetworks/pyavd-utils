@@ -2,7 +2,10 @@
 // Use of this source code is governed by the Apache License 2.0
 // that can be found in the LICENSE file.
 
-use avdschema::{any::AnySchema, boolean::Bool, dict::Dict, int::Int, list::List, str::Str};
+use avdschema::delegate_anyschema_method;
+use avdschema::{
+    any::AnySchema, boolean::Bool, dict::Dict, int::Int, list::List, resolve_ref, str::Str,
+};
 use serde_json::Value;
 
 use crate::{context::Context, feedback::CoercionNote};
@@ -19,9 +22,11 @@ where
     ///
     ///  TODO: Decide whether we should limit this to only coerce according to `convert_types`.
     fn coerce(&self, input: &mut Value, ctx: &mut Context);
+    fn coerce_ref(&self, input: &mut Value, ctx: &mut Context);
 }
 impl Coercion for Bool {
     fn coerce(&self, _input: &mut Value, _ctx: &mut Context) {}
+    fn coerce_ref(&self, _input: &mut Value, _ctx: &mut Context) {}
 }
 impl Coercion for Dict {
     fn coerce(&self, input: &mut Value, ctx: &mut Context) {
@@ -47,6 +52,18 @@ impl Coercion for Dict {
                         ctx.state.path.pop();
                     }
                 }
+            }
+        }
+        self.coerce_ref(input, ctx);
+    }
+
+    fn coerce_ref(&self, input: &mut Value, ctx: &mut Context) {
+        if let Some(ref_) = self.base.schema_ref.as_ref() {
+            // Ignoring not being able to resolve the schema.
+            // Ignoring a wrong schema type at the ref. Since coercion is infallible.
+            // TODO: What to do?
+            if let Ok(AnySchema::Dict(ref_schema)) = resolve_ref(ref_, ctx.store) {
+                ref_schema.coerce(input, ctx);
             }
         }
     }
@@ -97,6 +114,18 @@ impl Coercion for Int {
         if let Some(value) = value {
             _ = core::mem::replace(input, value.into());
         }
+        self.coerce_ref(input, ctx);
+    }
+
+    fn coerce_ref(&self, input: &mut Value, ctx: &mut Context) {
+        if let Some(ref_) = self.base.schema_ref.as_ref() {
+            // Ignoring not being able to resolve the schema.
+            // Ignoring a wrong schema type at the ref. Since coercion is infallible.
+            // TODO: What to do?
+            if let Ok(AnySchema::Int(ref_schema)) = resolve_ref(ref_, ctx.store) {
+                ref_schema.coerce(input, ctx);
+            }
+        }
     }
 }
 impl Coercion for List {
@@ -108,6 +137,18 @@ impl Coercion for List {
                 ctx.state.path.push(i.to_string());
                 item_schema.coerce(item, ctx);
                 ctx.state.path.pop();
+            }
+        }
+        self.coerce_ref(input, ctx);
+    }
+
+    fn coerce_ref(&self, input: &mut Value, ctx: &mut Context) {
+        if let Some(ref_) = self.base.schema_ref.as_ref() {
+            // Ignoring not being able to resolve the schema.
+            // Ignoring a wrong schema type at the ref. Since coercion is infallible.
+            // TODO: What to do?
+            if let Ok(AnySchema::List(ref_schema)) = resolve_ref(ref_, ctx.store) {
+                ref_schema.coerce(input, ctx);
             }
         }
     }
@@ -163,16 +204,78 @@ impl Coercion for Str {
         if let Some(value) = value.as_deref() {
             _ = core::mem::replace(input, value.into());
         }
+        self.coerce_ref(input, ctx);
+    }
+
+    fn coerce_ref(&self, input: &mut Value, ctx: &mut Context) {
+        if let Some(ref_) = self.base.schema_ref.as_ref() {
+            // Ignoring not being able to resolve the schema.
+            // Ignoring a wrong schema type at the ref. Since coercion is infallible.
+            // TODO: What to do?
+            if let Ok(AnySchema::Str(ref_schema)) = resolve_ref(ref_, ctx.store) {
+                ref_schema.coerce(input, ctx);
+            }
+        }
     }
 }
 impl Coercion for AnySchema {
     fn coerce(&self, input: &mut Value, ctx: &mut Context) {
-        match self {
-            Self::Bool(schema) => schema.coerce(input, ctx),
-            Self::Int(schema) => schema.coerce(input, ctx),
-            Self::Str(schema) => schema.coerce(input, ctx),
-            Self::List(schema) => schema.coerce(input, ctx),
-            Self::Dict(schema) => schema.coerce(input, ctx),
-        }
+        delegate_anyschema_method!(self, coerce, input, ctx)
+    }
+
+    fn coerce_ref(&self, input: &mut Value, ctx: &mut Context) {
+        delegate_anyschema_method!(self, coerce_ref, input, ctx)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use avdschema::base::Base;
+    use ordermap::OrderMap;
+
+    use super::*;
+    use crate::Validation as _;
+    use crate::context::{Configuration, Context};
+    use crate::feedback::{CoercionNote, Feedback};
+    use crate::validation::test_utils::get_test_store;
+
+    #[test]
+    fn validate_coecion_with_ref_ok() {
+        let schema = Dict {
+            keys: Some(OrderMap::from_iter([(
+                "foo".into(),
+                Dict {
+                    base: Base {
+                        // Using ref to the root of the schema since such refs will not get resolved.
+                        schema_ref: Some("eos_cli_config_gen#".into()),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                }
+                .into(),
+            )])),
+            ..Default::default()
+        };
+        let mut input = serde_json::json!({ "foo": {"key1": 123} });
+        let store = get_test_store();
+        let configuration = Configuration {
+            return_coercion_infos: true,
+            ..Default::default()
+        };
+        let mut ctx = Context::new(&store, Some(&configuration));
+        schema.coerce(&mut input, &mut ctx);
+        schema.validate_value(&input, &mut ctx);
+        assert!(ctx.result.errors.is_empty());
+        assert_eq!(
+            ctx.result.infos,
+            vec![Feedback {
+                path: vec!["foo".into(), "key1".into()].into(),
+                issue: CoercionNote {
+                    found: 123.into(),
+                    made: "123".into()
+                }
+                .into()
+            },]
+        )
     }
 }
