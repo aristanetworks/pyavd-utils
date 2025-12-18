@@ -11,5 +11,5 @@ mod errors;
 mod sha512crypt;
 
 pub use cbc::{cbc_check_password, cbc_decrypt, cbc_encrypt};
-pub use errors::{InvalidSaltError, Sha512CryptError};
+pub use errors::{CbcError, InvalidSaltError, Sha512CryptError};
 pub use sha512crypt::sha512_crypt;

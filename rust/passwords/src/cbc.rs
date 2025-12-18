@@ -7,6 +7,8 @@ use cbc::cipher::block_padding::NoPadding;
 use cbc::cipher::{BlockDecryptMut, BlockEncryptMut, KeyIvInit};
 use des::TdesEde3;
 
+use crate::CbcError;
+
 // Values used by Arista.
 const SEED: [u8; 8] = [0xd5, 0xa8, 0xc9, 0x1e, 0xf5, 0xd5, 0x8a, 0x23];
 const ENC_SIG: &[u8; 3] = b"\x4c\x88\xbb";
@@ -40,7 +42,7 @@ fn derive_key(pw: &[u8]) -> [u8; 24] {
     key_24
 }
 
-pub fn cbc_encrypt(key: &[u8], data: &[u8]) -> Vec<u8> {
+pub fn cbc_encrypt(key: &[u8], data: &[u8]) -> Result<Vec<u8>, CbcError> {
     let hashed_key = derive_key(key);
     let iv = [0u8; 8];
     let padding_len = (8 - ((data.len() + 4) % 8)) % 8;
@@ -57,40 +59,40 @@ pub fn cbc_encrypt(key: &[u8], data: &[u8]) -> Vec<u8> {
 
     let ct = cipher
         .encrypt_padded_mut::<NoPadding>(&mut buf, buf_len)
-        .expect("Encryption failed: buffer was not block-aligned");
+        .map_err(|_| CbcError::EncryptionFailed)?;
 
-    B64.encode(ct).into_bytes()
+    Ok(B64.encode(ct).into_bytes())
 }
 
-pub fn cbc_decrypt(key: &[u8], b64_encrypted_data: &[u8]) -> Result<Vec<u8>, String> {
+pub fn cbc_decrypt(key: &[u8], b64_encrypted_data: &[u8]) -> Result<Vec<u8>, CbcError> {
     let hashed_key = derive_key(key);
     let iv = [0u8; 8];
     let mut ciphertext = B64
         .decode(b64_encrypted_data)
-        .map_err(|e| format!("Base64 error: {:?}", e))?;
+        .map_err(|_| CbcError::InvalidBase64)?;
 
     let cipher = cbc::Decryptor::<TdesEde3>::new(&hashed_key.into(), &iv.into());
 
     let pt = cipher
         .decrypt_padded_mut::<NoPadding>(&mut ciphertext)
-        .map_err(|e| format!("DES decryption failed: {:?}", e))?;
+        .map_err(|_| CbcError::DecryptionFailed)?;
 
     // Validate ENC SIGN
     if pt.len() < 4 || &pt[0..3] != ENC_SIG {
-        return Err("Invalid Arista encryption signature inside ciphertext".to_string());
+        return Err(CbcError::InvalidSignature);
     }
 
     // Parse the Metadata byte (4th byte)
     let meta_byte = pt[3];
     if meta_byte < 0xE {
-        return Err("Invalid metadata byte in ciphertext".to_string());
+        return Err(CbcError::InvalidSignature);
     }
     let padding_len = ((meta_byte as usize) - 0xE) / 16;
 
     // Layout: [SIG (3)] [META (1)] [DATA (len - 4 - padding)] [NULLS (padding)]
     let end_idx = pt.len() - padding_len;
     if end_idx < 4 {
-        return Err("Decrypted block length is shorter than expected metadata".to_string());
+        return Err(CbcError::InvalidSignature);
     }
 
     Ok(pt[4..end_idx].to_vec())
@@ -120,7 +122,7 @@ mod tests {
     #[test]
     fn test_cbc_encrypt_ok() {
         for (key, expected) in VALID_PAIRS {
-            let result = cbc_encrypt(key, TEST_PASSWORD);
+            let result = cbc_encrypt(key, TEST_PASSWORD).expect("Encryption Failed");
             assert_eq!(result, expected);
         }
     }

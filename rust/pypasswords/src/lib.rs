@@ -9,6 +9,7 @@ use pyo3::pymodule;
 #[pyo3(name = "passwords")]
 mod passwords {
 
+    use pyo3::exceptions::{PyRuntimeError, PyValueError};
     use pyo3::{PyResult, pyfunction};
 
     #[pyfunction]
@@ -18,13 +19,43 @@ mod passwords {
             // Mapping our crates error to Python errors.
             match err {
                 passwords::Sha512CryptError::InvalidSalt(_) => {
-                    pyo3::exceptions::PyValueError::new_err(format!("{err}"))
+                    PyValueError::new_err(err.to_string())
                 }
                 passwords::Sha512CryptError::ShaCrypt(_) => {
-                    pyo3::exceptions::PyRuntimeError::new_err(format!("{err}"))
+                    PyRuntimeError::new_err(err.to_string())
                 }
             }
         })
+    }
+
+    #[pyfunction]
+    /// Encrypt the data with CBC TripleDES
+    pub fn cbc_encrypt(password: String, data: String) -> PyResult<String> {
+        let result_bytes = passwords::cbc_encrypt(password.as_bytes(), data.as_bytes())
+            .map_err(|err| PyRuntimeError::new_err(err.to_string()))?;
+        String::from_utf8(result_bytes)
+            .map_err(|_| PyRuntimeError::new_err("Base64 output contained invalid UTF-8"))
+    }
+
+    #[pyfunction]
+    /// Decrypt the encrypted_data with CBC TripleDES
+    pub fn cbc_decrypt(password: String, encrypted_data: String) -> PyResult<String> {
+        let decrypted_bytes =
+            passwords::cbc_decrypt(password.as_bytes(), encrypted_data.as_bytes()).map_err(
+                |err| match err {
+                    passwords::CbcError::InvalidBase64 => PyValueError::new_err(err.to_string()),
+                    _ => PyRuntimeError::new_err(err.to_string()),
+                },
+            )?;
+
+        String::from_utf8(decrypted_bytes)
+            .map_err(|_| PyValueError::new_err(passwords::CbcError::InvalidUtf8.to_string()))
+    }
+
+    #[pyfunction]
+    /// Verify if the encrypted data matches the given password
+    pub fn cbc_verify(password: String, encrypted_data: String) -> bool {
+        passwords::cbc_check_password(password.as_bytes(), encrypted_data.as_bytes())
     }
 }
 
@@ -44,11 +75,25 @@ mod tests {
         })
     }
 
+    fn with_passwords_module<
+        F: FnOnce(pyo3::Python<'_>, pyo3::Bound<'_, pyo3::types::PyModule>),
+    >(
+        test_logic: F,
+    ) {
+        setup();
+
+        pyo3::Python::attach(|py| {
+            let module = py
+                .import("passwords")
+                .expect("Failed to import embedded passwords module");
+
+            test_logic(py, module);
+        });
+    }
+
     #[test]
     fn sha512_crypt_valid_hash_with_salt_ok() {
-        setup();
-        pyo3::Python::attach(|py| {
-            let module = py.import("passwords").unwrap();
+        with_passwords_module(|py, module| {
             let args = ();
             let kwargs = pyo3::types::PyDict::new(py);
             kwargs
@@ -73,9 +118,7 @@ mod tests {
 
     #[test]
     fn sha512_crypt_empty_salt_err() {
-        setup();
-        pyo3::Python::attach(|py| {
-            let module = py.import("passwords").unwrap();
+        with_passwords_module(|py, module| {
             let args = ();
             let kwargs = pyo3::types::PyDict::new(py);
             kwargs
@@ -97,9 +140,7 @@ mod tests {
 
     #[test]
     fn sha512_crypt_invalid_character_in_salt_err() {
-        setup();
-        pyo3::Python::attach(|py| {
-            let module = py.import("passwords").unwrap();
+        with_passwords_module(|py, module| {
             let args = ();
             let kwargs = pyo3::types::PyDict::new(py);
             kwargs
@@ -116,6 +157,83 @@ mod tests {
                 err.value(py).to_string(),
                 "Invalid Salt: Salt contains an invalid character: '🐍'"
             );
+        });
+    }
+    #[test]
+    fn cbc_decrypt_invalid_base64_err() {
+        setup();
+        pyo3::Python::attach(|py| {
+            let module = py.import("passwords").unwrap();
+            let args = ("passwd", "ThisIsNotBase64!!!");
+
+            let err = module.call_method1("cbc_decrypt", args).unwrap_err();
+
+            // Maps CbcError::InvalidBase64 -> PyValueError
+            assert!(err.is_instance_of::<pyo3::exceptions::PyValueError>(py));
+            assert_eq!(err.value(py).to_string(), "Invalid Base64 encoding");
+        });
+    }
+
+    #[test]
+    fn cbc_decrypt_failed_err() {
+        with_passwords_module(|py, module| {
+            // "YWJjZA==" is "abcd" (4 bytes).
+            // Triple DES requires multiples of 8.
+            // This will trigger the .map_err(|_| CbcError::DecryptionFailed) branch.
+            let args = ("any_key", "YWJjZA==");
+
+            let err = module.call_method1("cbc_decrypt", args).unwrap_err();
+
+            assert!(err.is_instance_of::<pyo3::exceptions::PyRuntimeError>(py));
+            assert_eq!(
+                err.value(py).to_string(),
+                "Decryption failed (check password)"
+            );
+        });
+    }
+
+    #[test]
+    fn cbc_decrypt_invalid_signature_err() {
+        with_passwords_module(|py, module| {
+            // Provide valid base64, but no Arista signature at the beginning
+            let args = ("some_key", "YWFhYWFhYWFhYWFhYWFhYQ==");
+            let err = module.call_method1("cbc_decrypt", args).unwrap_err();
+
+            assert!(err.is_instance_of::<pyo3::exceptions::PyRuntimeError>(py));
+            assert_eq!(
+                err.value(py).to_string(),
+                "Invalid Arista signature in decrypted data"
+            );
+        });
+    }
+
+    #[test]
+    fn cbc_verify_returns_bool() {
+        with_passwords_module(|_py, module| {
+            let key = "42.42.42.42";
+            let data = "arista";
+
+            let encrypted: String = module
+                .call_method1("cbc_encrypt", (key, data))
+                .unwrap()
+                .extract()
+                .unwrap();
+
+            // Success case
+            let is_valid: bool = module
+                .call_method1("cbc_verify", (key, encrypted.clone()))
+                .unwrap()
+                .extract()
+                .unwrap();
+            assert!(is_valid);
+
+            // Failure case
+            let is_invalid: bool = module
+                .call_method1("cbc_verify", ("wrong_key", encrypted))
+                .unwrap()
+                .extract()
+                .unwrap();
+            assert!(!is_invalid);
         });
     }
 }
