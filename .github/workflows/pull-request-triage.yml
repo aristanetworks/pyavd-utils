@@ -50,7 +50,8 @@ jobs:
             Revert
           # Configure which scopes are allowed.
           scopes: |
-            pyavd-utils
+            validation
+            passwords
             rust
             requirements
           # Configure that a scope must always be provided.
