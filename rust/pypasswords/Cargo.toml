@@ -15,7 +15,7 @@ passwords = { path = "../passwords", optional=true }
 default = ["cbc", "sha512"]
 cbc = ["passwords/cbc", "_any_crypto"]
 sha512 = ["passwords/sha512", "_any_crypto"]
-_any_crypto = ["dep:pyo3"] 
+_any_crypto = ["dep:pyo3"]
 
 [lib]
 crate-type = ["cdylib", "lib"]
