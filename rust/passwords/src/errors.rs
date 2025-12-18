@@ -2,6 +2,7 @@
 // Use of this source code is governed by the Apache License 2.0
 // that can be found in the LICENSE file.
 
+#[cfg(feature = "sha512")]
 #[derive(Debug, derive_more::Display, derive_more::From)]
 pub enum Sha512CryptError {
     // The errors from sha_crypt library should never happen in our case.
@@ -11,6 +12,7 @@ pub enum Sha512CryptError {
     InvalidSalt(InvalidSaltError),
 }
 
+#[cfg(feature = "sha512")]
 #[derive(Debug, derive_more::Display)]
 pub enum InvalidSaltError {
     #[display("Salt cannot be empty.")]
@@ -19,6 +21,7 @@ pub enum InvalidSaltError {
     InvalidCharacter(char),
 }
 
+#[cfg(feature = "cbc")]
 #[derive(Debug, derive_more::Display, derive_more::From)]
 pub enum CbcError {
     #[display("Invalid Base64 encoding")]
@@ -33,6 +36,11 @@ pub enum CbcError {
     EncryptionFailed,
 }
 
-impl std::error::Error for Sha512CryptError {}
-impl std::error::Error for InvalidSaltError {}
+#[cfg(feature = "cbc")]
 impl std::error::Error for CbcError {}
+
+#[cfg(feature = "sha512")]
+impl std::error::Error for Sha512CryptError {}
+
+#[cfg(feature = "sha512")]
+impl std::error::Error for InvalidSaltError {}

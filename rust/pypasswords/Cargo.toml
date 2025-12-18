@@ -8,8 +8,14 @@ license.workspace = true
 pyo3-build-config = { workspace = true }
 
 [dependencies]
-pyo3 = {workspace = true, "features" = ["abi3-py310"] }
-passwords = { path = "../passwords" }
+pyo3 = {workspace = true, "features" = ["abi3-py310"], optional=true }
+passwords = { path = "../passwords", optional=true }
+
+[features]
+default = ["cbc", "sha512"]
+cbc = ["passwords/cbc", "_any_crypto"]
+sha512 = ["passwords/sha512", "_any_crypto"]
+_any_crypto = ["dep:pyo3"] 
 
 [lib]
 crate-type = ["cdylib", "lib"]

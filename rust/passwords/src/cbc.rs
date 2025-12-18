@@ -102,6 +102,7 @@ pub fn cbc_check_password(key: &[u8], ciphertext: &[u8]) -> bool {
     cbc_decrypt(key, ciphertext).is_ok()
 }
 
+#[cfg(feature = "cbc")]
 #[cfg(test)]
 mod tests {
     use super::*;

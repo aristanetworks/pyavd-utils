@@ -3,13 +3,25 @@
 // that can be found in the LICENSE file.
 #![deny(unused_crate_dependencies)]
 
-// TODO: the crate is seen as unused, need to get why
-use cipher as _;
-
-mod cbc;
 mod errors;
+
+#[cfg(feature = "sha512")]
 mod sha512crypt;
 
-pub use cbc::{cbc_check_password, cbc_decrypt, cbc_encrypt};
-pub use errors::{CbcError, InvalidSaltError, Sha512CryptError};
-pub use sha512crypt::sha512_crypt;
+#[cfg(feature = "cbc")]
+mod cbc;
+
+#[cfg(feature = "sha512")]
+pub use crate::{
+    errors::{InvalidSaltError, Sha512CryptError},
+    sha512crypt::sha512_crypt,
+};
+
+#[cfg(feature = "cbc")]
+pub use crate::{
+    cbc::{cbc_check_password, cbc_decrypt, cbc_encrypt},
+    errors::CbcError,
+};
+
+#[cfg(feature = "cbc")]
+use cipher as _;

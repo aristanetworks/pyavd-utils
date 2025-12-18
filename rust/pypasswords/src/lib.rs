@@ -3,15 +3,21 @@
 // that can be found in the LICENSE file.
 #![deny(unused_crate_dependencies)]
 
+#[cfg(feature = "_any_crypto")]
 use pyo3::pymodule;
 
+#[cfg(feature = "_any_crypto")]
 #[pymodule]
 #[pyo3(name = "passwords")]
 mod passwords {
 
-    use pyo3::exceptions::{PyRuntimeError, PyValueError};
-    use pyo3::{PyResult, pyfunction};
+    use pyo3::{
+        PyResult,
+        exceptions::{PyRuntimeError, PyValueError},
+        pyfunction,
+    };
 
+    #[cfg(feature = "sha512")]
     #[pyfunction]
     /// Computes the SHA512 crypt value for the password given the salt
     pub fn sha512_crypt(password: String, salt: String) -> PyResult<String> {
@@ -28,6 +34,7 @@ mod passwords {
         })
     }
 
+    #[cfg(feature = "cbc")]
     #[pyfunction]
     /// Encrypt the data with CBC TripleDES
     pub fn cbc_encrypt(password: String, data: String) -> PyResult<String> {
@@ -37,6 +44,7 @@ mod passwords {
             .map_err(|_| PyRuntimeError::new_err("Base64 output contained invalid UTF-8"))
     }
 
+    #[cfg(feature = "cbc")]
     #[pyfunction]
     /// Decrypt the encrypted_data with CBC TripleDES
     pub fn cbc_decrypt(password: String, encrypted_data: String) -> PyResult<String> {
@@ -52,6 +60,7 @@ mod passwords {
             .map_err(|_| PyValueError::new_err(passwords::CbcError::InvalidUtf8.to_string()))
     }
 
+    #[cfg(feature = "cbc")]
     #[pyfunction]
     /// Verify if the encrypted data matches the given password
     pub fn cbc_verify(password: String, encrypted_data: String) -> bool {
@@ -61,13 +70,16 @@ mod passwords {
 
 // Implementation of the pytests but here using pyo3 wrappers in Rust, to ensure we get coverage data
 // and that we can catch issues in Rust without building the Python first.
+#[cfg(feature = "_any_crypto")]
 #[cfg(test)]
 mod tests {
     use super::passwords;
+
     use pyo3::types::PyAnyMethods as _;
 
     // Initializing python only once. Otherwise things may crash when running in multiple threads.
     static INIT_PY: std::sync::Once = std::sync::Once::new();
+
     fn setup() {
         INIT_PY.call_once(|| {
             pyo3::append_to_inittab!(passwords);
@@ -91,6 +103,7 @@ mod tests {
         });
     }
 
+    #[cfg(feature = "sha512")]
     #[test]
     fn sha512_crypt_valid_hash_with_salt_ok() {
         with_passwords_module(|py, module| {
@@ -116,6 +129,7 @@ mod tests {
         });
     }
 
+    #[cfg(feature = "sha512")]
     #[test]
     fn sha512_crypt_empty_salt_err() {
         with_passwords_module(|py, module| {
@@ -138,6 +152,7 @@ mod tests {
         });
     }
 
+    #[cfg(feature = "sha512")]
     #[test]
     fn sha512_crypt_invalid_character_in_salt_err() {
         with_passwords_module(|py, module| {
@@ -159,6 +174,8 @@ mod tests {
             );
         });
     }
+
+    #[cfg(feature = "cbc")]
     #[test]
     fn cbc_decrypt_invalid_base64_err() {
         setup();
@@ -174,6 +191,7 @@ mod tests {
         });
     }
 
+    #[cfg(feature = "cbc")]
     #[test]
     fn cbc_decrypt_failed_err() {
         with_passwords_module(|py, module| {
@@ -192,6 +210,7 @@ mod tests {
         });
     }
 
+    #[cfg(feature = "cbc")]
     #[test]
     fn cbc_decrypt_invalid_signature_err() {
         with_passwords_module(|py, module| {
@@ -207,6 +226,7 @@ mod tests {
         });
     }
 
+    #[cfg(feature = "cbc")]
     #[test]
     fn cbc_verify_returns_bool() {
         with_passwords_module(|_py, module| {

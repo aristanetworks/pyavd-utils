@@ -33,6 +33,7 @@ fn validate_salt_characters(s: &str) -> Result<(), InvalidSaltError> {
     Ok(())
 }
 
+#[cfg(feature = "sha512")]
 #[cfg(test)]
 mod tests {
     use super::*;
