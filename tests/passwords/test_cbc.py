@@ -13,21 +13,22 @@ CBC_ENCRYPT_TEST_DATA = [
     pytest.param(
         "42.42.42.42_passwd",
         "arista",
-        "LIi7vE5hcmlzdGEAAAA=",
+        "3QGcqpU2YTwKh2jVQ4Vj/A==",
         id="Valid encryption",
     ),
 ]
 
 
 @pytest.mark.parametrize(("key", "data", "expected_b64"), CBC_ENCRYPT_TEST_DATA)
-def test_cbc_encrypt(key: str, data: str, expected_b64: str) -> None:
+def test_cbc_encrypt_success(key: str, data: str, expected_b64: str) -> None:
+    """Test cbc_encrypt."""
     assert cbc_encrypt(key, data) == expected_b64
 
 
 CBC_DECRYPT_TEST_DATA = [
     pytest.param(
         "42.42.42.42_passwd",
-        "LIi7vE5hcmlzdGEAAAA=",
+        "3QGcqpU2YTwKh2jVQ4Vj/A==",
         "arista",
         does_not_raise(),
         id="Valid decryption",
@@ -41,7 +42,7 @@ CBC_DECRYPT_TEST_DATA = [
     ),
     pytest.param(
         "wrong_password",
-        "LIi7vE5hcmlzdGEAAAA=",
+        "bM7t58t04qSqLHAfZR/Szg==",
         "",
         pytest.raises(RuntimeError, match="Invalid Arista signature"),
         id="Wrong password (signature mismatch)",
@@ -55,7 +56,7 @@ CBC_DECRYPT_TEST_DATA = [
     ),
     pytest.param(
         "42.42.42.42_passwd",
-        "LIi7vE5/v7+/v7+/v78=",
+        "Sh5yjV8SD2j//////////9pkhd5VI3SbQDy17ujMdko=",
         "",
         pytest.raises(ValueError, match="Decrypted data is not valid UTF-8"),
         id="Invalid UTF-8 sequence in decrypted data",
@@ -65,6 +66,7 @@ CBC_DECRYPT_TEST_DATA = [
 
 @pytest.mark.parametrize(("key", "encrypted_data", "expected_plain", "expected_raise"), CBC_DECRYPT_TEST_DATA)
 def test_cbc_decrypt(key: str, encrypted_data: str, expected_plain: str, expected_raise: AbstractContextManager[None]) -> None:
+    """Test cbc_decrypt susccess and various failures."""
     with expected_raise:
         assert cbc_decrypt(key, encrypted_data) == expected_plain
 
@@ -72,7 +74,7 @@ def test_cbc_decrypt(key: str, encrypted_data: str, expected_plain: str, expecte
 CBC_VERIFY_TEST_DATA = [
     pytest.param(
         "42.42.42.42_passwd",
-        "LIi7vE5hcmlzdGEAAAA=",
+        "3QGcqpU2YTwKh2jVQ4Vj/A==",
         True,
         id="Verify success",
     ),
@@ -93,4 +95,5 @@ CBC_VERIFY_TEST_DATA = [
 
 @pytest.mark.parametrize(("key", "encrypted_data", "expected_bool"), CBC_VERIFY_TEST_DATA)
 def test_cbc_verify(key: str, encrypted_data: str, expected_bool: bool) -> None:
+    """Test cbc_verify."""
     assert cbc_verify(key, encrypted_data) == expected_bool
