@@ -2,6 +2,7 @@
 // Use of this source code is governed by the Apache License 2.0
 // that can be found in the LICENSE file.
 
+use avdschema::delegate_anyschema_method;
 use avdschema::{
     any::AnySchema, boolean::Bool, dict::Dict, int::Int, list::List, resolve_ref, str::Str,
 };
@@ -219,23 +220,11 @@ impl Coercion for Str {
 }
 impl Coercion for AnySchema {
     fn coerce(&self, input: &mut Value, ctx: &mut Context) {
-        match self {
-            Self::Bool(schema) => schema.coerce(input, ctx),
-            Self::Int(schema) => schema.coerce(input, ctx),
-            Self::Str(schema) => schema.coerce(input, ctx),
-            Self::List(schema) => schema.coerce(input, ctx),
-            Self::Dict(schema) => schema.coerce(input, ctx),
-        }
+        delegate_anyschema_method!(self, coerce, input, ctx)
     }
 
     fn coerce_ref(&self, input: &mut Value, ctx: &mut Context) {
-        match self {
-            Self::Bool(schema) => schema.coerce_ref(input, ctx),
-            Self::Int(schema) => schema.coerce_ref(input, ctx),
-            Self::Str(schema) => schema.coerce_ref(input, ctx),
-            Self::List(schema) => schema.coerce_ref(input, ctx),
-            Self::Dict(schema) => schema.coerce_ref(input, ctx),
-        }
+        delegate_anyschema_method!(self, coerce_ref, input, ctx)
     }
 }
 
