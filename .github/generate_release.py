@@ -16,7 +16,8 @@ import yaml
 
 SCOPES = [
     "requirements",
-    "pyavd-utils",
+    "validation",
+    "passwords",
     "rust",
 ]
 
