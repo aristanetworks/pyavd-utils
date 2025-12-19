@@ -3,8 +3,18 @@
 // that can be found in the LICENSE file.
 #![deny(unused_crate_dependencies)]
 
-mod errors;
-mod sha512crypt;
+// Feature sha512
 
-pub use sha512crypt::sha512_crypt;
-pub use errors::{InvalidSaltError, Sha512CryptError};
+#[cfg(feature = "sha512")]
+mod sha512;
+
+#[cfg(feature = "sha512")]
+pub use crate::sha512::{InvalidSaltError, Sha512CryptError, sha512_crypt};
+
+// Feature cbc
+
+#[cfg(feature = "cbc")]
+mod cbc;
+
+#[cfg(feature = "cbc")]
+pub use crate::cbc::{CbcError, cbc_check_password, cbc_decrypt, cbc_encrypt};

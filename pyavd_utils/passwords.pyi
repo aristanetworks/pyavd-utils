@@ -20,3 +20,48 @@ def sha512_crypt(password: str, salt: str) -> str:
     Raises:
       ValueError: If the salt is empty or contain invalid characters.
     """
+
+def cbc_encrypt(key: str, data: str) -> str:
+    """
+    Encrypt the data string using CBC TripleDES.
+
+    Args:
+        key: The encryption key.
+        data: The data to be encrypted.
+
+    Returns:
+        str: The encrypted data, encoded in base64.
+
+    Raises:
+      RunTimeError: If anything fails during encryption.
+    """
+
+def cbc_decrypt(key: str, encrypted_data: str) -> str:
+    """
+    Decrypt the encrypted_data string using CBC TripleDES.
+
+    Args:
+        key: The encryption key.
+        encrypted_data: The base64-encoded encrypted data to be decrypted.
+
+    Returns:
+        str: The decrypted data.
+
+    Raises:
+      ValueError: If encrypted_data is not a valid base64 string.
+      RunTimeError: If anything fails during decryption.
+    """
+
+def cbc_verify(key: str, encrypted_data: str) -> str:
+    """
+    Verify if an encrypted password is decryptable with the given key.
+
+    It does not return the password but only raises an error if the password cannot be decrypted.
+
+    Args:
+        key: The decryption key.
+        encrypted_data: The base64-encoded encrypted data to be decrypted.
+
+    Returns:
+        bool: `True` if the password is decryptable, `False` otherwise.
+    """
