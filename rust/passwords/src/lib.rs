@@ -18,3 +18,11 @@ mod cbc;
 
 #[cfg(feature = "cbc")]
 pub use crate::cbc::{CbcError, cbc_check_password, cbc_decrypt, cbc_encrypt};
+
+// Feature simple-7
+
+#[cfg(feature = "simple-7")]
+mod simple_7;
+
+#[cfg(feature = "simple-7")]
+pub use crate::simple_7::{Simple7Error, simple_7_decrypt, simple_7_encrypt};

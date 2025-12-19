@@ -35,3 +35,6 @@ mod test_sha512;
 
 #[cfg(feature = "cbc")]
 mod test_cbc;
+
+#[cfg(feature = "simple-7")]
+mod test_simple_7;

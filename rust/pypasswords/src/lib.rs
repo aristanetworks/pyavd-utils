@@ -64,6 +64,30 @@ mod passwords {
     pub fn cbc_verify(password: String, encrypted_data: String) -> bool {
         passwords::cbc_check_password(password.as_bytes(), encrypted_data.as_bytes())
     }
+
+    #[cfg(feature = "simple-7")]
+    #[pyfunction]
+    /// Encrypt (obfuscate) a password with insecure type-7.
+    ///
+    /// If salt is None, a random salt in the range 0-15 will be used.
+    pub fn simple_7_encrypt(data: String, salt: Option<u8>) -> PyResult<String> {
+        passwords::simple_7_encrypt(&data, salt).map_err(|err| match err {
+            passwords::Simple7Error::InvalidSaltValue(_) => PyValueError::new_err(err.to_string()),
+            _ => PyRuntimeError::new_err(err.to_string()),
+        })
+    }
+
+    #[cfg(feature = "simple-7")]
+    #[pyfunction]
+    /// Decrypt (deobfuscate) a password from insecure type-7.
+    pub fn simple_7_decrypt(data: String) -> PyResult<String> {
+        passwords::simple_7_decrypt(&data).map_err(|err| match err {
+            passwords::Simple7Error::InvalidUtf8(_) => PyRuntimeError::new_err(err.to_string()),
+            _ => PyValueError::new_err(err.to_string()),
+        })
+    }
+
+
 }
 
 // Implementation of the pytests but here using pyo3 wrappers in Rust, to ensure we get coverage data

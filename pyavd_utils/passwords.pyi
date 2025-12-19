@@ -65,3 +65,39 @@ def cbc_verify(key: str, encrypted_data: str) -> str:
     Returns:
         bool: `True` if the password is decryptable, `False` otherwise.
     """
+
+def simple_7_encrypt(data: str, salt: int | None) -> str:
+    """
+    Encrypt (obfuscate) a password with insecure type-7.
+
+    WARNING: Type-7 encryption is NOT secure and should only be used for compatibility
+    with legacy systems. It provides only obfuscation, not real encryption.
+
+    Args:
+        data: The password to encrypt.
+        salt: The salt value (0-15). If None, a random salt will be generated.
+
+    Returns:
+        str: The encrypted password in type-7 format.
+
+    Raises:
+        ValueError: If the salt is not in the range 0-15.
+    """
+
+def simple_7_decrypt(data: str) -> str:
+    """
+    Decrypt (deobfuscate) a password from insecure type-7.
+
+    WARNING: Type-7 encryption is NOT secure and should only be used for compatibility
+    with legacy systems. It provides only obfuscation, not real encryption.
+
+    Args:
+        data: The type-7 encrypted password to decrypt.
+
+    Returns:
+        str: The decrypted password.
+
+    Raises:
+        ValueError: If the encrypted data is invalid (too short, invalid format, invalid hex, or salt out of range).
+        RuntimeError: If the decrypted data is not valid UTF-8.
+    """
