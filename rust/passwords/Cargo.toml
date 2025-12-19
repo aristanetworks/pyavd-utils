@@ -5,9 +5,10 @@ edition = "2024"
 license.workspace = true
 
 [features]
-default = ["cbc", "sha512"]
+default = ["cbc", "sha512", "simple-7"]
 cbc = ["dep:cbc", "dep:cipher", "dep:des", "dep:base64"]
 sha512 = ["dep:sha-crypt"]
+simple-7 = ["dep:hex", "dep:rand"]
 
 [dependencies]
 derive_more = { workspace = true, features = ["display", "from"]}
@@ -18,3 +19,6 @@ cbc = { version = "0.1.0", default-features = false , optional = true}
 cipher = { version = "0.4.4", default-features = false, features = ["block-padding"] , optional = true}
 des = { version = "0.8.0", default-features = false , optional = true}
 base64 = { version = "0.21.0", default-features = false , features = ["std"], optional = true}
+# simple-7 feature
+hex = { version = "0.4", default-features = false, features = ["std"], optional = true}
+rand = { version = "0.8", default-features = false, features = ["std", "std_rng"], optional = true}
