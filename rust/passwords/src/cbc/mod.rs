@@ -5,9 +5,8 @@
 use base64::{Engine as _, engine::general_purpose::STANDARD as B64};
 use cbc::cipher::block_padding::NoPadding;
 use cbc::cipher::{BlockDecryptMut, BlockEncryptMut, KeyIvInit};
+use cipher as _;
 use des::TdesEde3;
-
-use crate::CbcError;
 
 // Values used by Arista.
 const SEED: [u8; 8] = [0xd5, 0xa8, 0xc9, 0x1e, 0xf5, 0xd5, 0x8a, 0x23];
@@ -22,6 +21,21 @@ const PARITY_BITS: [u8; 128] = [
     0x61, 0x61, 0x62, 0x62, 0x64, 0x64, 0x67, 0x67, 0x68, 0x68, 0x6B, 0x6B, 0x6D, 0x6D, 0x6E, 0x6E,
     0x70, 0x70, 0x73, 0x73, 0x75, 0x75, 0x76, 0x76, 0x79, 0x79, 0x7A, 0x7A, 0x7C, 0x7C, 0x7F, 0x7F,
 ];
+
+#[derive(Debug, derive_more::Display, derive_more::From)]
+pub enum CbcError {
+    #[display("Invalid Base64 encoding")]
+    InvalidBase64,
+    #[display("Decryption failed (check password)")]
+    DecryptionFailed,
+    #[display("Invalid Arista signature in decrypted data")]
+    InvalidSignature,
+    #[display("Decrypted data is not valid UTF-8")]
+    InvalidUtf8,
+    #[display("Encryption failed: internal block alignment error")]
+    EncryptionFailed,
+}
+impl std::error::Error for CbcError {}
 
 /// Convert the key to the proper format to give to CBC Encryptor and Decryptor.
 fn derive_key(pw: &[u8]) -> [u8; 24] {
@@ -102,7 +116,6 @@ pub fn cbc_check_password(key: &[u8], ciphertext: &[u8]) -> bool {
     cbc_decrypt(key, ciphertext).is_ok()
 }
 
-#[cfg(feature = "cbc")]
 #[cfg(test)]
 mod tests {
     use super::*;

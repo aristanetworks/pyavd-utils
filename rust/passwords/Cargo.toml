@@ -6,12 +6,11 @@ license.workspace = true
 
 [features]
 default = ["cbc", "sha512"]
-cbc = ["dep:cbc", "dep:cipher", "dep:des", "dep:base64", "dep:derive_more"]
-sha512 = ["dep:sha-crypt", "dep:derive_more"]
+cbc = ["dep:cbc", "dep:cipher", "dep:des", "dep:base64"]
+sha512 = ["dep:sha-crypt"]
 
 [dependencies]
-# both features
-derive_more = { workspace = true, features = ["display", "from"] , optional = true}
+derive_more = { workspace = true, features = ["display", "from"]}
 # sha512 feature
 sha-crypt = { version = "0.5.0", default-features = false , optional = true}
 # cbc feature
