@@ -54,7 +54,7 @@ def cbc_decrypt(key: str, encrypted_data: str) -> str:
 
 def cbc_verify(key: str, encrypted_data: str) -> str:
     """
-    Verify if an encrypted password is decryptable.
+    Verify if an encrypted password is decryptable with the given key.
 
     It does not return the password but only raises an error if the password cannot be decrypted.
 
