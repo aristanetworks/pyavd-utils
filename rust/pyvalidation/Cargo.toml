@@ -13,6 +13,7 @@ test_schema_store = { path = "../test_schema_store" }
 
 [dependencies]
 avdschema = { path = "../avdschema", features = ["dump_load_files"] }
+merge = { path = "../merge" }
 validation = { path = "../validation" }
 log = { workspace = true }
 pyo3 = { workspace = true, "features" = ["abi3-py310"] }
