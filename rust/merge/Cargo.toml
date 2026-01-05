@@ -1,0 +1,13 @@
+[package]
+name = "merge"
+version.workspace = true
+edition = "2024"
+license.workspace = true
+
+[dev-dependencies]
+test_schema_store = { path = "../test_schema_store" }
+avdschema = { path = "../avdschema", features = ["dump_load_files"]}
+
+[dependencies]
+avdschema = { path = "../avdschema" }
+serde_json = { version = "1.0.135", features = ["preserve_order"] }
