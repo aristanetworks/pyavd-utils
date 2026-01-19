@@ -2,7 +2,7 @@
 // Use of this source code is governed by the Apache License 2.0
 // that can be found in the LICENSE file.
 
-use avdschema::Store;
+use avdschema::{Schema, Store};
 
 use crate::feedback::{ErrorIssue, Feedback, InfoIssue, Path, Violation, WarningIssue};
 
@@ -18,12 +18,19 @@ pub struct Context<'a> {
 }
 
 impl<'a> Context<'a> {
-    pub fn new(store: &'a Store, configuration: Option<&'a Configuration>) -> Self {
+    pub fn new(
+        store: &'a Store,
+        configuration: Option<&'a Configuration>,
+        schema_name: Schema,
+    ) -> Self {
         Self {
             configuration: configuration.cloned().unwrap_or_default(),
             store,
             result: Default::default(),
-            state: Default::default(),
+            state: State {
+                schema_name: Some(schema_name),
+                ..Default::default()
+            },
         }
     }
     pub(crate) fn add_error(&mut self, error: impl Into<ErrorIssue>) {
@@ -77,6 +84,9 @@ pub(crate) struct State {
     /// Used for structured_config where we overload other config, and only the final result should be validated for required keys.
     pub(crate) relaxed_validation: bool,
     pub(crate) path: Path,
+    /// The schema being validated (EosDesigns or EosCliConfigGen).
+    /// Used to determine if we should check for eos_cli_config_gen keys in eos_designs input.
+    pub(crate) schema_name: Option<Schema>,
 }
 
 /// Configuration to use during validation.

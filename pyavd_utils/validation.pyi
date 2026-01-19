@@ -30,11 +30,20 @@ class Deprecation:
     url: str | None
     """Url where more information can be found."""
 
+class IgnoredEosConfigKey:
+    """EOS CLI Config Gen key found in EOS Designs input."""
+
+    message: str
+    """String detailing the ignored key."""
+    key: str
+    """The top-level key name that was ignored."""
+
 class ValidationResult:
     """Result of data validation."""
 
     violations: list[Violation]
     deprecations: list[Deprecation]
+    ignored_eos_config_keys: list[IgnoredEosConfigKey]
 
 class ValidatedDataResult:
     """Result of data validation including the validated data as JSON."""

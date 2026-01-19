@@ -3,7 +3,7 @@
 // that can be found in the LICENSE file.
 
 use avdschema::{
-    Walker as _,
+    Schema, Walker as _,
     any::{AnySchema, Shortcuts as _},
     dict::Dict,
     resolve_ref,
@@ -13,7 +13,7 @@ use serde_json::{Map, Value};
 
 use crate::{
     context::Context,
-    feedback::{Deprecated, Removed, Type, Violation},
+    feedback::{Deprecated, IgnoredEosConfigKey, Removed, Type, Violation},
 };
 
 use super::Validation;
@@ -70,9 +70,43 @@ fn get_dynamic_keys_schemas<'a>(
         .unwrap_or_default()
 }
 
+/// Check if we're validating eos_designs at the root level and if any input keys
+/// are top-level keys from eos_cli_config_gen schema. If so, emit a warning.
+fn check_for_eos_cli_config_gen_keys(input: &Map<String, Value>, ctx: &mut Context) {
+    // Only check at root level when validating eos_designs
+    if !ctx.state.path.is_empty() {
+        return;
+    }
+
+    if let Some(Schema::EosDesigns) = ctx.state.schema_name {
+        // Get the eos_cli_config_gen schema from the store
+        let eos_cli_config_gen_schema = ctx.store.get(Schema::EosCliConfigGen);
+
+        // Try to get the Dict schema
+        if let Ok(eos_cli_config_gen_dict) = TryInto::<&Dict>::try_into(eos_cli_config_gen_schema) {
+            // Get the top-level keys from eos_cli_config_gen
+            if let Some(eos_cli_config_gen_keys) = &eos_cli_config_gen_dict.keys {
+                // Check each input key
+                for input_key in input.keys() {
+                    if eos_cli_config_gen_keys.contains_key(input_key) {
+                        // Found an eos_cli_config_gen key in eos_designs input
+                        ctx.add_warning(IgnoredEosConfigKey {
+                            key: input_key.to_owned(),
+                        });
+                    }
+                }
+            }
+        }
+    }
+}
+
 fn validate_keys(schema: &Dict, input: &Map<String, Value>, ctx: &mut Context) {
     if let Some(keys) = &schema.keys {
         let dynamic_keys_schemas = get_dynamic_keys_schemas(schema, input);
+
+        // Check for eos_cli_config_gen keys in eos_designs input at root level
+        check_for_eos_cli_config_gen_keys(input, ctx);
+
         input.iter().for_each(|(input_key, input_value)| {
             ctx.state.path.push(input_key.to_owned());
             if let Some(key_schema) = keys.get(input_key) {
@@ -177,7 +211,7 @@ mod tests {
         let schema = Dict::default();
         let input = serde_json::json!({ "foo": true });
         let store = get_test_store();
-        let mut ctx = Context::new(&store, None);
+        let mut ctx = Context::new(&store, None, Schema::EosDesigns);
         schema.validate_value(&input, &mut ctx);
         assert!(ctx.result.errors.is_empty() && ctx.result.infos.is_empty());
     }
@@ -187,7 +221,7 @@ mod tests {
         let schema = Dict::default();
         let input = serde_json::json!(true);
         let store = get_test_store();
-        let mut ctx = Context::new(&store, None);
+        let mut ctx = Context::new(&store, None, Schema::EosDesigns);
         schema.validate_value(&input, &mut ctx);
         assert!(ctx.result.infos.is_empty());
         assert_eq!(
@@ -214,7 +248,7 @@ mod tests {
         };
         let input = serde_json::json!({ "foo": "bar", "bar": 123 });
         let store = get_test_store();
-        let mut ctx = Context::new(&store, None);
+        let mut ctx = Context::new(&store, None, Schema::EosDesigns);
         schema.validate_value(&input, &mut ctx);
         assert!(ctx.result.errors.is_empty() && ctx.result.infos.is_empty());
     }
@@ -230,7 +264,7 @@ mod tests {
         };
         let input = serde_json::json!({ "foo": [], "bar": "boo" });
         let store = get_test_store();
-        let mut ctx = Context::new(&store, None);
+        let mut ctx = Context::new(&store, None, Schema::EosDesigns);
         schema.validate_value(&input, &mut ctx);
         assert!(ctx.result.infos.is_empty());
         assert_eq!(
@@ -271,7 +305,7 @@ mod tests {
             return_coercion_infos: true,
             ..Default::default()
         };
-        let mut ctx = Context::new(&store, Some(&configuration));
+        let mut ctx = Context::new(&store, Some(&configuration), Schema::EosDesigns);
         schema.coerce(&mut input, &mut ctx);
         schema.validate_value(&input, &mut ctx);
         assert!(ctx.result.errors.is_empty());
@@ -332,7 +366,7 @@ mod tests {
         let input = serde_json::json!(
             { "my_dynamic_keys": [{"key": "dynkey1"}, {"key": "dynkey2"}], "dynkey1": 5, "dynkey2": 9 });
         let store = get_test_store();
-        let mut ctx = Context::new(&store, None);
+        let mut ctx = Context::new(&store, None, Schema::EosDesigns);
         schema.validate_value(&input, &mut ctx);
         assert_eq!(ctx.result.errors, vec![]);
         assert_eq!(ctx.result.infos, vec![]);
@@ -372,7 +406,7 @@ mod tests {
         let input = serde_json::json!(
             { "my_dynamic_keys": [{"key": "dynkey1"}, {"key": "dynkey2"}], "dynkey1": 11, "dynkey2": "wrong" });
         let store = get_test_store();
-        let mut ctx = Context::new(&store, None);
+        let mut ctx = Context::new(&store, None, Schema::EosDesigns);
         schema.validate_value(&input, &mut ctx);
         assert_eq!(ctx.result.infos, vec![]);
         assert_eq!(
@@ -426,7 +460,7 @@ mod tests {
         };
         let mut input = serde_json::json!({ "dynkey1": 5, "dynkey2": 9 });
         let store = get_test_store();
-        let mut ctx = Context::new(&store, None);
+        let mut ctx = Context::new(&store, None, Schema::EosDesigns);
         schema.coerce(&mut input, &mut ctx);
         schema.validate_value(&input, &mut ctx);
         assert!(ctx.result.errors.is_empty());
@@ -469,7 +503,7 @@ mod tests {
         let mut input =
             serde_json::json!({ "dynkey1": {"sub_key": 11, "bad_key": true}, "dynkey2": "wrong" });
         let store = get_test_store();
-        let mut ctx = Context::new(&store, None);
+        let mut ctx = Context::new(&store, None, Schema::EosDesigns);
         schema.coerce(&mut input, &mut ctx);
         schema.validate_value(&input, &mut ctx);
         assert!(ctx.result.infos.is_empty());
@@ -509,7 +543,7 @@ mod tests {
         };
         let input = serde_json::json!({ "foo": "ok", "foo1": "wrong" });
         let store = get_test_store();
-        let mut ctx = Context::new(&store, None);
+        let mut ctx = Context::new(&store, None, Schema::EosDesigns);
         schema.validate_value(&input, &mut ctx);
         assert!(ctx.result.errors.is_empty() && ctx.result.infos.is_empty());
     }
@@ -522,7 +556,7 @@ mod tests {
         };
         let input = serde_json::json!({ "foo": "ok", "foo1": "wrong", "_internal": "ignored" });
         let store = get_test_store();
-        let mut ctx = Context::new(&store, None);
+        let mut ctx = Context::new(&store, None, Schema::EosDesigns);
         schema.validate_value(&input, &mut ctx);
         assert!(ctx.result.infos.is_empty());
         assert_eq!(
@@ -552,7 +586,7 @@ mod tests {
         .unwrap();
         let input = serde_json::json!({"foo": 123});
         let store = get_test_store();
-        let mut ctx = Context::new(&store, None);
+        let mut ctx = Context::new(&store, None, Schema::EosDesigns);
         schema.validate_value(&input, &mut ctx);
         assert!(ctx.result.infos.is_empty());
         assert_eq!(
@@ -599,7 +633,7 @@ mod tests {
         .unwrap();
         let input = serde_json::json!({"foo": 123});
         let store = get_test_store();
-        let mut ctx = Context::new(&store, None);
+        let mut ctx = Context::new(&store, None, Schema::EosDesigns);
         schema.validate_value(&input, &mut ctx);
         assert!(ctx.result.infos.is_empty());
         assert_eq!(
@@ -635,7 +669,7 @@ mod tests {
         .unwrap();
         let input = serde_json::json!({"foo": "blah"});
         let store = get_test_store();
-        let mut ctx = Context::new(&store, None);
+        let mut ctx = Context::new(&store, None, Schema::EosDesigns);
         schema.validate_value(&input, &mut ctx);
         assert!(ctx.result.infos.is_empty());
         assert!(ctx.result.warnings.is_empty());
@@ -664,7 +698,7 @@ mod tests {
             return_coercion_infos: true,
             ..Default::default()
         };
-        let mut ctx = Context::new(&store, Some(&configuration));
+        let mut ctx = Context::new(&store, Some(&configuration), Schema::EosDesigns);
         schema.coerce(&mut input, &mut ctx);
         schema.validate_value(&input, &mut ctx);
         assert!(ctx.result.errors.is_empty());
@@ -699,7 +733,7 @@ mod tests {
         };
         let input = serde_json::json!({});
         let store = get_test_store();
-        let mut ctx = Context::new(&store, None);
+        let mut ctx = Context::new(&store, None, Schema::EosDesigns);
         schema.validate_value(&input, &mut ctx);
         assert!(ctx.result.infos.is_empty());
         assert_eq!(
@@ -733,7 +767,7 @@ mod tests {
             ignore_required_keys_on_root_dict: true,
             ..Default::default()
         };
-        let mut ctx = Context::new(&store, Some(&configuration));
+        let mut ctx = Context::new(&store, Some(&configuration), Schema::EosDesigns);
         schema.coerce(&mut input, &mut ctx);
         schema.validate_value(&input, &mut ctx);
         assert!(ctx.result.errors.is_empty());
@@ -762,7 +796,7 @@ mod tests {
             ignore_required_keys_on_root_dict: true,
             ..Default::default()
         };
-        let mut ctx = Context::new(&store, Some(&configuration));
+        let mut ctx = Context::new(&store, Some(&configuration), Schema::EosDesigns);
         // Using a deeper path and see that we still get the error even though we relax for the root dict.
         ctx.state.path.push("deeper".into());
         schema.validate_value(&input, &mut ctx);
@@ -774,5 +808,67 @@ mod tests {
                 issue: Violation::MissingRequiredKey { key: "foo".into() }.into()
             }]
         )
+    }
+
+    #[test]
+    fn validate_eos_designs_with_eos_cli_config_gen_keys_warning() {
+        // Test that when validating eos_designs, if a top-level key from eos_cli_config_gen
+        // is present in the input, a warning is emitted.
+        let store = get_test_store();
+        let input = serde_json::json!({
+            "key3": "valid_eos_designs_key",
+            "key1": "this_is_an_eos_cli_config_gen_key",
+            "key2": "another_eos_cli_config_gen_key"
+        });
+
+        let mut ctx = Context::new(&store, None, Schema::EosDesigns);
+        let schema = store.get(Schema::EosDesigns);
+        schema.validate_value(&input, &mut ctx);
+
+        // Should have warnings for key1 and key2
+        assert_eq!(ctx.result.warnings.len(), 2);
+        assert!(ctx.result.warnings.iter().any(|w| {
+            matches!(&w.issue, WarningIssue::IgnoredEosConfigKey(ignored) if ignored.key == "key1")
+        }));
+        assert!(ctx.result.warnings.iter().any(|w| {
+            matches!(&w.issue, WarningIssue::IgnoredEosConfigKey(ignored) if ignored.key == "key2")
+        }));
+    }
+
+    #[test]
+    fn validate_eos_designs_without_eos_cli_config_gen_keys_no_warning() {
+        // Test that when validating eos_designs with only valid eos_designs keys,
+        // no warning is emitted.
+        let store = get_test_store();
+        let input = serde_json::json!({
+            "key3": "valid_eos_designs_key"
+        });
+
+        let mut ctx = Context::new(&store, None, Schema::EosDesigns);
+        let schema = store.get(Schema::EosDesigns);
+        schema.validate_value(&input, &mut ctx);
+
+        // Should have no warnings
+        assert!(ctx.result.warnings.is_empty());
+    }
+
+    #[test]
+    fn validate_eos_cli_config_gen_no_warning() {
+        // Test that when validating eos_cli_config_gen, no warning is emitted
+        // even if keys are present (since we only check when validating eos_designs).
+        // 'eos_designs' key are ignored.
+        let store = get_test_store();
+        let input = serde_json::json!({
+            "key1": "valid_key",
+            "key2": "another_valid_key",
+            "key3": "valid_eos_designs_key",
+        });
+
+        let mut ctx = Context::new(&store, None, Schema::EosCliConfigGen);
+        let schema = store.get(Schema::EosCliConfigGen);
+        schema.validate_value(&input, &mut ctx);
+
+        // Should have no warnings
+        assert!(ctx.result.warnings.is_empty());
     }
 }

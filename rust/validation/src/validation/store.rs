@@ -83,7 +83,7 @@ impl StoreValidate<Schema> for Store {
         configuration: Option<&Configuration>,
     ) -> ValidationResult {
         debug!("Validating serde_json::Value");
-        let mut ctx = Context::new(self, configuration);
+        let mut ctx = Context::new(self, configuration, schema_name);
         let schema = self.get(schema_name);
         schema.coerce(value, &mut ctx);
         debug!("Validating serde_json::Value Coercion Done");
@@ -93,7 +93,7 @@ impl StoreValidate<Schema> for Store {
     }
     fn coerce_value(&self, value: &mut Value, schema_name: Schema) -> ValidationResult {
         debug!("Coercing serde_json::Value");
-        let mut ctx = Context::new(self, None);
+        let mut ctx = Context::new(self, None, schema_name);
         let schema = self.get(schema_name);
         schema.coerce(value, &mut ctx);
         debug!("Coercing serde_json::Value Done");
@@ -161,7 +161,8 @@ impl SchemaConversionError {
     }
 
     pub fn to_validation_result(&self, store: &Store) -> ValidationResult {
-        let mut ctx = Context::new(store, None);
+        // Use a default schema since we don't have a valid schema name in this error case
+        let mut ctx = Context::new(store, None, Schema::EosDesigns);
         ctx.add_error(Violation::InvalidSchema {
             schema: self.get_invalid_schema_name(),
         });

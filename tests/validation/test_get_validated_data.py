@@ -14,6 +14,7 @@ def test_get_validated_data() -> None:
     validation_result = coercion_and_validation_result.validation_result
     assert len(validation_result.violations) == 0
     assert len(validation_result.deprecations) == 0
+    assert len(validation_result.ignored_eos_config_keys) == 0
 
 
 @pytest.mark.usefixtures("init_store")
@@ -32,3 +33,4 @@ def test_get_validated_data_not_ok() -> None:
         assert (violation.path, violation.message) in expected_violations, f"Violation not expected: {violation.path}, {violation.message}"
 
     assert len(validation_result.deprecations) == 0
+    assert len(validation_result.ignored_eos_config_keys) == 0

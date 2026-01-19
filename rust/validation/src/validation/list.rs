@@ -128,7 +128,7 @@ fn validate_item_primary_key(schema: &List, item: &Value, ctx: &mut Context) {
 
 #[cfg(test)]
 mod tests {
-    use avdschema::{any::AnySchema, dict::Dict, str::Str};
+    use avdschema::{Schema, any::AnySchema, dict::Dict, str::Str};
     use ordermap::OrderMap;
 
     use super::*;
@@ -144,7 +144,7 @@ mod tests {
         let schema = List::default();
         let input = serde_json::json!(["foo", "bar"]);
         let store = get_test_store();
-        let mut ctx = Context::new(&store, None);
+        let mut ctx = Context::new(&store, None, Schema::EosDesigns);
         schema.validate_value(&input, &mut ctx);
         assert!(ctx.result.errors.is_empty() && ctx.result.infos.is_empty());
     }
@@ -154,7 +154,7 @@ mod tests {
         let schema = List::default();
         let input = true.into();
         let store = get_test_store();
-        let mut ctx = Context::new(&store, None);
+        let mut ctx = Context::new(&store, None, Schema::EosDesigns);
         schema.validate_value(&input, &mut ctx);
         assert!(ctx.result.infos.is_empty());
         assert_eq!(
@@ -178,7 +178,7 @@ mod tests {
         };
         let input = serde_json::json!(["foo", "bar"]);
         let store = get_test_store();
-        let mut ctx = Context::new(&store, None);
+        let mut ctx = Context::new(&store, None, Schema::EosDesigns);
         schema.validate_value(&input, &mut ctx);
         assert!(ctx.result.errors.is_empty() && ctx.result.infos.is_empty());
     }
@@ -191,7 +191,7 @@ mod tests {
         };
         let input = serde_json::json!([{}, {}]);
         let store = get_test_store();
-        let mut ctx = Context::new(&store, None);
+        let mut ctx = Context::new(&store, None, Schema::EosDesigns);
         schema.validate_value(&input, &mut ctx);
         assert!(ctx.result.infos.is_empty());
         assert_eq!(
@@ -229,7 +229,7 @@ mod tests {
             return_coercion_infos: true,
             ..Default::default()
         };
-        let mut ctx = Context::new(&store, Some(&configuration));
+        let mut ctx = Context::new(&store, Some(&configuration), Schema::EosDesigns);
         schema.coerce(&mut input, &mut ctx);
         schema.validate_value(&input, &mut ctx);
         assert_eq!(
@@ -264,7 +264,7 @@ mod tests {
         };
         let input = serde_json::json!(["foo", "bar"]);
         let store = get_test_store();
-        let mut ctx = Context::new(&store, None);
+        let mut ctx = Context::new(&store, None, Schema::EosDesigns);
         schema.validate_value(&input, &mut ctx);
         assert!(ctx.result.errors.is_empty() && ctx.result.infos.is_empty());
     }
@@ -277,7 +277,7 @@ mod tests {
         };
         let input = serde_json::json!(["foo", "bar"]);
         let store = get_test_store();
-        let mut ctx = Context::new(&store, None);
+        let mut ctx = Context::new(&store, None, Schema::EosDesigns);
         schema.validate_value(&input, &mut ctx);
         assert!(ctx.result.infos.is_empty());
         assert_eq!(
@@ -301,7 +301,7 @@ mod tests {
         };
         let input = serde_json::json!(["foo", "bar"]);
         let store = get_test_store();
-        let mut ctx = Context::new(&store, None);
+        let mut ctx = Context::new(&store, None, Schema::EosDesigns);
         schema.validate_value(&input, &mut ctx);
         assert!(ctx.result.errors.is_empty() && ctx.result.infos.is_empty());
     }
@@ -314,7 +314,7 @@ mod tests {
         };
         let input = serde_json::json!(["foo", "bar", "baz"]);
         let store = get_test_store();
-        let mut ctx = Context::new(&store, None);
+        let mut ctx = Context::new(&store, None, Schema::EosDesigns);
         schema.validate_value(&input, &mut ctx);
         assert!(ctx.result.infos.is_empty());
         assert_eq!(
@@ -345,7 +345,7 @@ mod tests {
         };
         let input = serde_json::json!([{ "foo": "v1" }, { "foo": "v2" }]);
         let store = get_test_store();
-        let mut ctx = Context::new(&store, None);
+        let mut ctx = Context::new(&store, None, Schema::EosDesigns);
         schema.validate_value(&input, &mut ctx);
         assert!(ctx.result.errors.is_empty() && ctx.result.infos.is_empty());
     }
@@ -365,7 +365,7 @@ mod tests {
         };
         let input = serde_json::json!([{ "foo": null }, { "foo": "v1" }]);
         let store = get_test_store();
-        let mut ctx = Context::new(&store, None);
+        let mut ctx = Context::new(&store, None, Schema::EosDesigns);
         schema.validate_value(&input, &mut ctx);
         assert!(ctx.result.infos.is_empty());
         assert_eq!(
@@ -392,7 +392,7 @@ mod tests {
         };
         let input = serde_json::json!([{ "foo": "111" }, { "foo": "222" }, { "foo": "111" }]);
         let store = get_test_store();
-        let mut ctx = Context::new(&store, None);
+        let mut ctx = Context::new(&store, None, Schema::EosDesigns);
         schema.validate_value(&input, &mut ctx);
         assert!(ctx.result.infos.is_empty());
         assert_eq!(
@@ -432,7 +432,7 @@ mod tests {
         };
         let input = serde_json::json!([{ "foo": "111" }, { "foo": "222" }, { "foo": "111" }]);
         let store = get_test_store();
-        let mut ctx = Context::new(&store, None);
+        let mut ctx = Context::new(&store, None, Schema::EosDesigns);
         schema.validate_value(&input, &mut ctx);
         assert!(ctx.result.infos.is_empty());
         assert!(ctx.result.errors.is_empty());

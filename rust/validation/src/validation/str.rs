@@ -84,6 +84,7 @@ fn validate_pattern(schema: &Str, input: &str, ctx: &mut Context) {
 #[cfg(test)]
 mod tests {
     use avdschema::base::valid_values::ValidValues;
+    use avdschema::Schema;
 
     use super::*;
     use crate::{
@@ -98,7 +99,7 @@ mod tests {
         let schema = Str::default();
         let input = "foo".into();
         let store = get_test_store();
-        let mut ctx = Context::new(&store, None);
+        let mut ctx = Context::new(&store, None, Schema::EosDesigns);
         schema.validate_value(&input, &mut ctx);
         assert!(ctx.result.errors.is_empty() && ctx.result.infos.is_empty());
     }
@@ -108,7 +109,7 @@ mod tests {
         let schema = Str::default();
         let input = serde_json::json!([]);
         let store = get_test_store();
-        let mut ctx = Context::new(&store, None);
+        let mut ctx = Context::new(&store, None, Schema::EosDesigns);
         schema.validate_value(&input, &mut ctx);
         assert!(ctx.result.infos.is_empty());
         assert_eq!(
@@ -135,7 +136,7 @@ mod tests {
         };
         let input = "foo".into();
         let store = get_test_store();
-        let mut ctx = Context::new(&store, None);
+        let mut ctx = Context::new(&store, None, Schema::EosDesigns);
         schema.validate_value(&input, &mut ctx);
         assert!(ctx.result.errors.is_empty() && ctx.result.infos.is_empty());
     }
@@ -151,7 +152,7 @@ mod tests {
         };
         let input = "FOO".into();
         let store = get_test_store();
-        let mut ctx = Context::new(&store, None);
+        let mut ctx = Context::new(&store, None, Schema::EosDesigns);
         schema.validate_value(&input, &mut ctx);
         assert!(ctx.result.infos.is_empty());
         assert_eq!(
@@ -183,7 +184,7 @@ mod tests {
             return_coercion_infos: true,
             ..Default::default()
         };
-        let mut ctx = Context::new(&store, Some(&configuration));
+        let mut ctx = Context::new(&store, Some(&configuration), Schema::EosDesigns);
         schema.coerce(&mut input, &mut ctx);
         schema.validate_value(&input, &mut ctx);
         assert!(ctx.result.errors.is_empty());
@@ -213,7 +214,7 @@ mod tests {
         let mut input = true.into();
         let store = get_test_store();
         let configururation = Configuration { return_coercion_infos: true, ..Default::default()};
-        let mut ctx = Context::new(&store, Some(&configururation));
+        let mut ctx = Context::new(&store, Some(&configururation), Schema::EosDesigns);
         schema.coerce(&mut input, &mut ctx);
         schema.validate_value(&input, &mut ctx);
         assert!(ctx.result.errors.is_empty());
@@ -248,7 +249,7 @@ mod tests {
         };
         let input = "foo".into();
         let store = get_test_store();
-        let mut ctx = Context::new(&store, None);
+        let mut ctx = Context::new(&store, None, Schema::EosDesigns);
         schema.validate_value(&input, &mut ctx);
         assert!(ctx.result.errors.is_empty());
         assert!(ctx.result.warnings.is_empty());
@@ -263,7 +264,7 @@ mod tests {
         };
         let input = "go".into();
         let store = get_test_store();
-        let mut ctx = Context::new(&store, None);
+        let mut ctx = Context::new(&store, None, Schema::EosDesigns);
         schema.validate_value(&input, &mut ctx);
         assert!(ctx.result.infos.is_empty());
         assert_eq!(
@@ -287,7 +288,7 @@ mod tests {
         };
         let input = "foo".into();
         let store = get_test_store();
-        let mut ctx = Context::new(&store, None);
+        let mut ctx = Context::new(&store, None, Schema::EosDesigns);
         schema.validate_value(&input, &mut ctx);
         assert!(ctx.result.errors.is_empty() && ctx.result.infos.is_empty());
     }
@@ -300,7 +301,7 @@ mod tests {
         };
         let input = "fooo".into();
         let store = get_test_store();
-        let mut ctx = Context::new(&store, None);
+        let mut ctx = Context::new(&store, None, Schema::EosDesigns);
         schema.validate_value(&input, &mut ctx);
         assert!(ctx.result.infos.is_empty());
         assert_eq!(
@@ -324,7 +325,7 @@ mod tests {
         };
         let input = "fOo".into();
         let store = get_test_store();
-        let mut ctx = Context::new(&store, None);
+        let mut ctx = Context::new(&store, None, Schema::EosDesigns);
         schema.validate_value(&input, &mut ctx);
         assert!(ctx.result.errors.is_empty() && ctx.result.infos.is_empty());
     }
@@ -337,7 +338,7 @@ mod tests {
         };
         let input = "foo".into();
         let store = get_test_store();
-        let mut ctx = Context::new(&store, None);
+        let mut ctx = Context::new(&store, None, Schema::EosDesigns);
         schema.validate_value(&input, &mut ctx);
         assert!(ctx.result.infos.is_empty());
         assert_eq!(

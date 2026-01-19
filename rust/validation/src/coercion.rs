@@ -231,6 +231,7 @@ impl Coercion for AnySchema {
 #[cfg(test)]
 mod tests {
     use avdschema::base::Base;
+    use avdschema::Schema;
     use ordermap::OrderMap;
 
     use super::*;
@@ -262,7 +263,7 @@ mod tests {
             return_coercion_infos: true,
             ..Default::default()
         };
-        let mut ctx = Context::new(&store, Some(&configuration));
+        let mut ctx = Context::new(&store, Some(&configuration), Schema::EosDesigns);
         schema.coerce(&mut input, &mut ctx);
         schema.validate_value(&input, &mut ctx);
         assert!(ctx.result.errors.is_empty());

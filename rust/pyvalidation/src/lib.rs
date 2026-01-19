@@ -18,7 +18,7 @@ static STORE: OnceLock<Store> = OnceLock::new();
 #[pymodule(gil_used = false)]
 pub mod validation {
     use super::STORE;
-    use avdschema::{Load as _, Store, any::AnySchema};
+    use avdschema::{Schema, Load as _, Store, any::AnySchema};
     use log::{debug, info};
     use pyo3::{Bound, PyResult, exceptions::PyRuntimeError, pyclass, pyfunction, types::PyModule};
     use std::path::PathBuf;
@@ -53,10 +53,18 @@ pub mod validation {
     }
 
     #[pyclass(frozen, get_all)]
+    #[derive(Clone)]
+    pub struct IgnoredEosConfigKey {
+        pub message: String,
+        pub key: String,
+    }
+
+    #[pyclass(frozen, get_all)]
     #[derive(Clone, Default)]
     pub struct ValidationResult {
         pub violations: Vec<Violation>,
         pub deprecations: Vec<Deprecation>,
+        pub ignored_eos_config_keys: Vec<IgnoredEosConfigKey>,
     }
     impl TryFrom<validation::ValidationResult> for ValidationResult {
         type Error = pyo3::PyErr;
@@ -91,6 +99,12 @@ pub mod validation {
                             version: deprecated.version.to_owned().into(),
                             replacement: deprecated.replacement.to_owned().into(),
                             url: deprecated.url.to_owned().into(),
+                        })
+                    }
+                    validation::feedback::WarningIssue::IgnoredEosConfigKey(ignored) => {
+                        result.ignored_eos_config_keys.push(IgnoredEosConfigKey {
+                            message: ignored.to_string(),
+                            key: ignored.key.to_owned(),
                         })
                     }
                 });
@@ -187,7 +201,7 @@ pub mod validation {
         let mut data: serde_json::Value = serde_json::from_str(data_as_json)
             .map_err(|err| PyRuntimeError::new_err(format!("Invalid JSON in data: {err}")))?;
 
-        let mut ctx = Context::new(get_store()?, None);
+        let mut ctx = Context::new(get_store()?, None, Schema::EosDesigns);
         schema.coerce(&mut data, &mut ctx);
         schema.validate_value(&data, &mut ctx);
 
@@ -504,6 +518,57 @@ mod tests {
                     "violation was not found in expected violations: {expected_violation:?}"
                 )
             }
+        });
+    }
+
+    #[test]
+    fn validate_eos_designs_with_ignored_eos_config_key() {
+        setup();
+        pyo3::Python::attach(|py| {
+            let module = py.import("validation").unwrap();
+            // router_isis is a key from eos_cli_config_gen that should be ignored when validating eos_designs
+            // fabric_name is a required key in eos_designs
+            let data_as_json_str = serde_json::json!({"fabric_name": "TEST_FABRIC", "router_isis": {"instance": "ISIS_TEST"}}).to_string();
+            let validation_result = {
+                let args = ();
+                let kwargs = pyo3::types::PyDict::new(py);
+                kwargs.set_item("data_as_json", data_as_json_str).unwrap();
+                kwargs
+                    .set_item("schema_name", "eos_designs")
+                    .unwrap();
+                module
+                    .call_method("validate_json", args, Some(&kwargs))
+                    .unwrap()
+            };
+
+            // Should have no violations
+            let violations = validation_result.getattr("violations").unwrap();
+            assert!(violations.is_instance_of::<pyo3::types::PyList>());
+            assert_eq!(violations.len().unwrap(), 0);
+
+            // Should have no deprecations
+            let deprecations = validation_result.getattr("deprecations").unwrap();
+            assert!(deprecations.is_instance_of::<pyo3::types::PyList>());
+            assert_eq!(deprecations.len().unwrap(), 0);
+
+            // Should have one ignored_eos_config_key
+            let ignored_keys = validation_result.getattr("ignored_eos_config_keys").unwrap();
+            assert!(ignored_keys.is_instance_of::<pyo3::types::PyList>());
+            assert_eq!(ignored_keys.len().unwrap(), 1);
+
+            // Check the ignored key details
+            let ignored_key = ignored_keys.get_item(0).unwrap();
+            let key = ignored_key.getattr("key").unwrap()
+                .cast_into_exact::<pyo3::types::PyString>()
+                .unwrap()
+                .to_string();
+            assert_eq!(key, "router_isis");
+
+            let message = ignored_key.getattr("message").unwrap()
+                .cast_into_exact::<pyo3::types::PyString>()
+                .unwrap()
+                .to_string();
+            assert_eq!(message, "The 'eos_cli_config_gen' key 'router_isis' is present in the input to 'eos_designs' and will be ignored.");
         });
     }
 }

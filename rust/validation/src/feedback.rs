@@ -139,6 +139,8 @@ pub enum ErrorIssue {
 pub enum WarningIssue {
     /// Deprecation of data model.
     Deprecated(Deprecated),
+    /// Ignore EOSConfig keys
+    IgnoredEosConfigKey(IgnoredEosConfigKey),
 }
 
 /// InfoIssue is wrapped in Feedback and added to the Context during coercion and validation.
@@ -330,6 +332,14 @@ impl Removed {
             url: deprecation.url.to_owned().into(),
         }
     }
+}
+#[derive(Clone, Debug, PartialEq, Serialize, derive_more::Display)]
+#[display(
+    "The 'eos_cli_config_gen' key '{key}' is present in the input to 'eos_designs' and will be ignored."
+)]
+pub struct IgnoredEosConfigKey {
+    /// The top-level key name that was ignored.
+    pub key: String,
 }
 
 #[cfg(test)]

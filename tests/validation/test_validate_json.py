@@ -20,3 +20,26 @@ def test_validate_json() -> None:
         assert (violation.path, violation.message) in expected_violations, f"Error not expected: {violation.path}, {violation.message}"
 
     assert len(validation_result.deprecations) == 0
+    assert len(validation_result.ignored_eos_config_keys) == 0
+
+
+@pytest.mark.usefixtures("init_store")
+def test_validate_json_with_ignored_eos_config_key() -> None:
+    """Test that eos_cli_config_gen keys are ignored when validating eos_designs."""
+    # router_isis is a key from eos_cli_config_gen that should be ignored when validating eos_designs
+    # fabric_name is a required key in eos_designs
+    validation_result = validate_json('{"fabric_name": "TEST_FABRIC", "router_isis": {"instance": "ISIS_TEST"}}', "eos_designs")
+
+    # Should have no violations
+    assert len(validation_result.violations) == 0, f"Unexpected violations: {[(v.path, v.message) for v in validation_result.violations]}"
+
+    # Should have no deprecations
+    assert len(validation_result.deprecations) == 0
+
+    # Should have one ignored_eos_config_key
+    assert len(validation_result.ignored_eos_config_keys) == 1
+
+    # Check the ignored key details
+    ignored_key = validation_result.ignored_eos_config_keys[0]
+    assert ignored_key.key == "router_isis"
+    assert ignored_key.message == "The 'eos_cli_config_gen' key 'router_isis' is present in the input to 'eos_designs' and will be ignored."
