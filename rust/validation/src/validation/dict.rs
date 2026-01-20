@@ -71,59 +71,62 @@ fn get_dynamic_keys_schemas<'a>(
 }
 
 /// Check if we're validating eos_designs at the root level and if any input keys
-/// are top-level keys from eos_cli_config_gen schema. If so, emit a warning.
+/// are top-level keys from eos_cli_config_gen schema but NOT in eos_designs schema.
+/// If so, emit a warning that the key will be ignored.
 fn check_for_eos_cli_config_gen_keys(input: &Map<String, Value>, ctx: &mut Context) {
-    // Only check at root level when validating eos_designs
-    if !ctx.state.path.is_empty() {
+    // Get the top-level keys from both schemas using the store helper
+    let eos_cli_config_gen_keys = ctx.store.get_keys(Schema::EosCliConfigGen);
+    let eos_designs_keys = ctx.store.get_keys(Schema::EosDesigns);
+
+    // If we can't get the keys from eos_cli_config_gen, nothing to check
+    let Some(eos_cli_config_gen_keys) = eos_cli_config_gen_keys else {
         return;
-    }
+    };
 
-    if let Some(Schema::EosDesigns) = ctx.state.schema_name {
-        // Get the eos_cli_config_gen schema from the store
-        let eos_cli_config_gen_schema = ctx.store.get(Schema::EosCliConfigGen);
+    // Check each input key
+    for input_key in input.keys() {
+        // Only warn if the key exists in eos_cli_config_gen but NOT in eos_designs
+        if eos_cli_config_gen_keys.contains_key(input_key) {
+            let exists_in_eos_designs = eos_designs_keys
+                .map(|keys| keys.contains_key(input_key))
+                .unwrap_or(false);
 
-        // Try to get the Dict schema
-        if let Ok(eos_cli_config_gen_dict) = TryInto::<&Dict>::try_into(eos_cli_config_gen_schema) {
-            // Get the top-level keys from eos_cli_config_gen
-            if let Some(eos_cli_config_gen_keys) = &eos_cli_config_gen_dict.keys {
-                // Check each input key
-                for input_key in input.keys() {
-                    if eos_cli_config_gen_keys.contains_key(input_key) {
-                        // Found an eos_cli_config_gen key in eos_designs input
-                        ctx.add_warning(IgnoredEosConfigKey {
-                            key: input_key.to_owned(),
-                        });
-                    }
-                }
+            if !exists_in_eos_designs {
+                // Found an eos_cli_config_gen-only key in eos_designs input
+                ctx.add_warning(IgnoredEosConfigKey {
+                    key: input_key.to_owned(),
+                });
             }
         }
     }
 }
 
 fn validate_keys(schema: &Dict, input: &Map<String, Value>, ctx: &mut Context) {
-    if let Some(keys) = &schema.keys {
-        let dynamic_keys_schemas = get_dynamic_keys_schemas(schema, input);
+    let Some(keys) = &schema.keys else { return };
 
-        // Check for eos_cli_config_gen keys in eos_designs input at root level
+    // Check for eos_cli_config_gen keys in eos_designs input at root level
+    if ctx.state.path.is_empty() && ctx.state.schema_name == Some(Schema::EosDesigns) {
         check_for_eos_cli_config_gen_keys(input, ctx);
-
-        input.iter().for_each(|(input_key, input_value)| {
-            ctx.state.path.push(input_key.to_owned());
-            if let Some(key_schema) = keys.get(input_key) {
-                if !check_deprecation(input_key, key_schema, input, ctx) {
-                    key_schema.validate(input_value, ctx);
-                }
-            } else if let Some(key_schema) = dynamic_keys_schemas.get(input_key) {
-                if !check_deprecation(input_key, key_schema, input, ctx) {
-                    key_schema.validate(input_value, ctx);
-                }
-            } else if !schema.allow_other_keys.unwrap_or_default() && !input_key.starts_with("_") {
-                // Key is not part of the schema and does not start with underscore
-                ctx.add_error(Violation::UnexpectedKey());
-            }
-            ctx.state.path.pop();
-        });
     }
+
+    let dynamic_keys_schemas = get_dynamic_keys_schemas(schema, input);
+
+    input.iter().for_each(|(input_key, input_value)| {
+        ctx.state.path.push(input_key.to_owned());
+        if let Some(key_schema) = keys.get(input_key) {
+            if !check_deprecation(input_key, key_schema, input, ctx) {
+                key_schema.validate(input_value, ctx);
+            }
+        } else if let Some(key_schema) = dynamic_keys_schemas.get(input_key) {
+            if !check_deprecation(input_key, key_schema, input, ctx) {
+                key_schema.validate(input_value, ctx);
+            }
+        } else if !schema.allow_other_keys.unwrap_or_default() && !input_key.starts_with("_") {
+            // Key is not part of the schema and does not start with underscore
+            ctx.add_error(Violation::UnexpectedKey());
+        }
+        ctx.state.path.pop();
+    });
 }
 
 fn validate_required_keys(schema: &Dict, input: &Map<String, Value>, ctx: &mut Context) {
@@ -869,6 +872,23 @@ mod tests {
         schema.validate_value(&input, &mut ctx);
 
         // Should have no warnings
+        assert!(ctx.result.warnings.is_empty());
+    }
+
+    #[test]
+    fn validate_eos_designs_with_shared_key_no_warning() {
+        // Test that when a key exists in BOTH eos_designs and eos_cli_config_gen,
+        // no warning is emitted - the key should be validated normally.
+        let store = get_test_store();
+        let input = serde_json::json!({
+            "key3": "shared_key_value"  // key3 exists in both schemas
+        });
+
+        let mut ctx = Context::new(&store, None, Schema::EosDesigns);
+        let schema = store.get(Schema::EosDesigns);
+        schema.validate_value(&input, &mut ctx);
+
+        // Should have no warnings since key3 exists in both schemas
         assert!(ctx.result.warnings.is_empty());
     }
 }

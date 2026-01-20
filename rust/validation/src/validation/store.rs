@@ -161,7 +161,6 @@ impl SchemaConversionError {
     }
 
     pub fn to_validation_result(&self, store: &Store) -> ValidationResult {
-        // Use a default schema since we don't have a valid schema name in this error case
         let mut ctx = Context::new(store, None, Schema::EosDesigns);
         ctx.add_error(Violation::InvalidSchema {
             schema: self.get_invalid_schema_name(),

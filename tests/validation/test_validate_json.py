@@ -27,7 +27,6 @@ def test_validate_json() -> None:
 def test_validate_json_with_ignored_eos_config_key() -> None:
     """Test that eos_cli_config_gen keys are ignored when validating eos_designs."""
     # router_isis is a key from eos_cli_config_gen that should be ignored when validating eos_designs
-    # fabric_name is a required key in eos_designs
     validation_result = validate_json('{"fabric_name": "TEST_FABRIC", "router_isis": {"instance": "ISIS_TEST"}}', "eos_designs")
 
     # Should have no violations
