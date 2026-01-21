@@ -57,7 +57,7 @@ class Deprecation:
     """Url where more information can be found."""
 
 class IgnoredEosConfigKey:
-    """EOS CLI Config Gen key found in EOS Designs input."""
+    """EOS Config key found in AVD Design input."""
 
     message: str
     """String detailing the ignored key."""
