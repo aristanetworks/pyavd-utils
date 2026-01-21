@@ -55,7 +55,7 @@ mod tests {
         let schema = Bool::default();
         let input = true.into();
         let store = get_test_store();
-        let mut ctx = Context::new(&store, None, Schema::EosDesigns);
+        let mut ctx = Context::new(&store, None);
         schema.validate_value(&input, &mut ctx);
         assert!(ctx.result.errors.is_empty() && ctx.result.infos.is_empty());
     }
@@ -65,7 +65,7 @@ mod tests {
         let schema = Bool::default();
         let input = serde_json::json!([]);
         let store = get_test_store();
-        let mut ctx = Context::new(&store, None, Schema::EosDesigns);
+        let mut ctx = Context::new(&store, None);
         schema.validate_value(&input, &mut ctx);
         assert!(ctx.result.infos.is_empty());
         assert_eq!(

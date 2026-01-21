@@ -335,12 +335,9 @@ impl Removed {
 }
 #[derive(Clone, Debug, PartialEq, Serialize, derive_more::Display)]
 #[display(
-    "The 'eos_cli_config_gen' key '{key}' is present in the input to 'eos_designs' and will be ignored."
+    "The 'eos_cli_config_gen' key is present in the input to 'eos_designs' and will be ignored."
 )]
-pub struct IgnoredEosConfigKey {
-    /// The top-level key name that was ignored.
-    pub key: String,
-}
+pub struct IgnoredEosConfigKey {}
 
 #[cfg(test)]
 mod tests {

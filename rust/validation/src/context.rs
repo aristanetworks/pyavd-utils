@@ -2,7 +2,7 @@
 // Use of this source code is governed by the Apache License 2.0
 // that can be found in the LICENSE file.
 
-use avdschema::{Schema, Store};
+use avdschema::Store;
 
 use crate::feedback::{ErrorIssue, Feedback, InfoIssue, Path, Violation, WarningIssue};
 
@@ -18,19 +18,12 @@ pub struct Context<'a> {
 }
 
 impl<'a> Context<'a> {
-    pub fn new(
-        store: &'a Store,
-        configuration: Option<&'a Configuration>,
-        schema_name: Schema,
-    ) -> Self {
+    pub fn new(store: &'a Store, configuration: Option<&'a Configuration>) -> Self {
         Self {
             configuration: configuration.cloned().unwrap_or_default(),
             store,
             result: Default::default(),
-            state: State {
-                schema_name: Some(schema_name),
-                ..Default::default()
-            },
+            state: Default::default(),
         }
     }
     pub(crate) fn add_error(&mut self, error: impl Into<ErrorIssue>) {
@@ -84,9 +77,6 @@ pub(crate) struct State {
     /// Used for structured_config where we overload other config, and only the final result should be validated for required keys.
     pub(crate) relaxed_validation: bool,
     pub(crate) path: Path,
-    /// The schema being validated (EosDesigns or EosCliConfigGen).
-    /// Used to determine if we should check for eos_cli_config_gen keys in eos_designs input.
-    pub(crate) schema_name: Option<Schema>,
 }
 
 /// Configuration to use during validation.
@@ -97,6 +87,9 @@ pub struct Configuration {
     /// By default Null/None values are ignored no matter which data type is expected.
     /// Setting this will instead emit type errors for Null values.
     pub restrict_null_values: bool,
+    /// When validating eos_designs, emit warnings for top-level keys that exist in eos_cli_config_gen
+    /// but not in eos_designs.
+    pub warn_eos_cli_config_gen_keys: bool,
 }
 
 #[derive(Clone, Debug, Default)]

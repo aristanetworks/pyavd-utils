@@ -18,7 +18,7 @@ static STORE: OnceLock<Store> = OnceLock::new();
 #[pymodule(gil_used = false)]
 pub mod validation {
     use super::STORE;
-    use avdschema::{Load as _, Schema, Store, any::AnySchema};
+    use avdschema::{Load as _, Store, any::AnySchema};
     use log::{debug, info};
     use pyo3::{Bound, PyResult, exceptions::PyRuntimeError, pyclass, pyfunction, types::PyModule};
     use std::path::PathBuf;
@@ -56,7 +56,7 @@ pub mod validation {
     #[derive(Clone)]
     pub struct IgnoredEosConfigKey {
         pub message: String,
-        pub key: String,
+        pub path: Vec<String>,
     }
 
     #[pyclass(frozen, get_all)]
@@ -104,7 +104,7 @@ pub mod validation {
                     validation::feedback::WarningIssue::IgnoredEosConfigKey(ignored) => {
                         result.ignored_eos_config_keys.push(IgnoredEosConfigKey {
                             message: ignored.to_string(),
-                            key: ignored.key.to_owned(),
+                            path: feedback.path.to_owned().into(),
                         })
                     }
                 });
@@ -201,7 +201,7 @@ pub mod validation {
         let mut data: serde_json::Value = serde_json::from_str(data_as_json)
             .map_err(|err| PyRuntimeError::new_err(format!("Invalid JSON in data: {err}")))?;
 
-        let mut ctx = Context::new(get_store()?, None, Schema::EosDesigns);
+        let mut ctx = Context::new(get_store()?, None);
         schema.coerce(&mut data, &mut ctx);
         schema.validate_value(&data, &mut ctx);
 
@@ -561,13 +561,19 @@ mod tests {
 
             // Check the ignored key details
             let ignored_key = ignored_keys.get_item(0).unwrap();
-            let key = ignored_key
-                .getattr("key")
+            let path = ignored_key
+                .getattr("path")
+                .unwrap()
+                .cast_into_exact::<pyo3::types::PyList>()
+                .unwrap();
+            assert_eq!(path.len().unwrap(), 1);
+            let path_item = path
+                .get_item(0)
                 .unwrap()
                 .cast_into_exact::<pyo3::types::PyString>()
                 .unwrap()
                 .to_string();
-            assert_eq!(key, "router_isis");
+            assert_eq!(path_item, "router_isis");
 
             let message = ignored_key
                 .getattr("message")
@@ -577,7 +583,7 @@ mod tests {
                 .to_string();
             assert_eq!(
                 message,
-                "The 'eos_cli_config_gen' key 'router_isis' is present in the input to 'eos_designs' and will be ignored."
+                "The 'eos_cli_config_gen' key is present in the input to 'eos_designs' and will be ignored."
             );
         });
     }

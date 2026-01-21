@@ -40,5 +40,5 @@ def test_validate_json_with_ignored_eos_config_key() -> None:
 
     # Check the ignored key details
     ignored_key = validation_result.ignored_eos_config_keys[0]
-    assert ignored_key.key == "router_isis"
-    assert ignored_key.message == "The 'eos_cli_config_gen' key 'router_isis' is present in the input to 'eos_designs' and will be ignored."
+    assert ignored_key.path == ["router_isis"]
+    assert ignored_key.message == "The 'eos_cli_config_gen' key is present in the input to 'eos_designs' and will be ignored."

@@ -27,17 +27,6 @@ impl Store {
             Schema::EosCliConfigGen => &self.eos_cli_config_gen,
         }
     }
-
-    /// Get the top-level keys for a schema.
-    /// Returns `None` if the schema is not a Dict or has no keys defined.
-    pub fn get_keys(&self, schema: Schema) -> Option<&ordermap::OrderMap<String, AnySchema>> {
-        let schema_any = self.get(schema);
-        if let Ok(dict) = TryInto::<&Dict>::try_into(schema_any) {
-            dict.keys.as_ref()
-        } else {
-            None
-        }
-    }
     pub fn as_resolved(mut self) -> Self {
         // Extract copies of each schema so we can resolve them.
         let mut eos_cli_config_gen_schema = self.eos_cli_config_gen.to_owned();
@@ -117,17 +106,17 @@ mod tests {
 
     use super::Schema;
 
-    use crate::utils::test_utils::get_test_store;
     use crate::Store;
+    use crate::utils::test_utils::get_test_store;
     use serde::Deserialize as _;
     use serde_json::json;
 
     #[cfg(feature = "dump_load_files")]
     use super::Load;
     #[cfg(feature = "dump_load_files")]
-    use crate::utils::test_utils::{get_avd_store, get_tmp_file};
-    #[cfg(feature = "dump_load_files")]
     use crate::Dump as _;
+    #[cfg(feature = "dump_load_files")]
+    use crate::utils::test_utils::{get_avd_store, get_tmp_file};
 
     #[test]
     #[cfg(feature = "dump_load_files")]
@@ -206,87 +195,5 @@ mod tests {
         let file_path = get_tmp_file("test_dump_avd_store_resolved.xz2");
         let result = Store::from_file(Some(&file_path));
         assert!(result.is_ok());
-    }
-
-    #[test]
-    fn get_keys_eos_designs() {
-        // Test that get_keys returns the correct keys for eos_designs schema
-        let store = get_test_store();
-        let keys = store.get_keys(Schema::EosDesigns);
-
-        assert!(keys.is_some());
-        let keys = keys.unwrap();
-
-        // The test store has key3 in eos_designs
-        assert!(keys.contains_key("key3"));
-        assert_eq!(keys.len(), 1);
-    }
-
-    #[test]
-    fn get_keys_eos_cli_config_gen() {
-        // Test that get_keys returns the correct keys for eos_cli_config_gen schema
-        let store = get_test_store();
-        let keys = store.get_keys(Schema::EosCliConfigGen);
-
-        assert!(keys.is_some());
-        let keys = keys.unwrap();
-
-        // The test store has key1 and key2 in eos_cli_config_gen
-        assert!(keys.contains_key("key1"));
-        assert!(keys.contains_key("key2"));
-        assert_eq!(keys.len(), 2);
-    }
-
-    #[test]
-    fn get_keys_non_dict_schema() {
-        // Test that get_keys returns None when the schema is not a Dict
-        use crate::any::AnySchema;
-
-        let store = Store {
-            eos_designs: AnySchema::deserialize(json!({
-                "type": "str",  // Not a dict!
-                "description": "This is a string schema, not a dict"
-            }))
-            .unwrap(),
-            eos_cli_config_gen: AnySchema::deserialize(json!({
-                "type": "int",  // Not a dict!
-                "min": 0,
-                "max": 100
-            }))
-            .unwrap(),
-        };
-
-        // Both should return None since they're not Dict schemas
-        assert!(store.get_keys(Schema::EosDesigns).is_none());
-        assert!(store.get_keys(Schema::EosCliConfigGen).is_none());
-    }
-
-    #[test]
-    fn get_keys_dict_without_keys() {
-        // Test that get_keys returns None when the Dict has no keys defined
-        use crate::any::AnySchema;
-
-        let store = Store {
-            eos_designs: AnySchema::deserialize(json!({
-                "type": "dict",
-                "allow_other_keys": true
-                // No "keys" field defined
-            }))
-            .unwrap(),
-            eos_cli_config_gen: AnySchema::deserialize(json!({
-                "type": "dict",
-                "dynamic_keys": {
-                    "some.path": {
-                        "type": "str"
-                    }
-                }
-                // No "keys" field defined
-            }))
-            .unwrap(),
-        };
-
-        // Both should return None since they have no keys defined
-        assert!(store.get_keys(Schema::EosDesigns).is_none());
-        assert!(store.get_keys(Schema::EosCliConfigGen).is_none());
     }
 }

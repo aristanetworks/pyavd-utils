@@ -35,8 +35,8 @@ class IgnoredEosConfigKey:
 
     message: str
     """String detailing the ignored key."""
-    key: str
-    """The top-level key name that was ignored."""
+    path: list[str]
+    """Path to the ignored key."""
 
 class ValidationResult:
     """Result of data validation."""

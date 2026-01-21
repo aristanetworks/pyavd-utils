@@ -27,6 +27,7 @@ pub(crate) fn get_test_store() -> Store {
         eos_designs: AnySchema::deserialize(json!(
             {
                 "type": "dict",
+                "allow_other_keys": true,
                 "keys": {
                     "key3": {
                         "type": "str",
