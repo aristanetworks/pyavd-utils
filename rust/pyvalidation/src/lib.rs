@@ -18,8 +18,9 @@ static STORE: OnceLock<Store> = OnceLock::new();
 #[pymodule(gil_used = false)]
 pub mod validation {
     use super::STORE;
-    use avdschema::{Load as _, Store, any::AnySchema};
+    use avdschema::{Load as _, Store, any::AnySchema, resolve_ref};
     use log::{debug, info};
+    use merge::merge;
     use pyo3::{Bound, PyResult, exceptions::PyRuntimeError, pyclass, pyfunction, types::PyModule};
     use std::path::PathBuf;
     use validation::{Coercion as _, Context, StoreValidate as _, Validation as _};
@@ -193,6 +194,34 @@ pub mod validation {
 
         let validation_result: validation::ValidationResult = ctx.result;
         validation_result.try_into()
+    }
+
+    #[pyfunction]
+    pub fn merge_with_schema(
+        base_as_json: &str,
+        nexts_as_json: Vec<String>,
+        schema_ref: &str,
+        list_merge: &str,
+    ) -> PyResult<String> {
+        debug!("pyvalidation::merge_on_schema Begin");
+        let base: serde_json::Value = serde_json::from_str(base_as_json)
+            .map_err(|err| PyRuntimeError::new_err(format!("Invalid JSON in base: {err}")))?;
+        let nexts: Vec<serde_json::Value> = nexts_as_json
+            .into_iter()
+            .map(|next_as_json| {
+                serde_json::from_str(&next_as_json)
+                    .map_err(|err| PyRuntimeError::new_err(format!("Invalid JSON in next: {err}")))
+            })
+            .collect::<Result<_, _>>()?;
+        let schema = resolve_ref(schema_ref, get_store()?)
+            .map_err(|err| PyRuntimeError::new_err(format!("Invalid schema ref: {err}")))?;
+        let list_merge = list_merge
+            .try_into()
+            .map_err(|err: String| PyRuntimeError::new_err(err))?;
+        let merged_value = merge(base, nexts, Some(schema), &list_merge);
+        debug!("pyvalidation::merge_on_schema End");
+        serde_json::to_string(&merged_value)
+            .map_err(|err| PyRuntimeError::new_err(format!("Invalid JSON in merged data: {err}")))
     }
 }
 
