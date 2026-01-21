@@ -103,6 +103,13 @@ fn validate_keys(schema: &Dict, input: &Map<String, Value>, ctx: &mut Context) {
             ctx.add_error(Violation::UnexpectedKey());
         } else if let Some(eos_cli_config_gen_keys) = &eos_cli_config_gen_keys
             && eos_cli_config_gen_keys.contains_key(input_key)
+            && !matches!(
+                input_key.as_str(),
+                // Special eos_cli_config_gen role keys - skip them without warning
+                "eos_cli_config_gen_documentation"
+                    | "custom_templates"
+                    | "eos_cli_config_gen_configuration"
+            )
         {
             // Key is not in eos_designs schema but is in eos_cli_config_gen
             // and allow_other_keys is true - emit a warning that it will be ignored
@@ -887,5 +894,31 @@ mod tests {
 
         // Should have no warnings since key3 exists in both schemas
         assert!(ctx.result.warnings.is_empty());
+    }
+
+    #[test]
+    fn validate_eos_designs_with_eos_cli_config_gen_role_keys_no_warning() {
+        // Test that the special eos_cli_config_gen role keys are ignored without warnings.
+        // These keys are: eos_cli_config_gen_documentation, custom_templates, eos_cli_config_gen_configuration
+        let store = get_test_store();
+        let input = serde_json::json!({
+            "key3": "valid_eos_designs_key",
+            "eos_cli_config_gen_documentation": "should be ignored",
+            "custom_templates": "should be ignored",
+            "eos_cli_config_gen_configuration": "should be ignored"
+        });
+
+        let configuration = Configuration {
+            warn_eos_cli_config_gen_keys: true,
+            ..Default::default()
+        };
+        let mut ctx = Context::new(&store, Some(&configuration));
+        let schema = store.get(Schema::EosDesigns);
+        schema.validate_value(&input, &mut ctx);
+
+        // Should have no warnings - these special keys are silently ignored
+        assert!(ctx.result.warnings.is_empty());
+        // Should have no errors either
+        assert!(ctx.result.errors.is_empty());
     }
 }

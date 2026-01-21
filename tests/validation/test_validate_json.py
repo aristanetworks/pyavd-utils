@@ -61,3 +61,28 @@ def test_validate_json_without_config_no_warning() -> None:
 
     # Should have NO ignored_eos_config_key warnings (because warn_eos_cli_config_gen_keys is False by default)
     assert len(validation_result.ignored_eos_config_keys) == 0
+
+
+
+
+@pytest.mark.usefixtures("init_store")
+def test_validate_json_with_eos_cli_config_gen_role_keys_no_warning() -> None:
+    """Test that special eos_cli_config_gen role keys are silently ignored without warnings."""
+    from pyavd_utils.validation import Configuration
+
+    # These special keys should be ignored: eos_cli_config_gen_documentation, custom_templates, eos_cli_config_gen_configuration
+    config = Configuration(warn_eos_cli_config_gen_keys=True)
+    validation_result = validate_json(
+        '{"fabric_name": "TEST_FABRIC", "eos_cli_config_gen_documentation": "docs", "custom_templates": "templates", "eos_cli_config_gen_configuration": "config"}',
+        "eos_designs",
+        config
+    )
+
+    # Should have no violations
+    assert len(validation_result.violations) == 0, f"Unexpected violations: {[(v.path, v.message) for v in validation_result.violations]}"
+
+    # Should have no deprecations
+    assert len(validation_result.deprecations) == 0
+
+    # Should have NO ignored_eos_config_key warnings - these special keys are silently ignored
+    assert len(validation_result.ignored_eos_config_keys) == 0
