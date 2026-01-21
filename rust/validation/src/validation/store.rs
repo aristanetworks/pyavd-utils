@@ -83,7 +83,6 @@ impl StoreValidate<Schema> for Store {
         configuration: Option<&Configuration>,
     ) -> ValidationResult {
         debug!("Validating serde_json::Value");
-
         let mut ctx = Context::new(self, configuration);
         let schema = self.get(schema_name);
         schema.coerce(value, &mut ctx);
