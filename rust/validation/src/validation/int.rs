@@ -71,7 +71,6 @@ fn validate_max(schema: &Int, input: &i64, ctx: &mut Context) {
 mod tests {
     use super::*;
 
-    use avdschema::Schema;
     use crate::Configuration;
     use crate::coercion::Coercion as _;
     use crate::context::Context;

@@ -6,7 +6,7 @@ use std::path::PathBuf;
 
 use crate::{
     resolve_schema,
-    schema::{any::AnySchema, dict::Dict},
+    schema::any::AnySchema,
     utils::{
         dump::Dump,
         load::{Load, LoadError},
@@ -62,7 +62,7 @@ impl Store {
 impl Dump for Store {}
 impl Load for Store {}
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy)]
 pub enum Schema {
     EosDesigns,
     EosCliConfigGen,
@@ -104,19 +104,14 @@ pub struct SchemaName {
 #[cfg(test)]
 mod tests {
 
-    use super::Schema;
-
     use crate::Store;
-    use crate::utils::test_utils::get_test_store;
-    use serde::Deserialize as _;
-    use serde_json::json;
 
     #[cfg(feature = "dump_load_files")]
-    use super::Load;
-    #[cfg(feature = "dump_load_files")]
-    use crate::Dump as _;
-    #[cfg(feature = "dump_load_files")]
-    use crate::utils::test_utils::{get_avd_store, get_tmp_file};
+    use {
+        super::Load,
+        crate::Dump as _,
+        crate::utils::test_utils::{get_avd_store, get_tmp_file},
+    };
 
     #[test]
     #[cfg(feature = "dump_load_files")]

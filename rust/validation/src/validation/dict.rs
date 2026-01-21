@@ -73,7 +73,7 @@ fn get_dynamic_keys_schemas<'a>(
 fn validate_keys(schema: &Dict, input: &Map<String, Value>, ctx: &mut Context) {
     let Some(keys) = &schema.keys else { return };
 
-    // Check for eos_cli_config_gen keys in eos_designs input at root level
+    // When at the root level, if warn_eos_cli_config_gen_keys is enabled, get the keys from the eos_cli_config_gen schema.
     let eos_cli_config_gen_keys: Option<&OrderMap<String, AnySchema>> = {
         if ctx.state.path.is_empty() && ctx.configuration.warn_eos_cli_config_gen_keys {
             Some(&ctx.store.eos_cli_config_gen)

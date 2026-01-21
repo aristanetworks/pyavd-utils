@@ -84,7 +84,6 @@ fn validate_pattern(schema: &Str, input: &str, ctx: &mut Context) {
 #[cfg(test)]
 mod tests {
     use avdschema::base::valid_values::ValidValues;
-    use avdschema::Schema;
 
     use super::*;
     use crate::{

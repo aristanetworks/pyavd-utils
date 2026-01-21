@@ -44,7 +44,6 @@ impl Validation<bool> for Bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use avdschema::Schema;
     use crate::{
         feedback::{Feedback, Type, Violation},
         validation::test_utils::get_test_store,

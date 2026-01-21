@@ -84,17 +84,7 @@ impl StoreValidate<Schema> for Store {
     ) -> ValidationResult {
         debug!("Validating serde_json::Value");
 
-        // If validating eos_designs and no configuration provided, create one with warn_eos_cli_config_gen_keys enabled
-        // If configuration is provided, merge it with the warn flag
-        let config_with_warn = if schema_name == Schema::EosDesigns {
-            let mut config = configuration.cloned().unwrap_or_default();
-            config.warn_eos_cli_config_gen_keys = true;
-            config
-        } else {
-            configuration.cloned().unwrap_or_default()
-        };
-
-        let mut ctx = Context::new(self, Some(&config_with_warn));
+        let mut ctx = Context::new(self, configuration);
         let schema = self.get(schema_name);
         schema.coerce(value, &mut ctx);
         debug!("Validating serde_json::Value Coercion Done");

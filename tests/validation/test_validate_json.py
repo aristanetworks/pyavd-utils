@@ -26,8 +26,11 @@ def test_validate_json() -> None:
 @pytest.mark.usefixtures("init_store")
 def test_validate_json_with_ignored_eos_config_key() -> None:
     """Test that eos_cli_config_gen keys are ignored when validating eos_designs."""
+    from pyavd_utils.validation import Configuration
+
     # router_isis is a key from eos_cli_config_gen that should be ignored when validating eos_designs
-    validation_result = validate_json('{"fabric_name": "TEST_FABRIC", "router_isis": {"instance": "ISIS_TEST"}}', "eos_designs")
+    config = Configuration(warn_eos_cli_config_gen_keys=True)
+    validation_result = validate_json('{"fabric_name": "TEST_FABRIC", "router_isis": {"instance": "ISIS_TEST"}}', "eos_designs", config)
 
     # Should have no violations
     assert len(validation_result.violations) == 0, f"Unexpected violations: {[(v.path, v.message) for v in validation_result.violations]}"
@@ -42,3 +45,19 @@ def test_validate_json_with_ignored_eos_config_key() -> None:
     ignored_key = validation_result.ignored_eos_config_keys[0]
     assert ignored_key.path == ["router_isis"]
     assert ignored_key.message == "The 'eos_cli_config_gen' key is present in the input to 'eos_designs' and will be ignored."
+
+
+@pytest.mark.usefixtures("init_store")
+def test_validate_json_without_config_no_warning() -> None:
+    """Test that without configuration, no warnings are emitted for eos_cli_config_gen keys."""
+    # router_isis is a key from eos_cli_config_gen
+    validation_result = validate_json('{"fabric_name": "TEST_FABRIC", "router_isis": {"instance": "ISIS_TEST"}}', "eos_designs")
+
+    # Should have no violations
+    assert len(validation_result.violations) == 0, f"Unexpected violations: {[(v.path, v.message) for v in validation_result.violations]}"
+
+    # Should have no deprecations
+    assert len(validation_result.deprecations) == 0
+
+    # Should have NO ignored_eos_config_key warnings (because warn_eos_cli_config_gen_keys is False by default)
+    assert len(validation_result.ignored_eos_config_keys) == 0

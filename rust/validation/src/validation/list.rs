@@ -128,7 +128,7 @@ fn validate_item_primary_key(schema: &List, item: &Value, ctx: &mut Context) {
 
 #[cfg(test)]
 mod tests {
-    use avdschema::{Schema, any::AnySchema, dict::Dict, str::Str};
+    use avdschema::{any::AnySchema, dict::Dict, str::Str};
     use ordermap::OrderMap;
 
     use super::*;
