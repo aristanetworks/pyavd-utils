@@ -63,8 +63,6 @@ def test_validate_json_without_config_no_warning() -> None:
     assert len(validation_result.ignored_eos_config_keys) == 0
 
 
-
-
 @pytest.mark.usefixtures("init_store")
 def test_validate_json_with_eos_cli_config_gen_role_keys_no_warning() -> None:
     """Test that special eos_cli_config_gen role keys are silently ignored without warnings."""
@@ -75,7 +73,7 @@ def test_validate_json_with_eos_cli_config_gen_role_keys_no_warning() -> None:
     validation_result = validate_json(
         '{"fabric_name": "TEST_FABRIC", "eos_cli_config_gen_documentation": "docs", "custom_templates": "templates", "eos_cli_config_gen_configuration": "config"}',
         "eos_designs",
-        config
+        config,
     )
 
     # Should have no violations
