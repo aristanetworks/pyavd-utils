@@ -70,11 +70,11 @@ def test_validate_json_with_eos_cli_config_gen_role_keys_no_warning() -> None:
 
     # These special keys should be ignored: eos_cli_config_gen_documentation, custom_templates, eos_cli_config_gen_configuration
     config = Configuration(warn_eos_cli_config_gen_keys=True)
-    validation_result = validate_json(
-        '{"fabric_name": "TEST_FABRIC", "eos_cli_config_gen_documentation": "docs", "custom_templates": "templates", "eos_cli_config_gen_configuration": "config"}',
-        "eos_designs",
-        config,
+    json_as_str = (
+        '{"fabric_name": "TEST_FABRIC", "eos_cli_config_gen_documentation": "docs", '
+        '"custom_templates": "templates", "eos_cli_config_gen_configuration": "config"}'
     )
+    validation_result = validate_json(json_as_str, "eos_designs", config)
 
     # Should have no violations
     assert len(validation_result.violations) == 0, f"Unexpected violations: {[(v.path, v.message) for v in validation_result.violations]}"
