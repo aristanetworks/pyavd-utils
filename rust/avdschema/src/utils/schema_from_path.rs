@@ -52,6 +52,7 @@ impl SchemaKeys {
     pub fn try_from_schema_with_value<'a, V>(
         schema: &AnySchema,
         value: V,
+        store: &Store,
     ) -> Result<Self, SchemaKeysError>
     where
         V: SchemaDataValue<'a>,
@@ -75,6 +76,17 @@ impl SchemaKeys {
         schema_keys.keys.extend(
             dict_schema
                 .get_dynamic_keys(dict)
+                .unwrap_or_default()
+                .into_iter()
+                .map(|(key, dynamic_key_info)| {
+                    (key.to_owned(), SchemaKey::from(&dynamic_key_info))
+                }),
+        );
+
+        // Add prefix keys
+        schema_keys.keys.extend(
+            dict_schema
+                .get_prefix_keys(dict, store)
                 .unwrap_or_default()
                 .into_iter()
                 .map(|(key, dynamic_key_info)| {
@@ -118,7 +130,7 @@ pub fn get_schema_from_path<'store, 'value>(
     match path.next() {
         None => Ok(Some(schema)),
         Some(root_key) => {
-            let schema_keys = SchemaKeys::try_from_schema_with_value(schema, data_value)?;
+            let schema_keys = SchemaKeys::try_from_schema_with_value(schema, data_value, store)?;
             match schema_keys.keys.get(root_key) {
                 None => Ok(None),
                 Some(schema_key) => {
@@ -140,6 +152,7 @@ mod tests {
 
     #[test]
     fn schema_keys_try_from_schema_with_value_ok() {
+        let store = get_test_store();
         let schema = AnySchema::Dict(Dict {
             keys: Some(OrderMap::from_iter([
                 (
@@ -179,7 +192,7 @@ mod tests {
             ..Default::default()
         });
         let value = json!({"outer": [ {"inner": "one"}, {"inner": "two"}, {"inner": "three"}]});
-        let result = SchemaKeys::try_from_schema_with_value(&schema, &value);
+        let result = SchemaKeys::try_from_schema_with_value(&schema, &value, &store);
         assert!(result.is_ok());
         let schema_keys = result.unwrap();
         assert_eq!(
@@ -211,22 +224,24 @@ mod tests {
 
     #[test]
     fn schema_keys_try_from_schema_with_value_wrong_schema_err() {
+        let store = get_test_store();
         let schema = AnySchema::Str(Str {
             ..Default::default()
         });
         let value = json!({});
-        let result = SchemaKeys::try_from_schema_with_value(&schema, &value);
+        let result = SchemaKeys::try_from_schema_with_value(&schema, &value, &store);
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(matches!(err, SchemaKeysError::SchemaNotDict));
     }
     #[test]
     fn schema_keys_try_from_schema_with_value_wrong_value_err() {
+        let store = get_test_store();
         let schema = AnySchema::Dict(Dict {
             ..Default::default()
         });
         let value = json!([]);
-        let result = SchemaKeys::try_from_schema_with_value(&schema, &value);
+        let result = SchemaKeys::try_from_schema_with_value(&schema, &value, &store);
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(matches!(err, SchemaKeysError::ValueNotADict));

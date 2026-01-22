@@ -1,6 +1,7 @@
 // Copyright (c) 2025-2026 Arista Networks, Inc.
 // Use of this source code is governed by the Apache License 2.0
 // that can be found in the LICENSE file.
+pub mod prefix_keys;
 
 use std::sync::OnceLock;
 
@@ -20,6 +21,7 @@ use super::{
     any::AnySchema,
     base::{Base, documentation_options::DocumentationOptionsDict},
 };
+pub use prefix_keys::PrefixKeys;
 
 pub type DefaultDynamicKeys = OrderMap<String, Vec<String>>;
 type CachedDefaultDynamicKeys = Option<Box<DefaultDynamicKeys>>;
@@ -47,6 +49,7 @@ pub struct Dict {
     pub schema_schema: Option<String>,
     #[serde(rename = "$defs")]
     pub schema_defs: Option<OrderMap<String, AnySchema>>,
+    pub prefix_keys: Option<Vec<PrefixKeys>>,
     #[serde(flatten)]
     pub base: Base<OrderMap<String, Value>>,
     pub documentation_options: Option<DocumentationOptionsDict>,
@@ -129,7 +132,7 @@ impl<'a> Dict {
         })
     }
 
-    pub(self) fn get_default_for_key(&self, key: &str) -> Option<Value> {
+    pub fn get_default_for_key(&self, key: &str) -> Option<Value> {
         self.keys
             .as_ref()
             .and_then(|keys| keys.get(key).and_then(|key_schema| key_schema.default_()))

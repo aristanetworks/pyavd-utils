@@ -4,7 +4,10 @@
 
 use avdschema::{
     any::{AnySchema, Shortcuts as _},
-    dict::Dict,
+    dict::{
+        Dict,
+        prefix_keys::{PrefixMatchResult, ResolvedPrefixConfig},
+    },
     resolve_ref,
 };
 use ordermap::OrderMap;
@@ -269,8 +272,40 @@ fn check_deprecation<'a, M: ValidatableMapping<'a>>(
     }
 }
 
+/// Get list of resolved prefix configs from the schema
+fn get_resolved_prefix_configs<'a>(
+    schema: &'a Dict,
+    input: &'a Map<String, Value>,
+    store: &'a avdschema::Store,
+) -> Vec<ResolvedPrefixConfig<'a>> {
+    schema
+        .prefix_keys
+        .as_ref()
+        .map(|prefix_configs| {
+            prefix_configs
+                .iter()
+                .filter_map(|prefix_config| prefix_config.resolve(input, schema, store))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Check if a key matches any prefix and return the corresponding schema
+fn match_prefix_key<'a>(
+    key: &str,
+    resolved_configs: &[ResolvedPrefixConfig<'a>],
+) -> Option<PrefixMatchResult<'a>> {
+    for config in resolved_configs {
+        if let Some(result) = config.match_key(key) {
+            return Some(result);
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
+    use avdschema::Load;
     use avdschema::base::Base;
     use avdschema::int::Int;
     use avdschema::list::List;
@@ -1308,5 +1343,182 @@ mod tests {
         assert!(ctx.result.warnings.is_empty());
         // Should have no errors either
         assert!(ctx.result.errors.is_empty());
+    }
+
+    #[test]
+    fn validate_prefix_keys_ok() {
+        use avdschema::dict::PrefixKeys;
+        use serde::Deserialize as _;
+
+        // Create a store with a schema for prefix keys
+        let store = avdschema::Store::from(serde_json::json!({
+        "myschema": {
+            "type": "dict",
+            "keys": {
+                "prefix_schema": {
+                    "type": "int",
+                    "max": 100
+                }
+            }
+        }}))
+        .unwrap();
+
+        let schema = Dict {
+            keys: Some(OrderMap::from_iter([(
+                "custom_prefixes".into(),
+                List {
+                    items: Some(Box::new(Str::default().into())),
+                    ..Default::default()
+                }
+                .into(),
+            )])),
+            prefix_keys: Some(vec![PrefixKeys {
+                prefixes_key: "custom_prefixes".to_string(),
+                include_suffix_in_data: false,
+                schema_ref: "eos_cli_config_gen#/keys/prefix_schema".to_string(),
+            }]),
+            allow_other_keys: Some(true),
+            ..Default::default()
+        };
+
+        let input = serde_json::json!({
+            "custom_prefixes": ["custom_"],
+            "custom_foo": 50,
+            "custom_bar": 75,
+            "other_key": "ignored"
+        });
+        let mut ctx = Context::new(&store, None);
+        schema.validate_value(&input, &mut ctx);
+        assert!(ctx.result.errors.is_empty());
+        assert!(ctx.result.infos.is_empty());
+    }
+
+    #[test]
+    fn validate_prefix_keys_err() {
+        use avdschema::dict::PrefixKeys;
+        use serde::Deserialize as _;
+
+        // Create a store with a schema for prefix keys
+        let store = avdschema::Store::from(serde_json::json!({
+            "myschema": {
+                "type": "dict",
+                "keys": {
+                    "prefix_schema": {
+                        "type": "int",
+                        "max": 100
+                    }
+                }
+        }}));
+
+        let schema = Dict {
+            keys: Some(OrderMap::from_iter([(
+                "custom_prefixes".into(),
+                List {
+                    items: Some(Box::new(Str::default().into())),
+                    ..Default::default()
+                }
+                .into(),
+            )])),
+            prefix_keys: Some(vec![PrefixKeys {
+                prefixes_key: "custom_prefixes".to_string(),
+                include_suffix_in_data: false,
+                schema_ref: "eos_cli_config_gen#/keys/prefix_schema".to_string(),
+            }]),
+            allow_other_keys: Some(true),
+            ..Default::default()
+        };
+
+        let input = serde_json::json!({
+            "custom_prefixes": ["custom_"],
+            "custom_foo": 150,  // Above max
+            "custom_bar": "wrong",  // Wrong type
+            "other_key": "ignored"
+        });
+        let mut ctx = Context::new(&store, None);
+        schema.validate_value(&input, &mut ctx);
+        assert!(ctx.result.infos.is_empty());
+        assert_eq!(
+            ctx.result.errors,
+            vec![
+                Feedback {
+                    path: vec!["custom_foo".into()].into(),
+                    issue: Violation::ValueAboveMaximum {
+                        maximum: 100,
+                        found: 150
+                    }
+                    .into()
+                },
+                Feedback {
+                    path: vec!["custom_bar".into()].into(),
+                    issue: Violation::InvalidType {
+                        expected: Type::Int,
+                        found: Type::Str
+                    }
+                    .into()
+                }
+            ]
+        )
+    }
+
+    #[test]
+    fn validate_prefix_keys_invalid_suffix_err() {
+        use avdschema::dict::PrefixKeys;
+        use serde::Deserialize as _;
+
+        // Create a store with a schema for prefix keys with include_suffix_in_data
+        let store = avdschema::Store {
+            eos_cli_config_gen: AnySchema::deserialize(serde_json::json!({
+                "type": "dict",
+                "keys": {
+                    "prefix_schema": {
+                        "type": "dict",
+                        "keys": {
+                            "valid_suffix": {
+                                "type": "str"
+                            }
+                        }
+                    }
+                }
+            }))
+            .unwrap(),
+            eos_designs: AnySchema::deserialize(serde_json::json!({
+                "type": "dict"
+            }))
+            .unwrap(),
+        };
+
+        let schema = Dict {
+            keys: Some(OrderMap::from_iter([(
+                "custom_prefixes".into(),
+                List {
+                    items: Some(Box::new(Str::default().into())),
+                    ..Default::default()
+                }
+                .into(),
+            )])),
+            prefix_keys: Some(vec![PrefixKeys {
+                prefixes_key: "custom_prefixes".to_string(),
+                include_suffix_in_data: true,
+                schema_ref: "eos_cli_config_gen#/keys/prefix_schema".to_string(),
+            }]),
+            allow_other_keys: Some(false),
+            ..Default::default()
+        };
+
+        let input = serde_json::json!({
+            "custom_prefixes": ["custom_"],
+            "custom_valid_suffix": "this is ok",
+            "custom_invalid_suffix": "this should trigger UnexpectedKey"
+        });
+        let mut ctx = Context::new(&store, None);
+        schema.validate_value(&input, &mut ctx);
+        assert!(ctx.result.infos.is_empty());
+        assert_eq!(
+            ctx.result.errors,
+            vec![Feedback {
+                path: vec!["custom_invalid_suffix".into()].into(),
+                issue: Violation::UnexpectedKey().into()
+            }]
+        )
     }
 }
