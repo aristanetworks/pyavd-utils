@@ -104,13 +104,11 @@ pub struct SchemaName {
 #[cfg(test)]
 mod tests {
 
-    use crate::Store;
-
     #[cfg(feature = "dump_load_files")]
     use {
         super::Load,
-        crate::Dump as _,
         crate::utils::test_utils::{get_avd_store, get_tmp_file},
+        crate::{Dump as _, Store},
     };
 
     #[test]

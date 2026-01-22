@@ -81,7 +81,7 @@ pub mod validation {
             restrict_null_values: bool,
             warn_eos_cli_config_gen_keys: bool,
         ) -> Self {
-            Configuration {
+            Self {
                 ignore_required_keys_on_root_dict,
                 return_coercion_infos,
                 restrict_null_values,
@@ -90,9 +90,9 @@ pub mod validation {
         }
     }
 
-    impl From<&Configuration> for validation::Configuration {
-        fn from(config: &Configuration) -> Self {
-            validation::Configuration {
+    impl From<Configuration> for validation::Configuration {
+        fn from(config: Configuration) -> Self {
+            Self {
                 ignore_required_keys_on_root_dict: config.ignore_required_keys_on_root_dict,
                 return_coercion_infos: config.return_coercion_infos,
                 restrict_null_values: config.restrict_null_values,
@@ -197,7 +197,7 @@ pub mod validation {
         schema_name: &str,
         configuration: Option<Configuration>,
     ) -> PyResult<ValidationResult> {
-        let config = configuration.as_ref().map(Into::into);
+        let config = configuration.map(Into::into);
         get_store()?
             .validate_json(data_as_json, schema_name, config.as_ref())
             .map_err(|err| PyRuntimeError::new_err(format!("Invalid JSON in data: {err}")))
@@ -219,7 +219,7 @@ pub mod validation {
                 .map_err(|err| PyRuntimeError::new_err(format!("Invalid JSON in data: {err}")))?;
 
             debug!("pyvalidation::get_validated_data Deserialization Done");
-            let config = configuration.as_ref().map(Into::into);
+            let config= configuration.map(Into::into);
             let validation_result =
                 get_store()?.validate_value(&mut data_as_value, schema_name, config.as_ref());
             debug!("pyvalidation::get_validated_data Validation Done");
@@ -254,7 +254,7 @@ pub mod validation {
         let mut data: serde_json::Value = serde_json::from_str(data_as_json)
             .map_err(|err| PyRuntimeError::new_err(format!("Invalid JSON in data: {err}")))?;
 
-        let config = configuration.as_ref().map(Into::into);
+        let config: Option<validation::Configuration> = configuration.map(Into::into);
         let mut ctx = Context::new(get_store()?, config.as_ref());
         schema.coerce(&mut data, &mut ctx);
         schema.validate_value(&data, &mut ctx);

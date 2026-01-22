@@ -18,6 +18,15 @@ use crate::{
 
 use super::Validation;
 
+const EOS_CLI_CONFIG_GEN_ROLE_KEYS: [&str; 6] = [
+    "eos_cli_config_gen_documentation",
+    "custom_templates",
+    "eos_cli_config_gen_configuration",
+    "avd_eos_cli_config_gen_input_dir",
+    "avd_eos_cli_config_gen_validate_inputs_batch_size",
+    "avd_structured_config_file_format",
+];
+
 impl Validation<Map<String, Value>> for Dict {
     fn validate(&self, value: &Map<String, Value>, ctx: &mut Context) {
         validate_keys(self, value, ctx);
@@ -76,8 +85,7 @@ fn validate_keys(schema: &Dict, input: &Map<String, Value>, ctx: &mut Context) {
     // When at the root level, if warn_eos_cli_config_gen_keys is enabled, get the keys from the eos_cli_config_gen schema.
     let eos_cli_config_gen_keys: Option<&OrderMap<String, AnySchema>> = {
         if ctx.state.path.is_empty() && ctx.configuration.warn_eos_cli_config_gen_keys {
-            Some(&ctx.store.eos_cli_config_gen)
-                .and_then(|s| <&Dict>::try_from(s).ok())
+            <&Dict>::try_from(&ctx.store.eos_cli_config_gen).ok()
                 .and_then(|d| d.keys.as_ref())
         } else {
             None
@@ -103,13 +111,7 @@ fn validate_keys(schema: &Dict, input: &Map<String, Value>, ctx: &mut Context) {
             ctx.add_error(Violation::UnexpectedKey());
         } else if let Some(eos_cli_config_gen_keys) = &eos_cli_config_gen_keys
             && eos_cli_config_gen_keys.contains_key(input_key)
-            && !matches!(
-                input_key.as_str(),
-                // Special eos_cli_config_gen role keys - skip them without warning
-                "eos_cli_config_gen_documentation"
-                    | "custom_templates"
-                    | "eos_cli_config_gen_configuration"
-            )
+            && !EOS_CLI_CONFIG_GEN_ROLE_KEYS.contains(&input_key.as_str())
         {
             // Key is not in eos_designs schema but is in eos_cli_config_gen
             // and allow_other_keys is true - emit a warning that it will be ignored
