@@ -87,6 +87,9 @@ pub struct Configuration {
     /// By default Null/None values are ignored no matter which data type is expected.
     /// Setting this will instead emit type errors for Null values.
     pub restrict_null_values: bool,
+    /// When validating eos_designs, emit warnings for top-level keys that exist in eos_cli_config_gen
+    /// but not in eos_designs.
+    pub warn_eos_cli_config_gen_keys: bool,
 }
 
 #[derive(Clone, Debug, Default)]

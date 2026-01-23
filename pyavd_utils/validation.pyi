@@ -6,6 +6,32 @@
 from pathlib import Path
 from typing import Literal
 
+class Configuration:
+    """Configuration for validation behavior."""
+
+    ignore_required_keys_on_root_dict: bool
+    """Ignore required keys on the root dictionary."""
+
+    return_coercion_infos: bool
+    """Return coercion information in the validation result."""
+
+    restrict_null_values: bool
+    """Emit type errors for Null values instead of ignoring them."""
+
+    warn_eos_cli_config_gen_keys: bool
+    """
+    When validating eos_designs, emit warnings for top-level keys that exist in eos_cli_config_gen but not in eos_designs.
+    """
+
+    def __init__(
+        self,
+        *,
+        ignore_required_keys_on_root_dict: bool = False,
+        return_coercion_infos: bool = False,
+        restrict_null_values: bool = False,
+        warn_eos_cli_config_gen_keys: bool = False,
+    ) -> None: ...
+
 class Violation:
     """Input data violates the schema."""
 
@@ -30,11 +56,20 @@ class Deprecation:
     url: str | None
     """Url where more information can be found."""
 
+class IgnoredEosConfigKey:
+    """EOS Config key found in AVD Design input."""
+
+    message: str
+    """String detailing the ignored key."""
+    path: list[str]
+    """Path to the ignored key."""
+
 class ValidationResult:
     """Result of data validation."""
 
     violations: list[Violation]
     deprecations: list[Deprecation]
+    ignored_eos_config_keys: list[IgnoredEosConfigKey]
 
 class ValidatedDataResult:
     """Result of data validation including the validated data as JSON."""
@@ -56,19 +91,28 @@ def init_store_from_file(file: Path) -> None:
         RuntimeError: For any issue hit during loading, deserializing, combining and resolving schemas.
     """
 
-def validate_json(data_as_json: str, schema_name: Literal["eos_cli_config_gen", "eos_designs"]) -> ValidationResult:
+def validate_json(
+    data_as_json: str,
+    schema_name: Literal["eos_cli_config_gen", "eos_designs"],
+    configuration: Configuration | None = None,
+) -> ValidationResult:
     """
     Validate data against a schema specified by name.
 
     Args:
         data_as_json: Structured data dumped as JSON.
         schema_name: The name of the schema to validate against.
+        configuration: Optional configuration for validation behavior.
 
     Returns:
         ValidationResult holding lists of violations and deprecations.
     """
 
-def get_validated_data(data_as_json: str, schema_name: Literal["eos_cli_config_gen", "eos_designs"]) -> ValidatedDataResult:
+def get_validated_data(
+    data_as_json: str,
+    schema_name: Literal["eos_cli_config_gen", "eos_designs"],
+    configuration: Configuration | None = None,
+) -> ValidatedDataResult:
     """
     Validate data against a schema specified by name and return the data after coercion and validation.
 
@@ -77,18 +121,24 @@ def get_validated_data(data_as_json: str, schema_name: Literal["eos_cli_config_g
     Args:
         data_as_json: Structured data dumped as JSON.
         schema_name: The name of the schema to validate against.
+        configuration: Optional configuration for validation behavior.
 
     Returns:
         ValidatedDataResult holding the validated data and the ValidationResult with lists of violations and deprecations.
     """
 
-def validate_json_with_adhoc_schema(data_as_json: str, schema_as_json: str) -> ValidationResult:
+def validate_json_with_adhoc_schema(
+    data_as_json: str,
+    schema_as_json: str,
+    configuration: Configuration | None = None,
+) -> ValidationResult:
     """
     Validate data against the given schema.
 
     Args:
         data_as_json: Structured data dumped as JSON.
         schema_as_json: A fully resolved schema dumped as JSON.
+        configuration: Optional configuration for validation behavior.
 
     Returns:
         ValidationResult holding lists of violations and deprecations.

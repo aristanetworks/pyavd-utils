@@ -13,10 +13,19 @@ use serde_json::{Map, Value};
 
 use crate::{
     context::Context,
-    feedback::{Deprecated, Removed, Type, Violation},
+    feedback::{Deprecated, IgnoredEosConfigKey, Removed, Type, Violation},
 };
 
 use super::Validation;
+
+const EOS_CLI_CONFIG_GEN_ROLE_KEYS: [&str; 6] = [
+    "eos_cli_config_gen_documentation",
+    "custom_templates",
+    "eos_cli_config_gen_configuration",
+    "avd_eos_cli_config_gen_input_dir",
+    "avd_eos_cli_config_gen_validate_inputs_batch_size",
+    "avd_structured_config_file_format",
+];
 
 impl Validation<Map<String, Value>> for Dict {
     fn validate(&self, value: &Map<String, Value>, ctx: &mut Context) {
@@ -71,25 +80,45 @@ fn get_dynamic_keys_schemas<'a>(
 }
 
 fn validate_keys(schema: &Dict, input: &Map<String, Value>, ctx: &mut Context) {
-    if let Some(keys) = &schema.keys {
-        let dynamic_keys_schemas = get_dynamic_keys_schemas(schema, input);
-        input.iter().for_each(|(input_key, input_value)| {
-            ctx.state.path.push(input_key.to_owned());
-            if let Some(key_schema) = keys.get(input_key) {
-                if !check_deprecation(input_key, key_schema, input, ctx) {
-                    key_schema.validate(input_value, ctx);
-                }
-            } else if let Some(key_schema) = dynamic_keys_schemas.get(input_key) {
-                if !check_deprecation(input_key, key_schema, input, ctx) {
-                    key_schema.validate(input_value, ctx);
-                }
-            } else if !schema.allow_other_keys.unwrap_or_default() && !input_key.starts_with("_") {
-                // Key is not part of the schema and does not start with underscore
-                ctx.add_error(Violation::UnexpectedKey());
+    let Some(keys) = &schema.keys else { return };
+
+    // When at the root level, if warn_eos_cli_config_gen_keys is enabled, get the keys from the eos_cli_config_gen schema.
+    let eos_cli_config_gen_keys: Option<&OrderMap<String, AnySchema>> = {
+        if ctx.state.path.is_empty() && ctx.configuration.warn_eos_cli_config_gen_keys {
+            <&Dict>::try_from(&ctx.store.eos_cli_config_gen).ok()
+                .and_then(|d| d.keys.as_ref())
+        } else {
+            None
+        }
+    };
+
+    let dynamic_keys_schemas = get_dynamic_keys_schemas(schema, input);
+
+    input.iter().for_each(|(input_key, input_value)| {
+        ctx.state.path.push(input_key.to_owned());
+        if let Some(key_schema) = keys.get(input_key) {
+            if !check_deprecation(input_key, key_schema, input, ctx) {
+                key_schema.validate(input_value, ctx);
             }
-            ctx.state.path.pop();
-        });
-    }
+        } else if let Some(key_schema) = dynamic_keys_schemas.get(input_key) {
+            if !check_deprecation(input_key, key_schema, input, ctx) {
+                key_schema.validate(input_value, ctx);
+            }
+        } else if input_key.starts_with("_") {
+            // Key starts with underscore - skip it
+        } else if !schema.allow_other_keys.unwrap_or_default() {
+            // Key is not part of the schema and does not start with underscore
+            ctx.add_error(Violation::UnexpectedKey());
+        } else if let Some(eos_cli_config_gen_keys) = &eos_cli_config_gen_keys
+            && eos_cli_config_gen_keys.contains_key(input_key)
+            && !EOS_CLI_CONFIG_GEN_ROLE_KEYS.contains(&input_key.as_str())
+        {
+            // Key is not in eos_designs schema but is in eos_cli_config_gen
+            // and allow_other_keys is true - emit a warning that it will be ignored
+            ctx.add_warning(IgnoredEosConfigKey {});
+        }
+        ctx.state.path.pop();
+    });
 }
 
 fn validate_required_keys(schema: &Dict, input: &Map<String, Value>, ctx: &mut Context) {
@@ -159,6 +188,7 @@ fn check_deprecation(
 
 #[cfg(test)]
 mod tests {
+    use avdschema::Schema;
     use avdschema::base::Base;
     use avdschema::int::Int;
     use avdschema::list::List;
@@ -774,5 +804,123 @@ mod tests {
                 issue: Violation::MissingRequiredKey { key: "foo".into() }.into()
             }]
         )
+    }
+
+    #[test]
+    fn validate_eos_designs_with_eos_cli_config_gen_keys_warning() {
+        // Test that when validating eos_designs with warn_eos_cli_config_gen_keys enabled,
+        // if a top-level key from eos_cli_config_gen is present in the input, a warning is emitted.
+        let store = get_test_store();
+        let input = serde_json::json!({
+            "key3": "valid_eos_designs_key",
+            "key1": "this_is_an_eos_cli_config_gen_key",
+            "key2": "another_eos_cli_config_gen_key"
+        });
+
+        let configuration = Configuration {
+            warn_eos_cli_config_gen_keys: true,
+            ..Default::default()
+        };
+        let mut ctx = Context::new(&store, Some(&configuration));
+        let schema = store.get(Schema::EosDesigns);
+        schema.validate_value(&input, &mut ctx);
+
+        // Should have warnings for key1 and key2
+        assert_eq!(ctx.result.warnings.len(), 2);
+        assert!(ctx.result.warnings.iter().any(|w| {
+            matches!(&w.issue, WarningIssue::IgnoredEosConfigKey(_)) && w.path.to_string() == "key1"
+        }));
+        assert!(ctx.result.warnings.iter().any(|w| {
+            matches!(&w.issue, WarningIssue::IgnoredEosConfigKey(_)) && w.path.to_string() == "key2"
+        }));
+    }
+
+    #[test]
+    fn validate_eos_designs_without_eos_cli_config_gen_keys_no_warning() {
+        // Test that when validating eos_designs with only valid eos_designs keys,
+        // no warning is emitted even with warn_eos_cli_config_gen_keys enabled.
+        let store = get_test_store();
+        let input = serde_json::json!({
+            "key3": "valid_eos_designs_key"
+        });
+
+        let configuration = Configuration {
+            warn_eos_cli_config_gen_keys: true,
+            ..Default::default()
+        };
+        let mut ctx = Context::new(&store, Some(&configuration));
+        let schema = store.get(Schema::EosDesigns);
+        schema.validate_value(&input, &mut ctx);
+
+        // Should have no warnings
+        assert!(ctx.result.warnings.is_empty());
+    }
+
+    #[test]
+    fn validate_eos_cli_config_gen_no_warning() {
+        // Test that when validating eos_cli_config_gen, no warning is emitted
+        // (the warn_eos_cli_config_gen_keys flag is only used when validating eos_designs).
+        // 'eos_designs' keys are ignored.
+        let store = get_test_store();
+        let input = serde_json::json!({
+            "key1": "valid_key",
+            "key2": "another_valid_key",
+            "key3": "valid_eos_designs_key",
+        });
+
+        // Don't set warn_eos_cli_config_gen_keys since we're validating eos_cli_config_gen
+        let mut ctx = Context::new(&store, None);
+        let schema = store.get(Schema::EosCliConfigGen);
+        schema.validate_value(&input, &mut ctx);
+
+        // Should have no warnings
+        assert!(ctx.result.warnings.is_empty());
+    }
+
+    #[test]
+    fn validate_eos_designs_with_shared_key_no_warning() {
+        // Test that when a key exists in BOTH eos_designs and eos_cli_config_gen,
+        // no warning is emitted - the key should be validated normally.
+        let store = get_test_store();
+        let input = serde_json::json!({
+            "key3": "shared_key_value"  // key3 exists in both schemas
+        });
+
+        let configuration = Configuration {
+            warn_eos_cli_config_gen_keys: true,
+            ..Default::default()
+        };
+        let mut ctx = Context::new(&store, Some(&configuration));
+        let schema = store.get(Schema::EosDesigns);
+        schema.validate_value(&input, &mut ctx);
+
+        // Should have no warnings since key3 exists in both schemas
+        assert!(ctx.result.warnings.is_empty());
+    }
+
+    #[test]
+    fn validate_eos_designs_with_eos_cli_config_gen_role_keys_no_warning() {
+        // Test that the special eos_cli_config_gen role keys are ignored without warnings.
+        // These keys are: eos_cli_config_gen_documentation, custom_templates, eos_cli_config_gen_configuration
+        let store = get_test_store();
+        let input = serde_json::json!({
+            "key3": "valid_eos_designs_key",
+            "eos_cli_config_gen_documentation": "should be ignored",
+            "custom_templates": "should be ignored",
+            "eos_cli_config_gen_configuration": "should be ignored"
+        });
+
+        let configuration = Configuration {
+            warn_eos_cli_config_gen_keys: true,
+            ..Default::default()
+        };
+        let mut ctx = Context::new(&store, Some(&configuration));
+        let schema = store.get(Schema::EosDesigns);
+        schema.validate_value(&input, &mut ctx);
+
+        // Should have no warnings - these special keys are silently ignored
+        assert!(ctx.result.warnings.is_empty());
+        // Should have no errors either
+        assert!(ctx.result.errors.is_empty());
     }
 }

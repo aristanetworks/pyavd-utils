@@ -104,12 +104,15 @@ pub struct SchemaName {
 #[cfg(test)]
 mod tests {
 
-    use super::Load;
-
-    use crate::utils::test_utils::{get_avd_store, get_tmp_file};
-    use crate::{Dump as _, Store};
+    #[cfg(feature = "dump_load_files")]
+    use {
+        super::Load,
+        crate::utils::test_utils::{get_avd_store, get_tmp_file},
+        crate::{Dump as _, Store},
+    };
 
     #[test]
+    #[cfg(feature = "dump_load_files")]
     fn dump_avd_store() {
         // Dumping uncompressed and compressed schema.
         let store = get_avd_store();
@@ -132,6 +135,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "dump_load_files")]
     fn load_avd_store() {
         dump_avd_store();
         let store = get_avd_store();
@@ -157,6 +161,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "dump_load_files")]
     #[ignore = "Test only used for manual performance testing"]
     fn quick_load_avd_store_json() {
         //Depends on dump to be done before. This is just here to test the speed of loading from the file.
@@ -166,6 +171,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "dump_load_files")]
     #[ignore = "Test only used for manual performance testing"]
     fn quick_load_avd_store_gz() {
         //Depends on dump to be done before. This is just here to test the speed of loading from the file.
@@ -175,6 +181,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "dump_load_files")]
     #[ignore = "Test only used for manual performance testing"]
     fn quick_load_avd_store_xz2() {
         //Depends on dump to be done before. This is just here to test the speed of loading from the file.
