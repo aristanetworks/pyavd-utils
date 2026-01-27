@@ -18,11 +18,13 @@ use crate::{
 
 use super::Validation;
 
+// This must be kept up to date when adding role keys in eos_cli_config_gen schema.
+// TODO: Eventually this will go away as we stop warning.
 const EOS_CLI_CONFIG_GEN_ROLE_KEYS: [&str; 6] = [
     "eos_cli_config_gen_documentation",
     "custom_templates",
     "eos_cli_config_gen_configuration",
-    "avd_eos_cli_config_gen_input_dir",
+    "read_structured_config_from_file",
     "avd_eos_cli_config_gen_validate_inputs_batch_size",
     "avd_structured_config_file_format",
 ];
@@ -85,7 +87,8 @@ fn validate_keys(schema: &Dict, input: &Map<String, Value>, ctx: &mut Context) {
     // When at the root level, if warn_eos_cli_config_gen_keys is enabled, get the keys from the eos_cli_config_gen schema.
     let eos_cli_config_gen_keys: Option<&OrderMap<String, AnySchema>> = {
         if ctx.state.path.is_empty() && ctx.configuration.warn_eos_cli_config_gen_keys {
-            <&Dict>::try_from(&ctx.store.eos_cli_config_gen).ok()
+            <&Dict>::try_from(&ctx.store.eos_cli_config_gen)
+                .ok()
                 .and_then(|d| d.keys.as_ref())
         } else {
             None
@@ -901,13 +904,15 @@ mod tests {
     #[test]
     fn validate_eos_designs_with_eos_cli_config_gen_role_keys_no_warning() {
         // Test that the special eos_cli_config_gen role keys are ignored without warnings.
-        // These keys are: eos_cli_config_gen_documentation, custom_templates, eos_cli_config_gen_configuration
         let store = get_test_store();
         let input = serde_json::json!({
             "key3": "valid_eos_designs_key",
-            "eos_cli_config_gen_documentation": "should be ignored",
+            "avd_eos_cli_config_gen_validate_inputs_batch_size": "should be ignored",
+            "avd_structured_config_file_format": "should be ignored",
             "custom_templates": "should be ignored",
-            "eos_cli_config_gen_configuration": "should be ignored"
+            "eos_cli_config_gen_configuration": "should be ignored",
+            "eos_cli_config_gen_documentation": "should be ignored",
+            "read_structured_config_from_file": "should be ignored",
         });
 
         let configuration = Configuration {
