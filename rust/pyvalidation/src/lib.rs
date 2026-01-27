@@ -62,7 +62,7 @@ pub mod validation {
         pub path: Vec<String>,
     }
 
-    #[pyclass(get_all)]
+    #[pyclass(get_all, set_all)]
     #[derive(Clone, Default)]
     pub struct Configuration {
         pub ignore_required_keys_on_root_dict: bool,
