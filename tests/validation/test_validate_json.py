@@ -86,8 +86,6 @@ def test_validate_json_with_eos_cli_config_gen_role_keys_no_warning() -> None:
     assert len(validation_result.ignored_eos_config_keys) == 0
 
 
-
-
 @pytest.mark.usefixtures("init_store")
 def test_configuration_fields_are_writable() -> None:
     """Test that Configuration fields can be read and written."""
