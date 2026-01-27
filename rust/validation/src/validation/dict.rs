@@ -18,6 +18,8 @@ use crate::{
 
 use super::Validation;
 
+// This must be kept up to date when adding role keys in eos_cli_config_gen schema.
+// TODO: Eventually this will go away as we stop warning.
 const EOS_CLI_CONFIG_GEN_ROLE_KEYS: [&str; 6] = [
     "eos_cli_config_gen_documentation",
     "custom_templates",
@@ -107,16 +109,11 @@ fn validate_keys(schema: &Dict, input: &Map<String, Value>, ctx: &mut Context) {
             }
         } else if input_key.starts_with("_") {
             // Key starts with underscore - skip it
-        } else if ctx
-            .store
-            .get_eos_cli_config_gen_role_keys()
-            .contains(&input_key.as_str())
-        {
-            // Special eos_cli_config_gen role keys - skip them without warning
         } else if !schema.allow_other_keys.unwrap_or_default() {
             // Key is not part of the schema and does not start with underscore
             ctx.add_error(Violation::UnexpectedKey());
         } else if let Some(eos_cli_config_gen_keys) = &eos_cli_config_gen_keys
+            && eos_cli_config_gen_keys.contains_key(input_key)
             && !EOS_CLI_CONFIG_GEN_ROLE_KEYS.contains(&input_key.as_str())
         {
             // Key is not in eos_designs schema but is in eos_cli_config_gen
@@ -910,12 +907,12 @@ mod tests {
         let store = get_test_store();
         let input = serde_json::json!({
             "key3": "valid_eos_designs_key",
-            "eos_cli_config_gen_documentation": "should be ignored",
+            "avd_eos_cli_config_gen_validate_inputs_batch_size": "should be ignored",
+            "avd_structured_config_file_format": "should be ignored",
             "custom_templates": "should be ignored",
             "eos_cli_config_gen_configuration": "should be ignored",
-            "avd_eos_cli_config_gen_input_dir": "should be ignored",
-            "avd_eos_cli_config_gen_validate_inputs_batch_size": "should be ignored",
-            "avd_structured_config_file_format": "should be ignored"
+            "eos_cli_config_gen_documentation": "should be ignored",
+            "read_structured_config_from_file": "should be ignored",
         });
 
         let configuration = Configuration {

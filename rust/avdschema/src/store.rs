@@ -27,19 +27,6 @@ impl Store {
             Schema::EosCliConfigGen => &self.eos_cli_config_gen,
         }
     }
-
-    /// Get the list of special eos_cli_config_gen role keys that should be silently ignored
-    /// when validating eos_designs. These are role-level keys that are not part of the eos_designs schema.
-    pub fn get_eos_cli_config_gen_role_keys(&self) -> &[&str] {
-        &[
-            "eos_cli_config_gen_documentation",
-            "custom_templates",
-            "eos_cli_config_gen_configuration",
-            "avd_eos_cli_config_gen_input_dir",
-            "avd_eos_cli_config_gen_validate_inputs_batch_size",
-            "avd_structured_config_file_format",
-        ]
-    }
     pub fn as_resolved(mut self) -> Self {
         // Extract copies of each schema so we can resolve them.
         let mut eos_cli_config_gen_schema = self.eos_cli_config_gen.to_owned();
