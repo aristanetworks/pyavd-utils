@@ -68,11 +68,16 @@ def test_validate_json_with_eos_cli_config_gen_role_keys_no_warning() -> None:
     """Test that special eos_cli_config_gen role keys are silently ignored without warnings."""
     from pyavd_utils.validation import Configuration
 
-    # These special keys should be ignored: eos_cli_config_gen_documentation, custom_templates, eos_cli_config_gen_configuration
+    # These special keys should be ignored
     config = Configuration(warn_eos_cli_config_gen_keys=True)
     json_as_str = (
-        '{"fabric_name": "TEST_FABRIC", "eos_cli_config_gen_documentation": "docs", '
-        '"custom_templates": "templates", "eos_cli_config_gen_configuration": "config"}'
+        '{"fabric_name": "TEST_FABRIC", '
+        '"eos_cli_config_gen_documentation": "docs", '
+        '"custom_templates": "templates", '
+        '"eos_cli_config_gen_configuration": "config", '
+        '"avd_eos_cli_config_gen_input_dir": "dir", '
+        '"avd_eos_cli_config_gen_validate_inputs_batch_size": 10, '
+        '"avd_structured_config_file_format": "yaml"}'
     )
     validation_result = validate_json(json_as_str, "eos_designs", config)
 
