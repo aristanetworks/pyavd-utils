@@ -84,3 +84,29 @@ def test_validate_json_with_eos_cli_config_gen_role_keys_no_warning() -> None:
 
     # Should have NO ignored_eos_config_key warnings - these special keys are silently ignored
     assert len(validation_result.ignored_eos_config_keys) == 0
+
+
+@pytest.mark.usefixtures("init_store")
+def test_configuration_fields_are_writable() -> None:
+    """Test that Configuration fields can be read and written."""
+    from pyavd_utils.validation import Configuration
+
+    config = Configuration()
+
+    # Test initial values (all should be False by default)
+    assert config.ignore_required_keys_on_root_dict is False
+    assert config.return_coercion_infos is False
+    assert config.restrict_null_values is False
+    assert config.warn_eos_cli_config_gen_keys is False
+
+    # Test setting values
+    config.ignore_required_keys_on_root_dict = True
+    config.return_coercion_infos = True
+    config.restrict_null_values = True
+    config.warn_eos_cli_config_gen_keys = True
+
+    # Test reading updated values
+    assert config.ignore_required_keys_on_root_dict is True
+    assert config.return_coercion_infos is True
+    assert config.restrict_null_values is True
+    assert config.warn_eos_cli_config_gen_keys is True
