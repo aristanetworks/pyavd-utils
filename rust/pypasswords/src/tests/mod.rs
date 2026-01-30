@@ -38,3 +38,6 @@ mod test_cbc;
 
 #[cfg(feature = "simple-7")]
 mod test_simple_7;
+
+#[cfg(feature = "encryption")]
+mod test_encryption;

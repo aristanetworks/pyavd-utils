@@ -13,7 +13,9 @@ def test_validate_json() -> None:
         (["ethernet_interfaces", "0", "name"], "The value is not unique among similar items. Conflicting item: ethernet_interfaces[1].name"),
         (["ethernet_interfaces", "1", "name"], "The value is not unique among similar items. Conflicting item: ethernet_interfaces[0].name"),
     ]
-    validation_result = validate_json('{"ethernet_interfaces": [{"name": "Ethernet1", "description": 12345}, {"name": "Ethernet1"}, {}]}', "eos_cli_config_gen")
+    validation_result = validate_json(
+        b'{"ethernet_interfaces": [{"name": "Ethernet1", "description": 12345}, {"name": "Ethernet1"}, {}]}', "eos_cli_config_gen"
+    )
 
     assert len(validation_result.violations) == len(expected_violations)
     for violation in validation_result.violations:
@@ -30,7 +32,7 @@ def test_validate_json_with_ignored_eos_config_key() -> None:
 
     # router_isis is a key from eos_cli_config_gen that should be ignored when validating eos_designs
     config = Configuration(warn_eos_cli_config_gen_keys=True)
-    validation_result = validate_json('{"fabric_name": "TEST_FABRIC", "router_isis": {"instance": "ISIS_TEST"}}', "eos_designs", config)
+    validation_result = validate_json(b'{"fabric_name": "TEST_FABRIC", "router_isis": {"instance": "ISIS_TEST"}}', "eos_designs", config)
 
     # Should have no violations
     assert len(validation_result.violations) == 0, f"Unexpected violations: {[(v.path, v.message) for v in validation_result.violations]}"
@@ -51,7 +53,7 @@ def test_validate_json_with_ignored_eos_config_key() -> None:
 def test_validate_json_without_config_no_warning() -> None:
     """Test that without configuration, no warnings are emitted for eos_cli_config_gen keys."""
     # router_isis is a key from eos_cli_config_gen
-    validation_result = validate_json('{"fabric_name": "TEST_FABRIC", "router_isis": {"instance": "ISIS_TEST"}}', "eos_designs")
+    validation_result = validate_json(b'{"fabric_name": "TEST_FABRIC", "router_isis": {"instance": "ISIS_TEST"}}', "eos_designs")
 
     # Should have no violations
     assert len(validation_result.violations) == 0, f"Unexpected violations: {[(v.path, v.message) for v in validation_result.violations]}"
@@ -70,16 +72,16 @@ def test_validate_json_with_eos_cli_config_gen_role_keys_no_warning() -> None:
 
     # These special keys should be ignored
     config = Configuration(warn_eos_cli_config_gen_keys=True)
-    json_as_str = (
-        '{"fabric_name": "TEST_FABRIC", '
-        '"avd_eos_cli_config_gen_validate_inputs_batch_size": 10,'
-        '"avd_structured_config_file_format": "yaml",'
-        '"custom_templates": "templates",'
-        '"eos_cli_config_gen_configuration": "config",'
-        '"eos_cli_config_gen_documentation": "docs",'
-        '"read_structured_config_from_file": "file"}'
+    json_as_bytes = (
+        b'{"fabric_name": "TEST_FABRIC", '
+        b'"avd_eos_cli_config_gen_validate_inputs_batch_size": 10,'
+        b'"avd_structured_config_file_format": "yaml",'
+        b'"custom_templates": "templates",'
+        b'"eos_cli_config_gen_configuration": "config",'
+        b'"eos_cli_config_gen_documentation": "docs",'
+        b'"read_structured_config_from_file": "file"}'
     )
-    validation_result = validate_json(json_as_str, "eos_designs", config)
+    validation_result = validate_json(json_as_bytes, "eos_designs", config)
 
     # Should have no violations
     assert len(validation_result.violations) == 0, f"Unexpected violations: {[(v.path, v.message) for v in validation_result.violations]}"

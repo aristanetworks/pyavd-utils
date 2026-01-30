@@ -2,16 +2,18 @@
 // Use of this source code is governed by the Apache License 2.0
 // that can be found in the LICENSE file.
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
 
 use crate::{
     resolve_schema,
     schema::any::AnySchema,
-    utils::{
-        dump::Dump,
-        load::{Load, LoadError},
-    },
+    utils::{dump::Dump, load::Load},
 };
+
+#[cfg(feature = "dump_load_files")]
+use std::path::PathBuf;
+
+#[cfg(feature = "dump_load_files")]
+use crate::utils::load::LoadError;
 
 /// Schema store containing the AVD schemas.
 /// The store is used as entrypoint for validation and when resolving a $ref pointing to a specific schema.

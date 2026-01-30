@@ -23,6 +23,12 @@ class Configuration:
     When validating eos_designs, emit warnings for top-level keys that exist in eos_cli_config_gen but not in eos_designs.
     """
 
+    encryption_key: bytes | None
+    """
+    Optional 32-byte AES-256 encryption key for encrypting/decrypting data.
+    When set, input data is expected to be encrypted and output data will be encrypted.
+    """
+
     def __init__(
         self,
         *,
@@ -30,6 +36,7 @@ class Configuration:
         return_coercion_infos: bool = False,
         restrict_null_values: bool = False,
         warn_eos_cli_config_gen_keys: bool = False,
+        encryption_key: bytes | None = None,
     ) -> None: ...
 
 class Violation:
@@ -72,10 +79,11 @@ class ValidationResult:
     ignored_eos_config_keys: list[IgnoredEosConfigKey]
 
 class ValidatedDataResult:
-    """Result of data validation including the validated data as JSON."""
+    """Result of data validation including the validated data as UTF-8 encoded JSON."""
 
     validation_result: ValidationResult
-    validated_data: str | None
+    validated_data: bytes | None
+    """The validated data as UTF-8 encoded JSON (or encrypted bytes if encryption_key was provided)."""
 
 def init_store_from_file(file: Path) -> None:
     """
@@ -92,7 +100,7 @@ def init_store_from_file(file: Path) -> None:
     """
 
 def validate_json(
-    data_as_json: str,
+    data: bytes,
     schema_name: Literal["eos_cli_config_gen", "eos_designs"],
     configuration: Configuration | None = None,
 ) -> ValidationResult:
@@ -100,7 +108,7 @@ def validate_json(
     Validate data against a schema specified by name.
 
     Args:
-        data_as_json: Structured data dumped as JSON.
+        data: Structured data as UTF-8 encoded JSON (or encrypted bytes if encryption_key is set in configuration).
         schema_name: The name of the schema to validate against.
         configuration: Optional configuration for validation behavior.
 
@@ -109,17 +117,18 @@ def validate_json(
     """
 
 def get_validated_data(
-    data_as_json: str,
+    data: bytes,
     schema_name: Literal["eos_cli_config_gen", "eos_designs"],
     configuration: Configuration | None = None,
 ) -> ValidatedDataResult:
     """
     Validate data against a schema specified by name and return the data after coercion and validation.
 
-    This returned data is the type-coerced data encoded as JSON, which also contains default values that got inserted during validation.
+    This returned data is the type-coerced data encoded as UTF-8 encoded JSON, which also contains default values that got inserted during validation.
+    If encryption_key is set in configuration, both input and output data are encrypted.
 
     Args:
-        data_as_json: Structured data dumped as JSON.
+        data: Structured data as UTF-8 encoded JSON (or encrypted bytes if encryption_key is set in configuration).
         schema_name: The name of the schema to validate against.
         configuration: Optional configuration for validation behavior.
 
