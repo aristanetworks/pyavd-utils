@@ -6,7 +6,7 @@ use criterion::{Criterion, criterion_group, criterion_main};
 use pyvalidation::validation::{get_validated_data, init_store_from_file};
 use test_schema_store::get_store_gz_path;
 
-const TEST_DATA: &str = "{'fabric_name': 'foo', 'type': 123}";
+const TEST_DATA: &[u8] = b"{'fabric_name': 'foo', 'type': 123}";
 
 pub fn benchmark_init_store_from_file(c: &mut Criterion) {
     let schema_file = get_store_gz_path();

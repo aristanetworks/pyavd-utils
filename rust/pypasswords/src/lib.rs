@@ -87,7 +87,46 @@ mod passwords {
         })
     }
 
+    #[cfg(feature = "encryption")]
+    #[pyfunction]
+    /// Generate a random 32-byte AES-256 encryption key.
+    pub fn generate_encryption_key() -> Vec<u8> {
+        encrypt::generate_key().to_vec()
+    }
 
+    #[cfg(feature = "encryption")]
+    #[pyfunction]
+    /// Encrypt data using AES-256-GCM.
+    ///
+    /// Args:
+    ///     data: The plaintext data to encrypt.
+    ///     key: A 32-byte AES-256 encryption key.
+    ///
+    /// Returns:
+    ///     The encrypted data (nonce + ciphertext + auth tag).
+    pub fn aes_encrypt(data: &[u8], key: &[u8]) -> PyResult<Vec<u8>> {
+        let key: &[u8; 32] = key
+            .try_into()
+            .map_err(|_| PyValueError::new_err(format!("Key must be exactly 32 bytes, got {}", key.len())))?;
+        encrypt::encrypt(data, key).map_err(|err| PyRuntimeError::new_err(err.to_string()))
+    }
+
+    #[cfg(feature = "encryption")]
+    #[pyfunction]
+    /// Decrypt data using AES-256-GCM.
+    ///
+    /// Args:
+    ///     data: The encrypted data (nonce + ciphertext + auth tag).
+    ///     key: A 32-byte AES-256 encryption key.
+    ///
+    /// Returns:
+    ///     The decrypted plaintext data.
+    pub fn aes_decrypt(data: &[u8], key: &[u8]) -> PyResult<Vec<u8>> {
+        let key: &[u8; 32] = key
+            .try_into()
+            .map_err(|_| PyValueError::new_err(format!("Key must be exactly 32 bytes, got {}", key.len())))?;
+        encrypt::decrypt(data, key).map_err(|err| PyRuntimeError::new_err(err.to_string()))
+    }
 }
 
 // Implementation of the pytests but here using pyo3 wrappers in Rust, to ensure we get coverage data

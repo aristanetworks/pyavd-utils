@@ -10,12 +10,14 @@ pyo3-build-config = { workspace = true }
 [dependencies]
 pyo3 = { workspace = true, "features" = ["abi3-py310"] }
 passwords = { path = "../passwords", default-features = false }
+encrypt = { path = "../encrypt", optional = true }
 
 [features]
-default = ["cbc", "sha512", "simple-7"]
+default = ["cbc", "sha512", "simple-7", "encryption"]
 cbc = ["passwords/cbc"]
 sha512 = ["passwords/sha512"]
 simple-7 = ["passwords/simple-7"]
+encryption = ["dep:encrypt"]
 
 [lib]
 crate-type = ["cdylib", "lib"]
