@@ -19,6 +19,11 @@ where
     fn to_json(&self) -> Result<String, DumpError> {
         Ok(serde_json::to_string(self)?)
     }
+    #[cfg(feature = "encryption")]
+    fn to_encrypted_json(&self, key: &[u8; 32]) -> Result<Vec<u8>, DumpError> {
+        let json = self.to_json()?;
+        Ok(encrypt::encrypt(json.as_bytes(), key)?)
+    }
 
     #[cfg(feature = "dump_load_files")]
     fn to_file(&self, output: Option<&PathBuf>) -> Result<(), DumpError> {
@@ -77,6 +82,9 @@ pub enum DumpError {
     #[cfg(feature = "dump_load_files")]
     #[display("Invalid extension for output file.")]
     InvalidExtension {},
+    #[cfg(feature = "encryption")]
+    #[display("Encryption error: {_0}")]
+    EncryptionError(encrypt::EncryptError),
 }
 
 // These tests are also called from the load tests.

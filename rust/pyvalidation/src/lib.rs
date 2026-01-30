@@ -69,23 +69,28 @@ pub mod validation {
         pub return_coercion_infos: bool,
         pub restrict_null_values: bool,
         pub warn_eos_cli_config_gen_keys: bool,
+        /// Optional 32-byte AES-256 encryption key for encrypting/decrypting data.
+        /// When set, input data is expected to be encrypted and output data will be encrypted.
+        pub encryption_key: Option<[u8; 32]>,
     }
 
     #[pymethods]
     impl Configuration {
         #[new]
-        #[pyo3(signature = (*, ignore_required_keys_on_root_dict=false, return_coercion_infos=false, restrict_null_values=false, warn_eos_cli_config_gen_keys=false))]
+        #[pyo3(signature = (*, ignore_required_keys_on_root_dict=false, return_coercion_infos=false, restrict_null_values=false, warn_eos_cli_config_gen_keys=false, encryption_key=None))]
         fn new(
             ignore_required_keys_on_root_dict: bool,
             return_coercion_infos: bool,
             restrict_null_values: bool,
             warn_eos_cli_config_gen_keys: bool,
+            encryption_key: Option<[u8; 32]>,
         ) -> Self {
             Self {
                 ignore_required_keys_on_root_dict,
                 return_coercion_infos,
                 restrict_null_values,
                 warn_eos_cli_config_gen_keys,
+                encryption_key,
             }
         }
     }
@@ -157,7 +162,8 @@ pub mod validation {
     #[pyclass(frozen, get_all)]
     pub struct ValidatedDataResult {
         pub validation_result: ValidationResult,
-        pub validated_data: Option<String>,
+        /// The validated data as JSON bytes (or encrypted bytes if encryption_key was provided).
+        pub validated_data: Option<Vec<u8>>,
     }
 
     #[pymodule_init]
@@ -191,42 +197,77 @@ pub mod validation {
     }
 
     #[pyfunction]
-    #[pyo3(signature = (data_as_json, schema_name, configuration=None))]
+    #[pyo3(signature = (data, schema_name, configuration=None))]
     pub fn validate_json(
-        data_as_json: &str,
+        data: &[u8],
         schema_name: &str,
         configuration: Option<Configuration>,
     ) -> PyResult<ValidationResult> {
+        // Decrypt data if encryption key is provided
+        let data_as_json = match configuration.as_ref().and_then(|c| c.encryption_key.as_ref()) {
+            Some(key) => {
+                let decrypted = avdschema::decrypt(data, key)
+                    .map_err(|err| PyRuntimeError::new_err(format!("Decryption failed: {err}")))?;
+                String::from_utf8(decrypted)
+                    .map_err(|err| PyRuntimeError::new_err(format!("Invalid UTF-8 in decrypted data: {err}")))?
+            }
+            None => std::str::from_utf8(data)
+                .map_err(|err| PyRuntimeError::new_err(format!("Invalid UTF-8 in data: {err}")))?
+                .to_string(),
+        };
+
         let config = configuration.map(Into::into);
         get_store()?
-            .validate_json(data_as_json, schema_name, config.as_ref())
+            .validate_json(&data_as_json, schema_name, config.as_ref())
             .map_err(|err| PyRuntimeError::new_err(format!("Invalid JSON in data: {err}")))
             .and_then(|result| result.try_into())
     }
 
     #[pyfunction]
-    #[pyo3(signature = (data_as_json, schema_name, configuration=None))]
+    #[pyo3(signature = (data, schema_name, configuration=None))]
     pub fn get_validated_data(
         py: pyo3::Python<'_>,
-        data_as_json: &str,
+        data: &[u8],
         schema_name: &str,
         configuration: Option<Configuration>,
     ) -> PyResult<ValidatedDataResult> {
         debug!("pyvalidation::get_validated_data Begin");
+        let encryption_key = configuration.as_ref().and_then(|c| c.encryption_key);
         let result: PyResult<ValidatedDataResult> = py.detach(|| {
+            // Decrypt data if encryption key is provided
+            let data_as_json = match encryption_key.as_ref() {
+                Some(key) => {
+                    let decrypted = avdschema::decrypt(data, key)
+                        .map_err(|err| PyRuntimeError::new_err(format!("Decryption failed: {err}")))?;
+                    String::from_utf8(decrypted)
+                        .map_err(|err| PyRuntimeError::new_err(format!("Invalid UTF-8 in decrypted data: {err}")))?
+                }
+                None => std::str::from_utf8(data)
+                    .map_err(|err| PyRuntimeError::new_err(format!("Invalid UTF-8 in data: {err}")))?
+                    .to_string(),
+            };
+
             // The Value here will be in-place coerced to the correct data types.
-            let mut data_as_value = serde_json::from_str::<serde_json::Value>(data_as_json)
+            let mut data_as_value = serde_json::from_str::<serde_json::Value>(&data_as_json)
                 .map_err(|err| PyRuntimeError::new_err(format!("Invalid JSON in data: {err}")))?;
 
             debug!("pyvalidation::get_validated_data Deserialization Done");
-            let config= configuration.map(Into::into);
+            let config = configuration.map(Into::into);
             let validation_result =
                 get_store()?.validate_value(&mut data_as_value, schema_name, config.as_ref());
             debug!("pyvalidation::get_validated_data Validation Done");
+
             let validated_data = if validation_result.errors.is_empty() {
-                Some(serde_json::to_string(&data_as_value).map_err(|err| {
+                let json_bytes = serde_json::to_vec(&data_as_value).map_err(|err| {
                     PyRuntimeError::new_err(format!("Invalid JSON in coerced data: {err}"))
-                })?)
+                })?;
+                // Encrypt output if encryption key is provided
+                let output = match encryption_key.as_ref() {
+                    Some(key) => avdschema::encrypt(&json_bytes, key)
+                        .map_err(|err| PyRuntimeError::new_err(format!("Encryption failed: {err}")))?,
+                    None => json_bytes,
+                };
+                Some(output)
             } else {
                 None
             };
@@ -331,11 +372,11 @@ mod tests {
         setup();
         pyo3::Python::attach(|py| {
             let module = py.import("validation").unwrap();
-            let data_as_json_str = serde_json::json!({"ethernet_interfaces": [{"name": "Ethernet1", "description": 12345}, {"name": "Ethernet1"}, {}]}).to_string();
+            let data_bytes = serde_json::json!({"ethernet_interfaces": [{"name": "Ethernet1", "description": 12345}, {"name": "Ethernet1"}, {}]}).to_string();
             let validation_result = {
                 let args = ();
                 let kwargs = pyo3::types::PyDict::new(py);
-                kwargs.set_item("data_as_json", data_as_json_str).unwrap();
+                kwargs.set_item("data", pyo3::types::PyBytes::new(py, data_bytes.as_bytes())).unwrap();
                 kwargs
                     .set_item("schema_name", "eos_cli_config_gen")
                     .unwrap();
@@ -393,7 +434,7 @@ mod tests {
             let err = {
                 let args = ();
                 let kwargs = pyo3::types::PyDict::new(py);
-                kwargs.set_item("data_as_json", "invalid_json").unwrap();
+                kwargs.set_item("data", pyo3::types::PyBytes::new(py, b"invalid_json")).unwrap();
                 kwargs
                     .set_item("schema_name", "eos_cli_config_gen")
                     .unwrap();
@@ -505,11 +546,11 @@ mod tests {
         setup();
         pyo3::Python::attach(|py| {
             let module = py.import("validation").unwrap();
-            let data_as_json_str = serde_json::json!({"ethernet_interfaces": [{"name": "Ethernet1", "description": 12345}]}).to_string();
+            let data_bytes = serde_json::json!({"ethernet_interfaces": [{"name": "Ethernet1", "description": 12345}]}).to_string();
             let get_validated_data_result = {
                 let args = ();
                 let kwargs = pyo3::types::PyDict::new(py);
-                kwargs.set_item("data_as_json", data_as_json_str).unwrap();
+                kwargs.set_item("data", pyo3::types::PyBytes::new(py, data_bytes.as_bytes())).unwrap();
                 kwargs
                     .set_item("schema_name", "eos_cli_config_gen")
                     .unwrap();
@@ -518,7 +559,7 @@ mod tests {
                     .unwrap()
             };
             let validated_data = get_validated_data_result.getattr("validated_data").unwrap();
-            let expected_data = pyo3::types::PyString::new(py, &serde_json::json!({"ethernet_interfaces": [{"name": "Ethernet1", "description": "12345"}]}).to_string());
+            let expected_data = pyo3::types::PyBytes::new(py, serde_json::json!({"ethernet_interfaces": [{"name": "Ethernet1", "description": "12345"}]}).to_string().as_bytes());
             assert!(
                 validated_data.eq(&expected_data).unwrap(),
                 "Different data: {validated_data} vs {expected_data}"
@@ -537,11 +578,11 @@ mod tests {
         setup();
         pyo3::Python::attach(|py| {
             let module = py.import("validation").unwrap();
-            let data_as_json_str = serde_json::json!({"ethernet_interfaces": [{"name": "Ethernet1", "unknown": 12345}]}).to_string();
+            let data_bytes = serde_json::json!({"ethernet_interfaces": [{"name": "Ethernet1", "unknown": 12345}]}).to_string();
             let get_validated_data_result = {
                 let args = ();
                 let kwargs = pyo3::types::PyDict::new(py);
-                kwargs.set_item("data_as_json", data_as_json_str).unwrap();
+                kwargs.set_item("data", pyo3::types::PyBytes::new(py, data_bytes.as_bytes())).unwrap();
                 kwargs
                     .set_item("schema_name", "eos_cli_config_gen")
                     .unwrap();
@@ -581,7 +622,7 @@ mod tests {
         pyo3::Python::attach(|py| {
             let module = py.import("validation").unwrap();
             // router_isis is a key from eos_cli_config_gen that should be ignored when validating eos_designs
-            let data_as_json_str =
+            let data_bytes =
                 serde_json::json!({"fabric_name": "TEST-FABRIC", "router_isis": {"instance": "ISIS_TEST"}}).to_string();
 
             // Create configuration with warn_eos_cli_config_gen_keys enabled
@@ -599,7 +640,7 @@ mod tests {
             let get_validated_data_result = {
                 let args = ();
                 let kwargs = pyo3::types::PyDict::new(py);
-                kwargs.set_item("data_as_json", data_as_json_str).unwrap();
+                kwargs.set_item("data", pyo3::types::PyBytes::new(py, data_bytes.as_bytes())).unwrap();
                 kwargs.set_item("schema_name", "eos_designs").unwrap();
                 kwargs.set_item("configuration", config).unwrap();
                 module
