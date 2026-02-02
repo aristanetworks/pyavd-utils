@@ -25,7 +25,7 @@ const EOS_CLI_CONFIG_GEN_ROLE_KEYS: [&str; 6] = [
     "custom_templates",
     "eos_cli_config_gen_configuration",
     "read_structured_config_from_file",
-    "avd_eos_cli_config_gen_validate_inputs_batch_size",
+    "eos_cli_config_gen_validate_inputs_batch_size",
     "avd_structured_config_file_format",
 ];
 
@@ -907,7 +907,7 @@ mod tests {
         let store = get_test_store();
         let input = serde_json::json!({
             "key3": "valid_eos_designs_key",
-            "avd_eos_cli_config_gen_validate_inputs_batch_size": "should be ignored",
+            "eos_cli_config_gen_validate_inputs_batch_size": "should be ignored",
             "avd_structured_config_file_format": "should be ignored",
             "custom_templates": "should be ignored",
             "eos_cli_config_gen_configuration": "should be ignored",
