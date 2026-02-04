@@ -69,28 +69,35 @@ pub mod validation {
         pub return_coercion_infos: bool,
         pub restrict_null_values: bool,
         pub warn_eos_cli_config_gen_keys: bool,
-        /// Optional 32-byte AES-256 encryption key for encrypting/decrypting data.
-        /// When set, input data is expected to be encrypted and output data will be encrypted.
-        pub encryption_key: Option<[u8; 32]>,
+        /// Optional password for Ansible Vault encryption/decryption.
+        /// When set, input data is expected to be encrypted in Ansible Vault format
+        /// and output data will be encrypted in the same format.
+        pub encryption_password: Option<String>,
+        /// Optional vault ID for Ansible Vault encryption.
+        /// If set, uses v1.2 format with the vault ID in the header.
+        /// If not set, uses v1.1 format without a vault ID.
+        pub encryption_vault_id: Option<String>,
     }
 
     #[pymethods]
     impl Configuration {
         #[new]
-        #[pyo3(signature = (*, ignore_required_keys_on_root_dict=false, return_coercion_infos=false, restrict_null_values=false, warn_eos_cli_config_gen_keys=false, encryption_key=None))]
+        #[pyo3(signature = (*, ignore_required_keys_on_root_dict=false, return_coercion_infos=false, restrict_null_values=false, warn_eos_cli_config_gen_keys=false, encryption_password=None, encryption_vault_id=None))]
         fn new(
             ignore_required_keys_on_root_dict: bool,
             return_coercion_infos: bool,
             restrict_null_values: bool,
             warn_eos_cli_config_gen_keys: bool,
-            encryption_key: Option<[u8; 32]>,
+            encryption_password: Option<String>,
+            encryption_vault_id: Option<String>,
         ) -> Self {
             Self {
                 ignore_required_keys_on_root_dict,
                 return_coercion_infos,
                 restrict_null_values,
                 warn_eos_cli_config_gen_keys,
-                encryption_key,
+                encryption_password,
+                encryption_vault_id,
             }
         }
     }
@@ -203,10 +210,15 @@ pub mod validation {
         schema_name: &str,
         configuration: Option<Configuration>,
     ) -> PyResult<ValidationResult> {
-        // Decrypt data if encryption key is provided
-        let data_as_json = match configuration.as_ref().and_then(|c| c.encryption_key.as_ref()) {
-            Some(key) => {
-                let decrypted = avdschema::decrypt(data, key)
+        // Decrypt data if encryption password is provided
+        let data_as_json = match configuration
+            .as_ref()
+            .and_then(|c| c.encryption_password.as_ref())
+        {
+            Some(password) => {
+                let vault_data = std::str::from_utf8(data)
+                    .map_err(|err| PyRuntimeError::new_err(format!("Invalid UTF-8 in vault data: {err}")))?;
+                let (decrypted, _vault_id) = avdschema::vault_decrypt(vault_data, password)
                     .map_err(|err| PyRuntimeError::new_err(format!("Decryption failed: {err}")))?;
                 String::from_utf8(decrypted)
                     .map_err(|err| PyRuntimeError::new_err(format!("Invalid UTF-8 in decrypted data: {err}")))?
@@ -232,12 +244,19 @@ pub mod validation {
         configuration: Option<Configuration>,
     ) -> PyResult<ValidatedDataResult> {
         debug!("pyvalidation::get_validated_data Begin");
-        let encryption_key = configuration.as_ref().and_then(|c| c.encryption_key);
+        let encryption_password = configuration
+            .as_ref()
+            .and_then(|c| c.encryption_password.clone());
+        let encryption_vault_id = configuration
+            .as_ref()
+            .and_then(|c| c.encryption_vault_id.clone());
         let result: PyResult<ValidatedDataResult> = py.detach(|| {
-            // Decrypt data if encryption key is provided
-            let data_as_json = match encryption_key.as_ref() {
-                Some(key) => {
-                    let decrypted = avdschema::decrypt(data, key)
+            // Decrypt data if encryption password is provided
+            let data_as_json = match encryption_password.as_ref() {
+                Some(password) => {
+                    let vault_data = std::str::from_utf8(data)
+                        .map_err(|err| PyRuntimeError::new_err(format!("Invalid UTF-8 in vault data: {err}")))?;
+                    let (decrypted, _vault_id) = avdschema::vault_decrypt(vault_data, password)
                         .map_err(|err| PyRuntimeError::new_err(format!("Decryption failed: {err}")))?;
                     String::from_utf8(decrypted)
                         .map_err(|err| PyRuntimeError::new_err(format!("Invalid UTF-8 in decrypted data: {err}")))?
@@ -261,11 +280,14 @@ pub mod validation {
                 let json_bytes = serde_json::to_vec(&data_as_value).map_err(|err| {
                     PyRuntimeError::new_err(format!("Invalid JSON in coerced data: {err}"))
                 })?;
-                // Encrypt output if encryption key is provided
-                let output = match encryption_key.as_ref() {
-                    Some(key) => avdschema::encrypt(&json_bytes, key)
-                        .map_err(|err| PyRuntimeError::new_err(format!("Encryption failed: {err}")))?,
-                    None => json_bytes,
+                // Encrypt output if encryption password is provided
+                let output = match encryption_password.as_ref() {
+                    Some(password) => {
+                        avdschema::vault_encrypt(&json_bytes, password, encryption_vault_id.as_deref())
+                            .map_err(|err| PyRuntimeError::new_err(format!("Encryption failed: {err}")))?
+                            .into_bytes()
+                    }
+                    _ => json_bytes,
                 };
                 Some(output)
             } else {

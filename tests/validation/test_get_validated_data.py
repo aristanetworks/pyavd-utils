@@ -63,37 +63,76 @@ def test_get_validated_data_with_config() -> None:
 
 
 @pytest.mark.usefixtures("init_store")
-def test_get_validated_data_with_encryption() -> None:
-    """Test roundtrip encryption with get_validated_data."""
-    from pyavd_utils.passwords import aes_decrypt, aes_encrypt, generate_encryption_key
+def test_get_validated_data_with_encryption_v1_2() -> None:
+    """Test roundtrip encryption with get_validated_data using Ansible Vault v1.2 format (with vault_id)."""
+    from pyavd_utils.passwords import vault_decrypt, vault_encrypt
     from pyavd_utils.validation import Configuration
 
-    # Generate encryption key
-    key = generate_encryption_key()
-    assert len(key) == 32
+    # Set up vault credentials
+    password = "my_secret_password"  # noqa: S105 - this is a test.
+    vault_id = "test_vault"
 
     # Prepare test data
     test_data = b'{"ethernet_interfaces": [{"name": "Ethernet1", "description": 12345}]}'
 
-    # Encrypt input data
-    encrypted_input = aes_encrypt(test_data, key)
-    assert encrypted_input != test_data  # Ensure it's encrypted
+    # Encrypt input data using vault_encrypt with vault_id (v1.2 format)
+    encrypted_input = vault_encrypt(test_data, password, vault_id)
+    assert encrypted_input.startswith("$ANSIBLE_VAULT;1.2;AES256;test_vault")  # Verify v1.2 format
 
-    # Create configuration with encryption key
-    config = Configuration(encryption_key=key)
+    # Create configuration with encryption password and vault_id
+    config = Configuration(encryption_password=password, encryption_vault_id=vault_id)
 
-    # Call get_validated_data with encrypted data
-    result = get_validated_data(encrypted_input, "eos_cli_config_gen", config)
+    # Call get_validated_data with encrypted data (as bytes for the API)
+    result = get_validated_data(encrypted_input.encode("utf-8"), "eos_cli_config_gen", config)
 
     # Verify no validation errors
     assert len(result.validation_result.violations) == 0
 
     # Verify validated_data is present and encrypted
     assert result.validated_data is not None
-    assert result.validated_data != test_data  # Should be encrypted
+    assert result.validated_data.startswith(b"$ANSIBLE_VAULT;1.2;AES256;test_vault")  # Should be v1.2 format
 
     # Decrypt the result
-    decrypted_output = aes_decrypt(result.validated_data, key)
+    decrypted_output, returned_vault_id = vault_decrypt(result.validated_data.decode("utf-8"), password)
+    assert returned_vault_id == vault_id  # Should return vault_id as string
+
+    # Verify the decrypted data matches expected (with type coercion applied)
+    expected = b'{"ethernet_interfaces":[{"name":"Ethernet1","description":"12345"}]}'
+    assert decrypted_output == expected
+
+
+@pytest.mark.usefixtures("init_store")
+def test_get_validated_data_with_encryption_v1_1() -> None:
+    """Test roundtrip encryption with get_validated_data using Ansible Vault v1.1 format (without vault_id)."""
+    from pyavd_utils.passwords import vault_decrypt, vault_encrypt
+    from pyavd_utils.validation import Configuration
+
+    # Set up vault password only (no vault_id)
+    password = "my_secret_password"  # noqa: S105 - this is a test.
+
+    # Prepare test data
+    test_data = b'{"ethernet_interfaces": [{"name": "Ethernet1", "description": 12345}]}'
+
+    # Encrypt input data using vault_encrypt without vault_id (v1.1 format)
+    encrypted_input = vault_encrypt(test_data, password)  # No vault_id
+    assert encrypted_input.startswith("$ANSIBLE_VAULT;1.1;AES256\n")  # Verify v1.1 format
+
+    # Create configuration with encryption password only (no vault_id)
+    config = Configuration(encryption_password=password)
+
+    # Call get_validated_data with encrypted data (as bytes for the API)
+    result = get_validated_data(encrypted_input.encode("utf-8"), "eos_cli_config_gen", config)
+
+    # Verify no validation errors
+    assert len(result.validation_result.violations) == 0
+
+    # Verify validated_data is present and encrypted
+    assert result.validated_data is not None
+    assert result.validated_data.startswith(b"$ANSIBLE_VAULT;1.1;AES256\n")  # Should be v1.1 format
+
+    # Decrypt the result
+    decrypted_output, returned_vault_id = vault_decrypt(result.validated_data.decode("utf-8"), password)
+    assert returned_vault_id is None  # Should be None for v1.1 format
 
     # Verify the decrypted data matches expected (with type coercion applied)
     expected = b'{"ethernet_interfaces":[{"name":"Ethernet1","description":"12345"}]}'

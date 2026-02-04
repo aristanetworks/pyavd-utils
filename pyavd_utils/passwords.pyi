@@ -142,14 +142,15 @@ def aes_decrypt(data: bytes, key: bytes) -> bytes:
         RuntimeError: If decryption fails (wrong key, corrupted data, etc.).
     """
 
-def vault_encrypt(data: bytes, password: str, vault_id: str) -> str:
+def vault_encrypt(data: bytes, password: str, vault_id: str | None = None) -> str:
     """
-    Encrypt data using Ansible Vault v1.2 format.
+    Encrypt data using Ansible Vault format.
 
     Args:
         data: The plaintext data to encrypt.
         password: The password to use for encryption.
-        vault_id: The vault ID label to include in the header.
+        vault_id: Optional vault ID label. If provided, uses v1.2 format with the vault ID.
+                  If None or empty, uses v1.1 format without a vault ID.
 
     Returns:
         str: The encrypted data as a string in Ansible Vault format.
@@ -158,16 +159,17 @@ def vault_encrypt(data: bytes, password: str, vault_id: str) -> str:
         RuntimeError: If encryption fails.
     """
 
-def vault_decrypt(vault_data: str, password: str) -> tuple[bytes, str]:
+def vault_decrypt(vault_data: str, password: str) -> tuple[bytes, str | None]:
     """
-    Decrypt data from Ansible Vault v1.2 format.
+    Decrypt data from Ansible Vault v1.1/v1.2 format.
 
     Args:
         vault_data: The encrypted vault data as a string.
         password: The password to use for decryption.
 
     Returns:
-        tuple[bytes, str]: A tuple of (decrypted_data, vault_id).
+        tuple[bytes, str | None]: A tuple of (decrypted_data, vault_id).
+            vault_id is None for v1.1 format (no vault ID in header).
 
     Raises:
         RuntimeError: If decryption fails (wrong password, invalid format, HMAC mismatch, etc.).

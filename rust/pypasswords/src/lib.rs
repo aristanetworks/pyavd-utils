@@ -130,31 +130,33 @@ mod passwords {
 
     #[cfg(feature = "encryption")]
     #[pyfunction]
-    /// Encrypt data using Ansible Vault v1.2 format.
+    #[pyo3(signature = (data, password, vault_id = None))]
+    /// Encrypt data using Ansible Vault format.
     ///
     /// Args:
     ///     data: The plaintext data to encrypt.
     ///     password: The password to use for encryption.
-    ///     vault_id: The vault ID label to include in the header.
+    ///     vault_id: Optional vault ID label. If provided, uses v1.2 format.
+    ///               If None or empty, uses v1.1 format.
     ///
     /// Returns:
     ///     The encrypted data as a string in Ansible Vault format.
-    pub fn vault_encrypt(data: &[u8], password: &str, vault_id: &str) -> PyResult<String> {
+    pub fn vault_encrypt(data: &[u8], password: &str, vault_id: Option<&str>) -> PyResult<String> {
         encrypt::vault_encrypt(data, password, vault_id)
             .map_err(|err| PyRuntimeError::new_err(err.to_string()))
     }
 
     #[cfg(feature = "encryption")]
     #[pyfunction]
-    /// Decrypt data from Ansible Vault v1.2 format.
+    /// Decrypt data from Ansible Vault v1.1/v1.2 format.
     ///
     /// Args:
     ///     vault_data: The encrypted vault data as a string.
     ///     password: The password to use for decryption.
     ///
     /// Returns:
-    ///     A tuple of (decrypted_data, vault_id).
-    pub fn vault_decrypt(vault_data: &str, password: &str) -> PyResult<(Vec<u8>, String)> {
+    ///     A tuple of (decrypted_data, vault_id). vault_id is None for v1.1 format.
+    pub fn vault_decrypt(vault_data: &str, password: &str) -> PyResult<(Vec<u8>, Option<String>)> {
         encrypt::vault_decrypt(vault_data, password)
             .map_err(|err| PyRuntimeError::new_err(err.to_string()))
     }

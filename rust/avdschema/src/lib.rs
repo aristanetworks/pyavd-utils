@@ -12,7 +12,7 @@ mod utils;
 #[cfg(feature = "dump_load_files")]
 pub use self::utils::load::LoadFromFragments;
 #[cfg(feature = "encryption")]
-pub use encrypt::{decrypt, encrypt, generate_key};
+pub use encrypt::{decrypt, encrypt, generate_key, vault_decrypt, vault_encrypt};
 pub use self::{
     inherit::Inherit, resolve::resolve_ref::resolve_ref, resolve::resolve_schema, schema::any,
     schema::base, schema::boolean, schema::dict, schema::int, schema::list, schema::str,

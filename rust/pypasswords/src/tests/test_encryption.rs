@@ -153,7 +153,7 @@ fn aes_decrypt_corrupted_data_fails() {
 }
 
 #[test]
-fn vault_encrypt_decrypt_roundtrip() {
+fn vault_encrypt_decrypt_roundtrip_with_vault_id() {
     with_passwords_module(|py, module| {
         let plaintext = b"Hello, Ansible Vault!";
         let plaintext_bytes = pyo3::types::PyBytes::new(py, plaintext);
@@ -161,21 +161,48 @@ fn vault_encrypt_decrypt_roundtrip() {
         let vault_id = "my_vault";
 
         let encrypted: String = module
-            .call_method1("vault_encrypt", (plaintext_bytes, password, vault_id))
+            .call_method1("vault_encrypt", (plaintext_bytes, password, Some(vault_id)))
             .unwrap()
             .extract()
             .unwrap();
 
-        // Verify header format
+        // Verify v1.2 header format
         assert!(encrypted.starts_with("$ANSIBLE_VAULT;1.2;AES256;my_vault\n"));
 
         let result = module
             .call_method1("vault_decrypt", (&encrypted, password))
             .unwrap();
 
-        let (decrypted, returned_vault_id): (Vec<u8>, String) = result.extract().unwrap();
+        let (decrypted, returned_vault_id): (Vec<u8>, Option<String>) = result.extract().unwrap();
         assert_eq!(decrypted, plaintext);
-        assert_eq!(returned_vault_id, vault_id);
+        assert_eq!(returned_vault_id, Some(vault_id.to_string()));
+    });
+}
+
+#[test]
+fn vault_encrypt_decrypt_roundtrip_without_vault_id() {
+    with_passwords_module(|py, module| {
+        let plaintext = b"Hello, Ansible Vault!";
+        let plaintext_bytes = pyo3::types::PyBytes::new(py, plaintext);
+        let password = "secret_password";
+        let none: Option<&str> = None;
+
+        let encrypted: String = module
+            .call_method1("vault_encrypt", (plaintext_bytes, password, none))
+            .unwrap()
+            .extract()
+            .unwrap();
+
+        // Verify v1.1 header format
+        assert!(encrypted.starts_with("$ANSIBLE_VAULT;1.1;AES256\n"));
+
+        let result = module
+            .call_method1("vault_decrypt", (&encrypted, password))
+            .unwrap();
+
+        let (decrypted, returned_vault_id): (Vec<u8>, Option<String>) = result.extract().unwrap();
+        assert_eq!(decrypted, plaintext);
+        assert_eq!(returned_vault_id, None);
     });
 }
 
@@ -186,7 +213,7 @@ fn vault_decrypt_wrong_password_fails() {
         let plaintext_bytes = pyo3::types::PyBytes::new(py, plaintext);
 
         let encrypted: String = module
-            .call_method1("vault_encrypt", (plaintext_bytes, "correct_password", "test"))
+            .call_method1("vault_encrypt", (plaintext_bytes, "correct_password", Some("test")))
             .unwrap()
             .extract()
             .unwrap();

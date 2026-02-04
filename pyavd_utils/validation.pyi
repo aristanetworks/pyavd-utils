@@ -23,10 +23,18 @@ class Configuration:
     When validating eos_designs, emit warnings for top-level keys that exist in eos_cli_config_gen but not in eos_designs.
     """
 
-    encryption_key: bytes | None
+    encryption_password: str | None
     """
-    Optional 32-byte AES-256 encryption key for encrypting/decrypting data.
-    When set, input data is expected to be encrypted and output data will be encrypted.
+    Optional password for Ansible Vault encryption/decryption.
+    When set, input data is expected to be encrypted in Ansible Vault format
+    and output data will be encrypted in the same format.
+    """
+
+    encryption_vault_id: str | None
+    """
+    Optional vault ID for Ansible Vault encryption.
+    If set, uses v1.2 format with the vault ID in the header.
+    If not set, uses v1.1 format without a vault ID.
     """
 
     def __init__(
@@ -36,7 +44,8 @@ class Configuration:
         return_coercion_infos: bool = False,
         restrict_null_values: bool = False,
         warn_eos_cli_config_gen_keys: bool = False,
-        encryption_key: bytes | None = None,
+        encryption_password: str | None = None,
+        encryption_vault_id: str | None = None,
     ) -> None: ...
 
 class Violation:
@@ -83,7 +92,7 @@ class ValidatedDataResult:
 
     validation_result: ValidationResult
     validated_data: bytes | None
-    """The validated data as UTF-8 encoded JSON (or encrypted bytes if encryption_key was provided)."""
+    """The validated data as UTF-8 encoded JSON (or Ansible Vault encrypted bytes if encryption_password was provided)."""
 
 def init_store_from_file(file: Path) -> None:
     """
@@ -108,7 +117,7 @@ def validate_json(
     Validate data against a schema specified by name.
 
     Args:
-        data: Structured data as UTF-8 encoded JSON (or encrypted bytes if encryption_key is set in configuration).
+        data: Structured data as UTF-8 encoded JSON (or Ansible Vault encrypted data if encryption_password is set in configuration).
         schema_name: The name of the schema to validate against.
         configuration: Optional configuration for validation behavior.
 
@@ -125,10 +134,10 @@ def get_validated_data(
     Validate data against a schema specified by name and return the data after coercion and validation.
 
     This returned data is the type-coerced data encoded as UTF-8 encoded JSON, which also contains default values that got inserted during validation.
-    If encryption_key is set in configuration, both input and output data are encrypted.
+    If encryption_password is set in configuration, both input and output data are encrypted using Ansible Vault v1.2 format.
 
     Args:
-        data: Structured data as UTF-8 encoded JSON (or encrypted bytes if encryption_key is set in configuration).
+        data: Structured data as UTF-8 encoded JSON (or Ansible Vault encrypted data if encryption_password is set in configuration).
         schema_name: The name of the schema to validate against.
         configuration: Optional configuration for validation behavior.
 
