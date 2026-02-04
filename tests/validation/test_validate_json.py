@@ -74,7 +74,7 @@ def test_validate_json_with_eos_cli_config_gen_role_keys_no_warning() -> None:
     config = Configuration(warn_eos_cli_config_gen_keys=True)
     json_as_bytes = (
         b'{"fabric_name": "TEST_FABRIC", '
-        b'"avd_eos_cli_config_gen_validate_inputs_batch_size": 10,'
+        b'"eos_cli_config_gen_validate_inputs_batch_size": 10,'
         b'"avd_structured_config_file_format": "yaml",'
         b'"custom_templates": "templates",'
         b'"eos_cli_config_gen_configuration": "config",'
