@@ -4,6 +4,7 @@ package.license = "Apache-2.0"
 
 members = [
     "rust/avdschema",
+    "rust/encrypt",
     "rust/validation",
     "rust/passwords",
     "rust/pypasswords",

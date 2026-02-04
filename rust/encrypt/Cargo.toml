@@ -1,0 +1,9 @@
+[package]
+name = "encrypt"
+version.workspace = true
+edition = "2024"
+license.workspace = true
+
+[dependencies]
+aes-gcm = { version = "0.10.3", features = ["std"] }
+derive_more = { workspace = true, features = ["display", "from"] }

@@ -101,3 +101,43 @@ def simple_7_decrypt(data: str) -> str:
         ValueError: If the encrypted data is invalid (too short, invalid format, invalid hex, or salt out of range).
         RuntimeError: If the decrypted data is not valid UTF-8.
     """
+
+def generate_encryption_key() -> bytes:
+    """
+    Generate a random 32-byte AES-256 encryption key.
+
+    Returns:
+        bytes: A cryptographically secure random 32-byte key.
+    """
+
+def aes_encrypt(data: bytes, key: bytes) -> bytes:
+    """
+    Encrypt data using AES-256-GCM.
+
+    Args:
+        data: The plaintext data to encrypt.
+        key: A 32-byte AES-256 encryption key.
+
+    Returns:
+        bytes: The encrypted data (nonce + ciphertext + auth tag).
+
+    Raises:
+        ValueError: If the key is not exactly 32 bytes.
+        RuntimeError: If encryption fails.
+    """
+
+def aes_decrypt(data: bytes, key: bytes) -> bytes:
+    """
+    Decrypt data using AES-256-GCM.
+
+    Args:
+        data: The encrypted data (nonce + ciphertext + auth tag).
+        key: A 32-byte AES-256 encryption key.
+
+    Returns:
+        bytes: The decrypted plaintext data.
+
+    Raises:
+        ValueError: If the key is not exactly 32 bytes.
+        RuntimeError: If decryption fails (wrong key, corrupted data, etc.).
+    """

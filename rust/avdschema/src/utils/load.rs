@@ -22,6 +22,15 @@ where
         Ok(serde_json::from_str(json)?)
     }
 
+    /// Decrypt and deserialize JSON data encrypted with AES-256-GCM.
+    /// Expected format: nonce (12 bytes) || ciphertext (includes 16-byte auth tag)
+    #[cfg(feature = "encryption")]
+    fn from_encrypted_json(data: &[u8], key: &[u8; 32]) -> Result<Self, LoadError> {
+        let plaintext = encrypt::decrypt(data, key)?;
+        let json = std::str::from_utf8(&plaintext)?;
+        Self::from_json(json)
+    }
+
     #[cfg(feature = "dump_load_files")]
     fn from_file(input: Option<&Path>) -> Result<Self, LoadError> {
         // Read input from file / stdin
@@ -120,6 +129,12 @@ pub enum LoadError {
     #[cfg(feature = "dump_load_files")]
     #[display("No files found.")]
     NoFilesFound {},
+    #[cfg(feature = "encryption")]
+    #[display("Decryption error: {_0}")]
+    DecryptionError(encrypt::EncryptError),
+    #[cfg(feature = "encryption")]
+    #[display("Invalid UTF-8 in decrypted data: {_0}")]
+    Utf8Error(std::str::Utf8Error),
 }
 
 #[cfg(test)]
@@ -174,5 +189,96 @@ mod tests {
         let result = Store::from_file(Some(&file_path));
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), store);
+    }
+
+    #[cfg(feature = "encryption")]
+    mod encryption_tests {
+        use super::*;
+        use crate::utils::dump::Dump;
+
+        #[test]
+        fn encrypt_decrypt_roundtrip_schema() {
+            let key: [u8; 32] = [
+                0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e,
+                0x0f, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c,
+                0x1d, 0x1e, 0x1f, 0x20,
+            ];
+            let schema = get_test_dict_schema();
+
+            // Encrypt
+            let encrypted = schema.to_encrypted_json(&key);
+            assert!(encrypted.is_ok(), "Encryption failed: {:?}", encrypted.err());
+            let encrypted_data = encrypted.unwrap();
+
+            // Verify encrypted data has expected minimum size (12 nonce + 16 tag + some data)
+            assert!(encrypted_data.len() >= 28, "Encrypted data too short");
+
+            // Decrypt
+            let decrypted: Result<AnySchema, _> = AnySchema::from_encrypted_json(&encrypted_data, &key);
+            assert!(decrypted.is_ok(), "Decryption failed: {:?}", decrypted.err());
+            assert_eq!(decrypted.unwrap(), schema);
+        }
+
+        #[test]
+        fn encrypt_decrypt_roundtrip_store() {
+            let key: [u8; 32] = [
+                0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77,
+                0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x00, 0x11, 0x22, 0x33, 0x44, 0x55,
+                0x66, 0x77, 0x88, 0x99,
+            ];
+            let store = get_test_store();
+
+            // Encrypt
+            let encrypted = store.to_encrypted_json(&key);
+            assert!(encrypted.is_ok(), "Encryption failed: {:?}", encrypted.err());
+            let encrypted_data = encrypted.unwrap();
+
+            // Decrypt
+            let decrypted: Result<Store, _> = Store::from_encrypted_json(&encrypted_data, &key);
+            assert!(decrypted.is_ok(), "Decryption failed: {:?}", decrypted.err());
+            assert_eq!(decrypted.unwrap(), store);
+        }
+
+        #[test]
+        fn decrypt_with_wrong_key_fails() {
+            let key: [u8; 32] = [0x01; 32];
+            let wrong_key: [u8; 32] = [0x02; 32];
+            let schema = get_test_dict_schema();
+
+            // Encrypt with correct key
+            let encrypted = schema.to_encrypted_json(&key).unwrap();
+
+            // Decrypt with wrong key should fail
+            let decrypted: Result<AnySchema, _> = AnySchema::from_encrypted_json(&encrypted, &wrong_key);
+            assert!(decrypted.is_err(), "Decryption should fail with wrong key");
+        }
+
+        #[test]
+        fn decrypt_truncated_data_fails() {
+            let key: [u8; 32] = [0x01; 32];
+
+            // Data too short (less than nonce + tag + 1 byte)
+            let short_data = vec![0u8; 20];
+            let result: Result<AnySchema, _> = AnySchema::from_encrypted_json(&short_data, &key);
+            assert!(result.is_err(), "Decryption should fail with truncated data");
+        }
+
+        #[test]
+        fn decrypt_corrupted_data_fails() {
+            let key: [u8; 32] = [0x01; 32];
+            let schema = get_test_dict_schema();
+
+            // Encrypt
+            let mut encrypted = schema.to_encrypted_json(&key).unwrap();
+
+            // Corrupt the ciphertext (not the nonce)
+            if encrypted.len() > 15 {
+                encrypted[15] ^= 0xff;
+            }
+
+            // Decrypt should fail due to authentication failure
+            let decrypted: Result<AnySchema, _> = AnySchema::from_encrypted_json(&encrypted, &key);
+            assert!(decrypted.is_err(), "Decryption should fail with corrupted data");
+        }
     }
 }
