@@ -141,3 +141,34 @@ def aes_decrypt(data: bytes, key: bytes) -> bytes:
         ValueError: If the key is not exactly 32 bytes.
         RuntimeError: If decryption fails (wrong key, corrupted data, etc.).
     """
+
+def vault_encrypt(data: bytes, password: str, vault_id: str) -> str:
+    """
+    Encrypt data using Ansible Vault v1.2 format.
+
+    Args:
+        data: The plaintext data to encrypt.
+        password: The password to use for encryption.
+        vault_id: The vault ID label to include in the header.
+
+    Returns:
+        str: The encrypted data as a string in Ansible Vault format.
+
+    Raises:
+        RuntimeError: If encryption fails.
+    """
+
+def vault_decrypt(vault_data: str, password: str) -> tuple[bytes, str]:
+    """
+    Decrypt data from Ansible Vault v1.2 format.
+
+    Args:
+        vault_data: The encrypted vault data as a string.
+        password: The password to use for decryption.
+
+    Returns:
+        tuple[bytes, str]: A tuple of (decrypted_data, vault_id).
+
+    Raises:
+        RuntimeError: If decryption fails (wrong password, invalid format, HMAC mismatch, etc.).
+    """

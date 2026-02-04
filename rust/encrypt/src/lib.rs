@@ -2,16 +2,15 @@
 // Use of this source code is governed by the Apache License 2.0
 // that can be found in the LICENSE file.
 
-//! AES-256-GCM encryption and decryption utilities.
+//! Encryption and decryption utilities.
 //!
-//! This module provides functions for encrypting and decrypting data using
-//! AES-256-GCM (Galois/Counter Mode). The encrypted output format is:
-//!
-//! ```text
-//! ┌─────────────────┬──────────────────────────────────┐
-//! │  Nonce (12B)    │  Ciphertext (includes 16B tag)   │
-//! └─────────────────┴──────────────────────────────────┘
-//! ```
+//! This module provides:
+//! - AES-256-GCM encryption/decryption
+//! - Ansible Vault v1.2 compatible encryption/decryption
+
+mod vault;
+
+pub use vault::{vault_decrypt, vault_encrypt};
 
 use aes_gcm::aead::{Aead as _, AeadCore as _, KeyInit as _};
 
@@ -33,6 +32,14 @@ pub enum EncryptError {
     DataTooShort {},
     #[display("Invalid key length: expected 32 bytes, got {_0}")]
     InvalidKeyLength(usize),
+    #[display("Invalid vault format: {_0}")]
+    InvalidVaultFormat(String),
+    #[display("Invalid padding")]
+    InvalidPadding,
+    #[display("HMAC verification failed")]
+    HmacMismatch,
+    #[display("Hex decoding failed: {_0}")]
+    HexError(hex::FromHexError),
 }
 
 /// Returns a random 256-bit key for AES-256-GCM encryption.

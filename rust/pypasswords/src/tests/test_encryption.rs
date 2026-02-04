@@ -151,3 +151,62 @@ fn aes_decrypt_corrupted_data_fails() {
         assert!(err.is_instance_of::<pyo3::exceptions::PyRuntimeError>(py));
     });
 }
+
+#[test]
+fn vault_encrypt_decrypt_roundtrip() {
+    with_passwords_module(|py, module| {
+        let plaintext = b"Hello, Ansible Vault!";
+        let plaintext_bytes = pyo3::types::PyBytes::new(py, plaintext);
+        let password = "secret_password";
+        let vault_id = "my_vault";
+
+        let encrypted: String = module
+            .call_method1("vault_encrypt", (plaintext_bytes, password, vault_id))
+            .unwrap()
+            .extract()
+            .unwrap();
+
+        // Verify header format
+        assert!(encrypted.starts_with("$ANSIBLE_VAULT;1.2;AES256;my_vault\n"));
+
+        let result = module
+            .call_method1("vault_decrypt", (&encrypted, password))
+            .unwrap();
+
+        let (decrypted, returned_vault_id): (Vec<u8>, String) = result.extract().unwrap();
+        assert_eq!(decrypted, plaintext);
+        assert_eq!(returned_vault_id, vault_id);
+    });
+}
+
+#[test]
+fn vault_decrypt_wrong_password_fails() {
+    with_passwords_module(|py, module| {
+        let plaintext = b"Secret data";
+        let plaintext_bytes = pyo3::types::PyBytes::new(py, plaintext);
+
+        let encrypted: String = module
+            .call_method1("vault_encrypt", (plaintext_bytes, "correct_password", "test"))
+            .unwrap()
+            .extract()
+            .unwrap();
+
+        let err = module
+            .call_method1("vault_decrypt", (&encrypted, "wrong_password"))
+            .unwrap_err();
+
+        assert!(err.is_instance_of::<pyo3::exceptions::PyRuntimeError>(py));
+        assert!(err.value(py).to_string().contains("HMAC"));
+    });
+}
+
+#[test]
+fn vault_invalid_format_fails() {
+    with_passwords_module(|py, module| {
+        let err = module
+            .call_method1("vault_decrypt", ("invalid vault data", "password"))
+            .unwrap_err();
+
+        assert!(err.is_instance_of::<pyo3::exceptions::PyRuntimeError>(py));
+    });
+}
