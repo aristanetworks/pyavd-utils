@@ -1,0 +1,20 @@
+THIRD-PARTY LICENSES
+====================
+
+This file contains the licenses for third-party Rust crates used in pyavd-utils.
+
+{{#each licenses}}
+================================================================================
+{{name}}
+================================================================================
+
+Used by:
+{{#each used_by}}
+  - {{crate.name}} {{crate.version}}
+{{/each}}
+
+License text:
+--------------------------------------------------------------------------------
+{{text}}
+
+{{/each}}
