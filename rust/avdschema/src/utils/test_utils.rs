@@ -21,7 +21,7 @@ pub(crate) fn get_tmp_file(filename: &str) -> PathBuf {
 
 pub(crate) fn get_test_store() -> Store {
     Store {
-        eos_cli_config_gen: AnySchema::deserialize(json!(
+        eos_config: AnySchema::deserialize(json!(
             {
                 "type": "dict",
                 "keys": {
@@ -43,7 +43,7 @@ pub(crate) fn get_test_store() -> Store {
             }
         ))
         .unwrap(),
-        eos_designs: AnySchema::deserialize(json!(
+        avd_design: AnySchema::deserialize(json!(
             {
                 "type": "dict",
                 "keys": {

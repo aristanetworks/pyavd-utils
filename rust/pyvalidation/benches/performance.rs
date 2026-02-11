@@ -21,7 +21,7 @@ pub fn benchmark_init_store_from_file(c: &mut Criterion) {
 pub fn benchmark_get_validated_data(c: &mut Criterion) {
     c.bench_function("get_validated_data", |b| {
         pyo3::Python::initialize();
-        pyo3::Python::attach(|py| b.iter(|| get_validated_data(py, TEST_DATA, "eos_designs", None)))
+        pyo3::Python::attach(|py| b.iter(|| get_validated_data(py, TEST_DATA, "avd_design", None)))
     });
 }
 

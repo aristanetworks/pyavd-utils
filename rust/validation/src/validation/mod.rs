@@ -25,7 +25,7 @@ pub trait Validation<T> {
     fn validate_value(&self, value: &Value, ctx: &mut Context);
 
     /// Validation of ref which will not merge in the schema, so it only works as expected when there are no local variables set.
-    /// In practice this is only used for structured_config, where we $ref in the full eos_cli_config_gen schema. All other schemas
+    /// In practice this is only used for structured_config, where we $ref in the full eos_config schema. All other schemas
     /// will be resolved up-front and stored in the schema store.
     fn validate_ref(&self, value: &T, ctx: &mut Context);
 }

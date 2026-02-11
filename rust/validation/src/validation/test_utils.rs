@@ -8,13 +8,13 @@ use serde_json::json;
 
 pub(crate) fn get_test_store() -> Store {
     Store {
-        eos_cli_config_gen: AnySchema::deserialize(json!(
+        eos_config: AnySchema::deserialize(json!(
             {
                 "type": "dict",
                 "keys": {
                     "key1": {
                         "type": "str",
-                        "$ref": "eos_cli_config_gen#/keys/key2",
+                        "$ref": "eos_config#/keys/key2",
                     },
                     "key2": {
                         "type": "str",
@@ -24,14 +24,14 @@ pub(crate) fn get_test_store() -> Store {
             }
         ))
         .unwrap(),
-        eos_designs: AnySchema::deserialize(json!(
+        avd_design: AnySchema::deserialize(json!(
             {
                 "type": "dict",
                 "allow_other_keys": true,
                 "keys": {
                     "key3": {
                         "type": "str",
-                        "$ref": "eos_cli_config_gen#/keys/key2",
+                        "$ref": "eos_config#/keys/key2",
                     }
                 }
             }

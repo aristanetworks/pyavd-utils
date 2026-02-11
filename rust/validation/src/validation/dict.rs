@@ -18,7 +18,7 @@ use crate::{
 
 use super::Validation;
 
-// This must be kept up to date when adding role keys in eos_cli_config_gen schema.
+// This must be kept up to date when adding role keys in eos_config schema.
 // TODO: Eventually this will go away as we stop warning.
 const EOS_CLI_CONFIG_GEN_ROLE_KEYS: [&str; 6] = [
     "eos_cli_config_gen_documentation",
@@ -84,10 +84,10 @@ fn get_dynamic_keys_schemas<'a>(
 fn validate_keys(schema: &Dict, input: &Map<String, Value>, ctx: &mut Context) {
     let Some(keys) = &schema.keys else { return };
 
-    // When at the root level, if warn_eos_cli_config_gen_keys is enabled, get the keys from the eos_cli_config_gen schema.
-    let eos_cli_config_gen_keys: Option<&OrderMap<String, AnySchema>> = {
+    // When at the root level, if warn_eos_cli_config_gen_keys is enabled, get the keys from the eos_config schema.
+    let eos_config_keys: Option<&OrderMap<String, AnySchema>> = {
         if ctx.state.path.is_empty() && ctx.configuration.warn_eos_cli_config_gen_keys {
-            <&Dict>::try_from(&ctx.store.eos_cli_config_gen)
+            <&Dict>::try_from(&ctx.store.eos_config)
                 .ok()
                 .and_then(|d| d.keys.as_ref())
         } else {
@@ -112,11 +112,11 @@ fn validate_keys(schema: &Dict, input: &Map<String, Value>, ctx: &mut Context) {
         } else if !schema.allow_other_keys.unwrap_or_default() {
             // Key is not part of the schema and does not start with underscore
             ctx.add_error(Violation::UnexpectedKey());
-        } else if let Some(eos_cli_config_gen_keys) = &eos_cli_config_gen_keys
-            && eos_cli_config_gen_keys.contains_key(input_key)
+        } else if let Some(eos_config_keys) = &eos_config_keys
+            && eos_config_keys.contains_key(input_key)
             && !EOS_CLI_CONFIG_GEN_ROLE_KEYS.contains(&input_key.as_str())
         {
-            // Key is not in eos_designs schema but is in eos_cli_config_gen
+            // Key is not in avd_design schema but is in eos_config_keys
             // and allow_other_keys is true - emit a warning that it will be ignored
             ctx.add_warning(IgnoredEosConfigKey {});
         }
@@ -810,9 +810,9 @@ mod tests {
     }
 
     #[test]
-    fn validate_eos_designs_with_eos_cli_config_gen_keys_warning() {
+    fn validate_avd_design_with_eos_cli_config_gen_keys_warning() {
         // Test that when validating eos_designs with warn_eos_cli_config_gen_keys enabled,
-        // if a top-level key from eos_cli_config_gen is present in the input, a warning is emitted.
+        // if a top-level key from eos_config is present in the input, a warning is emitted.
         let store = get_test_store();
         let input = serde_json::json!({
             "key3": "valid_eos_designs_key",
@@ -825,7 +825,7 @@ mod tests {
             ..Default::default()
         };
         let mut ctx = Context::new(&store, Some(&configuration));
-        let schema = store.get(Schema::EosDesigns);
+        let schema = store.get(Schema::AVDDesign);
         schema.validate_value(&input, &mut ctx);
 
         // Should have warnings for key1 and key2
@@ -839,8 +839,8 @@ mod tests {
     }
 
     #[test]
-    fn validate_eos_designs_without_eos_cli_config_gen_keys_no_warning() {
-        // Test that when validating eos_designs with only valid eos_designs keys,
+    fn validate_avd_design_without_eos_cli_config_gen_keys_no_warning() {
+        // Test that when validating avd_design with only valid avd_design keys,
         // no warning is emitted even with warn_eos_cli_config_gen_keys enabled.
         let store = get_test_store();
         let input = serde_json::json!({
@@ -852,7 +852,7 @@ mod tests {
             ..Default::default()
         };
         let mut ctx = Context::new(&store, Some(&configuration));
-        let schema = store.get(Schema::EosDesigns);
+        let schema = store.get(Schema::AVDDesign);
         schema.validate_value(&input, &mut ctx);
 
         // Should have no warnings
@@ -860,10 +860,10 @@ mod tests {
     }
 
     #[test]
-    fn validate_eos_cli_config_gen_no_warning() {
-        // Test that when validating eos_cli_config_gen, no warning is emitted
-        // (the warn_eos_cli_config_gen_keys flag is only used when validating eos_designs).
-        // 'eos_designs' keys are ignored.
+    fn validate_eos_config_no_warning() {
+        // Test that when validating eos_config, no warning is emitted
+        // (the warn_eos_cli_config_gen_keys flag is only used when validating avd_design).
+        // 'avd_design' keys are ignored.
         let store = get_test_store();
         let input = serde_json::json!({
             "key1": "valid_key",
@@ -871,9 +871,9 @@ mod tests {
             "key3": "valid_eos_designs_key",
         });
 
-        // Don't set warn_eos_cli_config_gen_keys since we're validating eos_cli_config_gen
+        // Don't set warn_eos_cli_config_gen_keys since we're validating eos_config
         let mut ctx = Context::new(&store, None);
-        let schema = store.get(Schema::EosCliConfigGen);
+        let schema = store.get(Schema::EOSConfig);
         schema.validate_value(&input, &mut ctx);
 
         // Should have no warnings
@@ -881,8 +881,8 @@ mod tests {
     }
 
     #[test]
-    fn validate_eos_designs_with_shared_key_no_warning() {
-        // Test that when a key exists in BOTH eos_designs and eos_cli_config_gen,
+    fn validate_avd_design_with_shared_key_no_warning() {
+        // Test that when a key exists in BOTH avd_design and eos_config,
         // no warning is emitted - the key should be validated normally.
         let store = get_test_store();
         let input = serde_json::json!({
@@ -894,7 +894,7 @@ mod tests {
             ..Default::default()
         };
         let mut ctx = Context::new(&store, Some(&configuration));
-        let schema = store.get(Schema::EosDesigns);
+        let schema = store.get(Schema::AVDDesign);
         schema.validate_value(&input, &mut ctx);
 
         // Should have no warnings since key3 exists in both schemas
@@ -902,7 +902,7 @@ mod tests {
     }
 
     #[test]
-    fn validate_eos_designs_with_eos_cli_config_gen_role_keys_no_warning() {
+    fn validate_avd_design_with_eos_cli_config_gen_role_keys_no_warning() {
         // Test that the special eos_cli_config_gen role keys are ignored without warnings.
         let store = get_test_store();
         let input = serde_json::json!({
@@ -920,7 +920,7 @@ mod tests {
             ..Default::default()
         };
         let mut ctx = Context::new(&store, Some(&configuration));
-        let schema = store.get(Schema::EosDesigns);
+        let schema = store.get(Schema::AVDDesign);
         schema.validate_value(&input, &mut ctx);
 
         // Should have no warnings - these special keys are silently ignored

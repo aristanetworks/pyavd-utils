@@ -337,7 +337,7 @@ mod tests {
                 let kwargs = pyo3::types::PyDict::new(py);
                 kwargs.set_item("data_as_json", data_as_json_str).unwrap();
                 kwargs
-                    .set_item("schema_name", "eos_cli_config_gen")
+                    .set_item("schema_name", "eos_config")
                     .unwrap();
                 module
                     .call_method("validate_json", args, Some(&kwargs))
@@ -395,7 +395,7 @@ mod tests {
                 let kwargs = pyo3::types::PyDict::new(py);
                 kwargs.set_item("data_as_json", "invalid_json").unwrap();
                 kwargs
-                    .set_item("schema_name", "eos_cli_config_gen")
+                    .set_item("schema_name", "eos_config")
                     .unwrap();
                 module
                     .call_method("validate_json", args, Some(&kwargs))
@@ -511,7 +511,7 @@ mod tests {
                 let kwargs = pyo3::types::PyDict::new(py);
                 kwargs.set_item("data_as_json", data_as_json_str).unwrap();
                 kwargs
-                    .set_item("schema_name", "eos_cli_config_gen")
+                    .set_item("schema_name", "eos_config")
                     .unwrap();
                 module
                     .call_method("get_validated_data", args, Some(&kwargs))
@@ -543,7 +543,7 @@ mod tests {
                 let kwargs = pyo3::types::PyDict::new(py);
                 kwargs.set_item("data_as_json", data_as_json_str).unwrap();
                 kwargs
-                    .set_item("schema_name", "eos_cli_config_gen")
+                    .set_item("schema_name", "eos_config")
                     .unwrap();
                 module
                     .call_method("get_validated_data", args, Some(&kwargs))
@@ -576,11 +576,11 @@ mod tests {
     }
 
     #[test]
-    fn validate_eos_designs_with_ignored_eos_config_key() {
+    fn validate_avd_design_with_ignored_eos_config_key() {
         setup();
         pyo3::Python::attach(|py| {
             let module = py.import("validation").unwrap();
-            // router_isis is a key from eos_cli_config_gen that should be ignored when validating eos_designs
+            // router_isis is a key from eos_config that should be ignored when validating avd_design
             let data_as_json_str =
                 serde_json::json!({"fabric_name": "TEST-FABRIC", "router_isis": {"instance": "ISIS_TEST"}}).to_string();
 
@@ -600,7 +600,7 @@ mod tests {
                 let args = ();
                 let kwargs = pyo3::types::PyDict::new(py);
                 kwargs.set_item("data_as_json", data_as_json_str).unwrap();
-                kwargs.set_item("schema_name", "eos_designs").unwrap();
+                kwargs.set_item("schema_name", "avd_design").unwrap();
                 kwargs.set_item("configuration", config).unwrap();
                 module
                     .call_method("get_validated_data", args, Some(&kwargs))

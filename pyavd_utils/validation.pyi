@@ -19,9 +19,7 @@ class Configuration:
     """Emit type errors for Null values instead of ignoring them."""
 
     warn_eos_cli_config_gen_keys: bool
-    """
-    When validating eos_designs, emit warnings for top-level keys that exist in eos_cli_config_gen but not in eos_designs.
-    """
+    """When validating avd_design, emit warnings for top-level keys that exist in eos_config but not in avd_design."""
 
     def __init__(
         self,
@@ -93,7 +91,7 @@ def init_store_from_file(file: Path) -> None:
 
 def validate_json(
     data_as_json: str,
-    schema_name: Literal["eos_cli_config_gen", "eos_designs"],
+    schema_name: Literal["eos_config", "avd_design"],
     configuration: Configuration | None = None,
 ) -> ValidationResult:
     """
@@ -110,7 +108,7 @@ def validate_json(
 
 def get_validated_data(
     data_as_json: str,
-    schema_name: Literal["eos_cli_config_gen", "eos_designs"],
+    schema_name: Literal["eos_config", "avd_design"],
     configuration: Configuration | None = None,
 ) -> ValidatedDataResult:
     """
