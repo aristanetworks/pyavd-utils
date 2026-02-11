@@ -42,4 +42,4 @@ Please refer to the main [AVD GitHub repository](https://github.com/aristanetwor
 
 ## License
 
-`pyavd-utils` is licensed under Apache2. See the [LICENSE](https://www.google.com/search?q=https://github.com/aristanetworks/pyavd-utils/blob/main/LICENSE) file for details.
+`pyavd-utils` is licensed under Apache2. See the [LICENSE](https://github.com/aristanetworks/pyavd-utils/blob/main/LICENSE) file for details.
