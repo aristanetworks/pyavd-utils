@@ -8,9 +8,9 @@ from pyavd_utils.validation import get_validated_data
 
 @pytest.mark.usefixtures("init_store")
 def test_get_validated_data() -> None:
-    coercion_and_validation_result = get_validated_data('{"ethernet_interfaces": [{"name": "Ethernet1", "description": 12345}]}', "eos_cli_config_gen")
+    coercion_and_validation_result = get_validated_data(b'{"ethernet_interfaces": [{"name": "Ethernet1", "description": 12345}]}', "eos_cli_config_gen")
     validated_data = coercion_and_validation_result.validated_data
-    assert validated_data == ('{"ethernet_interfaces":[{"name":"Ethernet1","description":"12345"}]}')
+    assert validated_data == b'{"ethernet_interfaces":[{"name":"Ethernet1","description":"12345"}]}'
     validation_result = coercion_and_validation_result.validation_result
     assert len(validation_result.violations) == 0
     assert len(validation_result.deprecations) == 0
@@ -23,7 +23,7 @@ def test_get_validated_data_not_ok() -> None:
         (["ethernet_interfaces", "0", "unknown"], "Invalid key."),
     ]
 
-    get_validated_data_result = get_validated_data('{"ethernet_interfaces": [{"name": "Ethernet1", "unknown": 12345}]}', "eos_cli_config_gen")
+    get_validated_data_result = get_validated_data(b'{"ethernet_interfaces": [{"name": "Ethernet1", "unknown": 12345}]}', "eos_cli_config_gen")
     validated_data = get_validated_data_result.validated_data
     assert validated_data is None
 
@@ -42,7 +42,7 @@ def test_get_validated_data_with_config() -> None:
     from pyavd_utils.validation import Configuration
 
     config = Configuration(warn_eos_cli_config_gen_keys=True)
-    result = get_validated_data('{"fabric_name": "TEST_FABRIC", "router_isis": {"instance": "ISIS_TEST"}}', "eos_designs", config)
+    result = get_validated_data(b'{"fabric_name": "TEST_FABRIC", "router_isis": {"instance": "ISIS_TEST"}}', "eos_designs", config)
 
     # Should have no violations
     assert len(result.validation_result.violations) == 0
@@ -60,3 +60,41 @@ def test_get_validated_data_with_config() -> None:
 
     # Validated data should be present since there are no violations
     assert result.validated_data is not None
+
+
+@pytest.mark.usefixtures("init_store")
+def test_get_validated_data_with_encryption() -> None:
+    """Test roundtrip encryption with get_validated_data."""
+    from pyavd_utils.passwords import aes_decrypt, aes_encrypt, generate_encryption_key
+    from pyavd_utils.validation import Configuration
+
+    # Generate encryption key
+    key = generate_encryption_key()
+    assert len(key) == 32
+
+    # Prepare test data
+    test_data = b'{"ethernet_interfaces": [{"name": "Ethernet1", "description": 12345}]}'
+
+    # Encrypt input data
+    encrypted_input = aes_encrypt(test_data, key)
+    assert encrypted_input != test_data  # Ensure it's encrypted
+
+    # Create configuration with encryption key
+    config = Configuration(encryption_key=key)
+
+    # Call get_validated_data with encrypted data
+    result = get_validated_data(encrypted_input, "eos_cli_config_gen", config)
+
+    # Verify no validation errors
+    assert len(result.validation_result.violations) == 0
+
+    # Verify validated_data is present and encrypted
+    assert result.validated_data is not None
+    assert result.validated_data != test_data  # Should be encrypted
+
+    # Decrypt the result
+    decrypted_output = aes_decrypt(result.validated_data, key)
+
+    # Verify the decrypted data matches expected (with type coercion applied)
+    expected = b'{"ethernet_interfaces":[{"name":"Ethernet1","description":"12345"}]}'
+    assert decrypted_output == expected
