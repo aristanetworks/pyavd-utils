@@ -75,6 +75,8 @@ def test_validate_json_with_eos_cli_config_gen_role_keys_no_warning() -> None:
         '"eos_cli_config_gen_validate_inputs_batch_size": 10,'
         '"avd_structured_config_file_format": "yaml",'
         '"custom_templates": "templates",'
+        '"eos_cli_config_gen_keep_tmp_files": true,'
+        '"eos_cli_config_gen_tmp_dir": "my_custom_tmp_dir",'
         '"eos_cli_config_gen_configuration": "config",'
         '"eos_cli_config_gen_documentation": "docs",'
         '"read_structured_config_from_file": "file"}'
