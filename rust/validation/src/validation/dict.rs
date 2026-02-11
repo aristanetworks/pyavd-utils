@@ -20,7 +20,7 @@ use super::Validation;
 
 // This must be kept up to date when adding role keys in eos_cli_config_gen schema.
 // TODO: Eventually this will go away as we stop warning.
-const EOS_CLI_CONFIG_GEN_ROLE_KEYS: [&str; 6] = [
+const EOS_CLI_CONFIG_GEN_ROLE_KEYS: [&str; 8] = [
     "avd_structured_config_file_format",
     "custom_templates",
     "eos_cli_config_gen_configuration",
