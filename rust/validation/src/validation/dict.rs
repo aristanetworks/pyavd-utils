@@ -20,13 +20,15 @@ use super::Validation;
 
 // This must be kept up to date when adding role keys in eos_cli_config_gen schema.
 // TODO: Eventually this will go away as we stop warning.
-const EOS_CLI_CONFIG_GEN_ROLE_KEYS: [&str; 6] = [
-    "eos_cli_config_gen_documentation",
+const EOS_CLI_CONFIG_GEN_ROLE_KEYS: [&str; 8] = [
+    "avd_structured_config_file_format",
     "custom_templates",
     "eos_cli_config_gen_configuration",
-    "read_structured_config_from_file",
+    "eos_cli_config_gen_documentation",
+    "eos_cli_config_gen_keep_tmp_files",
+    "eos_cli_config_gen_tmp_dir",
     "eos_cli_config_gen_validate_inputs_batch_size",
-    "avd_structured_config_file_format",
+    "read_structured_config_from_file",
 ];
 
 impl Validation<Map<String, Value>> for Dict {
@@ -907,11 +909,13 @@ mod tests {
         let store = get_test_store();
         let input = serde_json::json!({
             "key3": "valid_eos_designs_key",
-            "eos_cli_config_gen_validate_inputs_batch_size": "should be ignored",
             "avd_structured_config_file_format": "should be ignored",
             "custom_templates": "should be ignored",
             "eos_cli_config_gen_configuration": "should be ignored",
             "eos_cli_config_gen_documentation": "should be ignored",
+            "eos_cli_config_gen_keep_tmp_files": "should be ignored",
+            "eos_cli_config_gen_tmp_dir": "should be ignored",
+            "eos_cli_config_gen_validate_inputs_batch_size": "should be ignored",
             "read_structured_config_from_file": "should be ignored",
         });
 
