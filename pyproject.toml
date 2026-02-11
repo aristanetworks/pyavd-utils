@@ -5,7 +5,7 @@ authors=[{ name = "Arista Networks", email = "avd-dev@arista.com"}]
 description="Rust based utilities used by PyAVD. Should not be used directly and may not follow semantic versioning."
 readme = "README.md"
 license = "Apache-2.0"
-license-files = ["pyavd_utils/LICENSE"]
+license-files = ["pyavd_utils/LICENSE", "pyavd_utils/THIRD_PARTY_LICENSES.txt"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
