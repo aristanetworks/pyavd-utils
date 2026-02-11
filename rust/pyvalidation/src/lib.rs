@@ -219,7 +219,7 @@ pub mod validation {
                 .map_err(|err| PyRuntimeError::new_err(format!("Invalid JSON in data: {err}")))?;
 
             debug!("pyvalidation::get_validated_data Deserialization Done");
-            let config= configuration.map(Into::into);
+            let config = configuration.map(Into::into);
             let validation_result =
                 get_store()?.validate_value(&mut data_as_value, schema_name, config.as_ref());
             debug!("pyvalidation::get_validated_data Validation Done");

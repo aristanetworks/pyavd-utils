@@ -212,7 +212,10 @@ mod tests {
         };
         let mut input = true.into();
         let store = get_test_store();
-        let configururation = Configuration { return_coercion_infos: true, ..Default::default()};
+        let configururation = Configuration {
+            return_coercion_infos: true,
+            ..Default::default()
+        };
         let mut ctx = Context::new(&store, Some(&configururation));
         schema.coerce(&mut input, &mut ctx);
         schema.validate_value(&input, &mut ctx);
