@@ -90,8 +90,7 @@ mod tests {
     #[test]
     fn test_simple_7_encrypt_ok() {
         for (salt, expected) in VALID_ENCRYPT_DECRYPT_PAIRS {
-            let result = simple_7_encrypt(TEST_PASSWORD, Some(salt))
-                .expect("Encryption failed");
+            let result = simple_7_encrypt(TEST_PASSWORD, Some(salt)).expect("Encryption failed");
             assert_eq!(result, expected, "Failed for salt {}", salt);
         }
     }
@@ -99,8 +98,7 @@ mod tests {
     #[test]
     fn test_simple_7_decrypt_ok() {
         for (salt, encrypted) in VALID_ENCRYPT_DECRYPT_PAIRS {
-            let result = simple_7_decrypt(encrypted)
-                .expect("Decryption failed");
+            let result = simple_7_decrypt(encrypted).expect("Decryption failed");
             assert_eq!(result, TEST_PASSWORD, "Failed for salt {}", salt);
         }
     }
@@ -108,22 +106,19 @@ mod tests {
     #[test]
     fn test_simple_7_encrypt_decrypt_roundtrip() {
         let original = "test_password_123";
-        let encrypted = simple_7_encrypt(original, Some(5))
-            .expect("Encryption failed");
-        let decrypted = simple_7_decrypt(&encrypted)
-            .expect("Decryption failed");
+        let encrypted = simple_7_encrypt(original, Some(5)).expect("Encryption failed");
+        let decrypted = simple_7_decrypt(&encrypted).expect("Decryption failed");
         assert_eq!(decrypted, original);
     }
 
     #[test]
     fn test_simple_7_encrypt_random_salt() {
-        let result = simple_7_encrypt(TEST_PASSWORD, None)
-            .expect("Encryption with random salt failed");
+        let result =
+            simple_7_encrypt(TEST_PASSWORD, None).expect("Encryption with random salt failed");
         // Should be 2 chars for salt + hex encoded data
         assert!(result.len() >= 2);
         // Should be able to decrypt it back
-        let decrypted = simple_7_decrypt(&result)
-            .expect("Decryption failed");
+        let decrypted = simple_7_decrypt(&result).expect("Decryption failed");
         assert_eq!(decrypted, TEST_PASSWORD);
     }
 
@@ -152,20 +147,32 @@ mod tests {
     #[test]
     fn test_simple_7_decrypt_invalid_hex() {
         let result = simple_7_decrypt("01GGGG");
-        assert!(matches!(result.unwrap_err(), Simple7Error::InvalidHexEncoding(_)));
+        assert!(matches!(
+            result.unwrap_err(),
+            Simple7Error::InvalidHexEncoding(_)
+        ));
     }
 
     #[test]
     fn test_simple_7_decrypt_invalid_salt() {
         // Invalid salt format (not a number)
         let result = simple_7_decrypt("XX1234");
-        assert!(matches!(result.unwrap_err(), Simple7Error::InvalidSaltFormat(_)));
+        assert!(matches!(
+            result.unwrap_err(),
+            Simple7Error::InvalidSaltFormat(_)
+        ));
 
         // Salt out of range (0-15)
         let result = simple_7_decrypt("161234");
-        assert!(matches!(result.unwrap_err(), Simple7Error::InvalidSaltValue(16)));
+        assert!(matches!(
+            result.unwrap_err(),
+            Simple7Error::InvalidSaltValue(16)
+        ));
 
         let result = simple_7_decrypt("991234");
-        assert!(matches!(result.unwrap_err(), Simple7Error::InvalidSaltValue(99)));
+        assert!(matches!(
+            result.unwrap_err(),
+            Simple7Error::InvalidSaltValue(99)
+        ));
     }
 }

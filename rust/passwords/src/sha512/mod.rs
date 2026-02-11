@@ -23,8 +23,6 @@ pub enum InvalidSaltError {
 }
 impl std::error::Error for InvalidSaltError {}
 
-
-
 pub fn sha512_crypt(password: &str, salt: &str) -> Result<String, Sha512CryptError> {
     // Setting rounds to 5000 which is the default for sha512crypt
     let params = Sha512Params::new(5_000)?;

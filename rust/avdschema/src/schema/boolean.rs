@@ -6,7 +6,7 @@ use crate::{any::Shortcuts, base::Deprecation};
 
 use super::{
     any::AnySchema,
-    base::{documentation_options::DocumentationOptions, Base},
+    base::{Base, documentation_options::DocumentationOptions},
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;

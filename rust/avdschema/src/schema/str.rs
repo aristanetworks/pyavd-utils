@@ -14,8 +14,8 @@ use crate::{any::Shortcuts, base::Deprecation};
 use super::{
     any::AnySchema,
     base::{
-        convert_types::ConvertTypes, documentation_options::DocumentationOptions,
-        valid_values::ValidValues, Base,
+        Base, convert_types::ConvertTypes, documentation_options::DocumentationOptions,
+        valid_values::ValidValues,
     },
 };
 

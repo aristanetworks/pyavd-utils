@@ -86,8 +86,6 @@ mod passwords {
             _ => PyValueError::new_err(err.to_string()),
         })
     }
-
-
 }
 
 // Implementation of the pytests but here using pyo3 wrappers in Rust, to ensure we get coverage data
