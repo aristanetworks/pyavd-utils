@@ -56,3 +56,7 @@ Cargo.lock
 
 **/tmp/**/*
 !/**/.gitkeep
+
+# Generated license files (cargo-about)
+licenses.html
+THIRD_PARTY_LICENSES.txt
