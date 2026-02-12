@@ -28,6 +28,6 @@ pub struct DocumentationOptionsDict {
     /// The `table` option is inherited to all child keys, unless specifically set on the child.
     pub table: Option<String>,
     /// Prevent keys of the dict from being displayed in the generated documentation.
-    /// This is used for structured_config where we wish to avoid displaying the full eos_cli_config_gen schema everywhere.
+    /// This is used for structured_config where we wish to avoid displaying the full eos_config schema everywhere.
     pub hide_keys: Option<bool>,
 }

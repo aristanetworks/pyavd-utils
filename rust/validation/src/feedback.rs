@@ -335,7 +335,7 @@ impl Removed {
 }
 #[derive(Clone, Debug, PartialEq, Serialize, derive_more::Display)]
 #[display(
-    "The 'eos_cli_config_gen' key is present in the input to 'eos_designs' and will be ignored."
+    "Ignoring key from the EOS Config schema when validating with the AVD Design schema."
 )]
 pub struct IgnoredEosConfigKey {}
 

@@ -201,7 +201,7 @@ mod tests {
     fn validate_yaml_err() {
         let input = "key3:\n  some_key: some_value\n";
         let store = get_test_store();
-        let result = store.validate_yaml(input, "eos_designs", None);
+        let result = store.validate_yaml(input, "avd_design", None);
         assert!(result.is_ok());
         let validation_result = result.unwrap();
         assert!(validation_result.infos.is_empty());

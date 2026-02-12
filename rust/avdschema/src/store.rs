@@ -17,27 +17,29 @@ use crate::{
 /// The store is used as entrypoint for validation and when resolving a $ref pointing to a specific schema.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Store {
-    pub eos_cli_config_gen: AnySchema,
-    pub eos_designs: AnySchema,
+    #[serde(alias = "eos_cli_config_gen")]
+    pub eos_config: AnySchema,
+    #[serde(alias = "eos_designs")]
+    pub avd_design: AnySchema,
 }
 impl Store {
     pub fn get(&self, schema: Schema) -> &AnySchema {
         match schema {
-            Schema::EosDesigns => &self.eos_designs,
-            Schema::EosCliConfigGen => &self.eos_cli_config_gen,
+            Schema::AVDDesign => &self.avd_design,
+            Schema::EOSConfig => &self.eos_config,
         }
     }
     pub fn as_resolved(mut self) -> Self {
         // Extract copies of each schema so we can resolve them.
-        let mut eos_cli_config_gen_schema = self.eos_cli_config_gen.to_owned();
-        let mut eos_designs_schema = self.eos_designs.to_owned();
+        let mut eos_config_schema = self.eos_config.to_owned();
+        let mut avd_design_schema = self.avd_design.to_owned();
 
         // Next resolve all $ref in each schema, updating the store as we go,
         // to avoid re-resolving nested refs many times.
-        resolve_schema(&mut eos_cli_config_gen_schema, &self).unwrap();
-        self.eos_cli_config_gen = eos_cli_config_gen_schema;
-        resolve_schema(&mut eos_designs_schema, &self).unwrap();
-        self.eos_designs = eos_designs_schema;
+        resolve_schema(&mut eos_config_schema, &self).unwrap();
+        self.eos_config = eos_config_schema;
+        resolve_schema(&mut avd_design_schema, &self).unwrap();
+        self.avd_design = avd_design_schema;
 
         self
     }
@@ -50,12 +52,12 @@ impl Store {
     /// which must be a json file, will then be used.
     #[cfg(feature = "dump_load_files")]
     pub fn new_from_paths(
-        eos_designs_schema_path: PathBuf,
-        eos_cli_config_gen_schema_path: PathBuf,
+        avd_design_schema_path: PathBuf,
+        eos_config_schema_path: PathBuf,
     ) -> Result<Self, LoadError> {
         Ok(Store {
-            eos_cli_config_gen: AnySchema::new_from_path(eos_cli_config_gen_schema_path)?,
-            eos_designs: AnySchema::new_from_path(eos_designs_schema_path)?,
+            eos_config: AnySchema::new_from_path(eos_config_schema_path)?,
+            avd_design: AnySchema::new_from_path(avd_design_schema_path)?,
         })
     }
 }
@@ -64,8 +66,8 @@ impl Load for Store {}
 
 #[derive(Debug, Clone, Copy)]
 pub enum Schema {
-    EosDesigns,
-    EosCliConfigGen,
+    AVDDesign,
+    EOSConfig,
 }
 
 impl TryFrom<&str> for Schema {
@@ -74,8 +76,10 @@ impl TryFrom<&str> for Schema {
     /// Try to get the Schema Enum variant for the string.
     fn try_from(value: &str) -> Result<Self, Self::Error> {
         match value {
-            "eos_designs" => Ok(Self::EosDesigns),
-            "eos_cli_config_gen" => Ok(Self::EosCliConfigGen),
+            "avd_design" => Ok(Self::AVDDesign),
+            "eos_config" => Ok(Self::EOSConfig),
+            "eos_designs" => Ok(Self::AVDDesign),
+            "eos_cli_config_gen" => Ok(Self::EOSConfig),
             _ => Err(SchemaName::new(value.into()).into()),
         }
     }
@@ -84,8 +88,8 @@ impl From<Schema> for String {
     /// Get the schema name as string.
     fn from(value: Schema) -> Self {
         match value {
-            Schema::EosDesigns => "eos_designs".to_string(),
-            Schema::EosCliConfigGen => "eos_cli_config_gen".to_string(),
+            Schema::AVDDesign => "avd_design".to_string(),
+            Schema::EOSConfig => "eos_config".to_string(),
         }
     }
 }

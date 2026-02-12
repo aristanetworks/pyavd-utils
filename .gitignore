@@ -29,6 +29,8 @@ dist/
 .pytest_cache/
 ## pyenv
 .python-version
+## direnv
+.envrc
 ## .vscode/*
 .vscode/
 
@@ -56,3 +58,7 @@ Cargo.lock
 
 **/tmp/**/*
 !/**/.gitkeep
+
+# Generated license files (cargo-about)
+licenses.html
+THIRD_PARTY_LICENSES.txt

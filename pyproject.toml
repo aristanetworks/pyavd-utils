@@ -5,7 +5,7 @@ authors=[{ name = "Arista Networks", email = "avd-dev@arista.com"}]
 description="Rust based utilities used by PyAVD. Should not be used directly and may not follow semantic versioning."
 readme = "README.md"
 license = "Apache-2.0"
-license-files = ["pyavd_utils/LICENSE"]
+license-files = ["pyavd_utils/LICENSE", "pyavd_utils/THIRD_PARTY_LICENSES.txt"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
@@ -37,7 +37,8 @@ requires = [
     "setuptools>=71.0",
     "setuptools-rust>=1.12.0",
 ]
-build-backend = "setuptools.build_meta"
+build-backend = "backend"
+backend-path = ["_build_backend"]
 
 [tool.distutils.bdist_wheel]
 py-limited-api = "cp310"
@@ -49,7 +50,7 @@ version = {attr = "pyavd_utils.__version__"}
 include = ["pyavd_utils"]
 
 [tool.setuptools.package-data]
-"pyavd_utils" = ["*.pyi"]
+"pyavd_utils" = ["*.pyi", "THIRD_PARTY_LICENSES.txt"]
 
 [[tool.setuptools-rust.ext-modules]]
 target = "pyavd_utils.passwords"
@@ -70,7 +71,7 @@ coverage = [
 ]
 # group used to build cross platform wheels
 build_wheel = [
-    "cibuildwheel==3.3.0",
+    "cibuildwheel==3.3.0; python_version >= '3.11'",
 ]
 
 # -------------------------------------- #
@@ -157,6 +158,11 @@ convention = "google"
   "S101",   # Accept 'assert' in pytest.
   "INP001", # implicit namespace package. Add an `__init__.py` - Tests are not in packages
   "PLC0415", # `import` should be at the top-level of a file
+]
+"_build_backend/*" = [
+  "INP001", # Not a package, just a build backend module
+  "T201",   # Allow print statements for build output
+  "S603",   # Allow subprocess calls - inputs are trusted
 ]
 
 [tool.ruff.lint.pylint]

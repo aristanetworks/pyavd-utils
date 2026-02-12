@@ -66,7 +66,8 @@ impl From<&AnySchema> for String {
 }
 impl AnySchema {
     pub fn is_removed(&self) -> bool {
-        self.deprecation().as_ref()
+        self.deprecation()
+            .as_ref()
             .and_then(|d| d.removed)
             .unwrap_or_default()
     }
