@@ -247,7 +247,7 @@ mod tests {
                 Dict {
                     base: Base {
                         // Using ref to the root of the schema since such refs will not get resolved.
-                        schema_ref: Some("eos_cli_config_gen#".into()),
+                        schema_ref: Some("eos_config#".into()),
                         ..Default::default()
                     },
                     ..Default::default()

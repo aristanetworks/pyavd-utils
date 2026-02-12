@@ -50,9 +50,27 @@ mod tests {
     use super::resolve_ref;
 
     #[test]
+    // Testing with eos_cli_config_gen ref
     fn resolve_ref_ok() {
         let test_store = get_test_store();
         let result = resolve_ref("eos_cli_config_gen#/keys/key2", &test_store);
+        assert!(result.is_ok());
+        let result_schema = result.unwrap();
+        let str_schema_result: Result<&Str, _> = result_schema.try_into();
+        assert!(str_schema_result.is_ok());
+        let str_schema = str_schema_result.unwrap();
+        assert!(str_schema.base.description.is_some());
+        assert_eq!(
+            str_schema.base.description.as_ref().unwrap(),
+            "this is from key2"
+        );
+    }
+
+    #[test]
+    // Testing with eos_config ref
+    fn resolve_ref_ok_2() {
+        let test_store = get_test_store();
+        let result = resolve_ref("eos_config#/keys/key2", &test_store);
         assert!(result.is_ok());
         let result_schema = result.unwrap();
         let str_schema_result: Result<&Str, _> = result_schema.try_into();

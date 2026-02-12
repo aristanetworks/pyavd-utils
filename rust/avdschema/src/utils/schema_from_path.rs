@@ -18,8 +18,8 @@ pub enum SchemaKey {
 }
 impl SchemaKey {
     /// Return a schema $ref like
-    /// "eos_cli_config_gen#/keys/somekey/items/" or
-    /// "eos_designs#/dynamic_keys/connected_endpoint_keys.key"
+    /// "eos_config#/keys/somekey/items/" or
+    /// "avd_design#/dynamic_keys/connected_endpoint_keys.key"
     /// For dynamic keys the first item of the path is replaced with with dynamic key path.
     pub fn get_schema_ref_from_path(&self, schema: &Schema, data_path: &[String]) -> String {
         let schema_name: String = (*schema).into();
@@ -235,12 +235,12 @@ mod tests {
         let value = json!(
             {"dynamic": [ {"key": "one"}, {"key": "two"}, {"key": "three"}]});
         let store = get_test_store();
-        let result = get_schema_from_path(Schema::EosCliConfigGen, &store, &[], &value);
+        let result = get_schema_from_path(Schema::EOSConfig, &store, &[], &value);
         assert!(result.is_ok());
         let opt = result.unwrap();
         assert!(opt.is_some());
         let schema = opt.unwrap();
-        assert_eq!(schema, &store.eos_cli_config_gen);
+        assert_eq!(schema, &store.eos_config);
     }
 
     #[test]
@@ -249,7 +249,7 @@ mod tests {
             {"dynamic": [ {"key": "one"}, {"key": "two"}, {"key": "three"}]});
         let store = get_test_store();
         let result =
-            get_schema_from_path(Schema::EosCliConfigGen, &store, &["key2".into()], &value);
+            get_schema_from_path(Schema::EOSConfig, &store, &["key2".into()], &value);
         assert!(result.is_ok());
         let opt = result.unwrap();
         assert!(opt.is_some());
@@ -267,7 +267,7 @@ mod tests {
         let value = json!(
             {"dynamic": [ {"key": "one"}, {"key": "two"}, {"key": "three"}]});
         let store = get_test_store();
-        let result = get_schema_from_path(Schema::EosCliConfigGen, &store, &["two".into()], &value);
+        let result = get_schema_from_path(Schema::EOSConfig, &store, &["two".into()], &value);
         assert!(result.is_ok());
         let opt = result.unwrap();
         assert!(opt.is_some());

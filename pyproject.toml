@@ -71,7 +71,7 @@ coverage = [
 ]
 # group used to build cross platform wheels
 build_wheel = [
-    "cibuildwheel==3.3.0",
+    "cibuildwheel==3.3.0; python_version >= '3.11'",
 ]
 
 # -------------------------------------- #
