@@ -89,7 +89,7 @@ pub struct Configuration {
     pub restrict_null_values: bool,
     /// When validating avd_design, emit warnings for top-level keys that exist in eos_config
     /// but not in avd_design.
-    pub warn_eos_cli_config_gen_keys: bool,
+    pub warn_eos_config_keys: bool,
 }
 
 #[derive(Clone, Debug, Default)]

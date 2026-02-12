@@ -29,7 +29,7 @@ def test_validate_json_with_ignored_eos_config_key() -> None:
     from pyavd_utils.validation import Configuration
 
     # router_isis is a key from eos_config that should be ignored when validating avd_design
-    config = Configuration(warn_eos_cli_config_gen_keys=True)
+    config = Configuration(warn_eos_config_keys=True)
     validation_result = validate_json('{"fabric_name": "TEST_FABRIC", "router_isis": {"instance": "ISIS_TEST"}}', "avd_design", config)
 
     # Should have no violations
@@ -59,7 +59,7 @@ def test_validate_json_without_config_no_warning() -> None:
     # Should have no deprecations
     assert len(validation_result.deprecations) == 0
 
-    # Should have NO ignored_eos_config_key warnings (because warn_eos_cli_config_gen_keys is False by default)
+    # Should have NO ignored_eos_config_key warnings (because warn_eos_config_keys is False by default)
     assert len(validation_result.ignored_eos_config_keys) == 0
 
 
@@ -69,7 +69,7 @@ def test_validate_json_with_eos_cli_config_gen_role_keys_no_warning() -> None:
     from pyavd_utils.validation import Configuration
 
     # These special keys should be ignored
-    config = Configuration(warn_eos_cli_config_gen_keys=True)
+    config = Configuration(warn_eos_config_keys=True)
     json_as_str = (
         '{"fabric_name": "TEST_FABRIC", '
         '"eos_cli_config_gen_validate_inputs_batch_size": 10,'
@@ -104,16 +104,16 @@ def test_configuration_fields_are_writable() -> None:
     assert config.ignore_required_keys_on_root_dict is False
     assert config.return_coercion_infos is False
     assert config.restrict_null_values is False
-    assert config.warn_eos_cli_config_gen_keys is False
+    assert config.warn_eos_config_keys is False
 
     # Test setting values
     config.ignore_required_keys_on_root_dict = True
     config.return_coercion_infos = True
     config.restrict_null_values = True
-    config.warn_eos_cli_config_gen_keys = True
+    config.warn_eos_config_keys = True
 
     # Test reading updated values
     assert config.ignore_required_keys_on_root_dict is True
     assert config.return_coercion_infos is True
     assert config.restrict_null_values is True
-    assert config.warn_eos_cli_config_gen_keys is True
+    assert config.warn_eos_config_keys is True

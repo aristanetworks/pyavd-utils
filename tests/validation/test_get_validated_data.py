@@ -41,7 +41,7 @@ def test_get_validated_data_with_config() -> None:
     """Test that get_validated_data works with configuration."""
     from pyavd_utils.validation import Configuration
 
-    config = Configuration(warn_eos_cli_config_gen_keys=True)
+    config = Configuration(warn_eos_config_keys=True)
     result = get_validated_data('{"fabric_name": "TEST_FABRIC", "router_isis": {"instance": "ISIS_TEST"}}', "avd_design", config)
 
     # Should have no violations

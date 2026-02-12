@@ -18,7 +18,7 @@ class Configuration:
     restrict_null_values: bool
     """Emit type errors for Null values instead of ignoring them."""
 
-    warn_eos_cli_config_gen_keys: bool
+    warn_eos_config_keys: bool
     """When validating avd_design, emit warnings for top-level keys that exist in eos_config but not in avd_design."""
 
     def __init__(
@@ -27,7 +27,7 @@ class Configuration:
         ignore_required_keys_on_root_dict: bool = False,
         return_coercion_infos: bool = False,
         restrict_null_values: bool = False,
-        warn_eos_cli_config_gen_keys: bool = False,
+        warn_eos_config_keys: bool = False,
     ) -> None: ...
 
 class Violation:

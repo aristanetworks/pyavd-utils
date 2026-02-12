@@ -68,24 +68,24 @@ pub mod validation {
         pub ignore_required_keys_on_root_dict: bool,
         pub return_coercion_infos: bool,
         pub restrict_null_values: bool,
-        pub warn_eos_cli_config_gen_keys: bool,
+        pub warn_eos_config_keys: bool,
     }
 
     #[pymethods]
     impl Configuration {
         #[new]
-        #[pyo3(signature = (*, ignore_required_keys_on_root_dict=false, return_coercion_infos=false, restrict_null_values=false, warn_eos_cli_config_gen_keys=false))]
+        #[pyo3(signature = (*, ignore_required_keys_on_root_dict=false, return_coercion_infos=false, restrict_null_values=false, warn_eos_config_keys=false))]
         fn new(
             ignore_required_keys_on_root_dict: bool,
             return_coercion_infos: bool,
             restrict_null_values: bool,
-            warn_eos_cli_config_gen_keys: bool,
+            warn_eos_config_keys: bool,
         ) -> Self {
             Self {
                 ignore_required_keys_on_root_dict,
                 return_coercion_infos,
                 restrict_null_values,
-                warn_eos_cli_config_gen_keys,
+                warn_eos_config_keys,
             }
         }
     }
@@ -96,7 +96,7 @@ pub mod validation {
                 ignore_required_keys_on_root_dict: config.ignore_required_keys_on_root_dict,
                 return_coercion_infos: config.return_coercion_infos,
                 restrict_null_values: config.restrict_null_values,
-                warn_eos_cli_config_gen_keys: config.warn_eos_cli_config_gen_keys,
+                warn_eos_config_keys: config.warn_eos_config_keys,
             }
         }
     }
@@ -584,12 +584,12 @@ mod tests {
             let data_as_json_str =
                 serde_json::json!({"fabric_name": "TEST-FABRIC", "router_isis": {"instance": "ISIS_TEST"}}).to_string();
 
-            // Create configuration with warn_eos_cli_config_gen_keys enabled
+            // Create configuration with warn_eos_config_keys enabled
             let config = {
                 let args = ();
                 let kwargs = pyo3::types::PyDict::new(py);
                 kwargs
-                    .set_item("warn_eos_cli_config_gen_keys", true)
+                    .set_item("warn_eos_config_keys", true)
                     .unwrap();
                 module
                     .call_method("Configuration", args, Some(&kwargs))
