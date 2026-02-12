@@ -56,7 +56,7 @@ def test_get_validated_data_with_config() -> None:
     # Check the ignored key details
     ignored_key = result.validation_result.ignored_eos_config_keys[0]
     assert ignored_key.path == ["router_isis"]
-    assert ignored_key.message == "The 'eos_cli_config_gen' key is present in the input to 'eos_designs' and will be ignored."
+    assert ignored_key.message == "Ignoring key from the EOS Config schema when validating with the AVD Design schema."
 
     # Validated data should be present since there are no violations
     assert result.validated_data is not None
