@@ -812,14 +812,14 @@ mod tests {
     }
 
     #[test]
-    fn validate_avd_design_with_eos_cli_config_gen_keys_warning() {
-        // Test that when validating eos_designs with warn_eos_config_keys enabled,
-        // if a top-level key from eos_config is present in the input, a warning is emitted.
+    fn validate_avd_design_with_eos_config_keys_warning() {
+        // Test that when validating AVD Design schema with warn_eos_config_keys enabled,
+        // if a top-level key from EOS Config is present in the input, a warning is emitted.
         let store = get_test_store();
         let input = serde_json::json!({
-            "key3": "valid_eos_designs_key",
-            "key1": "this_is_an_eos_cli_config_gen_key",
-            "key2": "another_eos_cli_config_gen_key"
+            "key3": "valid_avd_design_key",
+            "key1": "this_is_an_eos_config_key",
+            "key2": "another_eos_config_key"
         });
 
         let configuration = Configuration {
@@ -841,12 +841,12 @@ mod tests {
     }
 
     #[test]
-    fn validate_avd_design_without_eos_cli_config_gen_keys_no_warning() {
-        // Test that when validating avd_design with only valid avd_design keys,
+    fn validate_avd_design_without_eos_config_keys_no_warning() {
+        // Test that when validating AVD Design with only valid AVD Design keys,
         // no warning is emitted even with warn_eos_config_keys enabled.
         let store = get_test_store();
         let input = serde_json::json!({
-            "key3": "valid_eos_designs_key"
+            "key3": "valid_avd_design_key"
         });
 
         let configuration = Configuration {
@@ -863,14 +863,14 @@ mod tests {
 
     #[test]
     fn validate_eos_config_no_warning() {
-        // Test that when validating eos_config, no warning is emitted
-        // (the warn_eos_config_keys flag is only used when validating avd_design).
-        // 'avd_design' keys are ignored.
+        // Test that when validating EOS Config, no warning is emitted
+        // (the warn_eos_config_keys flag is only used when validating AVD Design).
+        // AVD Design keys are ignored.
         let store = get_test_store();
         let input = serde_json::json!({
             "key1": "valid_key",
             "key2": "another_valid_key",
-            "key3": "valid_eos_designs_key",
+            "key3": "valid_avd_design_key",
         });
 
         // Don't set warn_eos_config_keys since we're validating eos_config
@@ -884,7 +884,7 @@ mod tests {
 
     #[test]
     fn validate_avd_design_with_shared_key_no_warning() {
-        // Test that when a key exists in BOTH avd_design and eos_config,
+        // Test that when a key exists in BOTH AVD Design and EOS Config,
         // no warning is emitted - the key should be validated normally.
         let store = get_test_store();
         let input = serde_json::json!({
@@ -908,7 +908,7 @@ mod tests {
         // Test that the special eos_cli_config_gen role keys are ignored without warnings.
         let store = get_test_store();
         let input = serde_json::json!({
-            "key3": "valid_eos_designs_key",
+            "key3": "valid_avd_design_key",
             "avd_structured_config_file_format": "should be ignored",
             "custom_templates": "should be ignored",
             "eos_cli_config_gen_configuration": "should be ignored",
