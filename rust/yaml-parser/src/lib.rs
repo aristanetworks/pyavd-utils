@@ -38,6 +38,7 @@
 mod context_lexer;
 mod error;
 mod lexer;
+mod modal_lexer;
 mod parser;
 mod span;
 mod stream_lexer;
@@ -106,12 +107,17 @@ pub fn parse_layered(input: &str) -> (Stream, Vec<ParseError>) {
         // Layer 3: Parse tokens into a single document
         // Each raw document from the stream lexer should produce exactly one parsed document.
         // The stream lexer already handles document boundaries (--- and ...).
-        let (doc, errors) = parse_single_document(&tokens, &raw_doc.content);
+        // Pass the directives so the parser can validate tag handles.
+        let (doc, errors) = parse_single_document(&tokens, &raw_doc.content, &raw_doc.directives);
         all_errors.extend(errors);
+
+        // Check if document has explicit markers (--- or ...) in the content
+        let has_explicit_marker = raw_doc.content.trim_start().starts_with("---")
+            || raw_doc.content.trim_end().ends_with("...");
 
         if let Some(doc) = doc {
             all_docs.push(doc);
-        } else if raw_doc.explicit_start || raw_doc.explicit_end {
+        } else if has_explicit_marker {
             // Empty explicit document -> produce null
             all_docs.push(Node::null(Span::new((), 0..0)));
         }

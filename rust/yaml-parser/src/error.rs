@@ -76,6 +76,9 @@ pub enum ErrorKind {
     /// Invalid directive format
     InvalidDirective,
 
+    /// Tag handle used but not declared in document prolog
+    UndefinedTagHandle,
+
     /// Custom error message
     Custom(String),
 }
@@ -139,6 +142,7 @@ impl std::fmt::Display for ParseError {
             }
             ErrorKind::DuplicateDirective => write!(f, "duplicate directive"),
             ErrorKind::InvalidDirective => write!(f, "invalid directive format"),
+            ErrorKind::UndefinedTagHandle => write!(f, "tag handle not declared in document"),
             ErrorKind::Custom(msg) => write!(f, "{msg}"),
         }
     }

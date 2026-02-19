@@ -11,8 +11,10 @@
 //!
 //! This is Layer 2 of the layered parser architecture.
 
+use std::collections::VecDeque;
+
 use crate::error::{ErrorKind, ParseError};
-use crate::lexer::{BlockScalarHeader, Chomping, Token};
+use crate::lexer::{BlockScalarHeader, Chomping, QuoteStyle, Token};
 use crate::span::{Span, Spanned};
 
 use chumsky::span::Span as _;
@@ -54,6 +56,11 @@ pub struct ContextLexer<'a> {
     indent_stack: Vec<usize>,
     /// Collected errors during lexing
     errors: Vec<ParseError>,
+    /// Pending tokens to be returned (used for multi-token constructs like quoted strings)
+    pending_tokens: VecDeque<Spanned<Token>>,
+    /// Whether we're currently inside a quoted string (between StringStart and StringEnd).
+    /// When true, we suppress INDENT/DEDENT emission for LineStart tokens.
+    in_quoted_string: bool,
 }
 
 impl<'a> ContextLexer<'a> {
@@ -68,6 +75,8 @@ impl<'a> ContextLexer<'a> {
             prev_was_separator: true, // At start, we're at "line start"
             indent_stack: vec![0],    // Base indentation level
             errors: Vec::new(),
+            pending_tokens: VecDeque::new(),
+            in_quoted_string: false,
         }
     }
 
@@ -142,8 +151,15 @@ impl<'a> ContextLexer<'a> {
         // Start with LineStart(0) for initial indentation
         tokens.push((Token::LineStart(0), Span::new((), 0..0)));
 
-        while !self.is_eof() {
-            if let Some((token, span)) = self.next_token() {
+        while !self.is_eof() || !self.pending_tokens.is_empty() {
+            // Check pending tokens first (from multi-token constructs like quoted strings)
+            let maybe_token = if let Some(pending) = self.pending_tokens.pop_front() {
+                Some(pending)
+            } else {
+                self.next_token()
+            };
+
+            if let Some((token, span)) = maybe_token {
                 // Track flow depth
                 match &token {
                     Token::FlowMapStart | Token::FlowSeqStart => {
@@ -155,6 +171,18 @@ impl<'a> ContextLexer<'a> {
                     _ => {}
                 }
 
+                // Track quoted string context (between StringStart and StringEnd).
+                // Inside quoted strings, we don't emit INDENT/DEDENT tokens.
+                match &token {
+                    Token::StringStart(_) => {
+                        self.in_quoted_string = true;
+                    }
+                    Token::StringEnd(_) => {
+                        self.in_quoted_string = false;
+                    }
+                    _ => {}
+                }
+
                 // Track if this token is "JSON-like" for colon indicator detection.
                 // Whitespace, LineStart, and Comment tokens don't reset the flag -
                 // they act as separators that preserve the "just saw JSON value" state.
@@ -162,16 +190,17 @@ impl<'a> ContextLexer<'a> {
                 //   { "foo"
                 //     :bar }
                 match &token {
-                    Token::Whitespace | Token::LineStart(_) | Token::Comment(_) => {
+                    Token::Whitespace
+                    | Token::LineStart(_)
+                    | Token::Comment(_)
+                    | Token::StringStart(_)
+                    | Token::StringContent(_) => {
                         // Don't change prev_was_json_like
                         // These are separators that allow comments to follow
+                        // StringStart/StringContent are part of a string - wait for StringEnd
                         self.prev_was_separator = true;
                     }
-                    Token::SingleQuoted(_)
-                    | Token::DoubleQuoted(_)
-                    | Token::Alias(_)
-                    | Token::FlowMapEnd
-                    | Token::FlowSeqEnd => {
+                    Token::StringEnd(_) | Token::Alias(_) | Token::FlowMapEnd | Token::FlowSeqEnd => {
                         self.prev_was_json_like = true;
                         self.prev_was_separator = false;
                     }
@@ -182,11 +211,12 @@ impl<'a> ContextLexer<'a> {
                 }
 
                 // Emit INDENT/DEDENT tokens after LineStart in block context
+                // but NOT inside quoted strings
                 if let Token::LineStart(n) = &token {
                     tokens.push((token.clone(), span));
 
-                    // Only emit INDENT/DEDENT in block context (not inside flow collections)
-                    if self.flow_depth == 0 {
+                    // Only emit INDENT/DEDENT in block context (not inside flow collections or strings)
+                    if self.flow_depth == 0 && !self.in_quoted_string {
                         self.emit_indent_dedent_tokens(*n, span, &mut tokens);
                     }
                 } else {
@@ -247,10 +277,49 @@ impl<'a> ContextLexer<'a> {
         // If new_indent == current_indent, no INDENT/DEDENT needed
     }
 
+    /// Check if we're at column 0 (start of input or right after a newline).
+    fn is_at_column_zero(&self) -> bool {
+        if self.byte_pos == 0 {
+            return true;
+        }
+        // Check if previous byte was a newline
+        let prev_byte_pos = self.byte_pos.saturating_sub(1);
+        if let Some(ch) = self.input.as_bytes().get(prev_byte_pos) {
+            *ch == b'\n' || *ch == b'\r'
+        } else {
+            false
+        }
+    }
+
     /// Get the next token.
     fn next_token(&mut self) -> Option<Spanned<Token>> {
         let start = self.byte_pos;
         let c = self.peek()?;
+
+        // Check for document markers at column 0
+        // `---` (document start) and `...` (document end) are only valid at column 0
+        if self.is_at_column_zero() {
+            // Check for `---` followed by whitespace/newline/EOF
+            if c == '-' && self.peek_n(1) == Some('-') && self.peek_n(2) == Some('-') {
+                let after = self.peek_n(3);
+                if after.is_none() || after == Some(' ') || after == Some('\t') || Self::is_newline(after.unwrap_or('\n')) {
+                    self.advance(); // -
+                    self.advance(); // -
+                    self.advance(); // -
+                    return Some((Token::DocStart, self.current_span(start)));
+                }
+            }
+            // Check for `...` followed by whitespace/newline/EOF
+            if c == '.' && self.peek_n(1) == Some('.') && self.peek_n(2) == Some('.') {
+                let after = self.peek_n(3);
+                if after.is_none() || after == Some(' ') || after == Some('\t') || Self::is_newline(after.unwrap_or('\n')) {
+                    self.advance(); // .
+                    self.advance(); // .
+                    self.advance(); // .
+                    return Some((Token::DocEnd, self.current_span(start)));
+                }
+            }
+        }
 
         // Handle newlines -> produce LineStart with indentation
         if Self::is_newline(c) {
@@ -622,9 +691,14 @@ impl<'a> ContextLexer<'a> {
         BlockScalarHeader { indent, chomping }
     }
 
+    /// Consume a single-quoted string, emitting StringStart, StringContent, LineStart, and StringEnd tokens.
+    /// Pushes tokens to pending_tokens and returns the first token.
     fn consume_single_quoted(&mut self, start: usize) -> Spanned<Token> {
-        let mut content = String::new();
+        let start_span = Span::new((), start..start + 1);
         self.advance(); // consume opening '
+
+        let mut content = String::new();
+        let mut content_start = self.byte_pos;
         let mut terminated = false;
 
         loop {
@@ -641,6 +715,35 @@ impl<'a> ContextLexer<'a> {
                         break;
                     }
                 }
+                Some('\n' | '\r') => {
+                    // Emit current content before newline
+                    if !content.is_empty() {
+                        let content_span = Span::new((), content_start..self.byte_pos);
+                        self.pending_tokens
+                            .push_back((Token::StringContent(content), content_span));
+                        content = String::new();
+                    }
+
+                    // Consume newline
+                    let newline_start = self.byte_pos;
+                    let c = self.advance().unwrap();
+                    if c == '\r' && self.peek() == Some('\n') {
+                        self.advance();
+                    }
+
+                    // Count indentation
+                    let mut indent = 0;
+                    while self.peek() == Some(' ') {
+                        self.advance();
+                        indent += 1;
+                    }
+
+                    // Emit LineStart token
+                    let line_span = Span::new((), newline_start..self.byte_pos);
+                    self.pending_tokens
+                        .push_back((Token::LineStart(indent), line_span));
+                    content_start = self.byte_pos;
+                }
                 Some(c) => {
                     content.push(c);
                     self.advance();
@@ -648,16 +751,34 @@ impl<'a> ContextLexer<'a> {
             }
         }
 
-        let span = self.current_span(start);
-        if !terminated {
-            self.add_error(ErrorKind::UnterminatedString, span);
+        // Emit final content segment if any
+        if !content.is_empty() {
+            let content_span = Span::new((), content_start..self.byte_pos);
+            self.pending_tokens
+                .push_back((Token::StringContent(content), content_span));
         }
-        (Token::SingleQuoted(content), span)
+
+        // Emit StringEnd
+        let end_span = Span::new((), self.byte_pos - 1..self.byte_pos);
+        if !terminated {
+            let full_span = self.current_span(start);
+            self.add_error(ErrorKind::UnterminatedString, full_span);
+        }
+        self.pending_tokens
+            .push_back((Token::StringEnd(QuoteStyle::Single), end_span));
+
+        // Return StringStart as the immediate token
+        (Token::StringStart(QuoteStyle::Single), start_span)
     }
 
+    /// Consume a double-quoted string, emitting StringStart, StringContent, LineStart, and StringEnd tokens.
+    /// Pushes tokens to pending_tokens and returns the first token.
     fn consume_double_quoted(&mut self, start: usize) -> Spanned<Token> {
-        let mut content = String::new();
+        let start_span = Span::new((), start..start + 1);
         self.advance(); // consume opening "
+
+        let mut content = String::new();
+        let mut content_start = self.byte_pos;
         let mut terminated = false;
 
         loop {
@@ -675,6 +796,35 @@ impl<'a> ContextLexer<'a> {
                         content.push_str(&escaped);
                     }
                 }
+                Some('\n' | '\r') => {
+                    // Emit current content before newline
+                    if !content.is_empty() {
+                        let content_span = Span::new((), content_start..self.byte_pos);
+                        self.pending_tokens
+                            .push_back((Token::StringContent(content), content_span));
+                        content = String::new();
+                    }
+
+                    // Consume newline
+                    let newline_start = self.byte_pos;
+                    let c = self.advance().unwrap();
+                    if c == '\r' && self.peek() == Some('\n') {
+                        self.advance();
+                    }
+
+                    // Count indentation
+                    let mut indent = 0;
+                    while self.peek() == Some(' ') {
+                        self.advance();
+                        indent += 1;
+                    }
+
+                    // Emit LineStart token
+                    let line_span = Span::new((), newline_start..self.byte_pos);
+                    self.pending_tokens
+                        .push_back((Token::LineStart(indent), line_span));
+                    content_start = self.byte_pos;
+                }
                 Some(c) => {
                     content.push(c);
                     self.advance();
@@ -682,11 +832,24 @@ impl<'a> ContextLexer<'a> {
             }
         }
 
-        let span = self.current_span(start);
-        if !terminated {
-            self.add_error(ErrorKind::UnterminatedString, span);
+        // Emit final content segment if any
+        if !content.is_empty() {
+            let content_span = Span::new((), content_start..self.byte_pos);
+            self.pending_tokens
+                .push_back((Token::StringContent(content), content_span));
         }
-        (Token::DoubleQuoted(content), span)
+
+        // Emit StringEnd
+        let end_span = Span::new((), self.byte_pos - 1..self.byte_pos);
+        if !terminated {
+            let full_span = self.current_span(start);
+            self.add_error(ErrorKind::UnterminatedString, full_span);
+        }
+        self.pending_tokens
+            .push_back((Token::StringEnd(QuoteStyle::Double), end_span));
+
+        // Return StringStart as the immediate token
+        (Token::StringStart(QuoteStyle::Double), start_span)
     }
 
     fn consume_escape_sequence(&mut self, start_byte_pos: usize) -> Option<String> {
@@ -948,7 +1111,9 @@ mod tests {
             tokens,
             vec![
                 Token::FlowMapStart,
-                Token::DoubleQuoted("adjacent".into()),
+                Token::StringStart(QuoteStyle::Double),
+                Token::StringContent("adjacent".into()),
+                Token::StringEnd(QuoteStyle::Double),
                 Token::Colon,
                 Token::Plain("value".into()),
                 Token::FlowMapEnd,
@@ -1039,5 +1204,45 @@ mod tests {
         println!("Tokens: {:?}", tokens);
         // Should recognize http://example.org as a plain scalar
         assert!(tokens.contains(&Token::Plain("http://example.org".into())));
+    }
+
+    #[test]
+    fn test_bs4k_tokens_debug() {
+        // BS4K: word1 # comment\nword2
+        let input = "word1  # comment\nword2";
+        let (tokens, _errors) = tokenize_document(input);
+        for (tok, span) in &tokens {
+            println!("Token: {:?} @ {:?}", tok, span);
+        }
+    }
+
+    #[test]
+    fn test_h2rw_tokens_debug() {
+        // H2RW: Blank lines - mapping with multiple keys
+        let input = "foo: 1\n\nbar: 2";
+        let (tokens, _errors) = tokenize_document(input);
+        for (tok, span) in &tokens {
+            println!("Token: {:?} @ {:?}", tok, span);
+        }
+    }
+
+    #[test]
+    fn test_ks4u_tokens_debug() {
+        // KS4U: Content after flow sequence (note: --- is handled by stream_lexer)
+        let input = "[\nsequence item\n]\ninvalid item";
+        let (tokens, _errors) = tokenize_document(input);
+        for (tok, span) in &tokens {
+            println!("Token: {:?} @ {:?}", tok, span);
+        }
+    }
+
+    #[test]
+    fn test_35kp_doc2_tokens_debug() {
+        // 35KP doc 2: multiline scalar with tag
+        let input = "!!str\nd\ne";
+        let (tokens, _errors) = tokenize_document(input);
+        for (tok, span) in &tokens {
+            println!("Token: {:?} @ {:?}", tok, span);
+        }
     }
 }

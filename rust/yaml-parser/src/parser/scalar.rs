@@ -7,15 +7,22 @@
 use chumsky::span::Span as _;
 
 use crate::error::ErrorKind;
-use crate::lexer::{BlockScalarHeader, Chomping, Token};
+use crate::lexer::{BlockScalarHeader, Chomping, QuoteStyle, Token};
 use crate::span::Span;
 use crate::value::{Node, Value};
 
-use super::Parser;
+use super::{NodeProperties, Parser};
 
 impl<'a> Parser<'a> {
-    /// Parse a simple scalar token (single-line only, used for keys).
+    /// Parse a simple scalar token.
+    /// For mapping keys (typically single-line), uses min_indent=0.
     pub fn parse_scalar(&mut self) -> Option<Node> {
+        self.parse_scalar_with_indent(0)
+    }
+
+    /// Parse a scalar token with a specified minimum indentation for continuations.
+    /// This is used when parsing values where multi-line strings must respect indentation.
+    pub fn parse_scalar_with_indent(&mut self, min_indent: usize) -> Option<Node> {
         let (tok, span) = self.peek()?;
         let span = *span;
 
@@ -25,13 +32,117 @@ impl<'a> Parser<'a> {
                 self.advance();
                 Some(Node::new(value, span))
             }
-            Token::SingleQuoted(s) | Token::DoubleQuoted(s) => {
-                let value = Value::String(s.clone());
-                self.advance();
-                Some(Node::new(value, span))
-            }
+            Token::StringStart(_style) => self.parse_quoted_string(min_indent),
             _ => None,
         }
+    }
+
+    /// Parse a quoted string from StringStart/StringContent/LineStart/StringEnd tokens.
+    /// Returns the assembled string as a Node, or None if not at a StringStart token.
+    /// Validates that continuation lines have proper indentation (>= min_indent).
+    ///
+    /// `min_indent` is the minimum indentation required for continuation lines.
+    /// For root-level strings (min_indent=0), continuation at column 0 is valid.
+    /// For strings that are values in mappings, continuation must be >= min_indent.
+    pub fn parse_quoted_string(&mut self, min_indent: usize) -> Option<Node> {
+        let (tok, start_span) = self.peek()?;
+        let start_span = *start_span;
+
+        let style = match tok {
+            Token::StringStart(s) => *s,
+            _ => return None,
+        };
+        self.advance(); // consume StringStart
+
+        let mut content = String::new();
+        let mut end_span = start_span;
+        let mut first_content = true;
+
+        loop {
+            let Some((tok, span)) = self.peek() else {
+                // Unexpected EOF - unterminated string
+                self.errors.push(crate::error::ParseError {
+                    kind: ErrorKind::UnterminatedString,
+                    span: Span::new((), start_span.start..self.tokens.last().map(|(_, s)| s.end).unwrap_or(start_span.end)),
+                    expected: vec!["closing quote".to_string()],
+                    found: Some("end of input".to_string()),
+                });
+                break;
+            };
+            let span = *span;
+
+            match tok {
+                Token::StringContent(s) => {
+                    if !first_content && !content.is_empty() {
+                        // Multi-line string: previous content ended, new content starts
+                        // YAML spec: folded newlines become spaces (for flow scalars)
+                        content.push(' ');
+                    }
+                    content.push_str(s);
+                    first_content = false;
+                    end_span = span;
+                    self.advance();
+                }
+                Token::LineStart(indent) => {
+                    // Validate continuation indentation
+                    // In YAML, quoted string continuation lines must be indented
+                    // at least at the same level as the parent block structure.
+                    // For root-level strings (min_indent=0), continuation at column 0 is valid.
+                    // For strings in mappings/sequences, continuation must be >= min_indent.
+                    //
+                    // IMPORTANT: Empty lines (where the next token is LineStart or StringEnd)
+                    // are allowed regardless of indentation. Only lines with actual content
+                    // (StringContent) need to respect the indentation requirement.
+                    let indent = *indent;
+                    self.advance();
+
+                    // Check if this is an empty line by peeking at the next token
+                    let is_content_line = matches!(
+                        self.peek(),
+                        Some((Token::StringContent(_), _))
+                    );
+
+                    if is_content_line && indent < min_indent {
+                        self.errors.push(crate::error::ParseError {
+                            kind: ErrorKind::InvalidIndentation,
+                            span,
+                            expected: vec![format!(
+                                "indentation of at least {} for continuation",
+                                min_indent
+                            )],
+                            found: Some(format!("indentation of {indent}")),
+                        });
+                    }
+                }
+                Token::StringEnd(end_style) => {
+                    if *end_style != style {
+                        // Mismatched quotes (shouldn't happen with proper lexing)
+                        self.errors.push(crate::error::ParseError {
+                            kind: ErrorKind::UnexpectedToken,
+                            span,
+                            expected: vec![format!("closing {:?} quote", style)],
+                            found: Some(format!("{:?} quote", end_style)),
+                        });
+                    }
+                    end_span = span;
+                    self.advance();
+                    break;
+                }
+                _ => {
+                    // Unexpected token inside string
+                    self.errors.push(crate::error::ParseError {
+                        kind: ErrorKind::UnexpectedToken,
+                        span,
+                        expected: vec!["string content or closing quote".to_string()],
+                        found: Some(format!("{:?}", tok)),
+                    });
+                    break;
+                }
+            }
+        }
+
+        let full_span = Span::new((), start_span.start..end_span.end);
+        Some(Node::new(Value::String(content), full_span))
     }
 
     /// Convert a plain scalar string to an appropriate Value.
@@ -201,8 +312,27 @@ impl<'a> Parser<'a> {
                     Token::Dedent | Token::Indent(_) => {
                         self.advance();
                     }
-                    Token::Plain(s) | Token::SingleQuoted(s) | Token::DoubleQuoted(s) => {
+                    Token::Plain(s) | Token::StringContent(s) => {
                         line_content.push_str(s);
+                        end_pos = tok_span.end;
+                        self.advance();
+                    }
+                    Token::StringStart(style) => {
+                        // In block scalar content, quote characters are literal content
+                        let quote_char = match style {
+                            QuoteStyle::Single => '\'',
+                            QuoteStyle::Double => '"',
+                        };
+                        line_content.push(quote_char);
+                        end_pos = tok_span.end;
+                        self.advance();
+                    }
+                    Token::StringEnd(style) => {
+                        let quote_char = match style {
+                            QuoteStyle::Single => '\'',
+                            QuoteStyle::Double => '"',
+                        };
+                        line_content.push(quote_char);
                         end_pos = tok_span.end;
                         self.advance();
                     }
@@ -291,17 +421,29 @@ impl<'a> Parser<'a> {
     }
 
     /// Parse a scalar and check if it's actually a mapping key.
-    pub fn parse_scalar_or_mapping(&mut self, _min_indent: usize) -> Option<Node> {
+    pub fn parse_scalar_or_mapping(&mut self, min_indent: usize) -> Option<Node> {
         // Remember if the scalar we're about to parse is a quoted scalar, and its start position
-        let is_quoted_scalar = matches!(
-            self.peek(),
-            Some((Token::SingleQuoted(_) | Token::DoubleQuoted(_), _))
-        );
+        let is_quoted_scalar = matches!(self.peek(), Some((Token::StringStart(_), _)));
         let scalar_start_pos = self.pos;
 
-        let scalar = self.parse_scalar()?;
+        // Use min_indent for proper continuation validation in quoted strings
+        let scalar = self.parse_scalar_with_indent(min_indent)?;
 
-        self.skip_ws();
+        // Skip whitespace and track if we saw a comment
+        // A comment terminates a plain scalar, so we shouldn't look for continuations
+        let mut saw_comment = false;
+        while let Some((tok, _)) = self.peek() {
+            match tok {
+                Token::Whitespace | Token::Indent(_) => {
+                    self.advance();
+                }
+                Token::Comment(_) => {
+                    saw_comment = true;
+                    self.advance();
+                }
+                _ => break,
+            }
+        }
 
         // Check if this is a mapping key (followed by colon)
         if let Some((Token::Colon, colon_span)) = self.peek() {
@@ -328,8 +470,8 @@ impl<'a> Parser<'a> {
                                         continue;
                                     }
                                     Token::Plain(_)
-                                    | Token::SingleQuoted(_)
-                                    | Token::DoubleQuoted(_)
+                                    | Token::StringStart(_)
+                                    | Token::StringEnd(_)
                                     | Token::FlowSeqEnd
                                     | Token::FlowMapEnd => {
                                         has_key_before_colon = true;
@@ -401,10 +543,16 @@ impl<'a> Parser<'a> {
             Some(Node::new(Value::Mapping(pairs), Span::new((), start..end)))
         } else {
             // Just a scalar - check for multiline continuation (plain scalars only)
-            if is_quoted_scalar {
+            // Note: If we saw a comment after the scalar, it terminates the plain scalar
+            // and we should NOT look for continuation lines (YAML spec section 7.3.3)
+            if is_quoted_scalar || saw_comment {
+                // Comment terminated the scalar - check for trailing content at root
+                if min_indent == 0 && saw_comment {
+                    self.check_trailing_content_at_root(0);
+                }
                 Some(scalar)
             } else {
-                self.consume_plain_scalar_continuations(scalar, _min_indent)
+                self.consume_plain_scalar_continuations(scalar, min_indent)
             }
         }
     }
@@ -450,10 +598,81 @@ impl<'a> Parser<'a> {
 
             self.skip_ws();
 
-            // Try to parse another key
-            let key = match self.parse_scalar() {
-                Some(k) => k,
-                None => break,
+            // Skip any additional LineStart tokens (e.g., from blank lines)
+            while let Some((Token::LineStart(n), _)) = self.peek() {
+                if *n != map_indent {
+                    break;
+                }
+                self.advance();
+            }
+
+            self.skip_ws();
+
+            // Collect any anchor/tag properties before the key
+            let mut key_props = NodeProperties::default();
+            loop {
+                match self.peek() {
+                    Some((Token::Anchor(name), anchor_span)) => {
+                        let name = name.clone();
+                        let anchor_span = *anchor_span;
+                        self.advance();
+                        self.skip_ws();
+                        if key_props.anchor.is_some() {
+                            self.error(ErrorKind::DuplicateAnchor, anchor_span);
+                        }
+                        key_props.anchor = Some((name, anchor_span));
+                    }
+                    Some((Token::Tag(tag), tag_span)) => {
+                        let tag = tag.clone();
+                        let tag_span = *tag_span;
+                        self.advance();
+                        self.skip_ws();
+                        if key_props.tag.is_some() {
+                            self.error(ErrorKind::DuplicateTag, tag_span);
+                        }
+                        key_props.tag = Some((tag, tag_span));
+                    }
+                    Some((Token::Whitespace, _)) => {
+                        self.advance();
+                    }
+                    _ => break,
+                }
+            }
+
+            // Try to parse another key (can be scalar or alias)
+            let key = if let Some((Token::Alias(alias_name), span)) = self.peek() {
+                // Check if the key is an alias with properties (invalid)
+                let alias_name = alias_name.clone();
+                let span = *span;
+                if !key_props.is_empty() {
+                    self.error(ErrorKind::PropertiesOnAlias, span);
+                }
+                self.advance();
+                if !self.anchors.contains_key(&alias_name) {
+                    self.error(ErrorKind::UndefinedAlias, span);
+                }
+                Node::new(Value::Alias(alias_name), span)
+            } else {
+                match self.parse_scalar() {
+                    Some(k) => {
+                        if !key_props.is_empty() {
+                            self.apply_properties_and_register(key_props, k)
+                        } else {
+                            k
+                        }
+                    }
+                    None => {
+                        // If we collected properties (anchor/tag) but couldn't parse a scalar key,
+                        // report an error for the orphaned properties (e.g., &anchor at column 0
+                        // followed by a block sequence indicator on the next line)
+                        if let Some((_, anchor_span)) = key_props.anchor {
+                            self.error(ErrorKind::UnexpectedToken, anchor_span);
+                        } else if let Some((_, tag_span)) = key_props.tag {
+                            self.error(ErrorKind::UnexpectedToken, tag_span);
+                        }
+                        break;
+                    }
+                }
             };
 
             self.skip_ws();

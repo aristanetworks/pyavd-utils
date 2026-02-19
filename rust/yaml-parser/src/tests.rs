@@ -184,27 +184,19 @@ fn test_wz62_empty_content_with_tag() {
 #[test]
 fn test_ks4u_invalid_item_after_flow_seq() {
     // Test KS4U - Invalid item after end of flow sequence
-    // KNOWN ISSUE: See TECHNICAL_DEBT.md Issue #5
     // After the flow sequence ends with `]`, `invalid item` should not be allowed.
-    // Currently we silently drop the invalid content and return 1 document.
     let input = "---\n[\nsequence item\n]\ninvalid item\n";
 
     let (docs, errors) = parse(input);
     println!("Parse errors: {:?}", errors);
     println!("Docs: {:#?}", docs);
 
-    // KNOWN ISSUE: Currently parses without error and drops "invalid item".
-    // When fixed, change to: assert!(!errors.is_empty(), "Expected error for content after document root");
+    // Should produce an error for content after document root
     assert!(
-        errors.is_empty(),
-        "Known issue: KS4U should error but currently doesn't. See TECHNICAL_DEBT.md Issue #5"
+        !errors.is_empty(),
+        "KS4U should error - invalid content after flow sequence"
     );
-    // Currently returns 1 document (dropping "invalid item") - should error instead
-    assert_eq!(
-        docs.len(),
-        1,
-        "Currently drops invalid content after flow sequence"
-    );
+    assert_eq!(docs.len(), 1);
 }
 
 #[test]
@@ -225,29 +217,19 @@ fn test_7mnf_missing_colon() {
 fn test_td5n_invalid_scalar_after_sequence() {
     // Test TD5N - Invalid scalar after sequence
     // `invalid` at column 0 after a root-level sequence should error.
-    // KNOWN ISSUE: See TECHNICAL_DEBT.md for details.
     let input = "- item1\n- item2\ninvalid\n";
-
-    let (tokens, _) = crate::context_lexer::tokenize_document(input);
-    println!("Tokens: {:?}", tokens);
 
     let (docs, errors) = parse(input);
     println!("Parse errors: {:?}", errors);
     println!("Docs: {:#?}", docs);
     println!("Docs count: {}", docs.len());
 
-    // KNOWN ISSUE: Currently silently drops `invalid` and returns no error.
-    // When fixed, change to: assert!(!errors.is_empty()); assert_eq!(docs.len(), 1);
+    // Should produce an error for content after root-level sequence
     assert!(
-        errors.is_empty(),
-        "Known issue: TD5N should error but currently doesn't"
+        !errors.is_empty(),
+        "TD5N should error - invalid scalar after sequence"
     );
-    // Currently returns 1 document (dropping "invalid") - should error instead
-    assert_eq!(
-        docs.len(),
-        1,
-        "Currently drops invalid content after sequence"
-    );
+    assert_eq!(docs.len(), 1);
 }
 
 #[test]
@@ -764,6 +746,67 @@ fn test_3alj_debug() {
 }
 
 #[test]
+fn test_simple_document() {
+    // Test that a simple document parses correctly
+    let input = "key: value";
+    let (docs, parse_errors) = parse(input);
+    println!("Parse errors: {:?}", parse_errors);
+    println!("Docs: {}", docs.len());
+    assert_eq!(docs.len(), 1);
+}
+
+#[test]
+fn test_3hfz_debug() {
+    // 3HFZ: Invalid content after document end marker
+    // The `... invalid` line has text after `...` - this should error
+    let input = "---\nkey: value\n... invalid\n";
+
+    let (docs, parse_errors) = parse(input);
+    println!("\nParse errors: {:?}", parse_errors);
+    println!("Docs: {}", docs.len());
+    for doc in &docs {
+        println!("Doc: {:?}", doc);
+    }
+
+    // This SHOULD produce an error - content after document end marker
+    assert!(!parse_errors.is_empty(),
+        "3HFZ should produce an error for invalid content after document end");
+}
+
+#[test]
+fn test_rxy3_debug() {
+    // RXY3: Invalid document-end marker in single quoted string
+    // This should fail because '...' is NOT valid inside a single-quoted string
+    // (single-quoted strings can't have unescaped newlines)
+    let input = "---\n'\n...\n'\n";
+
+    let (docs, parse_errors) = parse(input);
+    println!("\nParse errors: {:?}", parse_errors);
+    println!("Docs: {}", docs.len());
+    for doc in &docs {
+        println!("Doc: {:?}", doc);
+    }
+
+    // This SHOULD produce an error because the '...' is a document end marker
+    // and the single-quoted string is unterminated
+    assert!(!parse_errors.is_empty(), "RXY3 should produce an error for unterminated string");
+
+    // Verify we got the correct error type
+    let has_unterminated_error = parse_errors.iter().any(|e| e.kind == ErrorKind::UnterminatedString);
+    assert!(has_unterminated_error, "Should have UnterminatedString error");
+}
+
+#[test]
+fn test_document_with_leading_comment() {
+    // Test that documents with leading comments parse correctly
+    let input = "# comment\nkey: value";
+    let (docs, parse_errors) = parse(input);
+    println!("\nParse errors: {:?}", parse_errors);
+    println!("Docs: {}", docs.len());
+    assert_eq!(docs.len(), 1);
+}
+
+#[test]
 fn test_6hb6_debug() {
     // Test case 6HB6: Spec Example 6.1. Indentation Spaces
     // Full version with leading comments (note: leading spaces before #)
@@ -780,15 +823,6 @@ Not indented:
   \tStill by two   # content nor
     ]             # indentation.
 ";
-
-    // Tokenize
-    let (tokens, lex_errors) = context_lexer::tokenize_document(input);
-    println!("Lexer errors: {:?}", lex_errors);
-    println!("\nTokens:");
-    for (i, (tok, span)) in tokens.iter().enumerate() {
-        let text = &input[span.start.min(input.len())..span.end.min(input.len())];
-        println!("{:3}: {:?} @ {:?} = {:?}", i, tok, span, text);
-    }
 
     let (docs, errors) = parse(input);
     println!("\n=== Final Parse Output ===");
@@ -870,10 +904,7 @@ fn test_multiline_plain_scalar_debug() {
     println!("Stream errors: {:?}", stream_errors);
     println!("Number of raw docs: {}", raw_docs.len());
     for (i, doc) in raw_docs.iter().enumerate() {
-        println!(
-            "Raw doc {}: explicit_start={}, content={:?}",
-            i, doc.explicit_start, doc.content
-        );
+        println!("Raw doc {}: content={:?}", i, doc.content);
     }
 
     // Tokenize the extracted content (not the full input)
@@ -1161,4 +1192,91 @@ mod error_recovery {
         // Should still produce output
         assert_eq!(docs.len(), 1);
     }
+}
+
+#[test]
+#[ignore = "Known failure - requires deeper directive state tracking (see TECHNICAL_DEBT.md Issue #11)"]
+fn test_9hcy_debug() {
+    // 9HCY: Need document footer before directives
+    // A directive appears after document content without a `...` separator
+    let input = "!foo \"bar\"\n%TAG ! tag:example.com,2000:app/\n---\n!foo \"bar\"\n";
+
+    let lexer = super::modal_lexer::ModalLexer::new(input);
+    let (tokens, errors) = lexer.tokenize();
+    println!("Lexer errors: {:?}", errors);
+    println!("Tokens ({}):", tokens.len());
+    for (i, (tok, span)) in tokens.iter().enumerate() {
+        let text = &input[span.start.min(input.len())..span.end.min(input.len())];
+        println!("{:3}: {:?} @ {:?} = {:?}", i, tok, span, text);
+    }
+
+    let (docs, parse_errors) = parse(input);
+    println!("\nParse errors: {:?}", parse_errors);
+    println!("Docs: {}", docs.len());
+    for doc in &docs {
+        println!("Doc: {:?}", doc);
+    }
+
+    // This SHOULD produce an error because a directive appears after content
+    let has_error = !parse_errors.is_empty() || !errors.is_empty();
+    assert!(has_error, "9HCY should produce an error - directive after content without ...");
+}
+
+#[test]
+fn test_su74_debug() {
+    // SU74: Anchor and alias as mapping key
+    // &b *alias is invalid - you can't put an anchor on an alias
+    let input = "key1: &alias value1\n&b *alias : value2\n";
+
+    let lexer = super::modal_lexer::ModalLexer::new(input);
+    let (tokens, errors) = lexer.tokenize();
+    println!("Lexer errors: {:?}", errors);
+    println!("Tokens ({}):", tokens.len());
+    for (i, (tok, span)) in tokens.iter().enumerate() {
+        let text = &input[span.start.min(input.len())..span.end.min(input.len())];
+        println!("{:3}: {:?} @ {:?} = {:?}", i, tok, span, text);
+    }
+
+    let (docs, parse_errors) = parse(input);
+    println!("\nParse errors: {:?}", parse_errors);
+    println!("Docs: {}", docs.len());
+    for doc in &docs {
+        println!("Doc: {:?}", doc);
+    }
+
+    // This SHOULD produce an error because &b is an anchor on *alias (an alias)
+    let has_error = !parse_errors.is_empty() || !errors.is_empty();
+    assert!(has_error, "SU74 should produce an error - anchor on alias");
+}
+
+#[test]
+fn test_qlj7_tag_handle_scope() {
+    // QLJ7: Tag shorthand used in documents but only defined in the first
+    // The %TAG directive is document-scoped, so !prefix! is only valid in the first document.
+    let input = "%TAG !prefix! tag:example.com,2011:\n--- !prefix!A\na: b\n--- !prefix!B\nc: d\n--- !prefix!C\ne: f\n";
+
+    let (_docs, parse_errors) = parse(input);
+
+    // Docs 2 and 3 use !prefix! which is NOT declared in their prologue
+    // This should produce errors
+    assert!(
+        !parse_errors.is_empty(),
+        "QLJ7: Expected errors for undefined tag handles in documents 2 and 3"
+    );
+}
+
+#[test]
+fn test_5tym_local_tag_prefix() {
+    // 5TYM: Spec Example 6.21. Local Tag Prefix
+    // Both documents have %TAG !m! !my- declarations, so !m!light should be valid in both.
+    let input = "%TAG !m! !my-\n--- # Bulb here\n!m!light fluorescent\n...\n%TAG !m! !my-\n--- # Color here\n!m!light green\n";
+
+    let (_docs, parse_errors) = parse(input);
+
+    // Both documents have valid %TAG declarations for !m!, so there should be no errors
+    assert!(
+        parse_errors.is_empty(),
+        "5TYM: Both documents have valid !m! declarations, no errors expected. Got: {:?}",
+        parse_errors
+    );
 }
