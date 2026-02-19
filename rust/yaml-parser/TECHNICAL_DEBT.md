@@ -425,12 +425,7 @@ lexer level and emits `Indent(n)` and `Dedent` tokens when indentation changes.
 - Nested flow error recovery
 - Error span accuracy
 
-**Remaining failures (15 tests) - ALL are "Expected error but parsing succeeded":**
-
-- **Block scalar indentation (3 tests):** 5LLU, S98Z, W9L4
-  - 5LLU: Block scalar with line after leading spaces at wrong indent
-  - S98Z: Block scalar with comment at wrong indentation
-  - W9L4: Literal block scalar with more spaces in first line than subsequent lines
+**Remaining failures (12 tests) - ALL are "Expected error but parsing succeeded":**
 
 - **Flow/quoted scalar indentation (2 tests):** 9C9N, QB6E
   - 9C9N: Flow sequence with continuation lines at wrong indentation
@@ -592,16 +587,14 @@ Implementation details:
 
 **Remaining indentation issues (see test categories above):**
 
-- Block scalar indentation rules (5LLU, S98Z, W9L4)
 - Flow/quoted scalar continuation indentation (9C9N, QB6E)
 
 ---
 
 ### Tests to Revisit
 
-**Still failing (15 tests - all "Expected error but parsing succeeded"):**
+**Still failing (12 tests - all "Expected error but parsing succeeded"):**
 
-- 5LLU, S98Z, W9L4 (block scalar indentation validation)
 - 9C9N, QB6E (flow/quoted scalar indentation validation)
 - BD7L, TD5N (invalid content after sequence)
 - BS4K (comment between plain scalar lines)
@@ -611,6 +604,7 @@ Implementation details:
 
 **Previously failing, now fixed:**
 
+- 5LLU, S98Z, W9L4 (block scalar indentation validation - fixed by validating empty lines before content)
 - 4HVU, ZVH3, DMG6, EW3V, N4JP, U44R (orphan block indicators - fixed by INDENT/DEDENT)
 - 6S55, 9KBC (fixed by earlier changes)
 - V9D5 (explicit mapping keys - fixed by first_entry flag)

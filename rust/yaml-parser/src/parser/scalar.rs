@@ -125,6 +125,11 @@ impl<'a> Parser<'a> {
         let mut content_indent: Option<usize> = header.indent.map(|i| i as usize);
         let mut end_pos = self.current_span().end;
 
+        // Track whitespace-only lines before the first content line.
+        // These must have at most as many spaces as the first content line's indentation.
+        // Store (indentation_level, span) for each empty line before content.
+        let mut empty_lines_before_content: Vec<(usize, Span)> = Vec::new();
+
         loop {
             while let Some((Token::Dedent | Token::Indent(_), _)) = self.peek() {
                 self.advance();
@@ -153,6 +158,12 @@ impl<'a> Parser<'a> {
 
             if content_indent.is_none() && !is_empty_line {
                 content_indent = Some(n);
+                // Validate that all preceding empty lines have at most n spaces
+                for (empty_indent, empty_span) in &empty_lines_before_content {
+                    if *empty_indent > n {
+                        self.error(ErrorKind::InvalidIndentation, *empty_span);
+                    }
+                }
             }
 
             let min_indent = content_indent.unwrap_or(1);
@@ -169,6 +180,10 @@ impl<'a> Parser<'a> {
             }
 
             if is_empty_line {
+                // Track this empty line's indentation if we haven't found content yet
+                if content_indent.is_none() {
+                    empty_lines_before_content.push((n, span));
+                }
                 lines.push(String::new());
                 continue;
             }
