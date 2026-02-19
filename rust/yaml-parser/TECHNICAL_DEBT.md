@@ -400,18 +400,44 @@ The `parse_single_document` check is CORRECT - the problem is that `parse_scalar
    - Phase 1: Structure recognition (indentation, block/flow, node boundaries)
    - Phase 2: Content parsing (scalars, anchors, tags)
 
-### Current Test Status (318/333 = 95.5%)
+### Current Test Status (330/333 = 99.1%)
 
-**Latest major improvement (2026-02-19):** Implemented Python-style INDENT/DEDENT token system in the
-context lexer, following the user's architectural suggestion. This tracks an indentation stack at the
-lexer level and emits `Indent(n)` and `Dedent` tokens when indentation changes.
+**Latest update (2026-02-19):** Fixed tag shorthand scope validation (QLJ7) and related document
+boundary issues in the stream lexer.
 
 **Key changes made:**
 
-1. `context_lexer.rs`: Added `indent_stack: Vec<usize>` field and INDENT/DEDENT emission logic
-2. `parser.rs`: Updated all block structure parsers to handle INDENT/DEDENT tokens
-3. `lib.rs`: Switched from `parse_tokens` to `parse_single_document` for proper single-document semantics
-4. Multiple fixes for explicit mapping keys (V9D5), multiline plain scalar continuations (HS5T), etc.
+1. **Tag Handle Validation (NEW):** Parser now validates that named tag handles (like `!prefix!`)
+   are declared in the current document's prolog via `%TAG` directives.
+   - Added `tag_handles: HashMap<String, String>` to Parser struct
+   - Added `validate_tag_handle()` method to check tags against declared handles
+   - Modified `parse_single_document()` to accept directives from stream lexer
+
+2. **Stream Lexer Document Boundary Fix:** Fixed incorrect directive assignment when `...`
+   is followed by directives for the next document.
+   - Directives after `...` now correctly go to the following document, not the current one
+   - Fixed 5TYM regression (both documents had their own `%TAG` declarations)
+
+3. **Modal Lexer Architecture:** Single lexer with Stream and Document modes
+   - Stream mode: handles directives (`%YAML`, `%TAG`), recognizes `---`/`...` as document markers
+   - Document mode: full content tokenization with proper context tracking
+   - Tracks flow depth, quote state, indentation levels
+   - Correctly handles `...` inside quoted strings (not a document marker)
+   - Validates document markers in flow context (error)
+
+2. **Parser fixes for mapping key properties:**
+   - `parse_block_mapping()` in `block.rs`: Now collects anchor/tag properties before parsing keys
+   - `parse_remaining_mapping_entries()` in `scalar.rs`: Same fix for continuation entries
+   - Both now properly error on `PropertiesOnAlias` (e.g., `&anchor *alias`)
+
+3. **Fixed tests:**
+   - SU74: Anchor and alias as mapping key (`&b *alias : value`) - now errors correctly
+   - H7J7: Node anchor not indented - now errors correctly
+   - RXY3, 5TRB: Document markers inside quoted strings
+   - 3HFZ: Invalid content after document end marker
+   - N782: Invalid document markers in flow style
+   - H7TQ: Extra words on %YAML directive
+   - SF5V: Duplicate YAML directive
 
 **Error recovery tests added (2026-02-19):** 15 comprehensive tests in `lib.rs` module `error_recovery`:
 
@@ -425,31 +451,19 @@ lexer level and emits `Indent(n)` and `Dedent` tokens when indentation changes.
 - Nested flow error recovery
 - Error span accuracy
 
-**Remaining failures (12 tests) - ALL are "Expected error but parsing succeeded":**
+**Remaining failures (3 tests) - ALL are "Expected error but parsing succeeded":**
 
 - **Flow/quoted scalar indentation (2 tests):** 9C9N, QB6E
-  - 9C9N: Flow sequence with continuation lines at wrong indentation
-  - QB6E: Quoted string with continuation lines at wrong indentation
+  - 9C9N: Flow sequence `[a, b, c]` with `b,` and `c]` continuation lines at column 0
+  - QB6E: Quoted string `"a\nb\nc"` with continuation lines at column 0
 
-- **Invalid content after sequence (2 tests):** BD7L, TD5N
-  - BD7L: Mapping at column 0 after block sequence
-  - TD5N: Plain scalar at column 0 after block sequence
+- **Anchor indentation (1 test):** G9HC
+  - `&anchor` at column 0 not properly indented under `seq:`
 
-- **Comment between plain scalar lines (1 test):** BS4K
-  - Comment on line between plain scalar continuations should terminate scalar
+**Recently fixed:**
 
-- **Anchor/tag placement (5 tests):** CXX2, G9HC, GT5M, H7J7, SU74
-  - CXX2: `--- &anchor a: b` - anchor on document start line
-  - G9HC: `&anchor` on its own line before `- a` in sequence
-  - GT5M: `&node` on its own line between sequence items
-  - H7J7: `key: &x\n!!map` - anchor alone on line, tag on next line
-  - SU74: `&b *alias :` - both anchor AND alias as mapping key
-
-- **Flow sequence validation (1 test):** KS4U
-  - Content after `]` closes the flow sequence
-
-- **Tag shorthand scope (1 test):** QLJ7
-  - Tag shorthand defined only in first document but used in subsequent documents
+- **QLJ7 (Tag shorthand scope):** Tag handles now validated per-document
+- **9HCY, 9MMA, B63P (Directive validation):** Now pass - likely fixed by stream lexer improvements
 
 ---
 
@@ -593,18 +607,26 @@ Implementation details:
 
 ### Tests to Revisit
 
-**Still failing (12 tests - all "Expected error but parsing succeeded"):**
+**Still failing (3 tests - all "Expected error but parsing succeeded"):**
 
 - 9C9N, QB6E (flow/quoted scalar indentation validation)
-- BD7L, TD5N (invalid content after sequence)
-- BS4K (comment between plain scalar lines)
-- CXX2, G9HC, GT5M, H7J7, SU74 (anchor/tag placement)
-- KS4U (content after flow sequence end)
-- QLJ7 (tag shorthand scope across documents)
+- G9HC (anchor indentation)
 
 **Previously failing, now fixed:**
 
-- 5LLU, S98Z, W9L4 (block scalar indentation validation - fixed by validating empty lines before content)
+- QLJ7 (tag shorthand scope - fixed by per-document tag handle validation)
+- 9HCY, 9MMA, B63P (directive validation - fixed by stream lexer document boundary improvements)
+- SU74 (anchor on alias - fixed by collecting key properties in mapping parsers)
+- H7J7 (node anchor not indented - fixed along with SU74)
+- RXY3, 5TRB (document markers inside quoted strings - fixed by modal lexer)
+- 3HFZ (invalid content after document end - fixed by seen_doc_end_on_line flag)
+- N782 (document markers in flow style - fixed by modal lexer)
+- H7TQ, SF5V (YAML directive validation - fixed by directive parsing improvements)
+- CXX2 (mapping on --- line - fixed earlier)
+- KS4U (content after flow sequence - fixed earlier)
+- BD7L, TD5N, GT5M (invalid content after block sequence - fixed earlier)
+- BS4K (comment terminates plain scalar - fixed earlier)
+- 5LLU, S98Z, W9L4 (block scalar indentation validation)
 - 4HVU, ZVH3, DMG6, EW3V, N4JP, U44R (orphan block indicators - fixed by INDENT/DEDENT)
 - 6S55, 9KBC (fixed by earlier changes)
 - V9D5 (explicit mapping keys - fixed by first_entry flag)
@@ -614,3 +636,103 @@ Implementation details:
 
 - 2SXE (anchor names with colons - lexer fix needed)
 - ZCZ6 (nested mappings with plain scalars - validation rule needed)
+
+---
+
+## Issue #10: Modal Lexer Architecture (NEW - 2026-02-19)
+
+**Status:** IMPLEMENTED
+
+**Background:**
+
+The original layered architecture (stream_lexer → context_lexer → parser) had fundamental information gaps:
+- Stream lexer split documents but didn't understand quoted strings
+- Couldn't distinguish `'...'` (string content) from `...` (document end marker)
+- Context lexer saw content but didn't know about document boundaries
+
+**Solution Implemented:**
+
+Created `modal_lexer.rs` - a single lexer with internal mode switching:
+
+1. **Stream Mode:** Between documents
+   - Handles `%YAML`, `%TAG` directives
+   - Recognizes `---`/`...` as document markers at column 0
+   - Tracks `seen_yaml_directive` for duplicate detection
+
+2. **Document Mode:** Inside documents
+   - Full content tokenization
+   - Tracks `flow_depth` (nested `{`/`[`)
+   - Quote state (inside single/double quotes)
+   - Indentation levels
+   - Only recognizes `---`/`...` as markers when NOT in quotes/flow AND at column 0
+   - Tracks `seen_doc_end_on_line` for validating content after `...`
+
+**Key Files:**
+- `src/modal_lexer.rs` - New modal lexer implementation (~1140 lines)
+- `src/lib.rs` - Updated to use `parse_layered()` with modal lexer
+- Old `stream_lexer.rs` and `context_lexer.rs` still exist but are unused (can be removed)
+
+**Tests Fixed by Modal Lexer:**
+- RXY3: `...` inside single-quoted string
+- 5TRB: `---` inside double-quoted string
+- 3HFZ: Invalid content after `...` on same line
+- N782: Document markers inside flow context
+
+---
+
+## Issue #11: Directive Validation Gaps
+
+**Status:** FIXED
+
+**Fixed:**
+- H7TQ: Extra words on %YAML directive (`%YAML 1.2 foo`)
+- SF5V: Duplicate YAML directive
+- 9HCY: Directive after document content without `...` footer
+- 9MMA: Directive by itself with no document following
+- B63P: Directive followed by document end marker
+
+**Implementation Notes:**
+The stream_lexer now properly handles document boundaries:
+- When `...` is encountered, the current document is finalized immediately
+- Directives after `...` are collected for the next document
+- When `---` is encountered with only directives (no content), those directives belong
+  to the document being started, not a separate empty document
+
+This architecture naturally handles the directive validation cases because orphan directives
+(without following content) result in proper error detection.
+
+---
+
+## Milestone: 100% YAML 1.2 Test Suite Compliance
+
+**Date Achieved:** 2026-02-19
+
+**Final Status:** 333/333 tests passing (100%)
+
+### Key Improvements Made
+
+1. **String Tokenization Refactor**: Changed from consuming entire quoted strings as single tokens to emitting separate `StringStart(QuoteStyle)`, `StringContent(String)`, `LineStart(n)`, and `StringEnd(QuoteStyle)` tokens. This allows the parser to validate continuation indentation inside strings.
+
+2. **Flow Context Column Tracking**: Added `flow_context_columns: Vec<usize>` to the parser to track the starting column of each nested flow context. This enables validation that continuation lines in flow collections don't appear at column 0 when the flow collection started at a column > 0.
+
+3. **Tab-Indented Flow Collections**: Fixed validation to check the actual column of content tokens after whitespace/tabs, not just the `LineStart(n)` value which doesn't account for tabs.
+
+4. **Anchor Indentation Validation**: Added check that anchors appearing as values must be at indentation >= `min_indent`. This catches cases like `seq:\n&anchor\n- a` where the anchor at column 0 is invalid for a value that requires indentation >= 1.
+
+5. **Orphaned Properties Detection**: When parsing remaining mapping entries, if properties (anchor/tag) are collected but no scalar key follows, an error is now reported for the orphaned properties.
+
+### Tests Fixed by These Changes
+
+- **6CA3**: Tab indented top flow - Tab-indented flow sequences now correctly validate
+- **9C9N**: Flow sequence with column 0 continuations - Error correctly raised
+- **QB6E**: Quoted string with column 0 continuations - Error correctly raised
+- **G9HC**: Invalid anchor in zero indented sequence - Error correctly raised
+- **NAT4, XV9V**: Empty lines in quoted strings - Correctly allowed regardless of indentation
+
+### Architecture Notes
+
+The parser now uses a consistent pattern for tracking context:
+- `flow_depth: usize` - Depth of nested flow collections
+- `flow_context_columns: Vec<usize>` - Starting column of each flow context
+- `in_quoted_string: bool` (in lexer) - Suppresses INDENT/DEDENT inside strings
+- `min_indent: usize` parameter - Threaded through parsing to validate indentation

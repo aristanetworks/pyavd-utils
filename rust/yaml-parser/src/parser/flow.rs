@@ -18,11 +18,13 @@ impl<'a> Parser<'a> {
     pub fn parse_flow_mapping(&mut self) -> Option<Node> {
         let (_, start_span) = self.advance()?; // consume '{'
         let start = start_span.start;
+        let flow_start_column = self.column_of_position(start);
         let mut pairs: Vec<(Node, Node)> = Vec::new();
         let mut just_saw_comma = true; // Start true to catch leading comma
 
-        // Track flow depth - inside flow collections, indentation doesn't matter
+        // Track flow depth and starting column for indentation validation
         self.flow_depth += 1;
+        self.flow_context_columns.push(flow_start_column);
 
         self.skip_ws_and_newlines();
 
@@ -34,6 +36,7 @@ impl<'a> Parser<'a> {
                 let end = end_span.end;
                 self.advance();
                 self.flow_depth -= 1;
+                self.flow_context_columns.pop();
                 return Some(Node::new(Value::Mapping(pairs), Span::new((), start..end)));
             }
 
@@ -149,6 +152,7 @@ impl<'a> Parser<'a> {
         // Unterminated mapping
         self.error(ErrorKind::UnexpectedEof, self.current_span());
         self.flow_depth -= 1;
+        self.flow_context_columns.pop();
         let end = self.tokens.last().map(|(_, s)| s.end).unwrap_or(start);
         Some(Node::new(Value::Mapping(pairs), Span::new((), start..end)))
     }
@@ -158,10 +162,13 @@ impl<'a> Parser<'a> {
     pub fn parse_flow_sequence(&mut self) -> Option<Node> {
         let (_, start_span) = self.advance()?; // consume '['
         let start = start_span.start;
+        let flow_start_column = self.column_of_position(start);
         let mut items: Vec<Node> = Vec::new();
         let mut just_saw_comma = true;
 
+        // Track flow depth and starting column for indentation validation
         self.flow_depth += 1;
+        self.flow_context_columns.push(flow_start_column);
 
         self.skip_ws_and_newlines();
 
@@ -172,6 +179,7 @@ impl<'a> Parser<'a> {
                 let end = end_span.end;
                 self.advance();
                 self.flow_depth -= 1;
+                self.flow_context_columns.pop();
                 return Some(Node::new(Value::Sequence(items), Span::new((), start..end)));
             }
 
@@ -236,6 +244,7 @@ impl<'a> Parser<'a> {
 
         self.error(ErrorKind::UnexpectedEof, self.current_span());
         self.flow_depth -= 1;
+        self.flow_context_columns.pop();
         let end = self.tokens.last().map(|(_, s)| s.end).unwrap_or(start);
         Some(Node::new(Value::Sequence(items), Span::new((), start..end)))
     }
@@ -334,11 +343,14 @@ impl<'a> Parser<'a> {
                 let node = Node::new(value, Span::new((), start_span.start..end_span.end));
                 Some(self.apply_properties_and_register(props, node))
             }
-            Token::SingleQuoted(s) | Token::DoubleQuoted(s) => {
-                let value = Value::String(s.clone());
-                self.advance();
-                let node = Node::new(value, start_span);
-                Some(self.apply_properties_and_register(props, node))
+            Token::StringStart(_) => {
+                // Parse the quoted string using the new token sequence
+                // In flow context, indentation rules are relaxed, so use min_indent=0
+                if let Some(node) = self.parse_quoted_string(0) {
+                    Some(self.apply_properties_and_register(props, node))
+                } else {
+                    None
+                }
             }
             Token::Comma | Token::FlowSeqEnd | Token::FlowMapEnd | Token::Colon => {
                 if !props.is_empty() {

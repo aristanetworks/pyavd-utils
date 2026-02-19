@@ -117,6 +117,37 @@ impl<'a> Parser<'a> {
 
             let empty_key = !explicit_key && matches!(self.peek(), Some((Token::Colon, _)));
 
+            // Collect any anchor/tag properties before the key
+            let mut key_props = NodeProperties::default();
+            loop {
+                match self.peek() {
+                    Some((Token::Anchor(name), anchor_span)) => {
+                        let name = name.clone();
+                        let anchor_span = *anchor_span;
+                        self.advance();
+                        self.skip_ws();
+                        if key_props.anchor.is_some() {
+                            self.error(ErrorKind::DuplicateAnchor, anchor_span);
+                        }
+                        key_props.anchor = Some((name, anchor_span));
+                    }
+                    Some((Token::Tag(tag), tag_span)) => {
+                        let tag = tag.clone();
+                        let tag_span = *tag_span;
+                        self.advance();
+                        self.skip_ws();
+                        if key_props.tag.is_some() {
+                            self.error(ErrorKind::DuplicateTag, tag_span);
+                        }
+                        key_props.tag = Some((tag, tag_span));
+                    }
+                    Some((Token::Whitespace, _)) => {
+                        self.advance();
+                    }
+                    _ => break,
+                }
+            }
+
             let key = if explicit_key {
                 match self.peek() {
                     Some((Token::MappingKey | Token::Colon, _)) => None,
@@ -136,11 +167,32 @@ impl<'a> Parser<'a> {
             } else if empty_key {
                 None
             } else {
-                self.parse_scalar()
+                // Check if the key is an alias with properties (invalid)
+                if let Some((Token::Alias(alias_name), span)) = self.peek() {
+                    let alias_name = alias_name.clone();
+                    let span = *span;
+                    if !key_props.is_empty() {
+                        self.error(ErrorKind::PropertiesOnAlias, span);
+                    }
+                    self.advance();
+                    if !self.anchors.contains_key(&alias_name) {
+                        self.error(ErrorKind::UndefinedAlias, span);
+                    }
+                    Some(Node::new(Value::Alias(alias_name), span))
+                } else {
+                    self.parse_scalar()
+                }
             };
 
             let key = match key {
-                Some(k) => k,
+                Some(k) => {
+                    // Apply properties to the key (unless it's an alias, which already errored)
+                    if !key_props.is_empty() && !matches!(k.value, Value::Alias(_)) {
+                        self.apply_properties_and_register(key_props, k)
+                    } else {
+                        k
+                    }
+                }
                 None if explicit_key || empty_key => Node::null(self.current_span()),
                 None => break,
             };
@@ -252,12 +304,14 @@ impl<'a> Parser<'a> {
             if let Some((tok, _)) = self.peek() {
                 match tok {
                     Token::Plain(_)
-                    | Token::SingleQuoted(_)
-                    | Token::DoubleQuoted(_)
+                    | Token::StringStart(_)
                     | Token::MappingKey
                     | Token::Colon
                     | Token::LiteralBlockHeader(_)
-                    | Token::FoldedBlockHeader(_) => {}
+                    | Token::FoldedBlockHeader(_)
+                    | Token::Anchor(_)
+                    | Token::Alias(_)
+                    | Token::Tag(_) => {}
                     _ => break,
                 }
             }
@@ -315,7 +369,7 @@ impl<'a> Parser<'a> {
         }
 
         let first_key = match self.peek() {
-            Some((Token::Plain(_) | Token::SingleQuoted(_) | Token::DoubleQuoted(_), _)) => {
+            Some((Token::Plain(_) | Token::StringStart(_), _)) => {
                 let scalar = self.parse_scalar()?;
                 self.apply_properties_and_register(key_props, scalar)
             }
@@ -435,7 +489,7 @@ impl<'a> Parser<'a> {
             }
 
             match self.peek() {
-                Some((Token::Plain(_) | Token::SingleQuoted(_) | Token::DoubleQuoted(_), _)) => {
+                Some((Token::Plain(_) | Token::StringStart(_), _)) => {
                     let key = self.parse_scalar()?;
                     self.skip_ws();
 
@@ -538,7 +592,7 @@ impl<'a> Parser<'a> {
             }
 
             match self.peek() {
-                Some((Token::Plain(_) | Token::SingleQuoted(_) | Token::DoubleQuoted(_), _)) => {
+                Some((Token::Plain(_) | Token::StringStart(_), _)) => {
                     let key = self.parse_scalar()?;
                     self.skip_ws();
 
@@ -590,10 +644,7 @@ impl<'a> Parser<'a> {
                     }
 
                     match self.peek() {
-                        Some((
-                            Token::Plain(_) | Token::SingleQuoted(_) | Token::DoubleQuoted(_),
-                            _,
-                        )) => {
+                        Some((Token::Plain(_) | Token::StringStart(_), _)) => {
                             let key = self.parse_scalar()?;
                             let key = self.apply_properties_and_register(inner_props, key);
                             self.skip_ws();
@@ -759,9 +810,7 @@ impl<'a> Parser<'a> {
             self.skip_ws();
 
             let key = match self.peek() {
-                Some((Token::Plain(_) | Token::SingleQuoted(_) | Token::DoubleQuoted(_), _)) => {
-                    self.parse_scalar()
-                }
+                Some((Token::Plain(_) | Token::StringStart(_), _)) => self.parse_scalar(),
                 Some((Token::Alias(name), span)) => {
                     let name = name.clone();
                     let span = *span;

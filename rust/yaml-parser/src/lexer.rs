@@ -12,6 +12,15 @@ use chumsky::prelude::*;
 
 use crate::span::{Span, Spanned};
 
+/// Quote style for quoted strings.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QuoteStyle {
+    /// Single quote (')
+    Single,
+    /// Double quote (")
+    Double,
+}
+
 /// A YAML token.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Token {
@@ -42,10 +51,12 @@ pub enum Token {
     // Scalars
     /// A plain (unquoted) scalar
     Plain(String),
-    /// A single-quoted scalar (content after processing escapes)
-    SingleQuoted(String),
-    /// A double-quoted scalar (content after processing escapes)
-    DoubleQuoted(String),
+    /// Opening quote for a quoted string (' or ")
+    StringStart(QuoteStyle),
+    /// Closing quote for a quoted string (' or ")
+    StringEnd(QuoteStyle),
+    /// Content segment inside a quoted string (escapes already processed)
+    StringContent(String),
     /// A literal block scalar (`|`) - header info only, content parsed separately
     LiteralBlockHeader(BlockScalarHeader),
     /// A folded block scalar (`>`) - header info only, content parsed separately
@@ -110,12 +121,11 @@ pub enum Chomping {
 
 impl Token {
     /// Returns `true` if this is a scalar token.
+    /// Note: StringStart/StringEnd/StringContent are components of a quoted scalar,
+    /// not complete scalars themselves.
     #[must_use]
     pub const fn is_scalar(&self) -> bool {
-        matches!(
-            self,
-            Self::Plain(_) | Self::SingleQuoted(_) | Self::DoubleQuoted(_)
-        )
+        matches!(self, Self::Plain(_))
     }
 
     /// Returns `true` if this is a flow indicator.
@@ -146,8 +156,11 @@ impl std::fmt::Display for Token {
             Self::DocStart => write!(f, "'---'"),
             Self::DocEnd => write!(f, "'...'"),
             Self::Plain(s) => write!(f, "plain scalar '{s}'"),
-            Self::SingleQuoted(s) => write!(f, "single-quoted '{s}'"),
-            Self::DoubleQuoted(s) => write!(f, "double-quoted '{s}'"),
+            Self::StringStart(QuoteStyle::Single) => write!(f, "string start (')"),
+            Self::StringStart(QuoteStyle::Double) => write!(f, "string start (\")"),
+            Self::StringEnd(QuoteStyle::Single) => write!(f, "string end (')"),
+            Self::StringEnd(QuoteStyle::Double) => write!(f, "string end (\")"),
+            Self::StringContent(s) => write!(f, "string content '{s}'"),
             Self::LiteralBlockHeader(_) => write!(f, "'|'"),
             Self::FoldedBlockHeader(_) => write!(f, "'>'"),
             Self::Anchor(name) => write!(f, "anchor '&{name}'"),
@@ -336,12 +349,14 @@ fn lexer<'src>()
         newline.clone().then(space.repeated()).to(' '), // Escaped newline becomes space
     )));
 
+    // NOTE: The chumsky lexer produces simplified StringContent tokens.
+    // The context_lexer produces proper StringStart/StringContent/StringEnd tokens.
     let double_quoted = none_of("\\\"")
         .or(double_escape)
         .repeated()
         .collect::<String>()
         .delimited_by(just('"'), just('"'))
-        .map(Token::DoubleQuoted)
+        .map(Token::StringContent) // Simplified for chumsky lexer
         .recover_with(via_parser(
             just('"')
                 .ignore_then(none_of("\"").repeated())
@@ -355,7 +370,7 @@ fn lexer<'src>()
         .repeated()
         .collect::<String>()
         .delimited_by(just('\''), just('\''))
-        .map(Token::SingleQuoted)
+        .map(Token::StringContent) // Simplified for chumsky lexer
         .recover_with(via_parser(
             just('\'')
                 .ignore_then(none_of("'").repeated())
@@ -587,7 +602,8 @@ mod tests {
     #[test]
     fn test_token_types() {
         assert!(Token::Plain("hello".into()).is_scalar());
-        assert!(Token::SingleQuoted("world".into()).is_scalar());
+        // StringContent is not a scalar by itself - it's a component
+        assert!(!Token::StringContent("world".into()).is_scalar());
         assert!(Token::FlowMapStart.is_flow_indicator());
         assert!(!Token::Colon.is_flow_indicator());
     }
@@ -651,6 +667,7 @@ mod tests {
 
     #[test]
     fn test_tokenize_double_quoted() {
+        // Note: The chumsky lexer emits simplified StringContent tokens
         let (tokens, errors) = tokenize("\"hello\\nworld\"");
         assert!(errors.is_empty(), "Errors: {errors:?}");
 
@@ -660,11 +677,12 @@ mod tests {
             .collect();
 
         assert_eq!(meaningful.len(), 1);
-        assert!(matches!(meaningful[0].0, Token::DoubleQuoted(ref s) if s == "hello\nworld"));
+        assert!(matches!(meaningful[0].0, Token::StringContent(ref s) if s == "hello\nworld"));
     }
 
     #[test]
     fn test_tokenize_single_quoted() {
+        // Note: The chumsky lexer emits simplified StringContent tokens
         let (tokens, errors) = tokenize("'hello''world'");
         assert!(errors.is_empty(), "Errors: {errors:?}");
 
@@ -674,7 +692,7 @@ mod tests {
             .collect();
 
         assert_eq!(meaningful.len(), 1);
-        assert!(matches!(meaningful[0].0, Token::SingleQuoted(ref s) if s == "hello'world"));
+        assert!(matches!(meaningful[0].0, Token::StringContent(ref s) if s == "hello'world"));
     }
 
     #[test]
