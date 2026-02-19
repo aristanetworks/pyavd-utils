@@ -336,9 +336,7 @@ mod tests {
                 let args = ();
                 let kwargs = pyo3::types::PyDict::new(py);
                 kwargs.set_item("data_as_json", data_as_json_str).unwrap();
-                kwargs
-                    .set_item("schema_name", "eos_config")
-                    .unwrap();
+                kwargs.set_item("schema_name", "eos_config").unwrap();
                 module
                     .call_method("validate_json", args, Some(&kwargs))
                     .unwrap()
@@ -394,9 +392,7 @@ mod tests {
                 let args = ();
                 let kwargs = pyo3::types::PyDict::new(py);
                 kwargs.set_item("data_as_json", "invalid_json").unwrap();
-                kwargs
-                    .set_item("schema_name", "eos_config")
-                    .unwrap();
+                kwargs.set_item("schema_name", "eos_config").unwrap();
                 module
                     .call_method("validate_json", args, Some(&kwargs))
                     .unwrap_err()
@@ -510,9 +506,7 @@ mod tests {
                 let args = ();
                 let kwargs = pyo3::types::PyDict::new(py);
                 kwargs.set_item("data_as_json", data_as_json_str).unwrap();
-                kwargs
-                    .set_item("schema_name", "eos_config")
-                    .unwrap();
+                kwargs.set_item("schema_name", "eos_config").unwrap();
                 module
                     .call_method("get_validated_data", args, Some(&kwargs))
                     .unwrap()
@@ -542,9 +536,7 @@ mod tests {
                 let args = ();
                 let kwargs = pyo3::types::PyDict::new(py);
                 kwargs.set_item("data_as_json", data_as_json_str).unwrap();
-                kwargs
-                    .set_item("schema_name", "eos_config")
-                    .unwrap();
+                kwargs.set_item("schema_name", "eos_config").unwrap();
                 module
                     .call_method("get_validated_data", args, Some(&kwargs))
                     .unwrap()
@@ -588,9 +580,7 @@ mod tests {
             let config = {
                 let args = ();
                 let kwargs = pyo3::types::PyDict::new(py);
-                kwargs
-                    .set_item("warn_eos_config_keys", true)
-                    .unwrap();
+                kwargs.set_item("warn_eos_config_keys", true).unwrap();
                 module
                     .call_method("Configuration", args, Some(&kwargs))
                     .unwrap()
