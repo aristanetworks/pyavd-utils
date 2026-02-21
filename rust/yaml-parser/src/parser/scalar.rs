@@ -13,9 +13,9 @@ use crate::value::{Node, Value};
 
 use super::{NodeProperties, Parser};
 
-impl<'a> Parser<'a> {
+impl Parser<'_> {
     /// Parse a simple scalar token.
-    /// For mapping keys (typically single-line), uses min_indent=0.
+    /// For mapping keys (typically single-line), uses `min_indent=0`.
     pub fn parse_scalar(&mut self) -> Option<Node> {
         self.parse_scalar_with_indent(0)
     }
@@ -27,8 +27,8 @@ impl<'a> Parser<'a> {
         let span = *span;
 
         match tok {
-            Token::Plain(s) => {
-                let value = self.scalar_to_value(s.clone());
+            Token::Plain(string) => {
+                let value = Self::scalar_to_value(string.clone());
                 self.advance();
                 Some(Node::new(value, span))
             }
@@ -37,19 +37,19 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// Parse a quoted string from StringStart/StringContent/LineStart/StringEnd tokens.
-    /// Returns the assembled string as a Node, or None if not at a StringStart token.
-    /// Validates that continuation lines have proper indentation (>= min_indent).
+    /// Parse a quoted string from `StringStart`/`StringContent`/`LineStart`/`StringEnd` tokens.
+    /// Returns the assembled string as a Node, or None if not at a `StringStart` token.
+    /// Validates that continuation lines have proper indentation (>= `min_indent`).
     ///
     /// `min_indent` is the minimum indentation required for continuation lines.
-    /// For root-level strings (min_indent=0), continuation at column 0 is valid.
-    /// For strings that are values in mappings, continuation must be >= min_indent.
+    /// For root-level strings (`min_indent=0`), continuation at column 0 is valid.
+    /// For strings that are values in mappings, continuation must be >= `min_indent`.
     pub fn parse_quoted_string(&mut self, min_indent: usize) -> Option<Node> {
-        let (tok, start_span) = self.peek()?;
+        let (first_token, start_span) = self.peek()?;
         let start_span = *start_span;
 
-        let style = match tok {
-            Token::StringStart(s) => *s,
+        let style = match first_token {
+            Token::StringStart(style) => *style,
             _ => return None,
         };
         self.advance(); // consume StringStart
@@ -63,22 +63,25 @@ impl<'a> Parser<'a> {
                 // Unexpected EOF - unterminated string
                 self.errors.push(crate::error::ParseError {
                     kind: ErrorKind::UnterminatedString,
-                    span: Span::new((), start_span.start..self.tokens.last().map(|(_, s)| s.end).unwrap_or(start_span.end)),
-                    expected: vec!["closing quote".to_string()],
-                    found: Some("end of input".to_string()),
+                    span: Span::new(
+                        (),
+                        start_span.start..self.tokens.last().map_or(start_span.end, |(_, s)| s.end),
+                    ),
+                    expected: vec!["closing quote".to_owned()],
+                    found: Some("end of input".to_owned()),
                 });
                 break;
             };
             let span = *span;
 
             match tok {
-                Token::StringContent(s) => {
+                Token::StringContent(string) => {
                     if !first_content && !content.is_empty() {
                         // Multi-line string: previous content ended, new content starts
                         // YAML spec: folded newlines become spaces (for flow scalars)
                         content.push(' ');
                     }
-                    content.push_str(s);
+                    content.push_str(string);
                     first_content = false;
                     end_span = span;
                     self.advance();
@@ -97,10 +100,7 @@ impl<'a> Parser<'a> {
                     self.advance();
 
                     // Check if this is an empty line by peeking at the next token
-                    let is_content_line = matches!(
-                        self.peek(),
-                        Some((Token::StringContent(_), _))
-                    );
+                    let is_content_line = matches!(self.peek(), Some((Token::StringContent(_), _)));
 
                     if is_content_line && indent < min_indent {
                         self.errors.push(crate::error::ParseError {
@@ -120,8 +120,8 @@ impl<'a> Parser<'a> {
                         self.errors.push(crate::error::ParseError {
                             kind: ErrorKind::UnexpectedToken,
                             span,
-                            expected: vec![format!("closing {:?} quote", style)],
-                            found: Some(format!("{:?} quote", end_style)),
+                            expected: vec![format!("closing {style:?} quote")],
+                            found: Some(format!("{end_style:?} quote")),
                         });
                     }
                     end_span = span;
@@ -133,8 +133,8 @@ impl<'a> Parser<'a> {
                     self.errors.push(crate::error::ParseError {
                         kind: ErrorKind::UnexpectedToken,
                         span,
-                        expected: vec!["string content or closing quote".to_string()],
-                        found: Some(format!("{:?}", tok)),
+                        expected: vec!["string content or closing quote".to_owned()],
+                        found: Some(format!("{tok:?}")),
                     });
                     break;
                 }
@@ -146,35 +146,39 @@ impl<'a> Parser<'a> {
     }
 
     /// Convert a plain scalar string to an appropriate Value.
-    pub fn scalar_to_value(&self, s: String) -> Value {
-        match s.as_str() {
+    pub fn scalar_to_value(scalar: String) -> Value {
+        match scalar.as_str() {
             "null" | "Null" | "NULL" | "~" | "" => Value::Null,
             "true" | "True" | "TRUE" => Value::Bool(true),
             "false" | "False" | "FALSE" => Value::Bool(false),
             _ => {
-                if let Ok(i) = s.parse::<i64>() {
-                    return Value::Int(i);
+                if let Ok(integer) = scalar.parse::<i64>() {
+                    return Value::Int(integer);
                 }
-                if let Some(hex) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
-                    if let Ok(i) = i64::from_str_radix(hex, 16) {
-                        return Value::Int(i);
-                    }
+                if let Some(hex) = scalar
+                    .strip_prefix("0x")
+                    .or_else(|| scalar.strip_prefix("0X"))
+                    && let Ok(integer) = i64::from_str_radix(hex, 16)
+                {
+                    return Value::Int(integer);
                 }
-                if let Some(oct) = s.strip_prefix("0o").or_else(|| s.strip_prefix("0O")) {
-                    if let Ok(i) = i64::from_str_radix(oct, 8) {
-                        return Value::Int(i);
-                    }
+                if let Some(oct) = scalar
+                    .strip_prefix("0o")
+                    .or_else(|| scalar.strip_prefix("0O"))
+                    && let Ok(integer) = i64::from_str_radix(oct, 8)
+                {
+                    return Value::Int(integer);
                 }
-                if let Ok(f) = s.parse::<f64>() {
-                    return Value::Float(f);
+                if let Ok(float) = scalar.parse::<f64>() {
+                    return Value::Float(float);
                 }
-                match s.as_str() {
+                match scalar.as_str() {
                     ".inf" | ".Inf" | ".INF" => return Value::Float(f64::INFINITY),
                     "-.inf" | "-.Inf" | "-.INF" => return Value::Float(f64::NEG_INFINITY),
                     ".nan" | ".NaN" | ".NAN" => return Value::Float(f64::NAN),
                     _ => {}
                 }
-                Value::String(s)
+                Value::String(scalar)
             }
         }
     }
@@ -308,12 +312,11 @@ impl<'a> Parser<'a> {
 
             while let Some((tok, tok_span)) = self.peek() {
                 match tok {
-                    Token::LineStart(_) => break,
                     Token::Dedent | Token::Indent(_) => {
                         self.advance();
                     }
-                    Token::Plain(s) | Token::StringContent(s) => {
-                        line_content.push_str(s);
+                    Token::Plain(string) | Token::StringContent(string) => {
+                        line_content.push_str(string);
                         end_pos = tok_span.end;
                         self.advance();
                     }
@@ -347,7 +350,7 @@ impl<'a> Parser<'a> {
                         end_pos = tok_span.end;
                         self.advance();
                     }
-                    Token::DocStart | Token::DocEnd => break,
+                    Token::LineStart(_) | Token::DocStart | Token::DocEnd => break,
                     _ => {
                         end_pos = tok_span.end;
                         self.advance();
@@ -415,7 +418,7 @@ impl<'a> Parser<'a> {
         let value = if had_continuations {
             Value::String(content)
         } else {
-            self.scalar_to_value(content)
+            Self::scalar_to_value(content)
         };
         Node::new(value, Span::new((), start..end))
     }
@@ -466,9 +469,6 @@ impl<'a> Parser<'a> {
                                     Token::LineStart(_) | Token::MappingKey => {
                                         break;
                                     }
-                                    Token::Whitespace | Token::Comment(_) => {
-                                        continue;
-                                    }
                                     Token::Plain(_)
                                     | Token::StringStart(_)
                                     | Token::StringEnd(_)
@@ -477,7 +477,7 @@ impl<'a> Parser<'a> {
                                         has_key_before_colon = true;
                                         break;
                                     }
-                                    _ => continue,
+                                    _ => {}
                                 }
                             }
                             if has_key_before_colon {
@@ -487,8 +487,7 @@ impl<'a> Parser<'a> {
                         Token::LineStart(_) => {
                             break;
                         }
-                        Token::Whitespace | Token::Comment(_) => continue,
-                        _ => continue,
+                        _ => {}
                     }
                 }
                 found_implicit_key_colon
@@ -525,21 +524,19 @@ impl<'a> Parser<'a> {
                 self.parse_value(map_indent + 1)
             };
 
-            let value = value.unwrap_or_else(|| Node::null(self.current_span()));
+            let value_node = value.unwrap_or_else(|| Node::null(self.current_span()));
 
             // Check for trailing content after quoted scalars in block context
-            if value_on_same_line {
-                if let Value::String(_) = &value.value {
-                    self.check_trailing_content_after_scalar();
-                }
+            if value_on_same_line && let Value::String(_) = &value_node.value {
+                self.check_trailing_content_after_scalar();
             }
 
-            pairs.push((key, value));
+            pairs.push((key, value_node));
 
             // Continue parsing more key-value pairs at same indentation
             self.parse_remaining_mapping_entries(&mut pairs, map_indent);
 
-            let end = pairs.last().map(|(_, v)| v.span.end).unwrap_or(start);
+            let end = pairs.last().map_or(start, |(_, v)| v.span.end);
             Some(Node::new(Value::Mapping(pairs), Span::new((), start..end)))
         } else {
             // Just a scalar - check for multiline continuation (plain scalars only)
@@ -552,7 +549,7 @@ impl<'a> Parser<'a> {
                 }
                 Some(scalar)
             } else {
-                self.consume_plain_scalar_continuations(scalar, min_indent)
+                Some(self.consume_plain_scalar_continuations(scalar, min_indent))
             }
         }
     }
@@ -613,17 +610,17 @@ impl<'a> Parser<'a> {
             loop {
                 match self.peek() {
                     Some((Token::Anchor(name), anchor_span)) => {
-                        let name = name.clone();
+                        let anchor_name = name.clone();
                         let anchor_span = *anchor_span;
                         self.advance();
                         self.skip_ws();
                         if key_props.anchor.is_some() {
                             self.error(ErrorKind::DuplicateAnchor, anchor_span);
                         }
-                        key_props.anchor = Some((name, anchor_span));
+                        key_props.anchor = Some((anchor_name, anchor_span));
                     }
-                    Some((Token::Tag(tag), tag_span)) => {
-                        let tag = tag.clone();
+                    Some((Token::Tag(name), tag_span)) => {
+                        let tag = name.clone();
                         let tag_span = *tag_span;
                         self.advance();
                         self.skip_ws();
@@ -640,9 +637,9 @@ impl<'a> Parser<'a> {
             }
 
             // Try to parse another key (can be scalar or alias)
-            let key = if let Some((Token::Alias(alias_name), span)) = self.peek() {
+            let key = if let Some((Token::Alias(name), span)) = self.peek() {
                 // Check if the key is an alias with properties (invalid)
-                let alias_name = alias_name.clone();
+                let alias_name = name.clone();
                 let span = *span;
                 if !key_props.is_empty() {
                     self.error(ErrorKind::PropertiesOnAlias, span);
@@ -652,27 +649,22 @@ impl<'a> Parser<'a> {
                     self.error(ErrorKind::UndefinedAlias, span);
                 }
                 Node::new(Value::Alias(alias_name), span)
-            } else {
-                match self.parse_scalar() {
-                    Some(k) => {
-                        if !key_props.is_empty() {
-                            self.apply_properties_and_register(key_props, k)
-                        } else {
-                            k
-                        }
-                    }
-                    None => {
-                        // If we collected properties (anchor/tag) but couldn't parse a scalar key,
-                        // report an error for the orphaned properties (e.g., &anchor at column 0
-                        // followed by a block sequence indicator on the next line)
-                        if let Some((_, anchor_span)) = key_props.anchor {
-                            self.error(ErrorKind::UnexpectedToken, anchor_span);
-                        } else if let Some((_, tag_span)) = key_props.tag {
-                            self.error(ErrorKind::UnexpectedToken, tag_span);
-                        }
-                        break;
-                    }
+            } else if let Some(key) = self.parse_scalar() {
+                if key_props.is_empty() {
+                    key
+                } else {
+                    self.apply_properties_and_register(key_props, key)
                 }
+            } else {
+                // If we collected properties (anchor/tag) but couldn't parse a scalar key,
+                // report an error for the orphaned properties (e.g., &anchor at column 0
+                // followed by a block sequence indicator on the next line)
+                if let Some((_, anchor_span)) = key_props.anchor {
+                    self.error(ErrorKind::UnexpectedToken, anchor_span);
+                } else if let Some((_, tag_span)) = key_props.tag {
+                    self.error(ErrorKind::UnexpectedToken, tag_span);
+                }
+                break;
             };
 
             self.skip_ws();
@@ -701,17 +693,15 @@ impl<'a> Parser<'a> {
                 self.parse_value(map_indent + 1)
             };
 
-            let value = value.unwrap_or_else(|| Node::null(self.current_span()));
+            let value_node = value.unwrap_or_else(|| Node::null(self.current_span()));
 
-            if value_on_same_line {
-                if let Value::String(_) = &value.value {
-                    self.check_trailing_content_after_scalar();
-                }
+            if value_on_same_line && let Value::String(_) = &value_node.value {
+                self.check_trailing_content_after_scalar();
             }
 
-            pairs.push((key, value));
+            pairs.push((key, value_node));
 
-            // Safety: ensure progress
+            // Ensure progress
             if self.pos == loop_start_pos && !self.is_eof() {
                 break;
             }
@@ -726,7 +716,7 @@ impl<'a> Parser<'a> {
         &mut self,
         initial: Node,
         block_min_indent: usize,
-    ) -> Option<Node> {
+    ) -> Node {
         let start = initial.span.start;
         let mut end = initial.span.end;
 
@@ -737,242 +727,218 @@ impl<'a> Parser<'a> {
 
         // Extract the initial content
         let mut content = match &initial.value {
-            Value::String(s) => s.clone(),
-            Value::Bool(b) => b.to_string(),
-            Value::Int(i) => i.to_string(),
-            Value::Float(f) => f.to_string(),
+            Value::String(string) => string.clone(),
+            Value::Bool(boolean) => boolean.to_string(),
+            Value::Int(integer) => integer.to_string(),
+            Value::Float(float) => float.to_string(),
             Value::Null => String::new(),
-            _ => return Some(initial), // Not a scalar type, return as-is
+            _ => return initial, // Not a scalar type, return as-is
         };
 
         // Track consecutive empty lines for folding
         let mut consecutive_newlines = 0;
         let mut had_continuations = false;
 
-        loop {
-            match self.peek() {
-                Some((Token::LineStart(n), _)) => {
-                    let indent = *n;
+        while let Some((Token::LineStart(n), _)) = self.peek() {
+            let indent = *n;
 
-                    // Check if this might be an empty line (LineStart(0) followed by LineStart)
-                    if indent < min_indent {
-                        // Could be an empty line - check if later content continues
-                        let mut next_pos = self.pos + 1;
-                        let mut found_continuation = false;
-                        while next_pos < self.tokens.len() {
-                            match &self.tokens[next_pos].0 {
-                                Token::Dedent | Token::Indent(_) => {
-                                    next_pos += 1;
-                                    continue;
-                                }
-                                Token::LineStart(next_indent) if *next_indent >= min_indent => {
-                                    consecutive_newlines += 1;
-                                    had_continuations = true;
-                                    self.advance();
-                                    while matches!(self.peek(), Some((Token::Dedent, _))) {
-                                        self.advance();
-                                    }
-                                    found_continuation = true;
-                                    break;
-                                }
-                                Token::Whitespace => {
-                                    // Tab at start of line followed by content
-                                    let after_ws = next_pos + 1;
-                                    if after_ws < self.tokens.len() {
-                                        match &self.tokens[after_ws].0 {
-                                            Token::Plain(_)
-                                            | Token::Anchor(_)
-                                            | Token::Tag(_)
-                                            | Token::Alias(_)
-                                            | Token::BlockSeqIndicator => {
-                                                if consecutive_newlines == 0 {
-                                                    content.push(' ');
-                                                } else {
-                                                    for _ in 0..consecutive_newlines {
-                                                        content.push('\n');
+            // Check if this might be an empty line (LineStart(0) followed by LineStart)
+            if indent < min_indent {
+                // Could be an empty line - check if later content continues
+                let mut next_pos = self.pos + 1;
+                let mut found_continuation = false;
+                while next_pos < self.tokens.len() {
+                    match &self.tokens[next_pos].0 {
+                        Token::Dedent | Token::Indent(_) => {
+                            next_pos += 1;
+                        }
+                        Token::LineStart(next_indent) if *next_indent >= min_indent => {
+                            consecutive_newlines += 1;
+                            had_continuations = true;
+                            self.advance();
+                            while matches!(self.peek(), Some((Token::Dedent, _))) {
+                                self.advance();
+                            }
+                            found_continuation = true;
+                            break;
+                        }
+                        Token::Whitespace => {
+                            // Tab at start of line followed by content
+                            let after_ws = next_pos + 1;
+                            if after_ws < self.tokens.len() {
+                                match &self.tokens[after_ws].0 {
+                                    Token::Plain(_)
+                                    | Token::Anchor(_)
+                                    | Token::Tag(_)
+                                    | Token::Alias(_)
+                                    | Token::BlockSeqIndicator => {
+                                        if consecutive_newlines == 0 {
+                                            content.push(' ');
+                                        } else {
+                                            for _ in 0..consecutive_newlines {
+                                                content.push('\n');
+                                            }
+                                        }
+
+                                        self.advance(); // consume LineStart
+                                        while matches!(self.peek(), Some((Token::Dedent, _))) {
+                                            self.advance();
+                                        }
+                                        self.advance(); // consume Whitespace (tab)
+
+                                        match self.peek() {
+                                            Some((Token::Plain(string), plain_span)) => {
+                                                let continuation = string.clone();
+                                                end = plain_span.end;
+                                                content.push_str(&continuation);
+                                                self.advance();
+                                            }
+                                            Some((
+                                                Token::Anchor(_)
+                                                | Token::Tag(_)
+                                                | Token::Alias(_)
+                                                | Token::BlockSeqIndicator,
+                                                span,
+                                            )) => {
+                                                let line_start_pos = span.start;
+                                                let mut line_end = span.end;
+                                                while let Some((tok, tok_span)) = self.peek() {
+                                                    if let Token::LineStart(_) = tok {
+                                                        break;
                                                     }
-                                                }
-
-                                                self.advance(); // consume LineStart
-                                                while matches!(
-                                                    self.peek(),
-                                                    Some((Token::Dedent, _))
-                                                ) {
+                                                    line_end = tok_span.end;
                                                     self.advance();
                                                 }
-                                                self.advance(); // consume Whitespace (tab)
-
-                                                match self.peek() {
-                                                    Some((Token::Plain(s), plain_span)) => {
-                                                        let continuation = s.clone();
-                                                        end = plain_span.end;
-                                                        content.push_str(&continuation);
-                                                        self.advance();
-                                                    }
-                                                    Some((
-                                                        Token::Anchor(_)
-                                                        | Token::Tag(_)
-                                                        | Token::Alias(_)
-                                                        | Token::BlockSeqIndicator,
-                                                        span,
-                                                    )) => {
-                                                        let line_start_pos = span.start;
-                                                        let mut line_end = span.end;
-                                                        while let Some((tok, tok_span)) =
-                                                            self.peek()
-                                                        {
-                                                            match tok {
-                                                                Token::LineStart(_) => break,
-                                                                _ => {
-                                                                    line_end = tok_span.end;
-                                                                    self.advance();
-                                                                }
-                                                            }
-                                                        }
-                                                        let line_text =
-                                                            &self.input[line_start_pos..line_end];
-                                                        content.push_str(line_text.trim_end());
-                                                        end = line_end;
-                                                    }
-                                                    _ => {}
-                                                }
-
-                                                had_continuations = true;
-                                                consecutive_newlines = 0;
-                                                found_continuation = true;
-                                                break;
+                                                let line_text =
+                                                    &self.input[line_start_pos..line_end];
+                                                content.push_str(line_text.trim_end());
+                                                end = line_end;
                                             }
                                             _ => {}
                                         }
-                                    }
-                                    return Some(self.finalize_multiline_scalar(
-                                        content,
-                                        had_continuations,
-                                        start,
-                                        end,
-                                    ));
-                                }
-                                _ => {
-                                    return Some(self.finalize_multiline_scalar(
-                                        content,
-                                        had_continuations,
-                                        start,
-                                        end,
-                                    ));
-                                }
-                            }
-                        }
-                        if !found_continuation {
-                            if next_pos >= self.tokens.len() {
-                                break;
-                            }
-                        }
-                        continue;
-                    }
 
-                    // Check if the following content is a mapping key
-                    let next_pos = self.pos + 1;
-                    if next_pos < self.tokens.len() {
-                        let mut content_pos = next_pos;
-                        while content_pos < self.tokens.len() {
-                            match &self.tokens[content_pos].0 {
-                                Token::Whitespace | Token::Indent(_) => content_pos += 1,
-                                _ => break,
-                            }
-                        }
-
-                        if content_pos < self.tokens.len() {
-                            if let Token::Plain(_) = &self.tokens[content_pos].0 {
-                                let mut lookahead = content_pos + 1;
-                                while lookahead < self.tokens.len() {
-                                    match &self.tokens[lookahead].0 {
-                                        Token::Whitespace => lookahead += 1,
-                                        Token::Colon => {
-                                            return Some(self.finalize_multiline_scalar(
-                                                content,
-                                                had_continuations,
-                                                start,
-                                                end,
-                                            ));
-                                        }
-                                        _ => break,
+                                        had_continuations = true;
+                                        consecutive_newlines = 0;
+                                        found_continuation = true;
+                                        break;
                                     }
+                                    _ => {}
                                 }
                             }
+                            return self.finalize_multiline_scalar(
+                                content,
+                                had_continuations,
+                                start,
+                                end,
+                            );
+                        }
+                        _ => {
+                            return self.finalize_multiline_scalar(
+                                content,
+                                had_continuations,
+                                start,
+                                end,
+                            );
                         }
                     }
+                }
+                if !found_continuation && next_pos >= self.tokens.len() {
+                    break;
+                }
+            }
 
-                    // Valid continuation, consume the LineStart
+            // Check if the following content is a mapping key
+            let next_pos = self.pos + 1;
+            if next_pos < self.tokens.len() {
+                let mut content_pos = next_pos;
+                while content_pos < self.tokens.len() {
+                    match &self.tokens[content_pos].0 {
+                        Token::Whitespace | Token::Indent(_) => content_pos += 1,
+                        _ => break,
+                    }
+                }
+
+                if content_pos < self.tokens.len()
+                    && let Token::Plain(_) = &self.tokens[content_pos].0
+                {
+                    let mut lookahead = content_pos + 1;
+                    while lookahead < self.tokens.len() {
+                        match &self.tokens[lookahead].0 {
+                            Token::Whitespace => lookahead += 1,
+                            Token::Colon => {
+                                return self.finalize_multiline_scalar(
+                                    content,
+                                    had_continuations,
+                                    start,
+                                    end,
+                                );
+                            }
+                            _ => break,
+                        }
+                    }
+                }
+            }
+
+            // Valid continuation, consume the LineStart
+            self.advance();
+
+            while let Some((Token::Indent(_) | Token::Whitespace, _)) = self.peek() {
+                self.advance();
+            }
+
+            match self.peek() {
+                Some((Token::Plain(string), plain_span)) => {
+                    let continuation = string.clone();
+                    end = plain_span.end;
+                    had_continuations = true;
+
+                    if consecutive_newlines == 0 {
+                        content.push(' ');
+                    } else {
+                        for _ in 0..consecutive_newlines {
+                            content.push('\n');
+                        }
+                    }
+                    content.push_str(&continuation);
+                    consecutive_newlines = 0;
+
                     self.advance();
+                }
+                Some((Token::LineStart(_), _)) => {
+                    consecutive_newlines += 1;
+                    had_continuations = true;
+                }
+                Some((
+                    Token::Anchor(_) | Token::Tag(_) | Token::Alias(_) | Token::BlockSeqIndicator,
+                    span,
+                )) => {
+                    let line_start_pos = span.start;
+                    let mut line_end = span.end;
 
-                    while let Some((Token::Indent(_) | Token::Whitespace, _)) = self.peek() {
+                    while let Some((tok, tok_span)) = self.peek() {
+                        if let Token::LineStart(_) = tok {
+                            break;
+                        }
+                        line_end = tok_span.end;
                         self.advance();
                     }
 
-                    match self.peek() {
-                        Some((Token::Plain(s), plain_span)) => {
-                            let continuation = s.clone();
-                            end = plain_span.end;
-                            had_continuations = true;
+                    let line_text = &self.input[line_start_pos..line_end];
+                    let continuation = line_text.trim_end();
 
-                            if consecutive_newlines == 0 {
-                                content.push(' ');
-                            } else {
-                                for _ in 0..consecutive_newlines {
-                                    content.push('\n');
-                                }
-                            }
-                            content.push_str(&continuation);
-                            consecutive_newlines = 0;
+                    if !continuation.is_empty() {
+                        had_continuations = true;
 
-                            self.advance();
-                        }
-                        Some((Token::LineStart(_), _)) => {
-                            consecutive_newlines += 1;
-                            had_continuations = true;
-                            continue;
-                        }
-                        Some((
-                            Token::Anchor(_)
-                            | Token::Tag(_)
-                            | Token::Alias(_)
-                            | Token::BlockSeqIndicator,
-                            span,
-                        )) => {
-                            let line_start_pos = span.start;
-                            let mut line_end = span.end;
-
-                            while let Some((tok, tok_span)) = self.peek() {
-                                match tok {
-                                    Token::LineStart(_) => break,
-                                    _ => {
-                                        line_end = tok_span.end;
-                                        self.advance();
-                                    }
-                                }
-                            }
-
-                            let line_text = &self.input[line_start_pos..line_end];
-                            let continuation = line_text.trim_end();
-
-                            if !continuation.is_empty() {
-                                had_continuations = true;
-
-                                if consecutive_newlines == 0 {
-                                    content.push(' ');
-                                } else {
-                                    for _ in 0..consecutive_newlines {
-                                        content.push('\n');
-                                    }
-                                }
-                                content.push_str(continuation);
-                                consecutive_newlines = 0;
-                                end = line_end;
+                        if consecutive_newlines == 0 {
+                            content.push(' ');
+                        } else {
+                            for _ in 0..consecutive_newlines {
+                                content.push('\n');
                             }
                         }
-                        _ => {
-                            break;
-                        }
+                        content.push_str(continuation);
+                        consecutive_newlines = 0;
+                        end = line_end;
                     }
                 }
                 _ => {
@@ -980,7 +946,6 @@ impl<'a> Parser<'a> {
                 }
             }
         }
-
-        Some(self.finalize_multiline_scalar(content, had_continuations, start, end))
+        self.finalize_multiline_scalar(content, had_continuations, start, end)
     }
 }

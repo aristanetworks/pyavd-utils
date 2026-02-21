@@ -10,7 +10,7 @@
 use std::fs;
 use std::path::Path;
 
-use yaml_parser::{Node, Value, parse};
+use yaml_parser::parse;
 
 /// Event notation for YAML test suite comparison.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -53,116 +53,6 @@ enum ScalarStyle {
     DoubleQuoted,
     Literal,
     Folded,
-}
-
-/// Convert parsed YAML to event stream for comparison.
-fn values_to_events(docs: &[Node], explicit_doc_markers: bool) -> Vec<Event> {
-    let mut events = vec![Event::StreamStart];
-
-    for doc in docs {
-        events.push(Event::DocumentStart {
-            explicit: explicit_doc_markers,
-        });
-        node_to_events(doc, &mut events);
-        events.push(Event::DocumentEnd { explicit: false });
-    }
-
-    events.push(Event::StreamEnd);
-    events
-}
-
-/// Convert a Node to events.
-/// Nodes have anchor/tag as properties, so we pass them to the events.
-fn node_to_events(node: &Node, events: &mut Vec<Event>) {
-    let anchor = node.anchor.clone();
-    let tag = node.tag.clone();
-
-    match &node.value {
-        Value::Null => {
-            events.push(Event::Scalar {
-                style: ScalarStyle::Plain,
-                value: String::new(),
-                anchor,
-                tag,
-            });
-        }
-        Value::Bool(b) => {
-            events.push(Event::Scalar {
-                style: ScalarStyle::Plain,
-                value: if *b { "true" } else { "false" }.to_string(),
-                anchor,
-                tag,
-            });
-        }
-        Value::Int(i) => {
-            events.push(Event::Scalar {
-                style: ScalarStyle::Plain,
-                value: i.to_string(),
-                anchor,
-                tag,
-            });
-        }
-        Value::Float(f) => {
-            events.push(Event::Scalar {
-                style: ScalarStyle::Plain,
-                value: format_float(*f),
-                anchor,
-                tag,
-            });
-        }
-        Value::String(s) => {
-            events.push(Event::Scalar {
-                style: ScalarStyle::Plain, // We don't track quote style in Value
-                value: s.clone(),
-                anchor,
-                tag,
-            });
-        }
-        Value::Sequence(items) => {
-            events.push(Event::SequenceStart {
-                flow: false,
-                anchor,
-                tag,
-            });
-            for item in items {
-                node_to_events(item, events);
-            }
-            events.push(Event::SequenceEnd);
-        }
-        Value::Mapping(pairs) => {
-            events.push(Event::MappingStart {
-                flow: false,
-                anchor,
-                tag,
-            });
-            for (key, val) in pairs {
-                node_to_events(key, events);
-                node_to_events(val, events);
-            }
-            events.push(Event::MappingEnd);
-        }
-        Value::Alias(name) => {
-            events.push(Event::Alias { name: name.clone() });
-        }
-        Value::Invalid => {
-            // Skip invalid nodes in event stream
-        }
-    }
-}
-
-fn format_float(f: f64) -> String {
-    if f.is_nan() {
-        ".nan".to_string()
-    } else if f.is_infinite() {
-        if f.is_sign_positive() {
-            ".inf"
-        } else {
-            "-.inf"
-        }
-        .to_string()
-    } else {
-        f.to_string()
-    }
 }
 
 /// Parse the test.event file format.
@@ -285,7 +175,6 @@ fn parse_scalar_event(s: &str) -> (Option<String>, Option<String>, ScalarStyle, 
 fn parse_collection_event(s: &str) -> (Option<String>, Option<String>, bool) {
     let mut anchor = None;
     let mut tag = None;
-    let mut flow = false;
     let mut rest = s;
 
     // Check for anchor
@@ -308,7 +197,7 @@ fn parse_collection_event(s: &str) -> (Option<String>, Option<String>, bool) {
     }
 
     // Check for flow indicators
-    flow = rest == "{}" || rest == "[]";
+    let flow = rest == "{}" || rest == "[]";
 
     (anchor, tag, flow)
 }
@@ -509,7 +398,7 @@ fn yaml_test_suite() {
 
     let (passed, failed, failures) = run_test_suite(&test_dir);
 
-    eprintln!("\n=== YAML Test Suite Results ===");
+    eprintln!("\n=== YAML Test Suite Results (Current Lexer) ===");
     eprintln!("Passed: {}", passed);
     eprintln!("Failed: {}", failed);
     eprintln!("Total: {}", passed + failed);

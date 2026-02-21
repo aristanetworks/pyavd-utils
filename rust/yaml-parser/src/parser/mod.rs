@@ -114,25 +114,17 @@ impl<'a> Parser<'a> {
         self.tokens.get(self.pos)
     }
 
-    /// Peek at the token N positions ahead.
-    #[allow(dead_code)]
-    pub fn peek_n(&self, n: usize) -> Option<&Spanned<Token>> {
-        self.tokens.get(self.pos + n)
-    }
-
     /// Consume the current token and return it.
     pub fn advance(&mut self) -> Option<&Spanned<Token>> {
-        if self.pos < self.tokens.len() {
+        (self.pos < self.tokens.len()).then(|| {
             let tok = &self.tokens[self.pos];
             self.pos += 1;
-            Some(tok)
-        } else {
-            None
-        }
+            tok
+        })
     }
 
     /// Skip whitespace and comments, but NOT line starts.
-    /// Also skips Indent tokens (they follow LineStart and are informational).
+    /// Also skips `Indent` tokens (they follow `LineStart` and are informational).
     pub fn skip_ws(&mut self) {
         while let Some((tok, _)) = self.peek() {
             match tok {
@@ -146,7 +138,7 @@ impl<'a> Parser<'a> {
 
     /// Skip whitespace, comments, AND line starts.
     /// Also checks for tabs used as indentation in block context.
-    /// Also skips Indent/Dedent tokens which are structural markers that can appear
+    /// Also skips `Indent`/`Dedent` tokens which are structural markers that can appear
     /// between content tokens (e.g., from comment-only indented lines).
     /// In flow context, validates that continuation lines at column 0 are only allowed
     /// when the flow collection itself started at column 0.
@@ -168,10 +160,8 @@ impl<'a> Parser<'a> {
                             // Skip past Whitespace tokens (tabs used as indentation)
                             // and check the actual column of the content token
                             let mut peek_offset = 0;
-                            while let Some((tok, _)) =
-                                self.tokens.get(self.pos + peek_offset)
-                            {
-                                if matches!(tok, Token::Whitespace) {
+                            while let Some((token, _)) = self.tokens.get(self.pos + peek_offset) {
+                                if matches!(token, Token::Whitespace) {
                                     peek_offset += 1;
                                 } else {
                                     break;
@@ -197,7 +187,7 @@ impl<'a> Parser<'a> {
                                         span,
                                         expected: vec![
                                             "indentation > 0 for flow content continuation"
-                                                .to_owned()
+                                                .to_owned(),
                                         ],
                                         found: Some(
                                             "content at column 0 inside flow collection".to_owned(),
@@ -215,7 +205,7 @@ impl<'a> Parser<'a> {
                     }
                 }
                 Token::Indent(_) | Token::Dedent => {
-                    // Indent/Dedent tokens are structural markers - skip them when skipping whitespace
+                    // `Indent`/`Dedent` tokens are structural markers - skip them when skipping whitespace
                     self.advance();
                 }
                 Token::Whitespace | Token::Comment(_) => {
@@ -247,12 +237,13 @@ impl<'a> Parser<'a> {
 
     /// Apply node properties to a node and register the anchor if present.
     pub fn apply_properties_and_register(&mut self, props: NodeProperties, node: Node) -> Node {
-        let node = props.apply_to(node);
+        let node_with_props = props.apply_to(node);
         // If the node has an anchor, register it in the anchors map
-        if let Some(ref anchor_name) = node.anchor {
-            self.anchors.insert(anchor_name.clone(), node.clone());
+        if let Some(ref anchor_name) = node_with_props.anchor {
+            self.anchors
+                .insert(anchor_name.clone(), node_with_props.clone());
         }
-        node
+        node_with_props
     }
 
     /// Push an indentation level onto the stack when entering a block structure.
@@ -267,41 +258,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// Check if an indentation level is valid (matches some level in the stack).
-    /// Returns true if valid, false if orphan.
-    #[allow(dead_code)]
-    pub fn is_valid_indent(&self, indent: usize) -> bool {
-        self.indent_stack.contains(&indent)
-    }
-
-    /// Check for orphan block indicator at the current position.
-    /// An orphan block indicator is a `-`, `?`, or `:` at an indentation level
-    /// that doesn't match any active structure in the indent stack.
-    /// Only checks in block context (flow_depth == 0).
-    #[allow(dead_code)]
-    pub fn check_orphan_block_indicator(&mut self) {
-        if self.flow_depth > 0 {
-            return; // No orphan detection in flow context
-        }
-
-        // Get current indentation from the most recent LineStart
-        let indent = self.current_indent();
-
-        // Check if we're at a block indicator
-        if let Some((tok, span)) = self.peek() {
-            let is_block_indicator = matches!(
-                tok,
-                Token::BlockSeqIndicator | Token::MappingKey | Token::Colon
-            );
-
-            if is_block_indicator && !self.is_valid_indent(indent) {
-                // Orphan block indicator - doesn't match any active structure
-                self.error(ErrorKind::InvalidIndentation, *span);
-            }
-        }
-    }
-
-    /// Check if there's whitespace (tabs) after LineStart that would indicate
+    /// Check if there's whitespace (tabs) after `LineStart` that would indicate
     /// invalid tab indentation in block context.
     pub fn check_tabs_as_indentation(&mut self) {
         // Tabs are only invalid for indentation in BLOCK context
@@ -314,28 +271,28 @@ impl<'a> Parser<'a> {
         }
 
         // Check: is the previous token LineStart and current token Whitespace?
-        if let Some((Token::LineStart(_), _)) = self.tokens.get(self.pos - 1) {
-            if let Some((Token::Whitespace, ws_span)) = self.peek() {
-                let ws_span = *ws_span;
-                let ws_content = &self.input[ws_span.start..ws_span.end];
+        if let Some((Token::LineStart(_), _)) = self.tokens.get(self.pos - 1)
+            && let Some((Token::Whitespace, ws_span)) = self.peek()
+        {
+            let ws_span = *ws_span;
+            let ws_content = &self.input[ws_span.start..ws_span.end];
 
-                if ws_content.contains('\t') {
-                    let next_token_pos = self.pos + 1;
-                    let is_flow_content = if let Some((tok, _)) = self.tokens.get(next_token_pos) {
-                        matches!(
-                            tok,
-                            Token::FlowMapStart
-                                | Token::FlowMapEnd
-                                | Token::FlowSeqStart
-                                | Token::FlowSeqEnd
-                        )
-                    } else {
-                        false
-                    };
+            if ws_content.contains('\t') {
+                let next_token_pos = self.pos + 1;
+                let is_flow_content = if let Some((tok, _)) = self.tokens.get(next_token_pos) {
+                    matches!(
+                        tok,
+                        Token::FlowMapStart
+                            | Token::FlowMapEnd
+                            | Token::FlowSeqStart
+                            | Token::FlowSeqEnd
+                    )
+                } else {
+                    false
+                };
 
-                    if !is_flow_content {
-                        self.error(ErrorKind::InvalidIndentation, ws_span);
-                    }
+                if !is_flow_content {
+                    self.error(ErrorKind::InvalidIndentation, ws_span);
                 }
             }
         }
@@ -369,10 +326,10 @@ impl<'a> Parser<'a> {
         // Skip whitespace, newlines, and dedent tokens
         while !self.is_eof() {
             match self.peek() {
-                Some((Token::Whitespace | Token::Comment(_) | Token::Dedent, _)) => {
-                    self.advance();
-                }
-                Some((Token::LineStart(_), _)) => {
+                Some((
+                    Token::Whitespace | Token::Comment(_) | Token::Dedent | Token::LineStart(_),
+                    _,
+                )) => {
                     self.advance();
                 }
                 _ => break,
@@ -470,11 +427,9 @@ impl<'a> Parser<'a> {
         }
 
         for (tok, span) in &self.tokens[..self.pos] {
-            if span.start > key_start && span.end <= key_end {
-                if matches!(tok, Token::LineStart(_)) {
-                    self.error(ErrorKind::UnexpectedToken, colon_span);
-                    return;
-                }
+            if span.start > key_start && span.end <= key_end && matches!(tok, Token::LineStart(_)) {
+                self.error(ErrorKind::UnexpectedToken, colon_span);
+                return;
             }
         }
     }
@@ -505,7 +460,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// Get the current indentation level from the most recent LineStart.
+    /// Get the current indentation level from the most recent `LineStart`.
     pub fn current_indent(&self) -> usize {
         for i in (0..self.pos).rev() {
             if let (Token::LineStart(n), _) = &self.tokens[i] {
@@ -518,8 +473,7 @@ impl<'a> Parser<'a> {
     /// Get the span of the current position.
     pub fn current_span(&self) -> Span {
         self.peek()
-            .map(|(_, span)| *span)
-            .unwrap_or_else(|| Span::new((), 0..0))
+            .map_or_else(|| Span::new((), 0..0), |(_, span)| *span)
     }
 
     /// Check if current position is a mapping key pattern (scalar followed by colon).
@@ -587,11 +541,7 @@ impl<'a> Parser<'a> {
         // value is like "!prefix! tag:example.com,2011:"
         // or "! !" for primary handle
         let parts: Vec<&str> = value.splitn(2, ' ').collect();
-        if parts.len() == 2 {
-            Some((parts[0].to_string(), parts[1].to_string()))
-        } else {
-            None
-        }
+        (parts.len() == 2).then(|| (parts[0].to_owned(), parts[1].to_owned()))
     }
 
     /// Validate that a tag handle is declared in the current document.
@@ -637,7 +587,6 @@ impl<'a> Parser<'a> {
             if !self.tag_handles.contains_key(&handle) {
                 self.error(ErrorKind::UndefinedTagHandle, span);
             }
-            return;
         }
 
         // Primary handle: original !type, stored as type (no '!') - always valid (local tag)
@@ -664,15 +613,14 @@ impl<'a> Parser<'a> {
 
             if self.is_eof() || matches!(self.peek(), Some((Token::DocStart | Token::DocEnd, _))) {
                 if explicit_doc_start.is_some() || !documents.is_empty() || self.pos > start_pos {
-                    let span = explicit_doc_start
-                        .map(|s| Span::new((), s.end..s.end))
-                        .unwrap_or_else(|| self.current_span());
+                    let span = explicit_doc_start.map_or_else(
+                        || self.current_span(),
+                        |span| Span::new((), span.end..span.end),
+                    );
                     documents.push(Node::null(span));
                 }
-            } else {
-                if let Some(node) = self.parse_value(0) {
-                    documents.push(node);
-                }
+            } else if let Some(node) = self.parse_value(0) {
+                documents.push(node);
             }
 
             self.skip_ws_and_newlines();
@@ -773,7 +721,7 @@ impl<'a> Parser<'a> {
             }
             // Anchor - collect as property and continue parsing
             Token::Anchor(name) => {
-                let name = name.clone();
+                let anchor_name = name.clone();
                 let anchor_span = span;
 
                 // Check anchor indentation - must be >= min_indent
@@ -793,7 +741,7 @@ impl<'a> Parser<'a> {
 
                 if props.crossed_line_boundary && props.anchor.is_some() {
                     let inner_props = NodeProperties {
-                        anchor: Some((name.clone(), anchor_span)),
+                        anchor: Some((anchor_name.clone(), anchor_span)),
                         tag: None,
                         crossed_line_boundary: false,
                     };
@@ -803,27 +751,27 @@ impl<'a> Parser<'a> {
                         Some(self.apply_properties_and_register(props, mapping))
                     } else {
                         self.error(ErrorKind::DuplicateAnchor, anchor_span);
-                        props.anchor = Some((name, anchor_span));
+                        props.anchor = Some((anchor_name, anchor_span));
                         self.parse_value_with_properties(min_indent, props)
                     }
                 } else {
-                    props.anchor = Some((name, anchor_span));
+                    props.anchor = Some((anchor_name, anchor_span));
                     self.parse_value_with_properties(min_indent, props)
                 }
             }
             // Alias
-            Token::Alias(alias_name) => {
+            Token::Alias(name) => {
                 if !props.is_empty() && !props.crossed_line_boundary {
                     self.error(ErrorKind::PropertiesOnAlias, span);
                     self.parse_alias()
                 } else {
-                    let alias_name = alias_name.clone();
+                    let alias_name = name.clone();
                     let alias_span = span;
                     self.advance();
                     self.skip_ws();
 
                     if matches!(self.peek(), Some((Token::Colon, _))) {
-                        self.parse_alias_as_mapping_key(alias_name, alias_span, props)
+                        Some(self.parse_alias_as_mapping_key(alias_name, alias_span, props))
                     } else {
                         if !self.anchors.contains_key(&alias_name) {
                             self.error(ErrorKind::UndefinedAlias, alias_span);
@@ -834,28 +782,26 @@ impl<'a> Parser<'a> {
             }
             // Tag - collect as property and continue parsing
             Token::Tag(tag) => {
-                let tag = tag.clone();
+                let tag_name = tag.clone();
                 let tag_span = span;
                 self.advance();
 
                 // Validate that named tag handles are declared in this document
-                self.validate_tag_handle(&tag, tag_span);
+                self.validate_tag_handle(&tag_name, tag_span);
 
-                let tag_looks_legitimate = !tag.contains('"') && !tag.contains('`');
+                let tag_looks_legitimate = !tag_name.contains('"') && !tag_name.contains('`');
                 let tag_end = tag_span.end;
-                if tag_looks_legitimate {
-                    if let Some((next_tok, next_span)) = self.peek() {
-                        let is_content = matches!(
-                            next_tok,
-                            Token::Plain(_)
-                                | Token::StringStart(_)
-                                | Token::FlowSeqStart
-                                | Token::FlowMapStart
-                                | Token::BlockSeqIndicator
-                        );
-                        if is_content && next_span.start == tag_end {
-                            self.error(ErrorKind::UnexpectedToken, *next_span);
-                        }
+                if tag_looks_legitimate && let Some((next_tok, next_span)) = self.peek() {
+                    let is_content = matches!(
+                        next_tok,
+                        Token::Plain(_)
+                            | Token::StringStart(_)
+                            | Token::FlowSeqStart
+                            | Token::FlowMapStart
+                            | Token::BlockSeqIndicator
+                    );
+                    if is_content && next_span.start == tag_end {
+                        self.error(ErrorKind::UnexpectedToken, *next_span);
                     }
                 }
 
@@ -868,7 +814,7 @@ impl<'a> Parser<'a> {
                 if props.crossed_line_boundary && props.tag.is_some() {
                     let inner_props = NodeProperties {
                         anchor: None,
-                        tag: Some((tag.clone(), tag_span)),
+                        tag: Some((tag_name.clone(), tag_span)),
                         crossed_line_boundary: false,
                     };
                     if let Some(mapping) =
@@ -877,37 +823,28 @@ impl<'a> Parser<'a> {
                         Some(self.apply_properties_and_register(props, mapping))
                     } else {
                         self.error(ErrorKind::DuplicateTag, tag_span);
-                        props.tag = Some((tag, tag_span));
+                        props.tag = Some((tag_name, tag_span));
                         self.parse_value_with_properties(min_indent, props)
                     }
                 } else {
-                    props.tag = Some((tag, tag_span));
+                    props.tag = Some((tag_name, tag_span));
                     self.parse_value_with_properties(min_indent, props)
                 }
             }
             // Block scalars
-            Token::LiteralBlockHeader(_) => {
-                if let Some(n) = self.parse_literal_block_scalar(min_indent) {
-                    Some(self.apply_properties_and_register(props, n))
-                } else {
-                    None
-                }
-            }
-            Token::FoldedBlockHeader(_) => {
-                if let Some(n) = self.parse_folded_block_scalar(min_indent) {
-                    Some(self.apply_properties_and_register(props, n))
-                } else {
-                    None
-                }
-            }
+            Token::LiteralBlockHeader(_) => self
+                .parse_literal_block_scalar(min_indent)
+                .map(|n| self.apply_properties_and_register(props, n)),
+            Token::FoldedBlockHeader(_) => self
+                .parse_folded_block_scalar(min_indent)
+                .map(|n| self.apply_properties_and_register(props, n)),
             // Scalars
             Token::Plain(_) | Token::StringStart(_) => {
                 if !props.is_empty() && self.is_mapping_key_pattern() {
                     self.parse_block_mapping_with_props(min_indent, props)
-                } else if let Some(n) = self.parse_scalar_or_mapping(min_indent) {
-                    Some(self.apply_properties_and_register(props, n))
                 } else {
-                    None
+                    self.parse_scalar_or_mapping(min_indent)
+                        .map(|n| self.apply_properties_and_register(props, n))
                 }
             }
             // Document markers
@@ -923,41 +860,28 @@ impl<'a> Parser<'a> {
                     let mut new_props = props;
                     new_props.crossed_line_boundary = true;
                     self.parse_value_with_properties(min_indent, new_props)
+                } else if !props.is_empty() {
+                    Some(self.apply_properties_and_register(props, Node::null(span)))
                 } else {
-                    if !props.is_empty() {
-                        Some(self.apply_properties_and_register(props, Node::null(span)))
-                    } else {
-                        None
-                    }
+                    None
                 }
             }
             // Skip comments
-            Token::Comment(_) => {
+            Token::Comment(_) | Token::Indent(_) => {
                 self.advance();
                 self.parse_value_with_properties(min_indent, props)
             }
             // Mapping key indicator
             Token::MappingKey => {
-                if let Some(n) = self.parse_block_mapping(min_indent) {
-                    Some(self.apply_properties_and_register(props, n))
-                } else {
-                    None
-                }
+                let node = self.parse_block_mapping(min_indent);
+                Some(self.apply_properties_and_register(props, node))
             }
             // Empty key
             Token::Colon => {
-                if !props.is_empty() {
-                    if let Some(n) =
-                        self.parse_block_mapping_with_tagged_null_key(min_indent, props)
-                    {
-                        Some(n)
-                    } else {
-                        None
-                    }
-                } else if let Some(n) = self.parse_block_mapping_with_empty_key(min_indent) {
-                    Some(n)
+                if props.is_empty() {
+                    Some(self.parse_block_mapping_with_empty_key(min_indent))
                 } else {
-                    None
+                    self.parse_block_mapping_with_tagged_null_key(min_indent, props)
                 }
             }
             // Directives
@@ -967,16 +891,12 @@ impl<'a> Parser<'a> {
                 self.parse_value_with_properties(min_indent, props)
             }
             // Indent
-            Token::Indent(_) => {
-                self.advance();
-                self.parse_value_with_properties(min_indent, props)
-            }
             // Dedent
             Token::Dedent => {
-                if !props.is_empty() {
-                    Some(self.apply_properties_and_register(props, Node::null(span)))
-                } else {
+                if props.is_empty() {
                     None
+                } else {
+                    Some(self.apply_properties_and_register(props, Node::null(span)))
                 }
             }
             // Invalid or unexpected
@@ -1062,11 +982,7 @@ pub fn parse_single_document(
     let doc = if parser.is_eof() || matches!(parser.peek(), Some((Token::DocEnd, _))) {
         // If we had an explicit document start (---), we should return a null node
         // rather than None. An explicit document with no content is a null value.
-        if has_doc_start {
-            Some(Node::null(Span::new((), 0..0)))
-        } else {
-            None
-        }
+        has_doc_start.then(|| Node::null(Span::new((), 0..0)))
     } else {
         parser.parse_value(0)
     };
@@ -1127,7 +1043,7 @@ mod tests {
         let (docs, errors) = parse("hello");
         assert!(errors.is_empty());
         assert_eq!(docs.len(), 1);
-        assert!(matches!(&docs[0].value, Value::String(s) if s == "hello"));
+        assert!(matches!(&docs.first().unwrap().value, Value::String(string) if string == "hello"));
     }
 
     #[test]
@@ -1135,12 +1051,13 @@ mod tests {
         let (docs, errors) = parse("key: value");
         assert!(errors.is_empty());
         assert_eq!(docs.len(), 1);
-        if let Value::Mapping(pairs) = &docs[0].value {
+        let value = &docs.first().unwrap().value;
+        assert!(matches!(value, Value::Mapping(_)));
+        if let Value::Mapping(pairs) = value {
             assert_eq!(pairs.len(), 1);
-            assert!(matches!(&pairs[0].0.value, Value::String(s) if s == "key"));
-            assert!(matches!(&pairs[0].1.value, Value::String(s) if s == "value"));
-        } else {
-            panic!("Expected mapping");
+            let pair = pairs.first().unwrap();
+            assert!(matches!(&pair.0.value, Value::String(string) if string == "key"));
+            assert!(matches!(&pair.1.value, Value::String(string) if string == "value"));
         }
     }
 
@@ -1149,10 +1066,10 @@ mod tests {
         let (docs, errors) = parse("{a: 1, b: 2}");
         assert!(errors.is_empty());
         assert_eq!(docs.len(), 1);
-        if let Value::Mapping(pairs) = &docs[0].value {
+        let value = &docs.first().unwrap().value;
+        assert!(matches!(value, Value::Mapping(_)));
+        if let Value::Mapping(pairs) = value {
             assert_eq!(pairs.len(), 2);
-        } else {
-            panic!("Expected mapping");
         }
     }
 
@@ -1161,10 +1078,10 @@ mod tests {
         let (docs, errors) = parse("[1, 2, 3]");
         assert!(errors.is_empty());
         assert_eq!(docs.len(), 1);
-        if let Value::Sequence(items) = &docs[0].value {
+        let value = &docs.first().unwrap().value;
+        assert!(matches!(value, Value::Sequence(_)));
+        if let Value::Sequence(items) = value {
             assert_eq!(items.len(), 3);
-        } else {
-            panic!("Expected sequence");
         }
     }
 
@@ -1173,10 +1090,10 @@ mod tests {
         let (docs, errors) = parse("- a\n- b\n- c");
         assert!(errors.is_empty());
         assert_eq!(docs.len(), 1);
-        if let Value::Sequence(items) = &docs[0].value {
+        let value = &docs.first().unwrap().value;
+        assert!(matches!(value, Value::Sequence(_)));
+        if let Value::Sequence(items) = value {
             assert_eq!(items.len(), 3);
-        } else {
-            panic!("Expected sequence");
         }
     }
 
@@ -1185,29 +1102,26 @@ mod tests {
         let (docs, errors) = parse("~");
         assert!(errors.is_empty());
         assert_eq!(docs.len(), 1);
-        assert!(matches!(&docs[0].value, Value::Null));
+        assert!(matches!(&docs.first().unwrap().value, Value::Null));
     }
 
     #[test]
     fn test_parse_boolean_values() {
         let (docs, errors) = parse("true");
         assert!(errors.is_empty());
-        assert!(matches!(&docs[0].value, Value::Bool(true)));
+        assert!(matches!(&docs.first().unwrap().value, Value::Bool(true)));
     }
 
     #[test]
     fn test_parse_number_values() {
         let (docs, errors) = parse("42");
         assert!(errors.is_empty());
-        assert!(matches!(&docs[0].value, Value::Int(42)));
+        assert!(matches!(&docs.first().unwrap().value, Value::Int(42)));
 
-        let (docs, errors) = parse("3.14");
-        assert!(errors.is_empty());
-        if let Value::Float(f) = &docs[0].value {
-            assert!((f - 3.14).abs() < 0.001);
-        } else {
-            panic!("Expected float");
-        }
+        let (docs_, errors_) = parse("3.45");
+        assert!(errors_.is_empty());
+        assert_eq!(docs_.len(), 1);
+        assert_eq!(docs_.first().unwrap().value, Value::Float(3.45));
     }
 
     #[test]
@@ -1221,11 +1135,13 @@ mod tests {
         let (docs, errors) = parse("a: &anchor 1\nb: *anchor");
         assert!(errors.is_empty());
         assert_eq!(docs.len(), 1);
-        if let Value::Mapping(pairs) = &docs[0].value {
+        let value = &docs.first().unwrap().value;
+        assert!(matches!(&docs.first().unwrap().value, Value::Mapping(_)));
+        if let Value::Mapping(pairs) = value {
             assert_eq!(pairs.len(), 2);
-            assert!(matches!(&pairs[1].1.value, Value::Alias(name) if name == "anchor"));
-        } else {
-            panic!("Expected mapping");
+            assert!(
+                matches!(&pairs.last().unwrap().1.value, Value::Alias(name) if name == "anchor")
+            );
         }
     }
 
@@ -1234,57 +1150,5 @@ mod tests {
         let input = "\"c\n d\": 1";
         let (_, errors) = parse(input);
         assert!(!errors.is_empty());
-    }
-
-    #[test]
-    fn test_bs4k_comment_terminates_plain_scalar() {
-        let input = "word1  # comment\nword2";
-        let (docs, errors) = parse(input);
-        println!("Docs: {:?}", docs);
-        println!("Errors: {:?}", errors);
-        // This should have an error because word2 at column 0 after word1 is invalid
-        assert!(
-            !errors.is_empty(),
-            "Expected error for content after plain scalar with comment"
-        );
-    }
-
-    #[test]
-    fn test_h2rw_multikey_mapping_debug() {
-        // Mapping with multiple keys separated by blank lines
-        let input = "foo: 1\n\nbar: 2";
-        let (docs, errors) = parse(input);
-        println!("Docs: {:?}", docs);
-        println!("Errors: {:?}", errors);
-        // Should parse as single mapping with 2 keys
-        assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
-        assert_eq!(docs.len(), 1);
-        if let Value::Mapping(pairs) = &docs[0].value {
-            assert_eq!(pairs.len(), 2, "Should have 2 key-value pairs: {:?}", pairs);
-        } else {
-            panic!("Expected mapping, got {:?}", docs[0].value);
-        }
-    }
-
-    #[test]
-    fn test_su74_anchor_alias_as_key_debug() {
-        // SU74: Anchor and alias as mapping key - should error
-        let input = "key1: &alias value1\n&b *alias : value2\n";
-
-        // Check what stream lexer produces
-        let (raw_docs, stream_errors) = crate::stream_lexer::parse_stream(input);
-        println!("SU74 Raw docs: {:?}", raw_docs);
-        println!("SU74 Stream errors: {:?}", stream_errors);
-
-        // Check what tokens are produced
-        let (tokens, lex_errors) = crate::context_lexer::tokenize_document(input);
-        println!("SU74 Tokens: {:?}", tokens);
-        println!("SU74 Lex errors: {:?}", lex_errors);
-
-        let (docs, errors) = crate::parse(input);
-        println!("SU74 Docs: {:?}", docs);
-        println!("SU74 Errors: {:?}", errors);
-        // Should have errors - can't have properties on alias
-        assert!(!errors.is_empty(), "Should have errors for anchor+alias key");
     }
 }

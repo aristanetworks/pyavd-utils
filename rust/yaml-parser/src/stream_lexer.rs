@@ -41,21 +41,11 @@ pub struct RawDocument {
     /// The parser is responsible for interpreting these tokens.
     pub content: String,
     /// The span of the content in the original input.
+    #[allow(
+        dead_code,
+        reason = "Public API field for consumers to access document boundaries"
+    )]
     pub content_span: Span,
-}
-
-/// Token types for stream-level lexing.
-#[derive(Debug, Clone, PartialEq)]
-enum StreamToken {
-    DocStart,
-    DocEnd,
-    YamlDirective(String),
-    TagDirective(String),
-    ReservedDirective(String),
-    /// Content line (not a marker or directive)
-    Content(String),
-    /// Newline character(s)
-    Newline,
 }
 
 /// Parse the YAML stream into raw documents.
@@ -77,7 +67,6 @@ pub fn parse_stream(input: &str) -> (Vec<RawDocument>, Vec<ParseError>) {
     let mut content_start: usize = 0;
     let mut in_directive_prologue = true; // At start, we can have directives
     let mut has_yaml_directive = false; // Track if we've seen a %YAML directive
-    let mut seen_doc_end = false; // Track if we've seen `...` (next `---` starts new doc)
 
     let mut pos: usize = 0;
     let chars: Vec<char> = input.chars().collect();
@@ -104,7 +93,6 @@ pub fn parse_stream(input: &str) -> (Vec<RawDocument>, Vec<ParseError>) {
                     });
                     has_yaml_directive = false;
                 }
-                seen_doc_end = false;
 
                 // No longer in directive prologue after seeing ---
                 in_directive_prologue = false;
@@ -138,8 +126,7 @@ pub fn parse_stream(input: &str) -> (Vec<RawDocument>, Vec<ParseError>) {
                 if !current_directives.is_empty() && current_content.is_empty() {
                     let span = current_directives
                         .first()
-                        .map(|(_, s)| *s)
-                        .unwrap_or(Span::new((), pos..marker_end));
+                        .map_or(Span::new((), pos..marker_end), |(_, span)| *span);
                     errors.push(ParseError {
                         kind: ErrorKind::UnexpectedToken,
                         span,
@@ -174,7 +161,6 @@ pub fn parse_stream(input: &str) -> (Vec<RawDocument>, Vec<ParseError>) {
                 }
 
                 // After `...`, we're back in directive prologue for the NEXT document
-                seen_doc_end = true;
                 in_directive_prologue = true;
                 has_yaml_directive = false;
                 continue;
@@ -188,7 +174,7 @@ pub fn parse_stream(input: &str) -> (Vec<RawDocument>, Vec<ParseError>) {
             let line = &input[pos..line_end];
             let directive_span = Span::new((), directive_start..line_end);
 
-            let directive = if line.starts_with("%YAML") {
+            let directive = if let Some(stripped) = line.strip_prefix("%YAML") {
                 // Check for duplicate %YAML directive
                 if has_yaml_directive {
                     errors.push(ParseError {
@@ -201,15 +187,15 @@ pub fn parse_stream(input: &str) -> (Vec<RawDocument>, Vec<ParseError>) {
                 has_yaml_directive = true;
 
                 // Validate %YAML directive format
-                let after_yaml = line[5..].trim();
-                let version_and_rest = if let Some(hash_pos) = after_yaml.find('#') {
-                    after_yaml[..hash_pos].trim()
-                } else {
-                    after_yaml
-                };
+                let after_yaml = stripped.trim();
+                let version_and_rest = after_yaml.split('#').next().unwrap().trim();
                 let parts: Vec<&str> = version_and_rest.split_whitespace().collect();
-                let is_valid_version =
-                    parts.len() == 1 && parts[0].chars().all(|c| c.is_ascii_digit() || c == '.');
+                let is_valid_version = parts.len() == 1
+                    && parts
+                        .first()
+                        .unwrap()
+                        .chars()
+                        .all(|ch| ch.is_ascii_digit() || ch == '.');
                 if !is_valid_version {
                     errors.push(ParseError {
                         kind: ErrorKind::InvalidDirective,
@@ -218,15 +204,15 @@ pub fn parse_stream(input: &str) -> (Vec<RawDocument>, Vec<ParseError>) {
                         found: None,
                     });
                 }
-                Some(Directive::Yaml(version_and_rest.to_string()))
-            } else if line.starts_with("%TAG") {
-                Some(Directive::Tag(line[4..].trim().to_string()))
+                Some(Directive::Yaml(version_and_rest.to_owned()))
+            } else if let Some(stripped) = line.strip_prefix("%TAG") {
+                Some(Directive::Tag(stripped.trim().to_owned()))
             } else {
-                Some(Directive::Reserved(line[1..].trim().to_string()))
+                Some(Directive::Reserved(line[1..].trim().to_owned()))
             };
 
-            if let Some(d) = directive {
-                current_directives.push((d, directive_span));
+            if let Some(di) = directive {
+                current_directives.push((di, directive_span));
             }
 
             pos = skip_to_eol(input, line_end);
@@ -315,8 +301,7 @@ pub fn parse_stream(input: &str) -> (Vec<RawDocument>, Vec<ParseError>) {
         if !current_directives.is_empty() && current_content.is_empty() {
             let span = current_directives
                 .first()
-                .map(|(_, s)| *s)
-                .unwrap_or(Span::new((), 0..0));
+                .map_or(Span::new((), 0..0), |(_, span)| *span);
             errors.push(ParseError {
                 kind: ErrorKind::UnexpectedToken,
                 span,
@@ -373,149 +358,103 @@ fn skip_newline(input: &str, pos: usize) -> usize {
     }
 }
 
-// NOTE: These tests are for the OLD stream_lexer architecture.
-// We now use modal_lexer instead, so these tests are disabled.
-// The module is kept for reference but should be removed once modal_lexer is stable.
 #[cfg(test)]
-#[allow(dead_code, reason = "Old stream_lexer tests - module replaced by modal_lexer")]
 mod tests {
     use super::*;
 
-    // All tests in this module are ignored because we've switched to modal_lexer architecture.
-    // See TECHNICAL_DEBT.md Issue #10 for details.
-
     #[test]
-    #[ignore = "Old stream_lexer architecture - replaced by modal_lexer"]
     fn test_single_document_no_markers() {
         let input = "key: value\n";
         let (docs, _errors) = parse_stream(input);
         assert_eq!(docs.len(), 1);
         // No markers in content
-        assert!(!docs[0].content.contains("---"));
-        assert!(!docs[0].content.contains("..."));
-        assert_eq!(docs[0].content, "key: value\n");
+        let content = &docs.first().unwrap().content;
+        assert!(!content.contains("---"));
+        assert!(!content.contains("..."));
+        assert_eq!(content, "key: value\n");
     }
 
     #[test]
-    #[ignore = "Old stream_lexer architecture - replaced by modal_lexer"]
     fn test_explicit_document_start() {
         let input = "---\nkey: value\n";
         let (docs, _errors) = parse_stream(input);
         assert_eq!(docs.len(), 1);
         // Content now includes the --- marker
-        assert!(docs[0].content.starts_with("---"));
-        assert!(docs[0].content.contains("key: value"));
+        assert!(docs.first().unwrap().content.starts_with("---"));
+        assert!(docs.first().unwrap().content.contains("key: value"));
     }
 
     #[test]
-    #[ignore = "Old stream_lexer architecture - replaced by modal_lexer"]
     fn test_multiple_documents() {
         let input = "---\ndoc1\n---\ndoc2\n";
         let (docs, _errors) = parse_stream(input);
         assert_eq!(docs.len(), 2);
         // Each document starts with ---
-        assert!(docs[0].content.starts_with("---"));
-        assert!(docs[0].content.contains("doc1"));
-        assert!(docs[1].content.starts_with("---"));
-        assert!(docs[1].content.contains("doc2"));
+        assert!(docs.first().unwrap().content.starts_with("---"));
+        assert!(docs.first().unwrap().content.contains("doc1"));
+        assert!(docs.last().unwrap().content.starts_with("---"));
+        assert!(docs.last().unwrap().content.contains("doc2"));
     }
 
     #[test]
-    #[ignore = "Old stream_lexer architecture - replaced by modal_lexer"]
     fn test_document_end_marker() {
         let input = "doc1\n...\n%YAML 1.2\n---\ndoc2\n";
         let (docs, _errors) = parse_stream(input);
         assert_eq!(docs.len(), 2);
         // First doc includes ...
-        assert!(docs[0].content.contains("..."));
-        assert_eq!(docs[1].directives.len(), 1);
+        assert!(docs.first().unwrap().content.contains("..."));
+        assert_eq!(docs.last().unwrap().directives.len(), 1);
         // Second doc starts with ---
-        assert!(docs[1].content.starts_with("---"));
+        assert!(docs.last().unwrap().content.starts_with("---"));
     }
 
     #[test]
-    #[ignore = "Old stream_lexer architecture - replaced by modal_lexer"]
     fn test_directives_at_start() {
         let input = "%YAML 1.2\n%TAG !e! tag:example.com,2000:\n---\nkey: value\n";
         let (docs, _errors) = parse_stream(input);
         assert_eq!(docs.len(), 1);
-        assert_eq!(docs[0].directives.len(), 2);
-        assert!(matches!(&docs[0].directives[0].0, Directive::Yaml(v) if v == "1.2"));
-        assert!(matches!(&docs[0].directives[1].0, Directive::Tag(_)));
+        let doc = docs.first().unwrap();
+        assert_eq!(doc.directives.len(), 2);
+        assert!(matches!(&doc.directives.first().unwrap().0, Directive::Yaml(v) if v == "1.2"));
+        assert!(matches!(
+            &doc.directives.last().unwrap().0,
+            Directive::Tag(_)
+        ));
     }
 
     #[test]
-    #[ignore = "Old stream_lexer architecture - replaced by modal_lexer"]
     fn test_percent_inside_document() {
         // % inside document content should NOT be treated as directive
         let input = "{ matches\n% : 20 }\n";
         let (docs, _errors) = parse_stream(input);
         assert_eq!(docs.len(), 1);
-        assert!(docs[0].directives.is_empty());
+        assert!(docs.first().unwrap().directives.is_empty());
         // The % line should be part of content, not a directive
-        assert!(docs[0].content.contains('%'));
+        assert!(docs.first().unwrap().content.contains('%'));
     }
 
     #[test]
-    #[ignore = "Old stream_lexer architecture - replaced by modal_lexer"]
     fn test_empty_documents() {
         let input = "---\n---\n";
         let (docs, _errors) = parse_stream(input);
-        // With our new architecture, each document includes its --- marker
+        // Each document includes its --- marker
         assert_eq!(docs.len(), 2);
         // First doc: "---\n" (only the marker)
-        assert!(docs[0].content.starts_with("---"));
+        assert!(docs.first().unwrap().content.starts_with("---"));
         // Second doc: "---\n" (only the marker)
-        assert!(docs[1].content.starts_with("---"));
+        assert!(docs.last().unwrap().content.starts_with("---"));
     }
 
     #[test]
-    #[ignore = "Old stream_lexer architecture - replaced by modal_lexer"]
     fn test_duplicate_yaml_directive() {
         let input = "%YAML 1.2\n%YAML 1.2\n---\nvalue\n";
         let (docs, errors) = parse_stream(input);
         assert_eq!(docs.len(), 1);
         // Should have exactly one error for duplicate directive
         assert_eq!(errors.len(), 1);
-        assert!(matches!(errors[0].kind, ErrorKind::DuplicateDirective));
-    }
-
-    #[test]
-    #[ignore = "Old stream_lexer architecture - replaced by modal_lexer"]
-    fn test_ks4u_stream_debug() {
-        // KS4U: Content after flow sequence in explicit doc
-        let input = "---\n[\nsequence item\n]\ninvalid item\n";
-        let (docs, errors) = parse_stream(input);
-        println!("Documents: {:?}", docs);
-        println!("Errors: {:?}", errors);
-        for (i, doc) in docs.iter().enumerate() {
-            println!("Doc {}: content={:?}", i, doc.content);
-        }
-    }
-
-    #[test]
-    #[ignore = "Old stream_lexer architecture - replaced by modal_lexer"]
-    fn test_35kp_stream_debug() {
-        // 35KP: Multiple explicit documents
-        let input = "--- !!map\n? a\n: b\n--- !!seq\n- !!str c\n--- !!str\nd\ne\n";
-        let (docs, errors) = parse_stream(input);
-        println!("Documents: {:?}", docs);
-        println!("Errors: {:?}", errors);
-        for (i, doc) in docs.iter().enumerate() {
-            println!("Doc {}: content={:?}", i, doc.content);
-        }
-    }
-
-    #[test]
-    #[ignore = "Old stream_lexer architecture - replaced by modal_lexer"]
-    fn test_cxx2_stream_debug() {
-        // CXX2: Mapping with anchor on document start line
-        let input = "--- &anchor a: b\n";
-        let (docs, errors) = parse_stream(input);
-        println!("Documents: {:?}", errors);
-        println!("Errors: {:?}", errors);
-        for (i, doc) in docs.iter().enumerate() {
-            println!("Doc {}: content={:?}", i, doc.content);
-        }
+        assert!(matches!(
+            errors.first().unwrap().kind,
+            ErrorKind::DuplicateDirective
+        ));
     }
 }

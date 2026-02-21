@@ -17,28 +17,3 @@ pub type Span = SimpleSpan<usize>;
 /// This is the fundamental type for representing parsed values with their
 /// source locations. Every node in the AST carries its span.
 pub type Spanned<T> = (T, Span);
-
-/// Extension trait for creating spanned values.
-pub trait WithSpan: Sized {
-    /// Attach a span to this value.
-    fn with_span(self, span: Span) -> Spanned<Self> {
-        (self, span)
-    }
-}
-
-impl<T> WithSpan for T {}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use chumsky::span::Span as _;
-
-    #[test]
-    fn test_spanned_value() {
-        let value = "hello".to_owned();
-        let spanned = value.with_span(Span::new((), 0..5));
-        assert_eq!(spanned.0, "hello");
-        assert_eq!(spanned.1.start, 0);
-        assert_eq!(spanned.1.end, 5);
-    }
-}

@@ -115,7 +115,7 @@ impl std::fmt::Display for ParseError {
         match &self.kind {
             ErrorKind::UnexpectedEof => write!(f, "unexpected end of input"),
             ErrorKind::UnexpectedToken => {
-                if let Some(ref found) = self.found {
+                if let Some(found) = &self.found {
                     write!(f, "unexpected token '{found}'")?;
                 } else {
                     write!(f, "unexpected token")?;
@@ -127,7 +127,7 @@ impl std::fmt::Display for ParseError {
             }
             ErrorKind::InvalidIndentation => write!(f, "invalid indentation"),
             ErrorKind::UnterminatedString => write!(f, "unterminated string literal"),
-            ErrorKind::InvalidEscape(c) => write!(f, "invalid escape sequence '\\{c}'"),
+            ErrorKind::InvalidEscape(ch) => write!(f, "invalid escape sequence '\\{ch}'"),
             ErrorKind::InvalidNumber => write!(f, "invalid number format"),
             ErrorKind::DuplicateKey => write!(f, "duplicate key in mapping"),
             ErrorKind::InvalidAnchor => write!(f, "invalid anchor name"),
