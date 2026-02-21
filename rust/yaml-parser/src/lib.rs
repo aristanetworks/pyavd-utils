@@ -38,7 +38,6 @@
 mod context_lexer;
 mod error;
 mod lexer;
-mod modal_lexer;
 mod parser;
 mod span;
 mod stream_lexer;
@@ -115,8 +114,8 @@ pub fn parse_layered(input: &str) -> (Stream, Vec<ParseError>) {
         let has_explicit_marker = raw_doc.content.trim_start().starts_with("---")
             || raw_doc.content.trim_end().ends_with("...");
 
-        if let Some(doc) = doc {
-            all_docs.push(doc);
+        if let Some(doc_) = doc {
+            all_docs.push(doc_);
         } else if has_explicit_marker {
             // Empty explicit document -> produce null
             all_docs.push(Node::null(Span::new((), 0..0)));

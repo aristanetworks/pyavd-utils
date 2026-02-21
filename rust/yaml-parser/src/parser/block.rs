@@ -13,7 +13,7 @@ use crate::value::{Node, Value};
 
 use super::{NodeProperties, Parser};
 
-impl<'a> Parser<'a> {
+impl Parser<'_> {
     /// Parse a block sequence: - item\n- item
     pub fn parse_block_sequence(&mut self, _min_indent: usize) -> Option<Node> {
         let (_, start_span) = self.peek()?;
@@ -46,8 +46,8 @@ impl<'a> Parser<'a> {
                 self.parse_value(seq_indent + 1)
             };
 
-            if let Some(item) = item {
-                items.push(item);
+            if let Some(node) = item {
+                items.push(node);
             } else {
                 items.push(Node::null(self.current_span()));
             }
@@ -59,13 +59,10 @@ impl<'a> Parser<'a> {
 
             loop {
                 match self.peek() {
-                    Some((Token::Whitespace | Token::Comment(_) | Token::Indent(_), _)) => {
-                        self.advance();
-                    }
                     Some((Token::LineStart(n), _)) => {
                         let n = *n;
                         if n < seq_indent {
-                            let end = items.last().map(|n| n.span.end).unwrap_or(start);
+                            let end = items.last().map_or(start, |node| node.span.end);
                             self.pop_indent();
                             return Some(Node::new(
                                 Value::Sequence(items),
@@ -74,11 +71,11 @@ impl<'a> Parser<'a> {
                         }
                         self.advance();
                     }
-                    Some((Token::Dedent, _)) => {
+                    Some((
+                        Token::Whitespace | Token::Comment(_) | Token::Indent(_) | Token::Dedent,
+                        _,
+                    )) => {
                         self.advance();
-                    }
-                    Some((Token::BlockSeqIndicator, _)) => {
-                        break;
                     }
                     _ => {
                         break;
@@ -87,13 +84,13 @@ impl<'a> Parser<'a> {
             }
         }
 
-        let end = items.last().map(|n| n.span.end).unwrap_or(start);
+        let end = items.last().map_or(start, |node| node.span.end);
         self.pop_indent();
         Some(Node::new(Value::Sequence(items), Span::new((), start..end)))
     }
 
     /// Parse a block mapping with explicit key indicator or implicit keys.
-    pub fn parse_block_mapping(&mut self, _min_indent: usize) -> Option<Node> {
+    pub fn parse_block_mapping(&mut self, _min_indent: usize) -> Node {
         let start = self.current_span().start;
         let map_indent = self.current_token_column();
         let mut pairs: Vec<(Node, Node)> = Vec::new();
@@ -122,17 +119,17 @@ impl<'a> Parser<'a> {
             loop {
                 match self.peek() {
                     Some((Token::Anchor(name), anchor_span)) => {
-                        let name = name.clone();
+                        let anchor_name: String = name.clone();
                         let anchor_span = *anchor_span;
                         self.advance();
                         self.skip_ws();
                         if key_props.anchor.is_some() {
                             self.error(ErrorKind::DuplicateAnchor, anchor_span);
                         }
-                        key_props.anchor = Some((name, anchor_span));
+                        key_props.anchor = Some((anchor_name, anchor_span));
                     }
-                    Some((Token::Tag(tag), tag_span)) => {
-                        let tag = tag.clone();
+                    Some((Token::Tag(name), tag_span)) => {
+                        let tag = name.clone();
                         let tag_span = *tag_span;
                         self.advance();
                         self.skip_ws();
@@ -168,8 +165,8 @@ impl<'a> Parser<'a> {
                 None
             } else {
                 // Check if the key is an alias with properties (invalid)
-                if let Some((Token::Alias(alias_name), span)) = self.peek() {
-                    let alias_name = alias_name.clone();
+                if let Some((Token::Alias(name), span)) = self.peek() {
+                    let alias_name = name.clone();
                     let span = *span;
                     if !key_props.is_empty() {
                         self.error(ErrorKind::PropertiesOnAlias, span);
@@ -184,13 +181,13 @@ impl<'a> Parser<'a> {
                 }
             };
 
-            let key = match key {
-                Some(k) => {
+            let key_node = match key {
+                Some(node) => {
                     // Apply properties to the key (unless it's an alias, which already errored)
-                    if !key_props.is_empty() && !matches!(k.value, Value::Alias(_)) {
-                        self.apply_properties_and_register(key_props, k)
+                    if !key_props.is_empty() && !matches!(node.value, Value::Alias(_)) {
+                        self.apply_properties_and_register(key_props, node)
                     } else {
-                        k
+                        node
                     }
                 }
                 None if explicit_key || empty_key => Node::null(self.current_span()),
@@ -200,26 +197,26 @@ impl<'a> Parser<'a> {
             self.skip_ws();
 
             let mut has_value = matches!(self.peek(), Some((Token::Colon, _)));
-            if !has_value && explicit_key {
-                if let Some((Token::LineStart(n), _)) = self.peek() {
-                    if *n >= map_indent {
-                        let saved_pos = self.pos;
-                        self.advance();
+            if !has_value
+                && explicit_key
+                && let Some((Token::LineStart(n), _)) = self.peek()
+                && *n >= map_indent
+            {
+                let saved_pos = self.pos;
+                self.advance();
 
-                        while let Some((Token::Indent(_), _)) = self.peek() {
-                            self.advance();
-                        }
+                while let Some((Token::Indent(_), _)) = self.peek() {
+                    self.advance();
+                }
 
-                        while let Some((Token::Dedent, _)) = self.peek() {
-                            self.advance();
-                        }
+                while let Some((Token::Dedent, _)) = self.peek() {
+                    self.advance();
+                }
 
-                        if matches!(self.peek(), Some((Token::Colon, _))) {
-                            has_value = true;
-                        } else {
-                            self.pos = saved_pos;
-                        }
-                    }
+                if matches!(self.peek(), Some((Token::Colon, _))) {
+                    has_value = true;
+                } else {
+                    self.pos = saved_pos;
                 }
             }
 
@@ -250,9 +247,9 @@ impl<'a> Parser<'a> {
                 None
             };
 
-            let value = value.unwrap_or_else(|| Node::null(self.current_span()));
+            let value_node = value.unwrap_or_else(|| Node::null(self.current_span()));
 
-            pairs.push((key, value));
+            pairs.push((key_node, value_node));
             first_entry = false;
 
             self.skip_ws();
@@ -262,9 +259,9 @@ impl<'a> Parser<'a> {
 
             if let Some((Token::Dedent, _)) = self.peek() {
                 self.advance();
-                let end = pairs.last().map(|(_, v)| v.span.end).unwrap_or(start);
+                let end = pairs.last().map_or(start, |(_, node)| node.span.end);
                 self.pop_indent();
-                return Some(Node::new(Value::Mapping(pairs), Span::new((), start..end)));
+                return Node::new(Value::Mapping(pairs), Span::new((), start..end));
             }
 
             while let Some((tok, _)) = self.peek() {
@@ -272,12 +269,9 @@ impl<'a> Parser<'a> {
                     Token::LineStart(n) => {
                         let n = *n;
                         if n < map_indent {
-                            let end = pairs.last().map(|(_, v)| v.span.end).unwrap_or(start);
+                            let end = pairs.last().map_or(start, |(_, node)| node.span.end);
                             self.pop_indent();
-                            return Some(Node::new(
-                                Value::Mapping(pairs),
-                                Span::new((), start..end),
-                            ));
+                            return Node::new(Value::Mapping(pairs), Span::new((), start..end));
                         }
                         if n == map_indent {
                             self.advance();
@@ -293,9 +287,9 @@ impl<'a> Parser<'a> {
                     }
                     Token::Dedent => {
                         self.advance();
-                        let end = pairs.last().map(|(_, v)| v.span.end).unwrap_or(start);
+                        let end = pairs.last().map_or(start, |(_, node)| node.span.end);
                         self.pop_indent();
-                        return Some(Node::new(Value::Mapping(pairs), Span::new((), start..end)));
+                        return Node::new(Value::Mapping(pairs), Span::new((), start..end));
                     }
                     _ => break,
                 }
@@ -322,9 +316,9 @@ impl<'a> Parser<'a> {
             }
         }
 
-        let end = pairs.last().map(|(_, v)| v.span.end).unwrap_or(start);
+        let end = pairs.last().map_or(start, |(_, node)| node.span.end);
         self.pop_indent();
-        Some(Node::new(Value::Mapping(pairs), Span::new((), start..end)))
+        Node::new(Value::Mapping(pairs), Span::new((), start..end))
     }
 
     /// Parse a block mapping where the first key already has properties (anchor/tag).
@@ -341,8 +335,8 @@ impl<'a> Parser<'a> {
 
         loop {
             match self.peek() {
-                Some((Token::Tag(tag), tag_span)) => {
-                    let tag = tag.clone();
+                Some((Token::Tag(name), tag_span)) => {
+                    let tag = name.clone();
                     let tag_span = *tag_span;
                     self.advance();
                     self.skip_ws();
@@ -352,14 +346,14 @@ impl<'a> Parser<'a> {
                     key_props.tag = Some((tag, tag_span));
                 }
                 Some((Token::Anchor(name), anchor_span)) => {
-                    let name = name.clone();
+                    let anchor_name = name.clone();
                     let anchor_span = *anchor_span;
                     self.advance();
                     self.skip_ws();
                     if key_props.anchor.is_some() {
                         self.error(ErrorKind::DuplicateAnchor, anchor_span);
                     }
-                    key_props.anchor = Some((name, anchor_span));
+                    key_props.anchor = Some((anchor_name, anchor_span));
                 }
                 Some((Token::Whitespace, _)) => {
                     self.advance();
@@ -401,9 +395,9 @@ impl<'a> Parser<'a> {
         } else {
             self.parse_value(map_indent + 1)
         };
-        let first_value = first_value.unwrap_or_else(|| Node::null(self.current_span()));
+        let first_value_node = first_value.unwrap_or_else(|| Node::null(self.current_span()));
 
-        pairs.push((first_key, first_value));
+        pairs.push((first_key, first_value_node));
 
         self.skip_ws();
         if let Some((Token::Comment(_), _)) = self.peek() {
@@ -428,8 +422,8 @@ impl<'a> Parser<'a> {
                         } else {
                             self.parse_value(map_indent + 1)
                         };
-                        let value = value.unwrap_or_else(|| Node::null(self.current_span()));
-                        pairs.push((key, value));
+                        let value_node = value.unwrap_or_else(|| Node::null(self.current_span()));
+                        pairs.push((key, value_node));
                     }
                 }
             } else {
@@ -437,7 +431,7 @@ impl<'a> Parser<'a> {
             }
         }
 
-        let end = pairs.last().map(|(_, v)| v.span.end).unwrap_or(start);
+        let end = pairs.last().map_or(start, |(_, node)| node.span.end);
         Some(Node::new(Value::Mapping(pairs), Span::new((), start..end)))
     }
 
@@ -463,9 +457,9 @@ impl<'a> Parser<'a> {
         } else {
             self.parse_value(map_indent + 1)
         };
-        let first_value = first_value.unwrap_or_else(|| Node::null(self.current_span()));
+        let first_value_node = first_value.unwrap_or_else(|| Node::null(self.current_span()));
 
-        pairs.push((first_key, first_value));
+        pairs.push((first_key, first_value_node));
 
         loop {
             self.skip_ws();
@@ -505,9 +499,9 @@ impl<'a> Parser<'a> {
                     } else {
                         self.parse_value(map_indent + 1)
                     };
-                    let value = value.unwrap_or_else(|| Node::null(self.current_span()));
+                    let value_node = value.unwrap_or_else(|| Node::null(self.current_span()));
 
-                    pairs.push((key, value));
+                    pairs.push((key, value_node));
                 }
                 Some((Token::FlowSeqStart | Token::FlowMapStart, _)) => {
                     let key = if matches!(self.peek(), Some((Token::FlowSeqStart, _))) {
@@ -529,15 +523,15 @@ impl<'a> Parser<'a> {
                     } else {
                         self.parse_value(map_indent + 1)
                     };
-                    let value = value.unwrap_or_else(|| Node::null(self.current_span()));
+                    let value_node = value.unwrap_or_else(|| Node::null(self.current_span()));
 
-                    pairs.push((key, value));
+                    pairs.push((key, value_node));
                 }
                 _ => break,
             }
         }
 
-        let end = pairs.last().map(|(_, v)| v.span.end).unwrap_or(start);
+        let end = pairs.last().map_or(start, |(_, node)| node.span.end);
         Some(Node::new(Value::Mapping(pairs), Span::new((), start..end)))
     }
 
@@ -566,9 +560,9 @@ impl<'a> Parser<'a> {
         } else {
             self.parse_value(map_indent + 1)
         };
-        let first_value = first_value.unwrap_or_else(|| Node::null(self.current_span()));
+        let first_value_node = first_value.unwrap_or_else(|| Node::null(self.current_span()));
 
-        pairs.push((first_key, first_value));
+        pairs.push((first_key, first_value_node));
 
         loop {
             self.skip_ws();
@@ -608,16 +602,16 @@ impl<'a> Parser<'a> {
                     } else {
                         self.parse_value(map_indent + 1)
                     };
-                    let value = value.unwrap_or_else(|| Node::null(self.current_span()));
+                    let value_node = value.unwrap_or_else(|| Node::null(self.current_span()));
 
-                    pairs.push((key, value));
+                    pairs.push((key, value_node));
                 }
                 Some((Token::Tag(_) | Token::Anchor(_), _)) => {
                     let mut inner_props = NodeProperties::default();
                     loop {
                         match self.peek() {
-                            Some((Token::Tag(tag), tag_span)) => {
-                                let tag = tag.clone();
+                            Some((Token::Tag(name), tag_span)) => {
+                                let tag = name.clone();
                                 let tag_span = *tag_span;
                                 self.advance();
                                 self.skip_ws();
@@ -627,14 +621,14 @@ impl<'a> Parser<'a> {
                                 inner_props.tag = Some((tag, tag_span));
                             }
                             Some((Token::Anchor(name), anchor_span)) => {
-                                let name = name.clone();
+                                let anchor_name = name.clone();
                                 let anchor_span = *anchor_span;
                                 self.advance();
                                 self.skip_ws();
                                 if inner_props.anchor.is_some() {
                                     self.error(ErrorKind::DuplicateAnchor, anchor_span);
                                 }
-                                inner_props.anchor = Some((name, anchor_span));
+                                inner_props.anchor = Some((anchor_name, anchor_span));
                             }
                             Some((Token::Whitespace, _)) => {
                                 self.advance();
@@ -646,7 +640,7 @@ impl<'a> Parser<'a> {
                     match self.peek() {
                         Some((Token::Plain(_) | Token::StringStart(_), _)) => {
                             let key = self.parse_scalar()?;
-                            let key = self.apply_properties_and_register(inner_props, key);
+                            let key_node = self.apply_properties_and_register(inner_props, key);
                             self.skip_ws();
 
                             if !matches!(self.peek(), Some((Token::Colon, _))) {
@@ -661,9 +655,10 @@ impl<'a> Parser<'a> {
                             } else {
                                 self.parse_value(map_indent + 1)
                             };
-                            let value = value.unwrap_or_else(|| Node::null(self.current_span()));
+                            let value_node =
+                                value.unwrap_or_else(|| Node::null(self.current_span()));
 
-                            pairs.push((key, value));
+                            pairs.push((key_node, value_node));
                         }
                         Some((Token::Colon, _)) => {
                             let key = self.apply_properties_and_register(
@@ -679,9 +674,10 @@ impl<'a> Parser<'a> {
                             } else {
                                 self.parse_value(map_indent + 1)
                             };
-                            let value = value.unwrap_or_else(|| Node::null(self.current_span()));
+                            let value_node =
+                                value.unwrap_or_else(|| Node::null(self.current_span()));
 
-                            pairs.push((key, value));
+                            pairs.push((key, value_node));
                         }
                         _ => break,
                     }
@@ -697,20 +693,20 @@ impl<'a> Parser<'a> {
                     } else {
                         self.parse_value(map_indent + 1)
                     };
-                    let value = value.unwrap_or_else(|| Node::null(self.current_span()));
+                    let value_node = value.unwrap_or_else(|| Node::null(self.current_span()));
 
-                    pairs.push((key, value));
+                    pairs.push((key, value_node));
                 }
                 _ => break,
             }
         }
 
-        let end = pairs.last().map(|(_, v)| v.span.end).unwrap_or(start);
+        let end = pairs.last().map_or(start, |(_, node)| node.span.end);
         Some(Node::new(Value::Mapping(pairs), Span::new((), start..end)))
     }
 
     /// Parse a block mapping starting with an empty key (colon at line start).
-    pub fn parse_block_mapping_with_empty_key(&mut self, _min_indent: usize) -> Option<Node> {
+    pub fn parse_block_mapping_with_empty_key(&mut self, _min_indent: usize) -> Node {
         let start = self.current_span().start;
         let map_indent = self.current_indent();
         let mut pairs: Vec<(Node, Node)> = Vec::new();
@@ -728,15 +724,15 @@ impl<'a> Parser<'a> {
                 self.parse_value(map_indent + 1)
             };
 
-            let value = value.unwrap_or_else(|| Node::null(self.current_span()));
+            let value_node = value.unwrap_or_else(|| Node::null(self.current_span()));
 
-            pairs.push((key, value));
+            pairs.push((key, value_node));
 
             self.skip_ws();
             while let Some((Token::LineStart(n), _)) = self.peek() {
                 if *n < map_indent {
-                    let end = pairs.last().map(|(_, v)| v.span.end).unwrap_or(start);
-                    return Some(Node::new(Value::Mapping(pairs), Span::new((), start..end)));
+                    let end = pairs.last().map_or(start, |(_, node)| node.span.end);
+                    return Node::new(Value::Mapping(pairs), Span::new((), start..end));
                 }
                 if *n == map_indent {
                     self.advance();
@@ -750,8 +746,8 @@ impl<'a> Parser<'a> {
             }
         }
 
-        let end = pairs.last().map(|(_, v)| v.span.end).unwrap_or(start);
-        Some(Node::new(Value::Mapping(pairs), Span::new((), start..end)))
+        let end = pairs.last().map_or(start, |(_, node)| node.span.end);
+        Node::new(Value::Mapping(pairs), Span::new((), start..end))
     }
 
     /// Parse a block mapping where the key is an alias.
@@ -760,12 +756,12 @@ impl<'a> Parser<'a> {
         alias_name: String,
         alias_span: Span,
         props: NodeProperties,
-    ) -> Option<Node> {
+    ) -> Node {
         if !self.anchors.contains_key(&alias_name) {
             self.error(ErrorKind::UndefinedAlias, alias_span);
         }
 
-        let key = Node::new(Value::Alias(alias_name), alias_span);
+        let alias_node = Node::new(Value::Alias(alias_name), alias_span);
 
         self.advance(); // ':'
         self.skip_ws();
@@ -778,9 +774,9 @@ impl<'a> Parser<'a> {
         } else {
             self.parse_value(map_indent + 1)
         };
-        let value = value.unwrap_or_else(|| Node::null(self.current_span()));
+        let value_node = value.unwrap_or_else(|| Node::null(self.current_span()));
 
-        let mut pairs = vec![(key, value)];
+        let mut pairs = vec![(alias_node, value_node)];
 
         loop {
             let at_same_indent = loop {
@@ -812,18 +808,18 @@ impl<'a> Parser<'a> {
             let key = match self.peek() {
                 Some((Token::Plain(_) | Token::StringStart(_), _)) => self.parse_scalar(),
                 Some((Token::Alias(name), span)) => {
-                    let name = name.clone();
+                    let new_alias_name = name.clone();
                     let span = *span;
                     self.advance();
-                    if !self.anchors.contains_key(&name) {
+                    if !self.anchors.contains_key(&new_alias_name) {
                         self.error(ErrorKind::UndefinedAlias, span);
                     }
-                    Some(Node::new(Value::Alias(name), span))
+                    Some(Node::new(Value::Alias(new_alias_name), span))
                 }
                 _ => None,
             };
 
-            let Some(key) = key else {
+            let Some(key_node) = key else {
                 break;
             };
 
@@ -835,23 +831,22 @@ impl<'a> Parser<'a> {
             self.advance();
             self.skip_ws();
 
-            let value = if let Some((Token::LineStart(_), _)) = self.peek() {
+            let linestart = if let Some((Token::LineStart(_), _)) = self.peek() {
                 self.advance();
                 self.parse_value(map_indent + 1)
             } else {
                 self.parse_value(map_indent + 1)
             };
-            let value = value.unwrap_or_else(|| Node::null(self.current_span()));
+            let linestart_node = linestart.unwrap_or_else(|| Node::null(self.current_span()));
 
-            pairs.push((key, value));
+            pairs.push((key_node, linestart_node));
         }
 
         let end = pairs
             .last()
-            .map(|(_, v)| v.span.end)
-            .unwrap_or(alias_span.start);
+            .map_or(alias_span.start, |(_, node)| node.span.end);
         let mapping = Node::new(Value::Mapping(pairs), Span::new((), alias_span.start..end));
 
-        Some(self.apply_properties_and_register(props, mapping))
+        self.apply_properties_and_register(props, mapping)
     }
 }

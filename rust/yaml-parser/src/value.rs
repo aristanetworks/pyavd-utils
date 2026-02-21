@@ -174,26 +174,26 @@ mod tests {
         let span = Span::new((), 0..4);
 
         // Basic node
-        let node = Node::new(Value::String("test".into()), span);
-        assert!(!node.has_anchor());
-        assert!(!node.has_tag());
+        let node1 = Node::new(Value::String("test".into()), span);
+        assert!(!node1.has_anchor());
+        assert!(!node1.has_tag());
 
         // Node with anchor
-        let node = Node::new(Value::String("test".into()), span).with_anchor("myanchor".into());
-        assert!(node.has_anchor());
-        assert_eq!(node.anchor, Some("myanchor".into()));
+        let node2 = Node::new(Value::String("test".into()), span).with_anchor("myanchor".into());
+        assert!(node2.has_anchor());
+        assert_eq!(node2.anchor, Some("myanchor".into()));
 
         // Node with tag
-        let node = Node::new(Value::String("test".into()), span).with_tag("str".into());
-        assert!(node.has_tag());
-        assert_eq!(node.tag, Some("str".into()));
+        let node3 = Node::new(Value::String("test".into()), span).with_tag("str".into());
+        assert!(node3.has_tag());
+        assert_eq!(node3.tag, Some("str".into()));
 
         // Null node
-        let node = Node::null(span);
-        assert!(node.value.is_null());
+        let node4 = Node::null(span);
+        assert!(node4.value.is_null());
 
         // Invalid node
-        let node = Node::invalid(span);
-        assert!(node.value.is_invalid());
+        let node5 = Node::invalid(span);
+        assert!(node5.value.is_invalid());
     }
 }

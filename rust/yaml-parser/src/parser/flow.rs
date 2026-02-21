@@ -13,7 +13,7 @@ use crate::value::{Node, Value};
 
 use super::{NodeProperties, Parser};
 
-impl<'a> Parser<'a> {
+impl Parser<'_> {
     /// Parse a flow mapping: { key: value, ... }
     pub fn parse_flow_mapping(&mut self) -> Option<Node> {
         let (_, start_span) = self.advance()?; // consume '{'
@@ -59,40 +59,39 @@ impl<'a> Parser<'a> {
             }
 
             // Check for empty key (: at start without key)
-            if let Some((Token::Colon, _)) = self.peek() {
-                if explicit_key || matches!(self.peek(), Some((Token::Colon, _))) {
-                    let key_span = self.current_span();
-                    let key = Node::null(key_span);
-                    just_saw_comma = false;
+            if let Some((Token::Colon, _)) = self.peek()
+                && (explicit_key || matches!(self.peek(), Some((Token::Colon, _))))
+            {
+                let key_span = self.current_span();
+                let key = Node::null(key_span);
+                just_saw_comma = false;
 
-                    self.advance(); // consume ':'
+                self.advance(); // consume ':'
+                self.skip_ws_and_newlines();
+
+                let value = if matches!(self.peek(), Some((Token::Comma | Token::FlowMapEnd, _))) {
+                    Node::null(self.current_span())
+                } else {
+                    self.parse_flow_value()
+                        .unwrap_or_else(|| Node::null(self.current_span()))
+                };
+
+                pairs.push((key, value));
+                self.skip_ws_and_newlines();
+
+                if let Some((Token::Comma, _)) = self.peek() {
+                    self.advance();
                     self.skip_ws_and_newlines();
-
-                    let value =
-                        if matches!(self.peek(), Some((Token::Comma | Token::FlowMapEnd, _))) {
-                            Node::null(self.current_span())
-                        } else {
-                            self.parse_flow_value()
-                                .unwrap_or_else(|| Node::null(self.current_span()))
-                        };
-
-                    pairs.push((key, value));
-                    self.skip_ws_and_newlines();
-
-                    if let Some((Token::Comma, _)) = self.peek() {
-                        self.advance();
-                        self.skip_ws_and_newlines();
-                        just_saw_comma = true;
-                    }
-                    continue;
+                    just_saw_comma = true;
                 }
+                continue;
             }
 
             // Parse key
             let key = match self.parse_flow_value() {
-                Some(k) => {
+                Some(node) => {
                     just_saw_comma = false;
-                    k
+                    node
                 }
                 None => {
                     if explicit_key {
@@ -143,7 +142,7 @@ impl<'a> Parser<'a> {
                 self.skip_to_flow_delimiter();
             }
 
-            // Safety: ensure progress
+            // Ensure progress
             if self.pos == loop_start_pos && !self.is_eof() {
                 self.advance();
             }
@@ -153,7 +152,7 @@ impl<'a> Parser<'a> {
         self.error(ErrorKind::UnexpectedEof, self.current_span());
         self.flow_depth -= 1;
         self.flow_context_columns.pop();
-        let end = self.tokens.last().map(|(_, s)| s.end).unwrap_or(start);
+        let end = self.tokens.last().map_or(start, |(_, span)| span.end);
         Some(Node::new(Value::Mapping(pairs), Span::new((), start..end)))
     }
 
@@ -245,7 +244,7 @@ impl<'a> Parser<'a> {
         self.error(ErrorKind::UnexpectedEof, self.current_span());
         self.flow_depth -= 1;
         self.flow_context_columns.pop();
-        let end = self.tokens.last().map(|(_, s)| s.end).unwrap_or(start);
+        let end = self.tokens.last().map_or(start, |(_, span)| span.end);
         Some(Node::new(Value::Sequence(items), Span::new((), start..end)))
     }
 
@@ -262,29 +261,21 @@ impl<'a> Parser<'a> {
         let start_span = *span;
 
         match tok {
-            Token::FlowMapStart => {
-                if let Some(n) = self.parse_flow_mapping() {
-                    Some(self.apply_properties_and_register(props, n))
-                } else {
-                    None
-                }
-            }
-            Token::FlowSeqStart => {
-                if let Some(n) = self.parse_flow_sequence() {
-                    Some(self.apply_properties_and_register(props, n))
-                } else {
-                    None
-                }
-            }
+            Token::FlowMapStart => self
+                .parse_flow_mapping()
+                .map(|node| self.apply_properties_and_register(props, node)),
+            Token::FlowSeqStart => self
+                .parse_flow_sequence()
+                .map(|node| self.apply_properties_and_register(props, node)),
             Token::Anchor(name) => {
-                let name = name.clone();
+                let anchor_name = name.clone();
                 let anchor_span = start_span;
                 self.advance();
 
                 if props.anchor.is_some() {
                     self.error(ErrorKind::DuplicateAnchor, anchor_span);
                 }
-                props.anchor = Some((name, anchor_span));
+                props.anchor = Some((anchor_name, anchor_span));
 
                 self.parse_flow_value_with_properties(props)
             }
@@ -295,19 +286,19 @@ impl<'a> Parser<'a> {
                 self.parse_alias()
             }
             Token::Tag(tag) => {
-                let tag = tag.clone();
+                let tag_name = tag.clone();
                 let tag_span = start_span;
                 self.advance();
 
                 if props.tag.is_some() {
                     self.error(ErrorKind::DuplicateTag, tag_span);
                 }
-                props.tag = Some((tag, tag_span));
+                props.tag = Some((tag_name, tag_span));
 
                 self.parse_flow_value_with_properties(props)
             }
-            Token::Plain(s) => {
-                let mut combined = s.clone();
+            Token::Plain(string) => {
+                let mut combined = string.clone();
                 let mut end_span = start_span;
                 self.advance();
 
@@ -339,24 +330,21 @@ impl<'a> Parser<'a> {
                     }
                 }
 
-                let value = self.scalar_to_value(combined);
+                let value = Self::scalar_to_value(combined);
                 let node = Node::new(value, Span::new((), start_span.start..end_span.end));
                 Some(self.apply_properties_and_register(props, node))
             }
             Token::StringStart(_) => {
                 // Parse the quoted string using the new token sequence
                 // In flow context, indentation rules are relaxed, so use min_indent=0
-                if let Some(node) = self.parse_quoted_string(0) {
-                    Some(self.apply_properties_and_register(props, node))
-                } else {
-                    None
-                }
+                self.parse_quoted_string(0)
+                    .map(|node| self.apply_properties_and_register(props, node))
             }
             Token::Comma | Token::FlowSeqEnd | Token::FlowMapEnd | Token::Colon => {
-                if !props.is_empty() {
-                    Some(self.apply_properties_and_register(props, Node::null(start_span)))
-                } else {
+                if props.is_empty() {
                     None
+                } else {
+                    Some(self.apply_properties_and_register(props, Node::null(start_span)))
                 }
             }
             _ => None,
