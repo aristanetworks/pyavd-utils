@@ -289,6 +289,10 @@ impl<'a> ContextLexer<'a> {
     }
 
     /// Get the next token.
+    #[allow(
+        clippy::too_many_lines,
+        reason = "Complex lexer logic, will be refactored later"
+    )]
     fn next_token(&mut self) -> Option<Spanned<Token>> {
         let start = self.byte_pos;
         let ch = self.peek()?;
@@ -645,7 +649,8 @@ impl<'a> ContextLexer<'a> {
                     self.advance();
                 }
                 Some(ch) if ch.is_ascii_digit() && ch != '0' => {
-                    indent = Some((ch as u8) - b'0');
+                    // ch is guaranteed to be ASCII digit 1-9, so to_digit is safe
+                    indent = ch.to_digit(10).and_then(|digit| u8::try_from(digit).ok());
                     self.advance();
                 }
                 _ => break,

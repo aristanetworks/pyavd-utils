@@ -115,6 +115,7 @@ impl<'a> Parser<'a> {
     }
 
     /// Consume the current token and return it.
+    #[allow(clippy::indexing_slicing, reason = "Bounds checked by the condition")]
     pub fn advance(&mut self) -> Option<&Spanned<Token>> {
         (self.pos < self.tokens.len()).then(|| {
             let tok = &self.tokens[self.pos];
@@ -142,6 +143,10 @@ impl<'a> Parser<'a> {
     /// between content tokens (e.g., from comment-only indented lines).
     /// In flow context, validates that continuation lines at column 0 are only allowed
     /// when the flow collection itself started at column 0.
+    #[allow(
+        clippy::indexing_slicing,
+        reason = "Index 0 is safe when flow_context_columns is not empty"
+    )]
     pub fn skip_ws_and_newlines(&mut self) {
         while let Some((tok, span)) = self.peek() {
             match tok {
@@ -226,6 +231,10 @@ impl<'a> Parser<'a> {
     }
 
     /// Get the column (0-based) of a byte position by looking back to the last newline.
+    #[allow(
+        clippy::string_slice,
+        reason = "Position is validated to be within input bounds"
+    )]
     pub fn column_of_position(&self, pos: usize) -> usize {
         let before = &self.input[..pos];
         if let Some(newline_pos) = before.rfind('\n') {
@@ -275,6 +284,10 @@ impl<'a> Parser<'a> {
             && let Some((Token::Whitespace, ws_span)) = self.peek()
         {
             let ws_span = *ws_span;
+            #[allow(
+                clippy::string_slice,
+                reason = "Span is from lexer tokens and guaranteed to be valid"
+            )]
             let ws_content = &self.input[ws_span.start..ws_span.end];
 
             if ws_content.contains('\t') {
@@ -366,6 +379,10 @@ impl<'a> Parser<'a> {
     /// Used to detect invalid block collections on the `---` line.
     /// Per YAML spec, block collections require s-l-comments (newline) before them
     /// when following an explicit document start marker.
+    #[allow(
+        clippy::indexing_slicing,
+        reason = "Token positions are validated by bounds checks"
+    )]
     pub fn check_block_mapping_on_start_line(&self) -> bool {
         let mut check_pos = self.pos;
 
@@ -406,6 +423,14 @@ impl<'a> Parser<'a> {
     }
 
     /// Check if a value used as an implicit key spans multiple lines.
+    #[allow(
+        clippy::string_slice,
+        reason = "Positions are from lexer tokens and guaranteed to be on UTF-8 boundaries"
+    )]
+    #[allow(
+        clippy::indexing_slicing,
+        reason = "Token positions are validated by parser logic before access"
+    )]
     pub fn check_multiline_implicit_key(&mut self, key_start: usize, key_end: usize) {
         let mut check_pos = self.pos;
         while check_pos < self.tokens.len() {
@@ -461,6 +486,10 @@ impl<'a> Parser<'a> {
     }
 
     /// Get the current indentation level from the most recent `LineStart`.
+    #[allow(
+        clippy::indexing_slicing,
+        reason = "Loop index i is guaranteed to be < self.pos which is <= tokens.len()"
+    )]
     pub fn current_indent(&self) -> usize {
         for i in (0..self.pos).rev() {
             if let (Token::LineStart(n), _) = &self.tokens[i] {
@@ -477,6 +506,10 @@ impl<'a> Parser<'a> {
     }
 
     /// Check if current position is a mapping key pattern (scalar followed by colon).
+    #[allow(
+        clippy::indexing_slicing,
+        reason = "Token positions are validated by bounds checks"
+    )]
     pub fn is_mapping_key_pattern(&self) -> bool {
         let mut i = self.pos;
         match self.tokens.get(i) {
@@ -537,6 +570,10 @@ impl<'a> Parser<'a> {
 
     /// Parse a %TAG directive value like "!prefix! tag:example.com,2011:"
     /// into (handle, prefix) tuple.
+    #[allow(
+        clippy::indexing_slicing,
+        reason = "Bounds checked by parts.len() == 2 condition"
+    )]
     fn parse_tag_directive_value(value: &str) -> Option<(String, String)> {
         // value is like "!prefix! tag:example.com,2011:"
         // or "! !" for primary handle
@@ -553,6 +590,10 @@ impl<'a> Parser<'a> {
     ///
     /// Tags that require declaration:
     /// - `!name!suffix` - named handle (must have `%TAG !name! prefix`)
+    #[allow(
+        clippy::string_slice,
+        reason = "bang_pos is from find('!') so slicing up to it is safe"
+    )]
     pub fn validate_tag_handle(&mut self, tag: &str, span: Span) {
         // Note: The lexer strips the leading `!` from tags.
         // So:
@@ -644,6 +685,10 @@ impl<'a> Parser<'a> {
     }
 
     /// Parse a value with already-collected node properties.
+    #[allow(
+        clippy::too_many_lines,
+        reason = "Complex value parsing logic with properties, will be refactored later"
+    )]
     pub fn parse_value_with_properties(
         &mut self,
         min_indent: usize,

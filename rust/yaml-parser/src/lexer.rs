@@ -182,6 +182,10 @@ impl std::fmt::Display for Token {
 /// Create the YAML lexer parser.
 ///
 /// This returns a chumsky parser that tokenizes YAML input with error recovery.
+#[allow(
+    clippy::too_many_lines,
+    reason = "Complex parser combinator logic, will be refactored later"
+)]
 fn lexer<'src>()
 -> impl Parser<'src, &'src str, Vec<Spanned<Token>>, extra::Err<Rich<'src, char, Span>>> {
     // === Character-level primitives ===
@@ -387,7 +391,10 @@ fn lexer<'src>()
     ));
 
     let indent_indicator = one_of("123456789")
-        .map(|ch: char| Some(ch.to_digit(10).unwrap() as u8))
+        .map(|ch: char| {
+            // to_digit(10) returns 0-9 for valid digits, which always fits in u8
+            ch.to_digit(10).and_then(|digit| u8::try_from(digit).ok())
+        })
         .or(empty().to(None));
 
     let block_header = indent_indicator

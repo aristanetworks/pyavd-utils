@@ -90,6 +90,10 @@ impl Parser<'_> {
     }
 
     /// Parse a block mapping with explicit key indicator or implicit keys.
+    #[allow(
+        clippy::too_many_lines,
+        reason = "Complex block mapping parsing logic, will be refactored later"
+    )]
     pub fn parse_block_mapping(&mut self, _min_indent: usize) -> Node {
         let start = self.current_span().start;
         let map_indent = self.current_token_column();
@@ -536,6 +540,10 @@ impl Parser<'_> {
     }
 
     /// Parse a block mapping where the first key is a null with properties.
+    #[allow(
+        clippy::too_many_lines,
+        reason = "Complex block mapping parsing logic, will be refactored later"
+    )]
     pub fn parse_block_mapping_with_tagged_null_key(
         &mut self,
         _min_indent: usize,
