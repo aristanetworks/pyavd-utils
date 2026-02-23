@@ -59,6 +59,14 @@ pub struct RawDocument {
 /// context-aware tokenization.
 ///
 /// Returns a tuple of (documents, errors).
+#[allow(
+    clippy::too_many_lines,
+    reason = "Complex stream parsing logic, will be refactored later"
+)]
+#[allow(
+    clippy::string_slice,
+    reason = "All positions are calculated from byte-level scanning and guaranteed to be on UTF-8 boundaries"
+)]
 pub fn parse_stream(input: &str) -> (Vec<RawDocument>, Vec<ParseError>) {
     let mut documents = Vec::new();
     let mut errors = Vec::new();
@@ -321,16 +329,20 @@ pub fn parse_stream(input: &str) -> (Vec<RawDocument>, Vec<ParseError>) {
 }
 
 /// Find the end of the current line (position of newline or EOF).
+#[allow(
+    clippy::indexing_slicing,
+    reason = "Index is validated by bounds check in loop condition"
+)]
 fn find_eol(input: &str, pos: usize) -> usize {
     let bytes = input.as_bytes();
-    let mut p = pos;
-    while p < bytes.len() {
-        match bytes[p] {
-            b'\n' | b'\r' => return p,
-            _ => p += 1,
+    let mut idx = pos;
+    while idx < bytes.len() {
+        match bytes[idx] {
+            b'\n' | b'\r' => return idx,
+            _ => idx += 1,
         }
     }
-    p
+    idx
 }
 
 /// Skip to the position after the current line (after newline).
@@ -340,6 +352,10 @@ fn skip_to_eol(input: &str, pos: usize) -> usize {
 }
 
 /// Skip a newline character (handles \r\n, \r, \n).
+#[allow(
+    clippy::indexing_slicing,
+    reason = "Index is validated by bounds check before access"
+)]
 fn skip_newline(input: &str, pos: usize) -> usize {
     let bytes = input.as_bytes();
     if pos >= bytes.len() {
@@ -415,7 +431,7 @@ mod tests {
         assert_eq!(docs.len(), 1);
         let doc = docs.first().unwrap();
         assert_eq!(doc.directives.len(), 2);
-        assert!(matches!(&doc.directives.first().unwrap().0, Directive::Yaml(v) if v == "1.2"));
+        assert!(matches!(&doc.directives.first().unwrap().0, Directive::Yaml(ver) if ver == "1.2"));
         assert!(matches!(
             &doc.directives.last().unwrap().0,
             Directive::Tag(_)

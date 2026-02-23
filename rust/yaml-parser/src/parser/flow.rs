@@ -15,6 +15,14 @@ use super::{NodeProperties, Parser};
 
 impl Parser<'_> {
     /// Parse a flow mapping: { key: value, ... }
+    #[allow(
+        clippy::too_many_lines,
+        reason = "Complex flow mapping parsing logic, will be refactored later"
+    )]
+    #[allow(
+        clippy::indexing_slicing,
+        reason = "Token positions are validated by parser logic before access"
+    )]
     pub fn parse_flow_mapping(&mut self) -> Option<Node> {
         let (_, start_span) = self.advance()?; // consume '{'
         let start = start_span.start;
@@ -318,11 +326,17 @@ impl Parser<'_> {
                         break;
                     }
 
+                    #[allow(clippy::indexing_slicing, reason = "next_pos bounds checked above")]
                     match &self.tokens[next_pos].0 {
                         Token::Plain(continuation) => {
                             combined.push(' ');
                             combined.push_str(continuation);
-                            end_span = self.tokens[next_pos].1;
+                            #[allow(
+                                clippy::indexing_slicing,
+                                reason = "next_pos bounds checked above"
+                            )]
+                            let continuation_span = self.tokens[next_pos].1;
+                            end_span = continuation_span;
                             self.advance(); // consume LineStart
                             self.advance(); // consume Plain
                         }

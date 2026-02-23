@@ -65,7 +65,11 @@ impl Parser<'_> {
                     kind: ErrorKind::UnterminatedString,
                     span: Span::new(
                         (),
-                        start_span.start..self.tokens.last().map_or(start_span.end, |(_, s)| s.end),
+                        start_span.start
+                            ..self
+                                .tokens
+                                .last()
+                                .map_or(start_span.end, |(_, span)| span.end),
                     ),
                     expected: vec!["closing quote".to_owned()],
                     found: Some("end of input".to_owned()),
@@ -205,8 +209,8 @@ impl Parser<'_> {
         let (tok, span) = self.advance()?;
         let start = span.start;
 
-        let header = if let Token::LiteralBlockHeader(h) = tok {
-            h.clone()
+        let header = if let Token::LiteralBlockHeader(hdr) = tok {
+            hdr.clone()
         } else {
             return None;
         };
@@ -220,8 +224,8 @@ impl Parser<'_> {
         let (tok, span) = self.advance()?;
         let start = span.start;
 
-        let header = if let Token::FoldedBlockHeader(h) = tok {
-            h.clone()
+        let header = if let Token::FoldedBlockHeader(hdr) = tok {
+            hdr.clone()
         } else {
             return None;
         };
@@ -231,13 +235,21 @@ impl Parser<'_> {
     }
 
     /// Collect block scalar content, respecting indentation.
+    #[allow(
+        clippy::too_many_lines,
+        reason = "Complex block scalar parsing logic, will be refactored later"
+    )]
+    #[allow(
+        clippy::indexing_slicing,
+        reason = "Token positions are validated by parser logic before access"
+    )]
     pub fn collect_block_scalar_content(
         &mut self,
         header: &BlockScalarHeader,
         literal: bool,
     ) -> (String, usize) {
         let mut lines: Vec<String> = Vec::new();
-        let mut content_indent: Option<usize> = header.indent.map(|i| i as usize);
+        let mut content_indent: Option<usize> = header.indent.map(usize::from);
         let mut end_pos = self.current_span().end;
 
         // Track whitespace-only lines before the first content line.
@@ -344,9 +356,9 @@ impl Parser<'_> {
                         end_pos = tok_span.end;
                         self.advance();
                     }
-                    Token::Comment(c) => {
+                    Token::Comment(comment) => {
                         line_content.push('#');
-                        line_content.push_str(c);
+                        line_content.push_str(comment);
                         end_pos = tok_span.end;
                         self.advance();
                     }
@@ -407,7 +419,6 @@ impl Parser<'_> {
 
     /// Convert multiline scalar content to final value.
     fn finalize_multiline_scalar(
-        &self,
         content: String,
         had_continuations: bool,
         start: usize,
@@ -461,10 +472,15 @@ impl Parser<'_> {
             let is_nested_value_position = {
                 let mut found_implicit_key_colon = false;
                 for i in (0..scalar_start_pos).rev() {
+                    #[allow(
+                        clippy::indexing_slicing,
+                        reason = "i is from range 0..scalar_start_pos"
+                    )]
                     match &self.tokens[i].0 {
                         Token::Colon => {
                             let mut has_key_before_colon = false;
                             for j in (0..i).rev() {
+                                #[allow(clippy::indexing_slicing, reason = "j is from range 0..i")]
                                 match &self.tokens[j].0 {
                                     Token::LineStart(_) | Token::MappingKey => {
                                         break;
@@ -536,7 +552,7 @@ impl Parser<'_> {
             // Continue parsing more key-value pairs at same indentation
             self.parse_remaining_mapping_entries(&mut pairs, map_indent);
 
-            let end = pairs.last().map_or(start, |(_, v)| v.span.end);
+            let end = pairs.last().map_or(start, |(_, val)| val.span.end);
             Some(Node::new(Value::Mapping(pairs), Span::new((), start..end)))
         } else {
             // Just a scalar - check for multiline continuation (plain scalars only)
@@ -555,6 +571,14 @@ impl Parser<'_> {
     }
 
     /// Helper to parse remaining mapping entries at the same indentation level.
+    #[allow(
+        clippy::too_many_lines,
+        reason = "Complex mapping parsing logic, will be refactored later"
+    )]
+    #[allow(
+        clippy::indexing_slicing,
+        reason = "Token positions are validated by parser logic before access"
+    )]
     fn parse_remaining_mapping_entries(
         &mut self,
         pairs: &mut Vec<(Node, Node)>,
@@ -712,6 +736,18 @@ impl Parser<'_> {
     ///
     /// Called after the first line of a plain scalar has been parsed.
     /// Continuation lines must be more indented than the scalar's starting column.
+    #[allow(
+        clippy::too_many_lines,
+        reason = "Complex plain scalar continuation logic, will be refactored later"
+    )]
+    #[allow(
+        clippy::string_slice,
+        reason = "Positions are from lexer tokens and guaranteed to be on UTF-8 boundaries"
+    )]
+    #[allow(
+        clippy::indexing_slicing,
+        reason = "Token positions are validated by parser logic before access"
+    )]
     pub fn consume_plain_scalar_continuations(
         &mut self,
         initial: Node,
@@ -825,7 +861,7 @@ impl Parser<'_> {
                                     _ => {}
                                 }
                             }
-                            return self.finalize_multiline_scalar(
+                            return Self::finalize_multiline_scalar(
                                 content,
                                 had_continuations,
                                 start,
@@ -833,7 +869,7 @@ impl Parser<'_> {
                             );
                         }
                         _ => {
-                            return self.finalize_multiline_scalar(
+                            return Self::finalize_multiline_scalar(
                                 content,
                                 had_continuations,
                                 start,
@@ -866,7 +902,7 @@ impl Parser<'_> {
                         match &self.tokens[lookahead].0 {
                             Token::Whitespace => lookahead += 1,
                             Token::Colon => {
-                                return self.finalize_multiline_scalar(
+                                return Self::finalize_multiline_scalar(
                                     content,
                                     had_continuations,
                                     start,
@@ -946,6 +982,6 @@ impl Parser<'_> {
                 }
             }
         }
-        self.finalize_multiline_scalar(content, had_continuations, start, end)
+        Self::finalize_multiline_scalar(content, had_continuations, start, end)
     }
 }

@@ -59,8 +59,8 @@ enum ScalarStyle {
 fn parse_event_file(content: &str) -> Vec<Event> {
     let mut events = Vec::new();
 
-    for line in content.lines() {
-        let line = line.trim();
+    for line_raw in content.lines() {
+        let line = line_raw.trim();
         if line.is_empty() {
             continue;
         }
@@ -105,8 +105,7 @@ fn parse_event_file(content: &str) -> Vec<Event> {
             });
         } else if line == "-SEQ" {
             events.push(Event::SequenceEnd);
-        } else if line.starts_with("=VAL ") {
-            let rest = &line[5..];
+        } else if let Some(rest) = line.strip_prefix("=VAL ") {
             let (anchor, tag, style, value) = parse_scalar_event(rest);
             events.push(Event::Scalar {
                 style,
@@ -114,57 +113,58 @@ fn parse_event_file(content: &str) -> Vec<Event> {
                 anchor,
                 tag,
             });
-        } else if line.starts_with("=ALI ") {
-            let name = line[5..].trim_start_matches('*').to_string();
+        } else if let Some(rest) = line.strip_prefix("=ALI ") {
+            let name = rest.trim_start_matches('*').to_owned();
             events.push(Event::Alias { name });
-        } else if line.starts_with("+MAP ") || line.starts_with("+SEQ ") {
+        } else if let Some(rest) = line.strip_prefix("+MAP ") {
             // Complex collection start with anchor/tag
-            let is_map = line.starts_with("+MAP");
-            let rest = &line[5..];
             let (anchor, tag, flow) = parse_collection_event(rest);
-            if is_map {
-                events.push(Event::MappingStart { flow, anchor, tag });
-            } else {
-                events.push(Event::SequenceStart { flow, anchor, tag });
-            }
+            events.push(Event::MappingStart { flow, anchor, tag });
+        } else if let Some(rest) = line.strip_prefix("+SEQ ") {
+            let (anchor, tag, flow) = parse_collection_event(rest);
+            events.push(Event::SequenceStart { flow, anchor, tag });
         }
     }
 
     events
 }
 
-fn parse_scalar_event(s: &str) -> (Option<String>, Option<String>, ScalarStyle, String) {
+#[allow(
+    clippy::string_slice,
+    reason = "Test event format uses fixed positions"
+)]
+fn parse_scalar_event(input: &str) -> (Option<String>, Option<String>, ScalarStyle, String) {
     let mut anchor = None;
     let mut tag = None;
-    let mut rest = s;
+    let mut rest = input;
 
     // Parse anchor (&name)
-    if rest.starts_with('&') {
-        if let Some(space_idx) = rest.find(' ') {
-            anchor = Some(rest[1..space_idx].to_string());
-            rest = &rest[space_idx + 1..];
-        }
+    if rest.starts_with('&')
+        && let Some(space_idx) = rest.find(' ')
+    {
+        anchor = Some(rest[1..space_idx].to_owned());
+        rest = &rest[space_idx + 1..];
     }
 
     // Parse tag (<tag>)
-    if rest.starts_with('<') {
-        if let Some(end_idx) = rest.find('>') {
-            tag = Some(rest[1..end_idx].to_string());
-            rest = &rest[end_idx + 1..].trim_start();
-        }
+    if rest.starts_with('<')
+        && let Some(end_idx) = rest.find('>')
+    {
+        tag = Some(rest[1..end_idx].to_owned());
+        rest = rest[end_idx + 1..].trim_start();
     }
 
     // Parse style and value
-    let (style, value) = if rest.starts_with(':') {
-        (ScalarStyle::Plain, unescape_event_value(&rest[1..]))
-    } else if rest.starts_with('"') {
-        (ScalarStyle::DoubleQuoted, unescape_event_value(&rest[1..]))
-    } else if rest.starts_with('\'') {
-        (ScalarStyle::SingleQuoted, unescape_event_value(&rest[1..]))
-    } else if rest.starts_with('|') {
-        (ScalarStyle::Literal, unescape_event_value(&rest[1..]))
-    } else if rest.starts_with('>') {
-        (ScalarStyle::Folded, unescape_event_value(&rest[1..]))
+    let (style, value) = if let Some(remainder) = rest.strip_prefix(':') {
+        (ScalarStyle::Plain, unescape_event_value(remainder))
+    } else if let Some(remainder) = rest.strip_prefix('"') {
+        (ScalarStyle::DoubleQuoted, unescape_event_value(remainder))
+    } else if let Some(remainder) = rest.strip_prefix('\'') {
+        (ScalarStyle::SingleQuoted, unescape_event_value(remainder))
+    } else if let Some(remainder) = rest.strip_prefix('|') {
+        (ScalarStyle::Literal, unescape_event_value(remainder))
+    } else if let Some(remainder) = rest.strip_prefix('>') {
+        (ScalarStyle::Folded, unescape_event_value(remainder))
     } else {
         (ScalarStyle::Plain, unescape_event_value(rest))
     };
@@ -172,28 +172,32 @@ fn parse_scalar_event(s: &str) -> (Option<String>, Option<String>, ScalarStyle, 
     (anchor, tag, style, value)
 }
 
-fn parse_collection_event(s: &str) -> (Option<String>, Option<String>, bool) {
+#[allow(
+    clippy::string_slice,
+    reason = "Test event format uses fixed positions"
+)]
+fn parse_collection_event(input: &str) -> (Option<String>, Option<String>, bool) {
     let mut anchor = None;
     let mut tag = None;
-    let mut rest = s;
+    let mut rest = input;
 
     // Check for anchor
     if rest.starts_with('&') {
         if let Some(space_idx) = rest.find(' ') {
-            anchor = Some(rest[1..space_idx].to_string());
+            anchor = Some(rest[1..space_idx].to_owned());
             rest = &rest[space_idx + 1..];
         } else {
-            anchor = Some(rest[1..].to_string());
+            anchor = Some(rest[1..].to_owned());
             rest = "";
         }
     }
 
     // Check for tag
-    if rest.starts_with('<') {
-        if let Some(end_idx) = rest.find('>') {
-            tag = Some(rest[1..end_idx].to_string());
-            rest = &rest[end_idx + 1..].trim_start();
-        }
+    if rest.starts_with('<')
+        && let Some(end_idx) = rest.find('>')
+    {
+        tag = Some(rest[1..end_idx].to_owned());
+        rest = rest[end_idx + 1..].trim_start();
     }
 
     // Check for flow indicators
@@ -202,12 +206,12 @@ fn parse_collection_event(s: &str) -> (Option<String>, Option<String>, bool) {
     (anchor, tag, flow)
 }
 
-fn unescape_event_value(s: &str) -> String {
+fn unescape_event_value(input: &str) -> String {
     let mut result = String::new();
-    let mut chars = s.chars().peekable();
+    let mut chars = input.chars().peekable();
 
-    while let Some(c) = chars.next() {
-        if c == '\\' {
+    while let Some(current_char) = chars.next() {
+        if current_char == '\\' {
             if let Some(&next) = chars.peek() {
                 match next {
                     'n' => {
@@ -230,13 +234,13 @@ fn unescape_event_value(s: &str) -> String {
                         result.push('\x08');
                         chars.next();
                     }
-                    _ => result.push(c),
+                    _ => result.push(current_char),
                 }
             } else {
-                result.push(c);
+                result.push(current_char);
             }
         } else {
-            result.push(c);
+            result.push(current_char);
         }
     }
 
@@ -254,7 +258,7 @@ struct TestCase {
 
 /// Load a test case from a directory.
 fn load_test_case(dir: &Path) -> Option<TestCase> {
-    let id = dir.file_name()?.to_str()?.to_string();
+    let id = dir.file_name()?.to_str()?.to_owned();
 
     // Skip special directories
     if id == "name" || id == "tags" || id.starts_with('.') {
@@ -263,10 +267,10 @@ fn load_test_case(dir: &Path) -> Option<TestCase> {
 
     // Check if this is a numbered sub-test directory (e.g., "00", "01")
     // Skip those for now - we'll handle them separately
-    if id.len() == 2 && id.chars().all(|c| c.is_ascii_digit()) {
+    if id.len() == 2 && id.chars().all(|ch| ch.is_ascii_digit()) {
         return None;
     }
-    if id.len() == 3 && id.chars().all(|c| c.is_ascii_digit()) {
+    if id.len() == 3 && id.chars().all(|ch| ch.is_ascii_digit()) {
         return None;
     }
 
@@ -282,8 +286,7 @@ fn load_test_case(dir: &Path) -> Option<TestCase> {
     }
 
     let name = fs::read_to_string(&name_file)
-        .map(|s| s.trim().to_string())
-        .unwrap_or_else(|_| id.clone());
+        .map_or_else(|_| id.clone(), |content| content.trim().to_owned());
 
     let input = fs::read_to_string(&input_file).ok()?;
     let event_content = fs::read_to_string(&event_file).ok()?;
@@ -300,18 +303,20 @@ fn load_test_case(dir: &Path) -> Option<TestCase> {
 }
 
 /// Run the test suite and return statistics.
+#[allow(clippy::print_stderr, reason = "Test output for progress tracking")]
 fn run_test_suite(test_dir: &Path) -> (usize, usize, Vec<String>) {
     let mut passed = 0;
     let mut failed = 0;
     let mut failures = Vec::new();
 
-    let mut entries: Vec<_> = fs::read_dir(test_dir)
-        .expect("Failed to read test directory")
-        .filter_map(|e| e.ok())
-        .collect();
+    let Ok(dir_entries) = fs::read_dir(test_dir) else {
+        eprintln!("Failed to read test directory");
+        return (0, 0, Vec::new());
+    };
+    let mut entries: Vec<_> = dir_entries.filter_map(Result::ok).collect();
 
     // Sort for deterministic order
-    entries.sort_by_key(|e| e.path());
+    entries.sort_by_key(std::fs::DirEntry::path);
 
     let total = entries.len();
 
@@ -330,14 +335,13 @@ fn run_test_suite(test_dir: &Path) -> (usize, usize, Vec<String>) {
                 test_case.name
             );
             let result = run_single_test(&test_case);
-            if result.is_ok() {
+            if let Err(err) = result {
+                failed += 1;
+                eprintln!("  -> FAIL: {err}");
+                failures.push(format!("{}: {} - {err}", test_case.id, test_case.name));
+            } else {
                 passed += 1;
                 eprintln!("  -> PASS");
-            } else {
-                failed += 1;
-                let err = result.unwrap_err();
-                eprintln!("  -> FAIL: {}", err);
-                failures.push(format!("{}: {} - {}", test_case.id, test_case.name, err));
             }
         }
     }
@@ -352,7 +356,7 @@ fn run_single_test(test: &TestCase) -> Result<(), String> {
         // For error tests, we just verify that parsing produces errors
         // (but may still produce partial output due to error recovery)
         if errors.is_empty() {
-            return Err("Expected error but parsing succeeded".to_string());
+            return Err("Expected error but parsing succeeded".to_owned());
         }
         return Ok(());
     }
@@ -361,7 +365,7 @@ fn run_single_test(test: &TestCase) -> Result<(), String> {
     if !errors.is_empty() {
         // For now, treat any error as a failure for non-error tests
         // Later we can be more lenient with recoverable errors
-        return Err(format!("Parse errors: {:?}", errors));
+        return Err(format!("Parse errors: {errors:?}"));
     }
 
     // Compare events
@@ -369,9 +373,9 @@ fn run_single_test(test: &TestCase) -> Result<(), String> {
     // Full event comparison requires more work due to style differences
     // Stream is Vec<Spanned<Value>>
     let empty_output = stream.is_empty();
-    let expects_content = test.expected_events.iter().any(|e| {
+    let expects_content = test.expected_events.iter().any(|event| {
         matches!(
-            e,
+            event,
             Event::Scalar { .. }
                 | Event::MappingStart { .. }
                 | Event::SequenceStart { .. }
@@ -380,37 +384,43 @@ fn run_single_test(test: &TestCase) -> Result<(), String> {
     });
 
     if empty_output && expects_content {
-        return Err("Empty output when content expected".to_string());
+        return Err("Empty output when content expected".to_owned());
     }
 
     Ok(())
 }
 
 #[test]
+#[allow(
+    clippy::print_stderr,
+    clippy::cast_precision_loss,
+    clippy::as_conversions,
+    clippy::use_debug,
+    clippy::tests_outside_test_module,
+    reason = "Integration test with test output and statistics calculation"
+)]
 fn yaml_test_suite() {
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
     let test_dir = Path::new(manifest_dir).join("tests/yaml-test-suite");
 
     if !test_dir.exists() {
-        eprintln!("Test suite not found at {:?}. Skipping tests.", test_dir);
+        eprintln!("Test suite not found at {test_dir:?}. Skipping tests.");
         return;
     }
 
     let (passed, failed, failures) = run_test_suite(&test_dir);
 
     eprintln!("\n=== YAML Test Suite Results (Current Lexer) ===");
-    eprintln!("Passed: {}", passed);
-    eprintln!("Failed: {}", failed);
+    eprintln!("Passed: {passed}");
+    eprintln!("Failed: {failed}");
     eprintln!("Total: {}", passed + failed);
-    eprintln!(
-        "Pass rate: {:.1}%",
-        (passed as f64 / (passed + failed) as f64) * 100.0
-    );
+    let pass_rate = (passed as f64 / (passed + failed) as f64) * 100.0;
+    eprintln!("Pass rate: {pass_rate:.1}%");
 
     if !failures.is_empty() {
         eprintln!("\n=== All {} Failures ===", failures.len());
-        for failure in failures.iter() {
-            eprintln!("  {}", failure);
+        for failure in &failures {
+            eprintln!("  {failure}");
         }
     }
 
