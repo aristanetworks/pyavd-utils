@@ -51,7 +51,7 @@ impl Parser<'_> {
             // Check for consecutive commas (e.g., `{ a: 1, , b: 2 }`)
             if let Some((Token::Comma, comma_span)) = self.peek() {
                 if just_saw_comma {
-                    self.error(ErrorKind::UnexpectedToken, *comma_span);
+                    self.error(ErrorKind::UnexpectedToken, comma_span);
                 }
                 self.advance();
                 self.skip_ws_and_newlines();
@@ -160,7 +160,7 @@ impl Parser<'_> {
         self.error(ErrorKind::UnexpectedEof, self.current_span());
         self.flow_depth -= 1;
         self.flow_context_columns.pop();
-        let end = self.tokens.last().map_or(start, |(_, span)| span.end);
+        let end = self.tokens.last().map_or(start, |rt| rt.span.end);
         Some(Node::new(Value::Mapping(pairs), Span::new((), start..end)))
     }
 
@@ -192,7 +192,7 @@ impl Parser<'_> {
 
             if let Some((Token::Comma, comma_span)) = self.peek() {
                 if just_saw_comma {
-                    self.error(ErrorKind::UnexpectedToken, *comma_span);
+                    self.error(ErrorKind::UnexpectedToken, comma_span);
                 }
                 self.advance();
                 self.skip_ws_and_newlines();
@@ -252,7 +252,7 @@ impl Parser<'_> {
         self.error(ErrorKind::UnexpectedEof, self.current_span());
         self.flow_depth -= 1;
         self.flow_context_columns.pop();
-        let end = self.tokens.last().map_or(start, |(_, span)| span.end);
+        let end = self.tokens.last().map_or(start, |rt| rt.span.end);
         Some(Node::new(Value::Sequence(items), Span::new((), start..end)))
     }
 
@@ -266,7 +266,7 @@ impl Parser<'_> {
         self.skip_ws_and_newlines();
 
         let (tok, span) = self.peek()?;
-        let start_span = *span;
+        let start_span = span;
 
         match tok {
             Token::FlowMapStart => self
@@ -313,7 +313,10 @@ impl Parser<'_> {
                 // In flow context, plain scalars can span multiple lines.
                 // Newlines are folded to spaces.
                 loop {
-                    while matches!(self.peek(), Some((Token::Whitespace, _))) {
+                    while matches!(
+                        self.peek(),
+                        Some((Token::Whitespace | Token::WhitespaceWithTabs, _))
+                    ) {
                         self.advance();
                     }
 
@@ -327,7 +330,7 @@ impl Parser<'_> {
                     }
 
                     #[allow(clippy::indexing_slicing, reason = "next_pos bounds checked above")]
-                    match &self.tokens[next_pos].0 {
+                    match &self.tokens[next_pos].token {
                         Token::Plain(continuation) => {
                             combined.push(' ');
                             combined.push_str(continuation);
@@ -335,7 +338,7 @@ impl Parser<'_> {
                                 clippy::indexing_slicing,
                                 reason = "next_pos bounds checked above"
                             )]
-                            let continuation_span = self.tokens[next_pos].1;
+                            let continuation_span = self.tokens[next_pos].span;
                             end_span = continuation_span;
                             self.advance(); // consume LineStart
                             self.advance(); // consume Plain

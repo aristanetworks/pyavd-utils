@@ -479,7 +479,12 @@ mod tests {
         // Filter out whitespace for easier testing
         let meaningful: Vec<_> = tokens
             .iter()
-            .filter(|(token, _)| !matches!(token, Token::Whitespace | Token::LineStart(_)))
+            .filter(|(token, _)| {
+                !matches!(
+                    token,
+                    Token::Whitespace | Token::WhitespaceWithTabs | Token::LineStart(_)
+                )
+            })
             .collect();
 
         assert_eq!(meaningful.len(), 3, "Tokens: {meaningful:?}");
@@ -500,7 +505,12 @@ mod tests {
 
         let meaningful: Vec<_> = tokens
             .iter()
-            .filter(|(token, _)| !matches!(token, Token::Whitespace | Token::LineStart(_)))
+            .filter(|(token, _)| {
+                !matches!(
+                    token,
+                    Token::Whitespace | Token::WhitespaceWithTabs | Token::LineStart(_)
+                )
+            })
             .collect();
 
         assert_eq!(meaningful.len(), 5);
@@ -529,7 +539,12 @@ mod tests {
 
         let meaningful: Vec<_> = tokens
             .iter()
-            .filter(|(token, _)| !matches!(token, Token::Whitespace | Token::LineStart(_)))
+            .filter(|(token, _)| {
+                !matches!(
+                    token,
+                    Token::Whitespace | Token::WhitespaceWithTabs | Token::LineStart(_)
+                )
+            })
             .collect();
 
         assert_eq!(meaningful.len(), 1);
@@ -544,7 +559,12 @@ mod tests {
 
         let meaningful: Vec<_> = tokens
             .iter()
-            .filter(|(token, _)| !matches!(token, Token::Whitespace | Token::LineStart(_)))
+            .filter(|(token, _)| {
+                !matches!(
+                    token,
+                    Token::Whitespace | Token::WhitespaceWithTabs | Token::LineStart(_)
+                )
+            })
             .collect();
 
         assert_eq!(meaningful.len(), 1);
@@ -561,7 +581,12 @@ mod tests {
 
         let meaningful: Vec<_> = tokens
             .iter()
-            .filter(|(token, _)| !matches!(token, Token::Whitespace | Token::LineStart(_)))
+            .filter(|(token, _)| {
+                !matches!(
+                    token,
+                    Token::Whitespace | Token::WhitespaceWithTabs | Token::LineStart(_)
+                )
+            })
             .collect();
 
         assert_eq!(meaningful.len(), 1);
@@ -577,7 +602,12 @@ mod tests {
 
         let meaningful: Vec<_> = tokens
             .iter()
-            .filter(|(token, _)| !matches!(token, Token::Whitespace | Token::LineStart(_)))
+            .filter(|(token, _)| {
+                !matches!(
+                    token,
+                    Token::Whitespace | Token::WhitespaceWithTabs | Token::LineStart(_)
+                )
+            })
             .collect();
 
         assert_eq!(meaningful.len(), 2);
@@ -596,7 +626,7 @@ mod tests {
 
         let meaningful: Vec<_> = tokens
             .iter()
-            .filter(|(token, _)| !matches!(token, Token::Whitespace))
+            .filter(|(token, _)| !matches!(token, Token::Whitespace | Token::WhitespaceWithTabs))
             .collect();
 
         // LineStart(0), BlockSeqIndicator, Plain, LineStart(0), BlockSeqIndicator, Plain
@@ -648,7 +678,12 @@ mod tests {
 
         let meaningful: Vec<_> = tokens
             .iter()
-            .filter(|(token, _)| !matches!(token, Token::Whitespace | Token::LineStart(_)))
+            .filter(|(token, _)| {
+                !matches!(
+                    token,
+                    Token::Whitespace | Token::WhitespaceWithTabs | Token::LineStart(_)
+                )
+            })
             .collect();
 
         assert_eq!(meaningful.len(), 2);
@@ -668,7 +703,12 @@ mod tests {
 
         let meaningful: Vec<_> = tokens
             .iter()
-            .filter(|(token, _)| !matches!(token, Token::Whitespace | Token::LineStart(_)))
+            .filter(|(token, _)| {
+                !matches!(
+                    token,
+                    Token::Whitespace | Token::WhitespaceWithTabs | Token::LineStart(_)
+                )
+            })
             .collect();
 
         assert_eq!(meaningful.len(), 1);
@@ -685,7 +725,12 @@ mod tests {
 
         let meaningful: Vec<_> = tokens
             .iter()
-            .filter(|(token, _)| !matches!(token, Token::Whitespace | Token::LineStart(_)))
+            .filter(|(token, _)| {
+                !matches!(
+                    token,
+                    Token::Whitespace | Token::WhitespaceWithTabs | Token::LineStart(_)
+                )
+            })
             .collect();
 
         assert_eq!(meaningful.len(), 1);

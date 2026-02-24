@@ -24,7 +24,6 @@ impl Parser<'_> {
     /// This is used when parsing values where multi-line strings must respect indentation.
     pub fn parse_scalar_with_indent(&mut self, min_indent: usize) -> Option<Node> {
         let (tok, span) = self.peek()?;
-        let span = *span;
 
         match tok {
             Token::Plain(string) => {
@@ -46,7 +45,6 @@ impl Parser<'_> {
     /// For strings that are values in mappings, continuation must be >= `min_indent`.
     pub fn parse_quoted_string(&mut self, min_indent: usize) -> Option<Node> {
         let (first_token, start_span) = self.peek()?;
-        let start_span = *start_span;
 
         let style = match first_token {
             Token::StringStart(style) => *style,
@@ -66,17 +64,13 @@ impl Parser<'_> {
                     span: Span::new(
                         (),
                         start_span.start
-                            ..self
-                                .tokens
-                                .last()
-                                .map_or(start_span.end, |(_, span)| span.end),
+                            ..self.tokens.last().map_or(start_span.end, |rt| rt.span.end),
                     ),
                     expected: vec!["closing quote".to_owned()],
                     found: Some("end of input".to_owned()),
                 });
                 break;
             };
-            let span = *span;
 
             match tok {
                 Token::StringContent(string) => {
@@ -190,7 +184,6 @@ impl Parser<'_> {
     /// Parse an alias: *name
     pub fn parse_alias(&mut self) -> Option<Node> {
         let (tok, span) = self.advance()?;
-        let span = *span;
 
         let name = if let Token::Alias(name) = tok {
             name.clone()
@@ -266,12 +259,11 @@ impl Parser<'_> {
                 break;
             };
             let n = *n;
-            let span = *span;
 
             let is_empty_line = {
                 let mut check_pos = self.pos + 1;
                 while check_pos < self.tokens.len() {
-                    match &self.tokens[check_pos].0 {
+                    match &self.tokens[check_pos].token {
                         Token::Dedent | Token::Indent(_) => check_pos += 1,
                         _ => break,
                     }
@@ -279,7 +271,7 @@ impl Parser<'_> {
                 if check_pos >= self.tokens.len() {
                     true
                 } else {
-                    matches!(self.tokens[check_pos].0, Token::LineStart(_))
+                    matches!(self.tokens[check_pos].token, Token::LineStart(_))
                 }
             };
 
@@ -351,7 +343,7 @@ impl Parser<'_> {
                         end_pos = tok_span.end;
                         self.advance();
                     }
-                    Token::Whitespace => {
+                    Token::Whitespace | Token::WhitespaceWithTabs => {
                         line_content.push(' ');
                         end_pos = tok_span.end;
                         self.advance();
@@ -448,7 +440,7 @@ impl Parser<'_> {
         let mut saw_comment = false;
         while let Some((tok, _)) = self.peek() {
             match tok {
-                Token::Whitespace | Token::Indent(_) => {
+                Token::Whitespace | Token::WhitespaceWithTabs | Token::Indent(_) => {
                     self.advance();
                 }
                 Token::Comment(_) => {
@@ -461,9 +453,6 @@ impl Parser<'_> {
 
         // Check if this is a mapping key (followed by colon)
         if let Some((Token::Colon, colon_span)) = self.peek() {
-            // Copy the span before any mutable borrows
-            let colon_span = *colon_span;
-
             // Check for multiline implicit key (invalid in block context)
             self.check_multiline_implicit_key(scalar.span.start, scalar.span.end);
 
@@ -476,12 +465,12 @@ impl Parser<'_> {
                         clippy::indexing_slicing,
                         reason = "i is from range 0..scalar_start_pos"
                     )]
-                    match &self.tokens[i].0 {
+                    match &self.tokens[i].token {
                         Token::Colon => {
                             let mut has_key_before_colon = false;
                             for j in (0..i).rev() {
                                 #[allow(clippy::indexing_slicing, reason = "j is from range 0..i")]
-                                match &self.tokens[j].0 {
+                                match &self.tokens[j].token {
                                     Token::LineStart(_) | Token::MappingKey => {
                                         break;
                                     }
@@ -526,7 +515,6 @@ impl Parser<'_> {
 
             // Check for block sequence indicator on same line as key - invalid in YAML
             if let Some((Token::BlockSeqIndicator, span)) = self.peek() {
-                let span = *span;
                 self.error(ErrorKind::UnexpectedToken, span);
             }
 
@@ -635,7 +623,6 @@ impl Parser<'_> {
                 match self.peek() {
                     Some((Token::Anchor(name), anchor_span)) => {
                         let anchor_name = name.clone();
-                        let anchor_span = *anchor_span;
                         self.advance();
                         self.skip_ws();
                         if key_props.anchor.is_some() {
@@ -645,7 +632,6 @@ impl Parser<'_> {
                     }
                     Some((Token::Tag(name), tag_span)) => {
                         let tag = name.clone();
-                        let tag_span = *tag_span;
                         self.advance();
                         self.skip_ws();
                         if key_props.tag.is_some() {
@@ -653,7 +639,7 @@ impl Parser<'_> {
                         }
                         key_props.tag = Some((tag, tag_span));
                     }
-                    Some((Token::Whitespace, _)) => {
+                    Some((Token::Whitespace | Token::WhitespaceWithTabs, _)) => {
                         self.advance();
                     }
                     _ => break,
@@ -664,7 +650,6 @@ impl Parser<'_> {
             let key = if let Some((Token::Alias(name), span)) = self.peek() {
                 // Check if the key is an alias with properties (invalid)
                 let alias_name = name.clone();
-                let span = *span;
                 if !key_props.is_empty() {
                     self.error(ErrorKind::PropertiesOnAlias, span);
                 }
@@ -705,7 +690,6 @@ impl Parser<'_> {
 
             // Check for block sequence indicator on same line as key - invalid
             if let Some((Token::BlockSeqIndicator, span)) = self.peek() {
-                let span = *span;
                 self.error(ErrorKind::UnexpectedToken, span);
             }
 
@@ -784,7 +768,7 @@ impl Parser<'_> {
                 let mut next_pos = self.pos + 1;
                 let mut found_continuation = false;
                 while next_pos < self.tokens.len() {
-                    match &self.tokens[next_pos].0 {
+                    match &self.tokens[next_pos].token {
                         Token::Dedent | Token::Indent(_) => {
                             next_pos += 1;
                         }
@@ -798,11 +782,11 @@ impl Parser<'_> {
                             found_continuation = true;
                             break;
                         }
-                        Token::Whitespace => {
+                        Token::Whitespace | Token::WhitespaceWithTabs => {
                             // Tab at start of line followed by content
                             let after_ws = next_pos + 1;
                             if after_ws < self.tokens.len() {
-                                match &self.tokens[after_ws].0 {
+                                match &self.tokens[after_ws].token {
                                     Token::Plain(_)
                                     | Token::Anchor(_)
                                     | Token::Tag(_)
@@ -888,19 +872,21 @@ impl Parser<'_> {
             if next_pos < self.tokens.len() {
                 let mut content_pos = next_pos;
                 while content_pos < self.tokens.len() {
-                    match &self.tokens[content_pos].0 {
-                        Token::Whitespace | Token::Indent(_) => content_pos += 1,
+                    match &self.tokens[content_pos].token {
+                        Token::Whitespace | Token::WhitespaceWithTabs | Token::Indent(_) => {
+                            content_pos += 1
+                        }
                         _ => break,
                     }
                 }
 
                 if content_pos < self.tokens.len()
-                    && let Token::Plain(_) = &self.tokens[content_pos].0
+                    && let Token::Plain(_) = &self.tokens[content_pos].token
                 {
                     let mut lookahead = content_pos + 1;
                     while lookahead < self.tokens.len() {
-                        match &self.tokens[lookahead].0 {
-                            Token::Whitespace => lookahead += 1,
+                        match &self.tokens[lookahead].token {
+                            Token::Whitespace | Token::WhitespaceWithTabs => lookahead += 1,
                             Token::Colon => {
                                 return Self::finalize_multiline_scalar(
                                     content,
@@ -918,7 +904,9 @@ impl Parser<'_> {
             // Valid continuation, consume the LineStart
             self.advance();
 
-            while let Some((Token::Indent(_) | Token::Whitespace, _)) = self.peek() {
+            while let Some((Token::Indent(_) | Token::Whitespace | Token::WhitespaceWithTabs, _)) =
+                self.peek()
+            {
                 self.advance();
             }
 

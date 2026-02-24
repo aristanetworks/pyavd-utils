@@ -132,6 +132,43 @@ The parser uses a **three-layer architecture**:
   - `DuplicateAnchor`, `UndefinedAlias`
   - `InvalidTag`, `InvalidDirective`
   - And more...
+- **Error suggestions**: `ErrorKind::suggestion()` returns fix hints for common errors
+
+#### `trivia.rs` - Token Trivia Preservation (IDE Support)
+
+- **`TriviaKind`**: Types of non-semantic content
+
+  ```rust
+  pub enum TriviaKind {
+      Comment(String),    // # comment content
+      Whitespace,         // Spaces/tabs between tokens
+      LineBreak(usize),   // Newline with following indent level
+  }
+  ```
+
+- **`Trivia`**: A piece of trivia with its span
+
+  ```rust
+  pub struct Trivia {
+      pub kind: TriviaKind,
+      pub span: Span,
+  }
+  ```
+
+- **`RichToken`**: Token with attached leading/trailing trivia
+
+  ```rust
+  pub struct RichToken {
+      pub token: Token,
+      pub span: Span,
+      pub leading_trivia: Vec<Trivia>,   // Trivia before this token
+      pub trailing_trivia: Vec<Trivia>,  // Trivia on same line after token
+  }
+  ```
+
+- **`tokenize_with_trivia()`**: Alternative tokenizer returning `Vec<RichToken>`
+  - Follows industry pattern (TypeScript, Roslyn, rust-analyzer)
+  - Critical for IDE refactoring that must preserve comments/formatting
 
 #### `value.rs` - AST Types
 
@@ -765,22 +802,16 @@ See `TECHNICAL_DEBT.md` for comprehensive documentation. Key limitations:
 3. ✅ **SourceMap Utility** - Line/column position tracking for IDE integration
 4. ✅ **State Machine Extraction** - `next_token()` refactored from ~230 to ~45 lines
 5. ✅ **Unified Quoted String Handling** - Shared helpers reduce duplication
+6. ✅ **Token Trivia Preservation** (Phase 1.1) - `RichToken` with leading/trailing trivia
+7. ✅ **Rich Error Context** (Phase 3.1) - 10 contextual error variants with suggestions
 
 See `LEXER_IMPROVEMENTS.md` for detailed progress tracking.
 
-### Short-Term (Architectural Cleanup)
+### Short-Term (Performance)
 
-1. **Token Trivia Preservation** (Phase 1.1)
-   - Associate comments/whitespace with adjacent tokens
-   - Critical for IDE refactoring features
-
-2. **Improve Error Messages** (Phase 3.1)
-   - Add more context to errors
-   - Include suggestions for common mistakes
-
-3. **Performance Optimization**
-   - Profile and optimize hot paths
-   - Zero-copy tokenization using `Cow<'input, str>` (Phase 2.1)
+1. **Zero-Copy Tokenization** (Phase 2.1)
+   - Use `Cow<'input, str>` for token content
+   - Reduce string allocations for better performance
 
 ### Medium-Term (Feature Additions)
 
