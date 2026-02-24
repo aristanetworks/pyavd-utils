@@ -18,8 +18,12 @@ use crate::span::Span;
 pub enum TriviaKind {
     /// A comment (content after `#` until end of line).
     Comment(String),
-    /// Inline whitespace (spaces and tabs, not newlines).
+    /// Inline whitespace (spaces only, not newlines).
     Whitespace,
+    /// Inline whitespace containing at least one tab character.
+    /// This is separated from `Whitespace` to allow O(1) detection of tabs
+    /// without re-scanning the content.
+    WhitespaceWithTabs,
     /// A newline followed by indentation spaces.
     /// The value is the indentation level (number of spaces).
     LineBreak(usize),
@@ -47,10 +51,16 @@ impl Trivia {
         Self::new(TriviaKind::Comment(content), span)
     }
 
-    /// Create a whitespace trivia.
+    /// Create a whitespace trivia (spaces only).
     #[must_use]
     pub const fn whitespace(span: Span) -> Self {
         Self::new(TriviaKind::Whitespace, span)
+    }
+
+    /// Create a whitespace trivia containing tabs.
+    #[must_use]
+    pub const fn whitespace_with_tabs(span: Span) -> Self {
+        Self::new(TriviaKind::WhitespaceWithTabs, span)
     }
 
     /// Create a line break trivia with indentation.
@@ -65,10 +75,20 @@ impl Trivia {
         matches!(self.kind, TriviaKind::Comment(_))
     }
 
-    /// Check if this trivia is whitespace.
+    /// Check if this trivia is whitespace (with or without tabs).
     #[must_use]
     pub const fn is_whitespace(&self) -> bool {
-        matches!(self.kind, TriviaKind::Whitespace)
+        matches!(
+            self.kind,
+            TriviaKind::Whitespace | TriviaKind::WhitespaceWithTabs
+        )
+    }
+
+    /// Check if this trivia contains tabs.
+    /// Returns true only for `WhitespaceWithTabs` trivia.
+    #[must_use]
+    pub const fn has_tabs(&self) -> bool {
+        matches!(self.kind, TriviaKind::WhitespaceWithTabs)
     }
 
     /// Check if this trivia is a line break.
@@ -92,6 +112,7 @@ impl std::fmt::Display for TriviaKind {
         match self {
             Self::Comment(content) => write!(f, "#{content}"),
             Self::Whitespace => write!(f, "<whitespace>"),
+            Self::WhitespaceWithTabs => write!(f, "<whitespace+tabs>"),
             Self::LineBreak(indent) => write!(f, "<newline+{indent}>"),
         }
     }
@@ -244,10 +265,17 @@ mod tests {
 
         let ws = Trivia::whitespace(Span::new((), 0..2));
         assert!(ws.is_whitespace());
+        assert!(!ws.has_tabs());
         assert_eq!(ws.comment_content(), None);
+
+        let ws_tabs = Trivia::whitespace_with_tabs(Span::new((), 0..2));
+        assert!(ws_tabs.is_whitespace());
+        assert!(ws_tabs.has_tabs());
+        assert_eq!(ws_tabs.comment_content(), None);
 
         let lb = Trivia::line_break(4, Span::new((), 0..5));
         assert!(lb.is_line_break());
+        assert!(!lb.has_tabs());
         assert_eq!(lb.comment_content(), None);
     }
 
@@ -255,6 +283,10 @@ mod tests {
     fn test_trivia_display() {
         assert_eq!(TriviaKind::Comment("test".to_owned()).to_string(), "#test");
         assert_eq!(TriviaKind::Whitespace.to_string(), "<whitespace>");
+        assert_eq!(
+            TriviaKind::WhitespaceWithTabs.to_string(),
+            "<whitespace+tabs>"
+        );
         assert_eq!(TriviaKind::LineBreak(4).to_string(), "<newline+4>");
     }
 

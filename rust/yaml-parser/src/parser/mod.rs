@@ -23,6 +23,7 @@ use chumsky::span::Span as _;
 use crate::error::{ErrorKind, ParseError};
 use crate::lexer::Token;
 use crate::span::{Span, Spanned};
+use crate::trivia::{RichToken, TriviaKind};
 use crate::value::{Node, Value};
 
 /// A stream of YAML documents.
@@ -68,7 +69,7 @@ impl NodeProperties {
 /// Parser state for tracking position and context.
 #[derive(Debug)]
 pub(crate) struct Parser<'a> {
-    pub tokens: &'a [Spanned<Token>],
+    pub tokens: &'a [RichToken],
     pub input: &'a str,
     pub pos: usize,
     pub errors: Vec<ParseError>,
@@ -90,7 +91,7 @@ pub(crate) struct Parser<'a> {
 }
 
 impl<'a> Parser<'a> {
-    pub fn new(tokens: &'a [Spanned<Token>], input: &'a str) -> Self {
+    pub fn new(tokens: &'a [RichToken], input: &'a str) -> Self {
         Self {
             tokens,
             input,
@@ -110,17 +111,19 @@ impl<'a> Parser<'a> {
     }
 
     /// Peek at the current token without consuming it.
-    pub fn peek(&self) -> Option<&Spanned<Token>> {
-        self.tokens.get(self.pos)
+    /// Returns the token and its span for easy destructuring.
+    pub fn peek(&self) -> Option<(&Token, Span)> {
+        self.tokens.get(self.pos).map(|rt| (&rt.token, rt.span))
     }
 
     /// Consume the current token and return it.
+    /// Returns the token and its span for easy destructuring.
     #[allow(clippy::indexing_slicing, reason = "Bounds checked by the condition")]
-    pub fn advance(&mut self) -> Option<&Spanned<Token>> {
+    pub fn advance(&mut self) -> Option<(&Token, Span)> {
         (self.pos < self.tokens.len()).then(|| {
-            let tok = &self.tokens[self.pos];
+            let rt = &self.tokens[self.pos];
             self.pos += 1;
-            tok
+            (&rt.token, rt.span)
         })
     }
 
@@ -129,7 +132,10 @@ impl<'a> Parser<'a> {
     pub fn skip_ws(&mut self) {
         while let Some((tok, _)) = self.peek() {
             match tok {
-                Token::Whitespace | Token::Comment(_) | Token::Indent(_) => {
+                Token::Whitespace
+                | Token::WhitespaceWithTabs
+                | Token::Comment(_)
+                | Token::Indent(_) => {
                     self.advance();
                 }
                 _ => break,
@@ -152,7 +158,6 @@ impl<'a> Parser<'a> {
             match tok {
                 Token::LineStart(indent) => {
                     let indent = *indent;
-                    let span = *span;
                     self.advance();
 
                     // In flow context, check for invalid column 0 continuations
@@ -165,19 +170,18 @@ impl<'a> Parser<'a> {
                             // Skip past Whitespace tokens (tabs used as indentation)
                             // and check the actual column of the content token
                             let mut peek_offset = 0;
-                            while let Some((token, _)) = self.tokens.get(self.pos + peek_offset) {
-                                if matches!(token, Token::Whitespace) {
+                            while let Some(rt) = self.tokens.get(self.pos + peek_offset) {
+                                if matches!(rt.token, Token::Whitespace | Token::WhitespaceWithTabs)
+                                {
                                     peek_offset += 1;
                                 } else {
                                     break;
                                 }
                             }
 
-                            if let Some((next_tok, next_span)) =
-                                self.tokens.get(self.pos + peek_offset)
-                            {
+                            if let Some(rt) = self.tokens.get(self.pos + peek_offset) {
                                 let is_content = !matches!(
-                                    next_tok,
+                                    rt.token,
                                     Token::LineStart(_)
                                         | Token::FlowSeqEnd
                                         | Token::FlowMapEnd
@@ -185,7 +189,7 @@ impl<'a> Parser<'a> {
                                         | Token::DocEnd
                                 );
                                 // Check actual column of content token
-                                let content_col = self.column_of_position(next_span.start);
+                                let content_col = self.column_of_position(rt.span.start);
                                 if is_content && content_col == 0 {
                                     self.errors.push(crate::error::ParseError {
                                         kind: ErrorKind::InvalidIndentation,
@@ -213,7 +217,7 @@ impl<'a> Parser<'a> {
                     // `Indent`/`Dedent` tokens are structural markers - skip them when skipping whitespace
                     self.advance();
                 }
-                Token::Whitespace | Token::Comment(_) => {
+                Token::Whitespace | Token::WhitespaceWithTabs | Token::Comment(_) => {
                     self.advance();
                 }
                 _ => break,
@@ -279,33 +283,30 @@ impl<'a> Parser<'a> {
             return;
         }
 
-        // Check: is the previous token LineStart and current token Whitespace?
-        if let Some((Token::LineStart(_), _)) = self.tokens.get(self.pos - 1)
-            && let Some((Token::Whitespace, ws_span)) = self.peek()
+        // Check: is the previous token LineStart?
+        // If so, check if the current token has WhitespaceWithTabs in its leading trivia
+        // (which would indicate tabs used for indentation)
+        if let Some(prev_rt) = self.tokens.get(self.pos - 1)
+            && matches!(prev_rt.token, Token::LineStart(_))
+            && let Some(current_rt) = self.tokens.get(self.pos)
         {
-            let ws_span = *ws_span;
-            #[allow(
-                clippy::string_slice,
-                reason = "Span is from lexer tokens and guaranteed to be valid"
-            )]
-            let ws_content = &self.input[ws_span.start..ws_span.end];
-
-            if ws_content.contains('\t') {
-                let next_token_pos = self.pos + 1;
-                let is_flow_content = if let Some((tok, _)) = self.tokens.get(next_token_pos) {
-                    matches!(
-                        tok,
-                        Token::FlowMapStart
-                            | Token::FlowMapEnd
-                            | Token::FlowSeqStart
-                            | Token::FlowSeqEnd
-                    )
-                } else {
-                    false
-                };
+            // Look for WhitespaceWithTabs in leading trivia of current token
+            if let Some(tab_trivia) = current_rt
+                .leading_trivia
+                .iter()
+                .find(|tr| matches!(tr.kind, TriviaKind::WhitespaceWithTabs))
+            {
+                // Check if next real token is flow content (tabs allowed there)
+                let is_flow_content = matches!(
+                    current_rt.token,
+                    Token::FlowMapStart
+                        | Token::FlowMapEnd
+                        | Token::FlowSeqStart
+                        | Token::FlowSeqEnd
+                );
 
                 if !is_flow_content {
-                    self.error(ErrorKind::InvalidIndentation, ws_span);
+                    self.error(ErrorKind::InvalidIndentation, tab_trivia.span);
                 }
             }
         }
@@ -324,7 +325,7 @@ impl<'a> Parser<'a> {
                     | Token::BlockSeqIndicator
             );
             if is_content && span.start == flow_end {
-                self.error(ErrorKind::UnexpectedToken, *span);
+                self.error(ErrorKind::UnexpectedToken, span);
             }
         }
     }
@@ -340,7 +341,11 @@ impl<'a> Parser<'a> {
         while !self.is_eof() {
             match self.peek() {
                 Some((
-                    Token::Whitespace | Token::Comment(_) | Token::Dedent | Token::LineStart(_),
+                    Token::Whitespace
+                    | Token::WhitespaceWithTabs
+                    | Token::Comment(_)
+                    | Token::Dedent
+                    | Token::LineStart(_),
                     _,
                 )) => {
                     self.advance();
@@ -367,7 +372,7 @@ impl<'a> Parser<'a> {
             let col = self.current_token_column();
 
             if is_content && col <= root_indent {
-                self.error(ErrorKind::UnexpectedToken, *span);
+                self.error(ErrorKind::UnexpectedToken, span);
             }
         }
 
@@ -388,33 +393,34 @@ impl<'a> Parser<'a> {
 
         // Skip anchors, tags, and whitespace
         while check_pos < self.tokens.len() {
-            match &self.tokens[check_pos].0 {
-                Token::Anchor(_) | Token::Tag(_) | Token::Whitespace => check_pos += 1,
+            match &self.tokens[check_pos].token {
+                Token::Anchor(_)
+                | Token::Tag(_)
+                | Token::Whitespace
+                | Token::WhitespaceWithTabs => check_pos += 1,
                 _ => break,
             }
         }
 
         // Check for block sequence indicator (- item)
-        if matches!(
-            self.tokens.get(check_pos),
-            Some((Token::BlockSeqIndicator, _))
-        ) {
-            return true;
+        if let Some(rt) = self.tokens.get(check_pos) {
+            if matches!(rt.token, Token::BlockSeqIndicator) {
+                return true;
+            }
         }
 
         // Check for scalar followed by Colon (key: value pattern)
-        if matches!(
-            self.tokens.get(check_pos),
-            Some((Token::Plain(_) | Token::StringStart(_), _))
-        ) {
-            // Look for Colon (:) after the scalar
-            // May have whitespace between scalar and :
-            let mut after_scalar = check_pos + 1;
-            while after_scalar < self.tokens.len() {
-                match &self.tokens[after_scalar].0 {
-                    Token::Whitespace => after_scalar += 1,
-                    Token::Colon => return true,
-                    _ => break,
+        if let Some(rt) = self.tokens.get(check_pos) {
+            if matches!(rt.token, Token::Plain(_) | Token::StringStart(_)) {
+                // Look for Colon (:) after the scalar
+                // May have whitespace between scalar and :
+                let mut after_scalar = check_pos + 1;
+                while after_scalar < self.tokens.len() {
+                    match &self.tokens[after_scalar].token {
+                        Token::Whitespace | Token::WhitespaceWithTabs => after_scalar += 1,
+                        Token::Colon => return true,
+                        _ => break,
+                    }
                 }
             }
         }
@@ -434,8 +440,8 @@ impl<'a> Parser<'a> {
     pub fn check_multiline_implicit_key(&mut self, key_start: usize, key_end: usize) {
         let mut check_pos = self.pos;
         while check_pos < self.tokens.len() {
-            match &self.tokens[check_pos].0 {
-                Token::Whitespace => check_pos += 1,
+            match &self.tokens[check_pos].token {
+                Token::Whitespace | Token::WhitespaceWithTabs => check_pos += 1,
                 Token::Colon => break,
                 _ => return,
             }
@@ -443,7 +449,7 @@ impl<'a> Parser<'a> {
         if check_pos >= self.tokens.len() {
             return;
         }
-        let colon_span = self.tokens[check_pos].1;
+        let colon_span = self.tokens[check_pos].span;
 
         let key_text = &self.input[key_start..key_end.min(self.input.len())];
         if key_text.contains('\n') {
@@ -451,8 +457,11 @@ impl<'a> Parser<'a> {
             return;
         }
 
-        for (tok, span) in &self.tokens[..self.pos] {
-            if span.start > key_start && span.end <= key_end && matches!(tok, Token::LineStart(_)) {
+        for rt in &self.tokens[..self.pos] {
+            if rt.span.start > key_start
+                && rt.span.end <= key_end
+                && matches!(rt.token, Token::LineStart(_))
+            {
                 self.error(ErrorKind::UnexpectedToken, colon_span);
                 return;
             }
@@ -480,7 +489,6 @@ impl<'a> Parser<'a> {
         }
 
         if let Some((_, span)) = self.peek() {
-            let span = *span;
             self.error(ErrorKind::UnexpectedToken, span);
         }
     }
@@ -492,7 +500,7 @@ impl<'a> Parser<'a> {
     )]
     pub fn current_indent(&self) -> usize {
         for i in (0..self.pos).rev() {
-            if let (Token::LineStart(n), _) = &self.tokens[i] {
+            if let Token::LineStart(n) = &self.tokens[i].token {
                 return *n;
             }
         }
@@ -502,7 +510,7 @@ impl<'a> Parser<'a> {
     /// Get the span of the current position.
     pub fn current_span(&self) -> Span {
         self.peek()
-            .map_or_else(|| Span::new((), 0..0), |(_, span)| *span)
+            .map_or_else(|| Span::new((), 0..0), |(_, span)| span)
     }
 
     /// Check if current position is a mapping key pattern (scalar followed by colon).
@@ -513,14 +521,14 @@ impl<'a> Parser<'a> {
     pub fn is_mapping_key_pattern(&self) -> bool {
         let mut i = self.pos;
         match self.tokens.get(i) {
-            Some((Token::Plain(_), _)) => {
+            Some(rt) if matches!(rt.token, Token::Plain(_)) => {
                 i += 1;
             }
-            Some((Token::StringStart(_), _)) => {
+            Some(rt) if matches!(rt.token, Token::StringStart(_)) => {
                 // Skip the entire quoted string (StringStart, StringContent*, LineStart*, StringEnd)
                 i += 1;
                 while i < self.tokens.len() {
-                    match &self.tokens[i].0 {
+                    match &self.tokens[i].token {
                         Token::StringEnd(_) => {
                             i += 1;
                             break;
@@ -534,10 +542,15 @@ impl<'a> Parser<'a> {
             }
             _ => return false,
         }
-        while let Some((Token::Whitespace, _)) = self.tokens.get(i) {
+        while let Some(rt) = self.tokens.get(i) {
+            if !matches!(rt.token, Token::Whitespace | Token::WhitespaceWithTabs) {
+                break;
+            }
             i += 1;
         }
-        matches!(self.tokens.get(i), Some((Token::Colon, _)))
+        self.tokens
+            .get(i)
+            .is_some_and(|rt| matches!(rt.token, Token::Colon))
     }
 
     /// Add an error.
@@ -644,7 +657,6 @@ impl<'a> Parser<'a> {
             let start_pos = self.pos;
 
             let explicit_doc_start = if let Some((Token::DocStart, span)) = self.peek() {
-                let span = *span;
                 self.advance();
                 self.skip_ws_and_newlines();
                 Some(span)
@@ -697,7 +709,6 @@ impl<'a> Parser<'a> {
         self.skip_ws();
 
         let (tok, span) = self.peek()?;
-        let span = *span;
 
         match tok {
             // Flow mapping
@@ -846,7 +857,7 @@ impl<'a> Parser<'a> {
                             | Token::BlockSeqIndicator
                     );
                     if is_content && next_span.start == tag_end {
-                        self.error(ErrorKind::UnexpectedToken, *next_span);
+                        self.error(ErrorKind::UnexpectedToken, next_span);
                     }
                 }
 
@@ -959,7 +970,7 @@ impl<'a> Parser<'a> {
 /// Returns the parsed documents and any errors encountered.
 /// Due to error recovery, partial values may be returned even when
 /// errors are present.
-pub fn parse_tokens(tokens: &[Spanned<Token>], input: &str) -> (Stream, Vec<ParseError>) {
+pub fn parse_tokens(tokens: &[RichToken], input: &str) -> (Stream, Vec<ParseError>) {
     let mut parser = Parser::new(tokens, input);
     let stream = parser.parse_stream();
     (stream, parser.errors)
@@ -976,7 +987,7 @@ pub fn parse_tokens(tokens: &[Spanned<Token>], input: &str) -> (Stream, Vec<Pars
 ///
 /// Returns the parsed node (or None if empty) and any errors encountered.
 pub fn parse_single_document(
-    tokens: &[Spanned<Token>],
+    tokens: &[RichToken],
     input: &str,
     directives: &[Spanned<crate::stream_lexer::Directive>],
 ) -> (Option<Node>, Vec<ParseError>) {
@@ -995,7 +1006,10 @@ pub fn parse_single_document(
         parser.advance(); // consume DocStart
 
         // Skip whitespace after `---` (but NOT newlines yet)
-        while matches!(parser.peek(), Some((Token::Whitespace, _))) {
+        while matches!(
+            parser.peek(),
+            Some((Token::Whitespace | Token::WhitespaceWithTabs, _))
+        ) {
             parser.advance();
         }
 
@@ -1076,10 +1090,10 @@ pub fn parse_single_document(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::lexer::tokenize;
+    use crate::context_lexer::tokenize_document;
 
     fn parse(input: &str) -> (Stream, Vec<ParseError>) {
-        let (tokens, _) = tokenize(input);
+        let (tokens, _) = tokenize_document(input);
         parse_tokens(&tokens, input)
     }
 

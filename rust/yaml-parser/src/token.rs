@@ -102,6 +102,8 @@ pub enum Token {
     LineStart(usize),
     /// Whitespace (spaces only, not at line start)
     Whitespace,
+    /// Whitespace containing at least one tab character (not at line start)
+    WhitespaceWithTabs,
     /// Comment content (after `#`, without the `#` prefix)
     Comment(String),
 
@@ -167,6 +169,7 @@ impl std::fmt::Display for Token {
             Self::ReservedDirective(value) => write!(f, "%{value}"),
             Self::LineStart(n) => write!(f, "line start (indent={n})"),
             Self::Whitespace => write!(f, "whitespace"),
+            Self::WhitespaceWithTabs => write!(f, "whitespace (with tabs)"),
             Self::Comment(comment) => write!(f, "comment '{comment}'"),
             Self::Indent(n) => write!(f, "INDENT({n})"),
             Self::Dedent => write!(f, "DEDENT"),

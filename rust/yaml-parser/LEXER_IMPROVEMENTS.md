@@ -30,7 +30,7 @@ This document tracks improvements to the YAML lexer for better IDE/language serv
 
 ### Phase 1: Language Server Foundation
 
-- [ ] **1.1 Token Trivia Preservation** - Associate comments/whitespace with tokens
+- [x] **1.1 Token Trivia Preservation** - Associate comments/whitespace with tokens ✅ 2026-02-24
 - [ ] **1.2 Incremental Lexing Support** - Re-lex only affected regions
 - [x] **1.3 Line/Column Position Tracking** - SourceMap utility ✅ 2026-02-24 (Quick Win #1)
 
@@ -53,6 +53,16 @@ This document tracks improvements to the YAML lexer for better IDE/language serv
 ---
 
 ## Change Log
+
+### 2026-02-24: Phase 1.1 Token Trivia Preservation
+
+- ✅ Phase 1.1: Added token trivia preservation (commit f0e9504)
+  - Created `trivia.rs` module with `TriviaKind`, `Trivia`, and `RichToken` types
+  - Added `tokenize_with_trivia()` function returning `Vec<RichToken>`
+  - Leading trivia: all trivia before a token (including line breaks)
+  - Trailing trivia: trivia on same line after token (before line break)
+  - Follows industry standard pattern used by TypeScript, Roslyn, rust-analyzer
+  - Exported from public API: `RichToken`, `Trivia`, `TriviaKind`, `tokenize_with_trivia`
 
 ### 2026-02-24: Quick Wins, Phase 3.1, and Phase 4 Complete
 

@@ -72,7 +72,11 @@ impl Parser<'_> {
                         self.advance();
                     }
                     Some((
-                        Token::Whitespace | Token::Comment(_) | Token::Indent(_) | Token::Dedent,
+                        Token::Whitespace
+                        | Token::WhitespaceWithTabs
+                        | Token::Comment(_)
+                        | Token::Indent(_)
+                        | Token::Dedent,
                         _,
                     )) => {
                         self.advance();
@@ -124,7 +128,6 @@ impl Parser<'_> {
                 match self.peek() {
                     Some((Token::Anchor(name), anchor_span)) => {
                         let anchor_name: String = name.clone();
-                        let anchor_span = *anchor_span;
                         self.advance();
                         self.skip_ws();
                         if key_props.anchor.is_some() {
@@ -134,7 +137,6 @@ impl Parser<'_> {
                     }
                     Some((Token::Tag(name), tag_span)) => {
                         let tag = name.clone();
-                        let tag_span = *tag_span;
                         self.advance();
                         self.skip_ws();
                         if key_props.tag.is_some() {
@@ -142,7 +144,7 @@ impl Parser<'_> {
                         }
                         key_props.tag = Some((tag, tag_span));
                     }
-                    Some((Token::Whitespace, _)) => {
+                    Some((Token::Whitespace | Token::WhitespaceWithTabs, _)) => {
                         self.advance();
                     }
                     _ => break,
@@ -171,7 +173,6 @@ impl Parser<'_> {
                 // Check if the key is an alias with properties (invalid)
                 if let Some((Token::Alias(name), span)) = self.peek() {
                     let alias_name = name.clone();
-                    let span = *span;
                     if !key_props.is_empty() {
                         self.error(ErrorKind::PropertiesOnAlias, span);
                     }
@@ -341,7 +342,6 @@ impl Parser<'_> {
             match self.peek() {
                 Some((Token::Tag(name), tag_span)) => {
                     let tag = name.clone();
-                    let tag_span = *tag_span;
                     self.advance();
                     self.skip_ws();
                     if key_props.tag.is_some() {
@@ -351,7 +351,6 @@ impl Parser<'_> {
                 }
                 Some((Token::Anchor(name), anchor_span)) => {
                     let anchor_name = name.clone();
-                    let anchor_span = *anchor_span;
                     self.advance();
                     self.skip_ws();
                     if key_props.anchor.is_some() {
@@ -359,7 +358,7 @@ impl Parser<'_> {
                     }
                     key_props.anchor = Some((anchor_name, anchor_span));
                 }
-                Some((Token::Whitespace, _)) => {
+                Some((Token::Whitespace | Token::WhitespaceWithTabs, _)) => {
                     self.advance();
                 }
                 _ => break,
@@ -620,7 +619,6 @@ impl Parser<'_> {
                         match self.peek() {
                             Some((Token::Tag(name), tag_span)) => {
                                 let tag = name.clone();
-                                let tag_span = *tag_span;
                                 self.advance();
                                 self.skip_ws();
                                 if inner_props.tag.is_some() {
@@ -630,7 +628,6 @@ impl Parser<'_> {
                             }
                             Some((Token::Anchor(name), anchor_span)) => {
                                 let anchor_name = name.clone();
-                                let anchor_span = *anchor_span;
                                 self.advance();
                                 self.skip_ws();
                                 if inner_props.anchor.is_some() {
@@ -638,7 +635,7 @@ impl Parser<'_> {
                                 }
                                 inner_props.anchor = Some((anchor_name, anchor_span));
                             }
-                            Some((Token::Whitespace, _)) => {
+                            Some((Token::Whitespace | Token::WhitespaceWithTabs, _)) => {
                                 self.advance();
                             }
                             _ => break,
@@ -817,7 +814,6 @@ impl Parser<'_> {
                 Some((Token::Plain(_) | Token::StringStart(_), _)) => self.parse_scalar(),
                 Some((Token::Alias(name), span)) => {
                     let new_alias_name = name.clone();
-                    let span = *span;
                     self.advance();
                     if !self.anchors.contains_key(&new_alias_name) {
                         self.error(ErrorKind::UndefinedAlias, span);

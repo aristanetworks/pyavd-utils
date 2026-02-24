@@ -45,7 +45,7 @@ mod token;
 mod trivia;
 mod value;
 
-pub use context_lexer::tokenize_with_trivia;
+pub use context_lexer::tokenize_document;
 pub use error::{ErrorKind, ParseError};
 pub use lexer::{Token, tokenize};
 pub use parser::{Stream, parse_single_document, parse_tokens};
@@ -81,8 +81,19 @@ pub fn parse_legacy(input: &str) -> (Stream, Vec<ParseError>) {
     // Lexer phase
     let (tokens, mut errors) = tokenize(input);
 
+    // Convert legacy tokens to RichToken format
+    let rich_tokens: Vec<trivia::RichToken> = tokens
+        .into_iter()
+        .map(|(token, span)| trivia::RichToken {
+            token,
+            span,
+            leading_trivia: Vec::new(),
+            trailing_trivia: Vec::new(),
+        })
+        .collect();
+
     // Parser phase
-    let (stream, parser_errors) = parse_tokens(&tokens, input);
+    let (stream, parser_errors) = parse_tokens(&rich_tokens, input);
     errors.extend(parser_errors);
 
     (stream, errors)
