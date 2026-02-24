@@ -32,13 +32,13 @@ This document tracks improvements to the YAML lexer for better IDE/language serv
 
 - [ ] **1.1 Token Trivia Preservation** - Associate comments/whitespace with tokens
 - [ ] **1.2 Incremental Lexing Support** - Re-lex only affected regions
-- [ ] **1.3 Line/Column Position Tracking** - SourceMap utility (see Quick Win #1)
+- [x] **1.3 Line/Column Position Tracking** - SourceMap utility ✅ 2026-02-24 (Quick Win #1)
 
 ### Phase 2: Performance Optimizations
 
 - [ ] **2.1 Zero-Copy Tokenization** - Use `Cow<'input, str>` for token content
 - [ ] **2.2 Lazy Token Iteration** - Return iterator instead of Vec
-- [ ] **2.3 Character Iterator Optimization** - (see Quick Win #3)
+- [x] **2.3 Character Iterator Optimization** ✅ 2026-02-24 (Quick Win #3)
 
 ### Phase 3: Error Recovery Improvements
 
@@ -46,15 +46,15 @@ This document tracks improvements to the YAML lexer for better IDE/language serv
 
 ### Phase 4: Architecture Refinements
 
-- [ ] **4.1 Consolidate Token Types** - (see Quick Win #2)
+- [x] **4.1 Consolidate Token Types** ✅ 2026-02-24 (Quick Win #2)
 - [x] **4.2 State Machine Extraction** - Break up monolithic `next_token()` ✅ 2026-02-24
-- [ ] **4.3 Unify Quoted String Handling** - Reduce duplication
+- [x] **4.3 Unify Quoted String Handling** - Reduce duplication ✅ 2026-02-24
 
 ---
 
 ## Change Log
 
-### 2026-02-24: Quick Wins and Phase 4.2 Complete
+### 2026-02-24: Quick Wins and Phase 4 Complete
 
 - ✅ Quick Win #1: Added SourceMap for line/column position tracking
 - ✅ Quick Win #2: Extracted token types to dedicated `token.rs` module
@@ -62,6 +62,9 @@ This document tracks improvements to the YAML lexer for better IDE/language serv
 - ✅ Phase 4.2: Extracted state machine from `next_token()` (230→45 lines)
   - Added 10 helper methods for different token types
   - Improved maintainability and testability
+- ✅ Phase 4.3: Unified quoted string handling
+  - Extracted `handle_quoted_newline()` and `finalize_quoted_string()` helpers
+  - Reduced code duplication by ~35 lines
 
 ### 2026-02-24: Initial Plan Created
 
