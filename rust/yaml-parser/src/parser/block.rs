@@ -336,34 +336,8 @@ impl Parser<'_, '_> {
         let map_indent = self.current_indent();
         let mut pairs: Vec<(Node, Node)> = Vec::new();
 
-        let mut key_props = first_key_props;
-
-        loop {
-            match self.peek() {
-                Some((Token::Tag(name), tag_span)) => {
-                    let tag = name.to_string();
-                    self.advance();
-                    self.skip_ws();
-                    if key_props.tag.is_some() {
-                        self.error(ErrorKind::DuplicateTag, tag_span);
-                    }
-                    key_props.tag = Some((tag, tag_span));
-                }
-                Some((Token::Anchor(name), anchor_span)) => {
-                    let anchor_name = name.to_string();
-                    self.advance();
-                    self.skip_ws();
-                    if key_props.anchor.is_some() {
-                        self.error(ErrorKind::DuplicateAnchor, anchor_span);
-                    }
-                    key_props.anchor = Some((anchor_name, anchor_span));
-                }
-                Some((Token::Whitespace | Token::WhitespaceWithTabs, _)) => {
-                    self.advance();
-                }
-                _ => break,
-            }
-        }
+        // Collect any additional properties after the initial ones
+        let key_props = self.collect_node_properties(first_key_props);
 
         let first_key = match self.peek() {
             Some((Token::Plain(_) | Token::StringStart(_), _)) => {
