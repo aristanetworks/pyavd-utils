@@ -13,7 +13,7 @@ use crate::value::{Node, Value};
 
 use super::{NodeProperties, Parser};
 
-impl Parser<'_, '_> {
+impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
     /// Enter a flow collection context.
     ///
     /// Tracks flow depth and starting column for proper indentation validation.
@@ -92,9 +92,9 @@ impl Parser<'_, '_> {
         clippy::indexing_slicing,
         reason = "Token positions are validated by parser logic before access"
     )]
-    pub fn parse_flow_mapping(&mut self) -> Option<Node> {
+    pub fn parse_flow_mapping(&mut self) -> Option<Node<'input>> {
         let start = self.enter_flow_collection()?;
-        let mut pairs: Vec<(Node, Node)> = Vec::new();
+        let mut pairs: Vec<(Node<'input>, Node<'input>)> = Vec::new();
         let mut just_saw_comma = true; // Start true to catch leading comma
 
         self.skip_ws_and_newlines();
@@ -220,9 +220,9 @@ impl Parser<'_, '_> {
 
     /// Parse a flow sequence: [ item, ... ]
     /// Also handles implicit flow mappings like [ key: value, ... ]
-    pub fn parse_flow_sequence(&mut self) -> Option<Node> {
+    pub fn parse_flow_sequence(&mut self) -> Option<Node<'input>> {
         let start = self.enter_flow_collection()?;
-        let mut items: Vec<Node> = Vec::new();
+        let mut items: Vec<Node<'input>> = Vec::new();
         let mut just_saw_comma = true;
 
         self.skip_ws_and_newlines();
@@ -294,15 +294,15 @@ impl Parser<'_, '_> {
     }
 
     /// Parse a value in flow context (no block structures).
-    pub fn parse_flow_value(&mut self) -> Option<Node> {
+    pub fn parse_flow_value(&mut self) -> Option<Node<'input>> {
         self.parse_flow_value_with_properties(NodeProperties::default())
     }
 
     /// Parse a flow value with already-collected node properties.
     pub fn parse_flow_value_with_properties(
         &mut self,
-        initial_props: NodeProperties,
-    ) -> Option<Node> {
+        initial_props: NodeProperties<'input>,
+    ) -> Option<Node<'input>> {
         self.skip_ws_and_newlines();
 
         // Collect any properties (anchors/tags) before the value

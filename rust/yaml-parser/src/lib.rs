@@ -59,6 +59,10 @@ pub use value::{Node, Value};
 /// even when errors are present. Each document in the stream is a separate
 /// `Spanned<Value>`.
 ///
+/// This function returns owned data (`Node<'static>`) for convenience. If you need
+/// zero-copy parsing to avoid allocations, use `parse_single_document` directly
+/// with your own token storage.
+///
 /// # Arguments
 ///
 /// * `input` - The YAML source code to parse
@@ -68,10 +72,10 @@ pub use value::{Node, Value};
 /// A tuple of:
 /// - `Stream` (Vec<Spanned<Value>>) - The parsed documents with spans
 /// - `Vec<ParseError>` - Any errors encountered during parsing (from both lexer and parser)
-pub fn parse(input: &str) -> (Stream, Vec<ParseError>) {
+pub fn parse(input: &str) -> (Stream<'static>, Vec<ParseError>) {
     use chumsky::span::Span as _;
 
-    let mut all_docs: Stream = Vec::new();
+    let mut all_docs: Stream<'static> = Vec::new();
     let mut all_errors = Vec::new();
 
     // Step 1: Parse stream into raw documents
@@ -95,7 +99,8 @@ pub fn parse(input: &str) -> (Stream, Vec<ParseError>) {
             || raw_doc.content.trim_end().ends_with("...");
 
         if let Some(doc_) = doc {
-            all_docs.push(doc_);
+            // Convert to owned data since we're returning beyond the scope of raw_doc
+            all_docs.push(doc_.into_owned());
         } else if has_explicit_marker {
             // Empty explicit document -> produce null
             all_docs.push(Node::null(Span::new((), 0..0)));
