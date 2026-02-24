@@ -442,7 +442,7 @@ mod tests {
         avdschema::base::Deprecation {
             warning: true,
             new_key: Some("new_key".to_string()),
-            removed: true,
+            removed: Some(true),
             remove_in_version: Some("6.0.0".to_string()),
             url: Some("my.url".to_string()),
             ..Default::default()
