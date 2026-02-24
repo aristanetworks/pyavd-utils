@@ -14,25 +14,79 @@ use crate::value::{Node, Value};
 use super::{NodeProperties, Parser};
 
 impl Parser<'_, '_> {
+    /// Enter a flow collection context.
+    ///
+    /// Tracks flow depth and starting column for proper indentation validation.
+    /// Returns the start position for span tracking.
+    fn enter_flow_collection(&mut self) -> Option<usize> {
+        let (_, start_span) = self.advance()?;
+        let start = start_span.start;
+        let flow_start_column = self.column_of_position(start);
+
+        self.flow_depth += 1;
+        self.flow_context_columns.push(flow_start_column);
+
+        Some(start)
+    }
+
+    /// Exit a flow collection context.
+    ///
+    /// Decrements flow depth and removes the column tracking.
+    fn exit_flow_collection(&mut self) {
+        self.flow_depth -= 1;
+        self.flow_context_columns.pop();
+    }
+
+    /// Handle a comma in flow context.
+    ///
+    /// Returns true if a comma was consumed, false otherwise.
+    /// Reports an error if consecutive commas are detected.
+    fn handle_flow_comma(&mut self, just_saw_comma: &mut bool) -> bool {
+        if let Some((Token::Comma, comma_span)) = self.peek() {
+            if *just_saw_comma {
+                self.error(ErrorKind::UnexpectedToken, comma_span);
+            }
+            self.advance();
+            self.skip_ws_and_newlines();
+            *just_saw_comma = true;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Handle end of flow entry (comma or closing delimiter).
+    ///
+    /// Consumes a comma if present, otherwise checks for expected end token.
+    /// Reports error and skips to delimiter if unexpected token found.
+    fn handle_flow_entry_end(
+        &mut self,
+        just_saw_comma: &mut bool,
+        is_end_token: impl Fn(&Token) -> bool,
+    ) {
+        if let Some((Token::Comma, _)) = self.peek() {
+            self.advance();
+            self.skip_ws_and_newlines();
+            *just_saw_comma = true;
+        } else if let Some((tok, _)) = self.peek() {
+            if is_end_token(tok) {
+                // Will be handled at top of loop
+            } else if !self.is_eof() {
+                self.error(ErrorKind::UnexpectedToken, self.current_span());
+                self.skip_to_flow_delimiter();
+            }
+        }
+    }
+
     /// Parse a flow mapping: { key: value, ... }
-    #[allow(
-        clippy::too_many_lines,
-        reason = "Complex flow mapping parsing logic, will be refactored later"
-    )]
     #[allow(
         clippy::indexing_slicing,
         reason = "Token positions are validated by parser logic before access"
     )]
     pub fn parse_flow_mapping(&mut self) -> Option<Node> {
-        let (_, start_span) = self.advance()?; // consume '{'
-        let start = start_span.start;
-        let flow_start_column = self.column_of_position(start);
+        let start = self.enter_flow_collection()?;
         let mut pairs: Vec<(Node, Node)> = Vec::new();
         let mut just_saw_comma = true; // Start true to catch leading comma
-
-        // Track flow depth and starting column for indentation validation
-        self.flow_depth += 1;
-        self.flow_context_columns.push(flow_start_column);
 
         self.skip_ws_and_newlines();
 
@@ -43,19 +97,12 @@ impl Parser<'_, '_> {
             if let Some((Token::FlowMapEnd, end_span)) = self.peek() {
                 let end = end_span.end;
                 self.advance();
-                self.flow_depth -= 1;
-                self.flow_context_columns.pop();
+                self.exit_flow_collection();
                 return Some(Node::new(Value::Mapping(pairs), Span::new((), start..end)));
             }
 
             // Check for consecutive commas (e.g., `{ a: 1, , b: 2 }`)
-            if let Some((Token::Comma, comma_span)) = self.peek() {
-                if just_saw_comma {
-                    self.error(ErrorKind::UnexpectedToken, comma_span);
-                }
-                self.advance();
-                self.skip_ws_and_newlines();
-                just_saw_comma = true;
+            if self.handle_flow_comma(&mut just_saw_comma) {
                 continue;
             }
 
@@ -139,16 +186,7 @@ impl Parser<'_, '_> {
             self.skip_ws_and_newlines();
 
             // Check for comma or end
-            if let Some((Token::Comma, _)) = self.peek() {
-                self.advance();
-                self.skip_ws_and_newlines();
-                just_saw_comma = true;
-            } else if let Some((Token::FlowMapEnd, _)) = self.peek() {
-                // Will be handled at top of loop
-            } else if !self.is_eof() {
-                self.error(ErrorKind::UnexpectedToken, self.current_span());
-                self.skip_to_flow_delimiter();
-            }
+            self.handle_flow_entry_end(&mut just_saw_comma, |tok| matches!(tok, Token::FlowMapEnd));
 
             // Ensure progress
             if self.pos == loop_start_pos && !self.is_eof() {
@@ -158,8 +196,7 @@ impl Parser<'_, '_> {
 
         // Unterminated mapping
         self.error(ErrorKind::UnexpectedEof, self.current_span());
-        self.flow_depth -= 1;
-        self.flow_context_columns.pop();
+        self.exit_flow_collection();
         let end = self.tokens.last().map_or(start, |rt| rt.span.end);
         Some(Node::new(Value::Mapping(pairs), Span::new((), start..end)))
     }
@@ -167,15 +204,9 @@ impl Parser<'_, '_> {
     /// Parse a flow sequence: [ item, ... ]
     /// Also handles implicit flow mappings like [ key: value, ... ]
     pub fn parse_flow_sequence(&mut self) -> Option<Node> {
-        let (_, start_span) = self.advance()?; // consume '['
-        let start = start_span.start;
-        let flow_start_column = self.column_of_position(start);
+        let start = self.enter_flow_collection()?;
         let mut items: Vec<Node> = Vec::new();
         let mut just_saw_comma = true;
-
-        // Track flow depth and starting column for indentation validation
-        self.flow_depth += 1;
-        self.flow_context_columns.push(flow_start_column);
 
         self.skip_ws_and_newlines();
 
@@ -185,18 +216,12 @@ impl Parser<'_, '_> {
             if let Some((Token::FlowSeqEnd, end_span)) = self.peek() {
                 let end = end_span.end;
                 self.advance();
-                self.flow_depth -= 1;
-                self.flow_context_columns.pop();
+                self.exit_flow_collection();
                 return Some(Node::new(Value::Sequence(items), Span::new((), start..end)));
             }
 
-            if let Some((Token::Comma, comma_span)) = self.peek() {
-                if just_saw_comma {
-                    self.error(ErrorKind::UnexpectedToken, comma_span);
-                }
-                self.advance();
-                self.skip_ws_and_newlines();
-                just_saw_comma = true;
+            // Check for consecutive commas
+            if self.handle_flow_comma(&mut just_saw_comma) {
                 continue;
             }
 
@@ -233,16 +258,8 @@ impl Parser<'_, '_> {
 
             self.skip_ws_and_newlines();
 
-            if let Some((Token::Comma, _)) = self.peek() {
-                self.advance();
-                self.skip_ws_and_newlines();
-                just_saw_comma = true;
-            } else if let Some((Token::FlowSeqEnd, _)) = self.peek() {
-                // Will be handled at top of loop
-            } else if !self.is_eof() {
-                self.error(ErrorKind::UnexpectedToken, self.current_span());
-                self.skip_to_flow_delimiter();
-            }
+            // Check for comma or end
+            self.handle_flow_entry_end(&mut just_saw_comma, |tok| matches!(tok, Token::FlowSeqEnd));
 
             if self.pos == loop_start_pos && !self.is_eof() {
                 self.advance();
@@ -250,8 +267,7 @@ impl Parser<'_, '_> {
         }
 
         self.error(ErrorKind::UnexpectedEof, self.current_span());
-        self.flow_depth -= 1;
-        self.flow_context_columns.pop();
+        self.exit_flow_collection();
         let end = self.tokens.last().map_or(start, |rt| rt.span.end);
         Some(Node::new(Value::Sequence(items), Span::new((), start..end)))
     }
