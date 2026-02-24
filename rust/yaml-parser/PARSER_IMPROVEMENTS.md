@@ -139,16 +139,21 @@ to use the contextual Named variants with specific anchor/tag/alias names.
 
 #### 3.2 Expected Token Sets for Better Diagnostics
 
-**Status:** [ ] Not Started
+**Status:** [x] Complete
 **Complexity:** Low
 **Impact:** Clearer error messages
 
-**Problem:** `ParseError::expected` field is often empty.
+**Problem:** `ParseError::expected` field was often empty.
 
-**Solution:**
+**Solution:** Added `error_expected()` method and updated key decision points:
 
-- At key decision points, populate expected tokens
-- Example: After `:` in mapping, expected values are scalars, collections, etc.
+- Flow collection entry end: expects `,` or closing delimiter
+- Flow mapping after key: expects `:`, `,`, or `}`
+- Consecutive commas in flow: expects `value`, `key`, or closing delimiter
+- `parse_value_with_properties` catch-all: expects `scalar`, `sequence`, `mapping`, etc.
+
+**Note:** The existing infrastructure (`ParseError::expected` field, `with_expected()` builder)
+was already in place. The implementation focused on populating these fields at key error sites.
 
 ## Implementation Priority
 
@@ -158,11 +163,11 @@ to use the contextual Named variants with specific anchor/tag/alias names.
 2. ~~**3.1 Contextual Error Variants**~~ - ✓ Done
 3. ~~**1.2 Method Extraction**~~ - ✓ Done
 4. ~~**1.3 Flow Unification**~~ - ✓ Done
+5. ~~**3.2 Expected Token Sets**~~ - ✓ Done
 
 **Remaining (recommended order):**
 
-1. **3.2 Expected Token Sets** - Low effort, better diagnostics
-2. **2.1/2.2 Performance** - Only if profiling shows need
+1. **2.1/2.2 Performance** - Only if profiling shows need
 
 ## Dropped Items
 
