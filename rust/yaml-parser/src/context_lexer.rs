@@ -9,7 +9,7 @@
 //! - In **block context** (`flow_depth` = 0): `,[]{}` are valid in plain scalars
 //! - In **flow context** (`flow_depth` > 0): `,[]{}` are delimiters
 //!
-//! This is Layer 2 of the layered parser architecture.
+//! This is Step 2 of the parser architecture.
 //!
 //! Uses `Cow<'input, str>` for zero-copy tokenization where possible.
 
@@ -108,17 +108,17 @@ impl<'input> ContextLexer<'input> {
 
     /// Peek the current character without advancing.
     fn peek(&self) -> Option<char> {
-        self.input[self.byte_pos..].chars().next()
+        self.input.get(self.byte_pos..)?.chars().next()
     }
 
     /// Peek `n` characters ahead (0 = current character).
     fn peek_n(&self, n: usize) -> Option<char> {
-        self.input[self.byte_pos..].chars().nth(n)
+        self.input.get(self.byte_pos..)?.chars().nth(n)
     }
 
     /// Advance to the next character and return the current one.
     fn advance(&mut self) -> Option<char> {
-        let ch = self.input[self.byte_pos..].chars().next()?;
+        let ch = self.input.get(self.byte_pos..)?.chars().next()?;
         self.byte_pos += ch.len_utf8();
         Some(ch)
     }
@@ -434,7 +434,11 @@ impl<'input> ContextLexer<'input> {
             self.advance();
         }
         // Borrow directly from input (zero-copy)
-        let content = &self.input[content_start..self.byte_pos];
+        // Byte positions are always at UTF-8 boundaries (maintained by advance())
+        let content = self
+            .input
+            .get(content_start..self.byte_pos)
+            .unwrap_or_default();
         Some((
             Token::Comment(Cow::Borrowed(content)),
             self.current_span(start),
@@ -664,7 +668,12 @@ impl<'input> ContextLexer<'input> {
             }
         }
         // Borrow directly from input (zero-copy)
-        Cow::Borrowed(&self.input[name_start..self.byte_pos])
+        // Byte positions are always at UTF-8 boundaries (maintained by advance())
+        Cow::Borrowed(
+            self.input
+                .get(name_start..self.byte_pos)
+                .unwrap_or_default(),
+        )
     }
 
     fn consume_tag(&mut self, start: usize) -> Spanned<Token<'input>> {
@@ -1164,7 +1173,7 @@ pub fn tokenize_document(input: &str) -> (Vec<RichToken<'_>>, Vec<ParseError>) {
 mod tests {
     use super::*;
 
-    fn get_tokens(input: &str) -> Vec<Token> {
+    fn get_tokens(input: &str) -> Vec<Token<'_>> {
         let (tokens, _errors) = tokenize_document(input);
         tokens
             .into_iter()

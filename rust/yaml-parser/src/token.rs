@@ -126,7 +126,7 @@ pub enum Token<'input> {
     Invalid,
 }
 
-impl<'input> Token<'input> {
+impl Token<'_> {
     /// Returns `true` if this is a scalar token.
     /// Note: StringStart/StringEnd/StringContent are components of a quoted scalar,
     /// not complete scalars themselves.

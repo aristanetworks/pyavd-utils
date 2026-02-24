@@ -32,11 +32,9 @@ pub enum ErrorKind {
     UnexpectedToken,
 
     /// Invalid indentation.
-    /// Contains (expected_indent, found_indent) when available.
     InvalidIndentation,
 
     /// Invalid indentation with context.
-    /// Contains (expected_indent, found_indent).
     InvalidIndentationContext { expected: usize, found: usize },
 
     /// Unterminated string literal (includes quote style for better messaging)
