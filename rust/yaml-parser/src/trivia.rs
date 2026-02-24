@@ -10,14 +10,20 @@
 //!
 //! This module provides types for attaching trivia to tokens, following the
 //! industry standard pattern used by TypeScript, Roslyn, and rust-analyzer.
+//!
+//! Trivia content uses `Cow<'input, str>` for zero-copy when possible.
+
+use std::borrow::Cow;
 
 use crate::span::Span;
 
 /// The kind of trivia (non-semantic content).
+///
+/// The lifetime `'input` refers to the input string being tokenized.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum TriviaKind {
+pub enum TriviaKind<'input> {
     /// A comment (content after `#` until end of line).
-    Comment(String),
+    Comment(Cow<'input, str>),
     /// Inline whitespace (spaces only, not newlines).
     Whitespace,
     /// Inline whitespace containing at least one tab character.
@@ -30,24 +36,26 @@ pub enum TriviaKind {
 }
 
 /// A piece of trivia with its source location.
+///
+/// The lifetime `'input` refers to the input string being tokenized.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Trivia {
+pub struct Trivia<'input> {
     /// The kind of trivia.
-    pub kind: TriviaKind,
+    pub kind: TriviaKind<'input>,
     /// The source location of this trivia.
     pub span: Span,
 }
 
-impl Trivia {
+impl<'input> Trivia<'input> {
     /// Create a new trivia item.
     #[must_use]
-    pub const fn new(kind: TriviaKind, span: Span) -> Self {
+    pub const fn new(kind: TriviaKind<'input>, span: Span) -> Self {
         Self { kind, span }
     }
 
     /// Create a comment trivia.
     #[must_use]
-    pub fn comment(content: String, span: Span) -> Self {
+    pub fn comment(content: Cow<'input, str>, span: Span) -> Self {
         Self::new(TriviaKind::Comment(content), span)
     }
 
@@ -107,7 +115,7 @@ impl Trivia {
     }
 }
 
-impl std::fmt::Display for TriviaKind {
+impl std::fmt::Display for TriviaKind<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Comment(content) => write!(f, "#{content}"),
@@ -118,7 +126,7 @@ impl std::fmt::Display for TriviaKind {
     }
 }
 
-impl std::fmt::Display for Trivia {
+impl std::fmt::Display for Trivia<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.kind)
     }
@@ -136,22 +144,24 @@ use crate::token::Token;
 /// - Leading trivia is attached to the token that follows it
 /// - Trailing trivia on the same line is attached to the preceding token
 /// - Line breaks (newlines + indentation) are considered leading trivia of the next token
+///
+/// The lifetime `'input` refers to the input string being tokenized.
 #[derive(Debug, Clone, PartialEq)]
-pub struct RichToken {
+pub struct RichToken<'input> {
     /// The actual token.
-    pub token: Token,
+    pub token: Token<'input>,
     /// The source location of the token (excluding trivia).
     pub span: Span,
     /// Trivia appearing before this token (comments, whitespace, line breaks).
-    pub leading_trivia: Vec<Trivia>,
+    pub leading_trivia: Vec<Trivia<'input>>,
     /// Trivia appearing after this token on the same line.
-    pub trailing_trivia: Vec<Trivia>,
+    pub trailing_trivia: Vec<Trivia<'input>>,
 }
 
-impl RichToken {
+impl<'input> RichToken<'input> {
     /// Create a new rich token with no trivia.
     #[must_use]
-    pub fn new(token: Token, span: Span) -> Self {
+    pub fn new(token: Token<'input>, span: Span) -> Self {
         Self {
             token,
             span,
@@ -162,7 +172,7 @@ impl RichToken {
 
     /// Create a rich token with leading trivia.
     #[must_use]
-    pub fn with_leading(token: Token, span: Span, leading: Vec<Trivia>) -> Self {
+    pub fn with_leading(token: Token<'input>, span: Span, leading: Vec<Trivia<'input>>) -> Self {
         Self {
             token,
             span,
@@ -172,12 +182,12 @@ impl RichToken {
     }
 
     /// Add leading trivia to this token.
-    pub fn add_leading(&mut self, trivia: Trivia) {
+    pub fn add_leading(&mut self, trivia: Trivia<'input>) {
         self.leading_trivia.push(trivia);
     }
 
     /// Add trailing trivia to this token.
-    pub fn add_trailing(&mut self, trivia: Trivia) {
+    pub fn add_trailing(&mut self, trivia: Trivia<'input>) {
         self.trailing_trivia.push(trivia);
     }
 
@@ -196,7 +206,7 @@ impl RichToken {
 
     /// Get all comment trivia (both leading and trailing).
     #[must_use]
-    pub fn comments(&self) -> Vec<&Trivia> {
+    pub fn comments(&self) -> Vec<&Trivia<'input>> {
         self.leading_trivia
             .iter()
             .chain(self.trailing_trivia.iter())
@@ -221,7 +231,7 @@ impl RichToken {
     }
 }
 
-impl std::fmt::Display for RichToken {
+impl std::fmt::Display for RichToken<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if !self.leading_trivia.is_empty() {
             write!(f, "[")?;
@@ -259,7 +269,7 @@ mod tests {
 
     #[test]
     fn test_trivia_creation() {
-        let comment = Trivia::comment("hello".to_owned(), Span::new((), 0..6));
+        let comment = Trivia::comment(Cow::Owned("hello".to_owned()), Span::new((), 0..6));
         assert!(comment.is_comment());
         assert_eq!(comment.comment_content(), Some("hello"));
 
@@ -281,7 +291,10 @@ mod tests {
 
     #[test]
     fn test_trivia_display() {
-        assert_eq!(TriviaKind::Comment("test".to_owned()).to_string(), "#test");
+        assert_eq!(
+            TriviaKind::Comment(Cow::Borrowed("test")).to_string(),
+            "#test"
+        );
         assert_eq!(TriviaKind::Whitespace.to_string(), "<whitespace>");
         assert_eq!(
             TriviaKind::WhitespaceWithTabs.to_string(),
@@ -292,7 +305,7 @@ mod tests {
 
     #[test]
     fn test_rich_token_creation() {
-        let token = RichToken::new(Token::Plain("test".to_owned()), Span::new((), 0..4));
+        let token = RichToken::new(Token::Plain(Cow::Borrowed("test")), Span::new((), 0..4));
         assert!(!token.has_trivia());
         assert!(!token.has_comments());
         assert_eq!(token.span, Span::new((), 0..4));
@@ -301,15 +314,18 @@ mod tests {
 
     #[test]
     fn test_rich_token_with_trivia() {
-        let mut token = RichToken::new(Token::Plain("test".to_owned()), Span::new((), 5..9));
+        let mut token = RichToken::new(Token::Plain(Cow::Borrowed("test")), Span::new((), 5..9));
 
         // Add leading whitespace and comment
         token.add_leading(Trivia::whitespace(Span::new((), 0..2)));
-        token.add_leading(Trivia::comment("comment".to_owned(), Span::new((), 2..10)));
+        token.add_leading(Trivia::comment(
+            Cow::Owned("comment".to_owned()),
+            Span::new((), 2..10),
+        ));
 
         // Add trailing comment
         token.add_trailing(Trivia::comment(
-            "trailing".to_owned(),
+            Cow::Owned("trailing".to_owned()),
             Span::new((), 10..19),
         ));
 
@@ -323,7 +339,7 @@ mod tests {
     fn test_rich_token_display() {
         let mut token = RichToken::new(Token::Colon, Span::new((), 5..6));
         token.add_leading(Trivia::whitespace(Span::new((), 4..5)));
-        token.add_trailing(Trivia::comment("key".to_owned(), Span::new((), 7..11)));
+        token.add_trailing(Trivia::comment(Cow::Borrowed("key"), Span::new((), 7..11)));
 
         let display = token.to_string();
         // Token::Colon displays as ':'

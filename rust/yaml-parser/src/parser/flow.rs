@@ -13,7 +13,7 @@ use crate::value::{Node, Value};
 
 use super::{NodeProperties, Parser};
 
-impl Parser<'_> {
+impl Parser<'_, '_> {
     /// Parse a flow mapping: { key: value, ... }
     #[allow(
         clippy::too_many_lines,
@@ -276,7 +276,7 @@ impl Parser<'_> {
                 .parse_flow_sequence()
                 .map(|node| self.apply_properties_and_register(props, node)),
             Token::Anchor(name) => {
-                let anchor_name = name.clone();
+                let anchor_name = name.to_string();
                 let anchor_span = start_span;
                 self.advance();
 
@@ -294,7 +294,7 @@ impl Parser<'_> {
                 self.parse_alias()
             }
             Token::Tag(tag) => {
-                let tag_name = tag.clone();
+                let tag_name = tag.to_string();
                 let tag_span = start_span;
                 self.advance();
 
@@ -306,7 +306,7 @@ impl Parser<'_> {
                 self.parse_flow_value_with_properties(props)
             }
             Token::Plain(string) => {
-                let mut combined = string.clone();
+                let mut combined = string.to_string();
                 let mut end_span = start_span;
                 self.advance();
 

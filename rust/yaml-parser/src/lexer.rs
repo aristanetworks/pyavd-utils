@@ -26,7 +26,7 @@ pub use crate::token::{BlockScalarHeader, Chomping, QuoteStyle, Token};
     reason = "Complex parser combinator logic, will be refactored later"
 )]
 fn lexer<'src>()
--> impl Parser<'src, &'src str, Vec<Spanned<Token>>, extra::Err<Rich<'src, char, Span>>> {
+-> impl Parser<'src, &'src str, Vec<Spanned<Token<'src>>>, extra::Err<Rich<'src, char, Span>>> {
     // === Character-level primitives ===
 
     // Newline characters (YAML 1.2: b-break)
@@ -49,7 +49,7 @@ fn lexer<'src>()
                 .repeated()
                 .to_slice(),
         )
-        .map(|string: &str| Token::Comment(string.to_owned()));
+        .map(|string: &str| Token::Comment(string.to_owned().into()));
 
     // Line start: newline followed by indentation (spaces only)
     let line_start = newline.ignore_then(space.repeated().count().map(Token::LineStart));
@@ -97,11 +97,11 @@ fn lexer<'src>()
 
     let anchor = just('&')
         .ignore_then(anchor_name)
-        .map(|string: &str| Token::Anchor(string.to_owned()));
+        .map(|string: &str| Token::Anchor(string.to_owned().into()));
 
     let alias = just('*')
         .ignore_then(anchor_name)
-        .map(|string: &str| Token::Alias(string.to_owned()));
+        .map(|string: &str| Token::Alias(string.to_owned().into()));
 
     // === Tags ===
     // Verbatim tag: !<uri>
@@ -131,7 +131,7 @@ fn lexer<'src>()
                     }
                 })),
         )
-        .map(Token::Tag);
+        .map(|tag_str: String| Token::Tag(tag_str.into()));
 
     // === Quoted scalars ===
 
@@ -199,7 +199,7 @@ fn lexer<'src>()
         .repeated()
         .collect::<String>()
         .delimited_by(just('"'), just('"'))
-        .map(Token::StringContent) // Simplified for chumsky lexer
+        .map(|str_val: String| Token::StringContent(str_val.into())) // Simplified for chumsky lexer
         .recover_with(via_parser(
             just('"')
                 .ignore_then(none_of("\"").repeated())
@@ -213,7 +213,7 @@ fn lexer<'src>()
         .repeated()
         .collect::<String>()
         .delimited_by(just('\''), just('\''))
-        .map(Token::StringContent) // Simplified for chumsky lexer
+        .map(|str_val: String| Token::StringContent(str_val.into())) // Simplified for chumsky lexer
         .recover_with(via_parser(
             just('\'')
                 .ignore_then(none_of("'").repeated())
@@ -256,14 +256,14 @@ fn lexer<'src>()
         .to_slice();
     let yaml_directive = just("%YAML")
         .ignore_then(directive_content)
-        .map(|string: &str| Token::YamlDirective(string.trim().to_owned()));
+        .map(|string: &str| Token::YamlDirective(string.trim().to_owned().into()));
     let tag_directive = just("%TAG")
         .ignore_then(directive_content)
-        .map(|string: &str| Token::TagDirective(string.trim().to_owned()));
+        .map(|string: &str| Token::TagDirective(string.trim().to_owned().into()));
     // Reserved/unknown directives: %NAME where NAME is not YAML or TAG
     let reserved_directive = just('%')
         .ignore_then(directive_content)
-        .map(|string: &str| Token::ReservedDirective(string.trim().to_owned()));
+        .map(|string: &str| Token::ReservedDirective(string.trim().to_owned().into()));
 
     // === Plain scalars ===
     // Plain scalars are complex - they:
@@ -359,7 +359,8 @@ fn lexer<'src>()
             let mut string = String::with_capacity(1 + rest.len());
             string.push(first);
             string.push_str(&rest);
-            Token::Plain(string.trim_end().to_owned())
+            // trim_end() returns &str so we need to_owned() to get String, then .into() for Cow
+            Token::Plain(string.trim_end().to_owned().into())
         });
 
     // === Whitespace token ===
@@ -427,7 +428,7 @@ fn lexer<'src>()
 ///
 /// Returns a list of tokens with spans and any errors encountered.
 /// Due to error recovery, the function may return both tokens and errors.
-pub fn tokenize(input: &str) -> (Vec<Spanned<Token>>, Vec<crate::error::ParseError>) {
+pub fn tokenize(input: &str) -> (Vec<Spanned<Token<'_>>>, Vec<crate::error::ParseError>) {
     use crate::error::{ErrorKind, ParseError};
     use chumsky::span::Span as _;
 

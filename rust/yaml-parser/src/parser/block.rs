@@ -13,7 +13,7 @@ use crate::value::{Node, Value};
 
 use super::{NodeProperties, Parser};
 
-impl Parser<'_> {
+impl Parser<'_, '_> {
     /// Parse a block sequence: - item\n- item
     pub fn parse_block_sequence(&mut self, _min_indent: usize) -> Option<Node> {
         let (_, start_span) = self.peek()?;
@@ -127,7 +127,7 @@ impl Parser<'_> {
             loop {
                 match self.peek() {
                     Some((Token::Anchor(name), anchor_span)) => {
-                        let anchor_name: String = name.clone();
+                        let anchor_name = name.to_string();
                         self.advance();
                         self.skip_ws();
                         if key_props.anchor.is_some() {
@@ -136,7 +136,7 @@ impl Parser<'_> {
                         key_props.anchor = Some((anchor_name, anchor_span));
                     }
                     Some((Token::Tag(name), tag_span)) => {
-                        let tag = name.clone();
+                        let tag = name.to_string();
                         self.advance();
                         self.skip_ws();
                         if key_props.tag.is_some() {
@@ -172,7 +172,7 @@ impl Parser<'_> {
             } else {
                 // Check if the key is an alias with properties (invalid)
                 if let Some((Token::Alias(name), span)) = self.peek() {
-                    let alias_name = name.clone();
+                    let alias_name = name.to_string();
                     if !key_props.is_empty() {
                         self.error(ErrorKind::PropertiesOnAlias, span);
                     }
@@ -341,7 +341,7 @@ impl Parser<'_> {
         loop {
             match self.peek() {
                 Some((Token::Tag(name), tag_span)) => {
-                    let tag = name.clone();
+                    let tag = name.to_string();
                     self.advance();
                     self.skip_ws();
                     if key_props.tag.is_some() {
@@ -350,7 +350,7 @@ impl Parser<'_> {
                     key_props.tag = Some((tag, tag_span));
                 }
                 Some((Token::Anchor(name), anchor_span)) => {
-                    let anchor_name = name.clone();
+                    let anchor_name = name.to_string();
                     self.advance();
                     self.skip_ws();
                     if key_props.anchor.is_some() {
@@ -618,7 +618,7 @@ impl Parser<'_> {
                     loop {
                         match self.peek() {
                             Some((Token::Tag(name), tag_span)) => {
-                                let tag = name.clone();
+                                let tag = name.to_string();
                                 self.advance();
                                 self.skip_ws();
                                 if inner_props.tag.is_some() {
@@ -627,7 +627,7 @@ impl Parser<'_> {
                                 inner_props.tag = Some((tag, tag_span));
                             }
                             Some((Token::Anchor(name), anchor_span)) => {
-                                let anchor_name = name.clone();
+                                let anchor_name = name.to_string();
                                 self.advance();
                                 self.skip_ws();
                                 if inner_props.anchor.is_some() {
@@ -813,7 +813,7 @@ impl Parser<'_> {
             let key = match self.peek() {
                 Some((Token::Plain(_) | Token::StringStart(_), _)) => self.parse_scalar(),
                 Some((Token::Alias(name), span)) => {
-                    let new_alias_name = name.clone();
+                    let new_alias_name = name.to_string();
                     self.advance();
                     if !self.anchors.contains_key(&new_alias_name) {
                         self.error(ErrorKind::UndefinedAlias, span);

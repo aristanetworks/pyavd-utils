@@ -10,7 +10,10 @@
 //! - In **flow context** (`flow_depth` > 0): `,[]{}` are delimiters
 //!
 //! This is Layer 2 of the layered parser architecture.
+//!
+//! Uses `Cow<'input, str>` for zero-copy tokenization where possible.
 
+use std::borrow::Cow;
 use std::collections::VecDeque;
 
 use crate::error::{ErrorKind, ParseError};
@@ -37,8 +40,10 @@ pub enum LexMode {
 }
 
 /// Context-aware lexer state.
-pub struct ContextLexer<'a> {
-    input: &'a str,
+///
+/// The lifetime `'input` refers to the input string being tokenized.
+pub struct ContextLexer<'input> {
+    input: &'input str,
     /// Byte offset of current position in the input string.
     /// This replaces the previous `chars: Vec<char>` approach for zero-allocation iteration.
     byte_pos: usize,
@@ -57,14 +62,14 @@ pub struct ContextLexer<'a> {
     /// Collected errors during lexing
     errors: Vec<ParseError>,
     /// Pending tokens to be returned (used for multi-token constructs like quoted strings)
-    pending_tokens: VecDeque<Spanned<Token>>,
+    pending_tokens: VecDeque<Spanned<Token<'input>>>,
     /// Whether we're currently inside a quoted string (between `StringStart` and `StringEnd`).
     /// When true, we suppress INDENT/DEDENT emission for `LineStart` tokens.
     in_quoted_string: bool,
 }
 
-impl<'a> ContextLexer<'a> {
-    pub fn new(input: &'a str) -> Self {
+impl<'input> ContextLexer<'input> {
+    pub fn new(input: &'input str) -> Self {
         Self {
             input,
             byte_pos: 0,
@@ -158,13 +163,13 @@ impl<'a> ContextLexer<'a> {
     /// - Comments have semantic meaning (they terminate plain scalars)
     /// - Whitespace carries indentation information for block structure
     /// - Tab detection requires seeing `WhitespaceWithTabs` tokens
-    pub fn tokenize(mut self) -> (Vec<RichToken>, Vec<ParseError>) {
+    pub fn tokenize(mut self) -> (Vec<RichToken<'input>>, Vec<ParseError>) {
         let tokens = self.collect_tokens();
         (tokens, self.errors)
     }
 
     /// Collect all tokens as `RichToken`s directly (no intermediate allocation).
-    fn collect_tokens(&mut self) -> Vec<RichToken> {
+    fn collect_tokens(&mut self) -> Vec<RichToken<'input>> {
         let mut tokens = Vec::new();
 
         // Start with LineStart(0) for initial indentation
@@ -270,7 +275,7 @@ impl<'a> ContextLexer<'a> {
         &mut self,
         new_indent: usize,
         span: Span,
-        tokens: &mut Vec<RichToken>,
+        tokens: &mut Vec<RichToken<'input>>,
     ) {
         let current_indent = *self.indent_stack.last().unwrap_or(&0);
 
@@ -319,7 +324,11 @@ impl<'a> ContextLexer<'a> {
     // ========================================================================
 
     /// Try to lex a document marker (`---` or `...`) at column 0.
-    fn try_lex_document_marker(&mut self, start: usize, ch: char) -> Option<Spanned<Token>> {
+    fn try_lex_document_marker(
+        &mut self,
+        start: usize,
+        ch: char,
+    ) -> Option<Spanned<Token<'input>>> {
         if !self.is_at_column_zero() {
             return None;
         }
@@ -358,7 +367,7 @@ impl<'a> ContextLexer<'a> {
     }
 
     /// Try to lex a newline and subsequent indentation.
-    fn try_lex_newline(&mut self, start: usize, ch: char) -> Option<Spanned<Token>> {
+    fn try_lex_newline(&mut self, start: usize, ch: char) -> Option<Spanned<Token<'input>>> {
         if !Self::is_newline(ch) {
             return None;
         }
@@ -381,7 +390,7 @@ impl<'a> ContextLexer<'a> {
 
     /// Try to lex inline whitespace.
     /// Returns `Token::Whitespace` for spaces only, or `Token::WhitespaceWithTabs` if tabs are present.
-    fn try_lex_whitespace(&mut self, start: usize, ch: char) -> Option<Spanned<Token>> {
+    fn try_lex_whitespace(&mut self, start: usize, ch: char) -> Option<Spanned<Token<'input>>> {
         if ch != ' ' && ch != '\t' {
             return None;
         }
@@ -399,7 +408,7 @@ impl<'a> ContextLexer<'a> {
     }
 
     /// Try to lex a comment.
-    fn try_lex_comment(&mut self, start: usize, ch: char) -> Option<Spanned<Token>> {
+    fn try_lex_comment(&mut self, start: usize, ch: char) -> Option<Spanned<Token<'input>>> {
         if ch != '#' {
             return None;
         }
@@ -416,23 +425,27 @@ impl<'a> ContextLexer<'a> {
                 }
                 self.advance();
             }
-            return Some((Token::Comment(String::new()), self.current_span(start)));
+            return Some((Token::Comment(Cow::Borrowed("")), self.current_span(start)));
         }
 
-        let mut content = String::new();
         self.advance(); // consume #
+        let content_start = self.byte_pos;
         while let Some(peek_ch) = self.peek() {
             if Self::is_newline(peek_ch) {
                 break;
             }
-            content.push(peek_ch);
             self.advance();
         }
-        Some((Token::Comment(content), self.current_span(start)))
+        // Borrow directly from input (zero-copy)
+        let content = &self.input[content_start..self.byte_pos];
+        Some((
+            Token::Comment(Cow::Borrowed(content)),
+            self.current_span(start),
+        ))
     }
 
     /// Try to lex a flow indicator (`{}[],`).
-    fn try_lex_flow_indicator(&mut self, start: usize, ch: char) -> Option<Spanned<Token>> {
+    fn try_lex_flow_indicator(&mut self, start: usize, ch: char) -> Option<Spanned<Token<'input>>> {
         match ch {
             '{' => {
                 self.advance();
@@ -459,7 +472,11 @@ impl<'a> ContextLexer<'a> {
     }
 
     /// Try to lex a block indicator (`-` or `?` followed by whitespace).
-    fn try_lex_block_indicator(&mut self, start: usize, ch: char) -> Option<Spanned<Token>> {
+    fn try_lex_block_indicator(
+        &mut self,
+        start: usize,
+        ch: char,
+    ) -> Option<Spanned<Token<'input>>> {
         // Block sequence indicator: - followed by whitespace/newline
         if ch == '-' {
             if let Some(next) = self.peek_n(1) {
@@ -491,7 +508,7 @@ impl<'a> ContextLexer<'a> {
     }
 
     /// Try to lex a colon as a mapping value indicator.
-    fn try_lex_colon(&mut self, start: usize, ch: char) -> Option<Spanned<Token>> {
+    fn try_lex_colon(&mut self, start: usize, ch: char) -> Option<Spanned<Token<'input>>> {
         if ch != ':' {
             return None;
         }
@@ -529,7 +546,11 @@ impl<'a> ContextLexer<'a> {
     }
 
     /// Try to lex an anchor (`&name`) or alias (`*name`).
-    fn try_lex_anchor_or_alias(&mut self, start: usize, ch: char) -> Option<Spanned<Token>> {
+    fn try_lex_anchor_or_alias(
+        &mut self,
+        start: usize,
+        ch: char,
+    ) -> Option<Spanned<Token<'input>>> {
         // Anchors: &name
         if ch == '&'
             && let Some(next) = self.peek_n(1)
@@ -554,7 +575,11 @@ impl<'a> ContextLexer<'a> {
     }
 
     /// Try to lex a block scalar header (`|` or `>`).
-    fn try_lex_block_scalar_header(&mut self, start: usize, ch: char) -> Option<Spanned<Token>> {
+    fn try_lex_block_scalar_header(
+        &mut self,
+        start: usize,
+        ch: char,
+    ) -> Option<Spanned<Token<'input>>> {
         if ch == '|' {
             self.advance();
             let header = self.consume_block_header();
@@ -569,7 +594,7 @@ impl<'a> ContextLexer<'a> {
     }
 
     /// Try to lex a quoted scalar (`'...'` or `"..."`).
-    fn try_lex_quoted_scalar(&mut self, start: usize, ch: char) -> Option<Spanned<Token>> {
+    fn try_lex_quoted_scalar(&mut self, start: usize, ch: char) -> Option<Spanned<Token<'input>>> {
         if ch == '\'' {
             return Some(self.consume_single_quoted(start));
         }
@@ -582,7 +607,7 @@ impl<'a> ContextLexer<'a> {
     /// Get the next token.
     ///
     /// This method dispatches to specialized helper methods for each token type.
-    fn next_token(&mut self) -> Option<Spanned<Token>> {
+    fn next_token(&mut self) -> Option<Spanned<Token<'input>>> {
         let start = self.byte_pos;
         let ch = self.peek()?;
 
@@ -628,23 +653,24 @@ impl<'a> ContextLexer<'a> {
         Some(self.consume_plain_scalar(start))
     }
 
-    fn consume_anchor_name(&mut self) -> String {
+    /// Consume an anchor name, borrowing directly from input (zero-copy).
+    fn consume_anchor_name(&mut self) -> Cow<'input, str> {
         // According to YAML 1.2 spec, anchor names (ns-anchor-char+) can contain:
         // - Any non-whitespace character except c-flow-indicator ([]{},)
         // This includes colons and other special characters!
-        let mut name = String::new();
+        let name_start = self.byte_pos;
         while let Some(peek_ch) = self.peek() {
             if is_anchor_char(peek_ch) {
-                name.push(peek_ch);
                 self.advance();
             } else {
                 break;
             }
         }
-        name
+        // Borrow directly from input (zero-copy)
+        Cow::Borrowed(&self.input[name_start..self.byte_pos])
     }
 
-    fn consume_tag(&mut self, start: usize) -> Spanned<Token> {
+    fn consume_tag(&mut self, start: usize) -> Spanned<Token<'input>> {
         let mut tag = String::new();
         self.advance(); // consume !
 
@@ -718,11 +744,13 @@ impl<'a> ContextLexer<'a> {
                     plain.push(peek_ch);
                     self.advance();
                 }
-                return (Token::Plain(plain), self.current_span(start));
+                // Tag fallback to plain scalar requires owned string
+                return (Token::Plain(Cow::Owned(plain)), self.current_span(start));
             }
         }
 
-        (Token::Tag(tag), self.current_span(start))
+        // Tag content uses owned string (constructed from pieces like !!str)
+        (Token::Tag(Cow::Owned(tag)), self.current_span(start))
     }
 
     /// Check if a character is valid at the start of a tag name.
@@ -810,8 +838,11 @@ impl<'a> ContextLexer<'a> {
         // Emit current content before newline
         if !content.is_empty() {
             let content_span = Span::new((), content_start..self.byte_pos);
-            self.pending_tokens
-                .push_back((Token::StringContent(std::mem::take(content)), content_span));
+            // Quoted strings always use Cow::Owned (escape processing)
+            self.pending_tokens.push_back((
+                Token::StringContent(Cow::Owned(std::mem::take(content))),
+                content_span,
+            ));
         }
 
         // Consume newline
@@ -851,8 +882,9 @@ impl<'a> ContextLexer<'a> {
         // Emit final content segment if any
         if !content.is_empty() {
             let content_span = Span::new((), content_start..self.byte_pos);
+            // Quoted strings always use Cow::Owned (escape processing)
             self.pending_tokens
-                .push_back((Token::StringContent(content), content_span));
+                .push_back((Token::StringContent(Cow::Owned(content)), content_span));
         }
 
         // Emit StringEnd
@@ -867,7 +899,7 @@ impl<'a> ContextLexer<'a> {
 
     /// Consume a single-quoted string, emitting `StringStart`, `StringContent`, `LineStart` and `StringEnd` tokens.
     /// Pushes tokens to `pending_tokens` and returns the first token.
-    fn consume_single_quoted(&mut self, start: usize) -> Spanned<Token> {
+    fn consume_single_quoted(&mut self, start: usize) -> Spanned<Token<'input>> {
         let start_span = Span::new((), start..start + 1);
         self.advance(); // consume opening '
 
@@ -913,7 +945,7 @@ impl<'a> ContextLexer<'a> {
 
     /// Consume a double-quoted string, emitting `StringStart`, `StringContent`, `LineStart` and `StringEnd` tokens.
     /// Pushes tokens to `pending_tokens` and returns the first token.
-    fn consume_double_quoted(&mut self, start: usize) -> Spanned<Token> {
+    fn consume_double_quoted(&mut self, start: usize) -> Spanned<Token<'input>> {
         let start_span = Span::new((), start..start + 1);
         self.advance(); // consume opening "
 
@@ -1020,7 +1052,7 @@ impl<'a> ContextLexer<'a> {
     }
 
     /// Consume a plain scalar, respecting the current mode.
-    fn consume_plain_scalar(&mut self, start: usize) -> Spanned<Token> {
+    fn consume_plain_scalar(&mut self, start: usize) -> Spanned<Token<'input>> {
         let mut content = String::new();
         let mut at_start = true;
 
@@ -1049,7 +1081,7 @@ impl<'a> ContextLexer<'a> {
                     let span = self.current_span(start);
                     self.add_error(ErrorKind::UnexpectedToken, span);
                     self.advance(); // Consume the invalid character to avoid infinite loop
-                    return (Token::Plain(String::new()), self.current_span(start));
+                    return (Token::Plain(Cow::Borrowed("")), self.current_span(start));
                 }
             }
 
@@ -1104,8 +1136,10 @@ impl<'a> ContextLexer<'a> {
             at_start = false;
         }
 
+        // Plain scalars need Cow::Owned because we trim trailing whitespace
+        let trimmed = content.trim_end();
         (
-            Token::Plain(content.trim_end().to_owned()),
+            Token::Plain(Cow::Owned(trimmed.to_owned())),
             self.current_span(start),
         )
     }
@@ -1124,7 +1158,7 @@ impl<'a> ContextLexer<'a> {
 /// - **Line breaks** become leading trivia of the next token
 ///
 /// This follows the Python tokenizer pattern for indentation-sensitive languages.
-pub fn tokenize_document(input: &str) -> (Vec<RichToken>, Vec<ParseError>) {
+pub fn tokenize_document(input: &str) -> (Vec<RichToken<'_>>, Vec<ParseError>) {
     ContextLexer::new(input).tokenize()
 }
 

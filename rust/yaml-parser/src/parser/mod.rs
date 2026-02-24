@@ -67,10 +67,14 @@ impl NodeProperties {
 }
 
 /// Parser state for tracking position and context.
+///
+/// The parser has two lifetimes:
+/// - `'tokens` is the lifetime of the token slice
+/// - `'input` is the lifetime of the input string (tokens borrow from input via `Cow`)
 #[derive(Debug)]
-pub(crate) struct Parser<'a> {
-    pub tokens: &'a [RichToken],
-    pub input: &'a str,
+pub(crate) struct Parser<'tokens, 'input> {
+    pub tokens: &'tokens [RichToken<'input>],
+    pub input: &'input str,
     pub pos: usize,
     pub errors: Vec<ParseError>,
     /// Map of anchor names to their nodes (for alias resolution)
@@ -90,8 +94,8 @@ pub(crate) struct Parser<'a> {
     pub tag_handles: HashMap<String, String>,
 }
 
-impl<'a> Parser<'a> {
-    pub fn new(tokens: &'a [RichToken], input: &'a str) -> Self {
+impl<'tokens, 'input> Parser<'tokens, 'input> {
+    pub fn new(tokens: &'tokens [RichToken<'input>], input: &'input str) -> Self {
         Self {
             tokens,
             input,
@@ -112,14 +116,14 @@ impl<'a> Parser<'a> {
 
     /// Peek at the current token without consuming it.
     /// Returns the token and its span for easy destructuring.
-    pub fn peek(&self) -> Option<(&Token, Span)> {
+    pub fn peek(&self) -> Option<(&Token<'input>, Span)> {
         self.tokens.get(self.pos).map(|rt| (&rt.token, rt.span))
     }
 
     /// Consume the current token and return it.
     /// Returns the token and its span for easy destructuring.
     #[allow(clippy::indexing_slicing, reason = "Bounds checked by the condition")]
-    pub fn advance(&mut self) -> Option<(&Token, Span)> {
+    pub fn advance(&mut self) -> Option<(&Token<'input>, Span)> {
         (self.pos < self.tokens.len()).then(|| {
             let rt = &self.tokens[self.pos];
             self.pos += 1;
@@ -502,8 +506,8 @@ impl<'a> Parser<'a> {
     )]
     pub fn current_indent(&self) -> usize {
         for i in (0..self.pos).rev() {
-            if let Token::LineStart(n) = &self.tokens[i].token {
-                return *n;
+            if let Token::LineStart(n) = self.tokens[i].token {
+                return n;
             }
         }
         0
@@ -779,7 +783,7 @@ impl<'a> Parser<'a> {
             }
             // Anchor - collect as property and continue parsing
             Token::Anchor(name) => {
-                let anchor_name = name.clone();
+                let anchor_name = name.to_string();
                 let anchor_span = span;
 
                 // Check anchor indentation - must be >= min_indent
@@ -823,7 +827,7 @@ impl<'a> Parser<'a> {
                     self.error(ErrorKind::PropertiesOnAlias, span);
                     self.parse_alias()
                 } else {
-                    let alias_name = name.clone();
+                    let alias_name = name.to_string();
                     let alias_span = span;
                     self.advance();
                     self.skip_ws();
@@ -840,7 +844,7 @@ impl<'a> Parser<'a> {
             }
             // Tag - collect as property and continue parsing
             Token::Tag(tag) => {
-                let tag_name = tag.clone();
+                let tag_name = tag.to_string();
                 let tag_span = span;
                 self.advance();
 
