@@ -26,7 +26,7 @@ This document tracks improvements to the YAML lexer for better IDE/language serv
 
 - [ ] **1. Add `SourceMap` struct** - Line/column position tracking
 - [x] **2. Move `Token` to `token.rs`** - Consolidate token types ✅ 2026-02-24
-- [ ] **3. Remove `Vec<char>` allocation** - Use char iterator optimization
+- [x] **3. Remove `Vec<char>` allocation** - Use char iterator optimization ✅ 2026-02-24
 
 ### Phase 1: Language Server Foundation
 
