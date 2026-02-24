@@ -54,6 +54,18 @@ This document tracks improvements to the YAML lexer for better IDE/language serv
 
 ## Change Log
 
+### 2026-02-24: Phase 1.1 Trivia Optimization - Split Whitespace Variants
+
+- ✅ Split `TriviaKind::Whitespace` into `Whitespace` and `WhitespaceWithTabs`
+  - `Whitespace`: contains only spaces
+  - `WhitespaceWithTabs`: contains at least one tab character
+  - O(1) tab detection in parser (tabs detected during lexing, already O(n))
+  - Fixed trivia attachment for `LineStart` tokens:
+    - Comments after `LineStart` → trailing trivia of `LineStart`
+    - Whitespace after `LineStart` → leading trivia of next token
+  - Enables proper tab-as-indentation error detection
+  - Follows industry standards (Ruff, LibCST)
+
 ### 2026-02-24: Phase 1.1 Token Trivia Preservation
 
 - ✅ Phase 1.1: Added token trivia preservation (commit f0e9504)
