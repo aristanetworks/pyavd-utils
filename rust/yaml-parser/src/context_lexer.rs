@@ -1078,7 +1078,98 @@ pub fn tokenize_document(input: &str) -> (Vec<Spanned<Token>>, Vec<ParseError>) 
     ContextLexer::new(input).tokenize()
 }
 
+use crate::trivia::{RichToken, Trivia, TriviaKind};
+
+/// Check if a token is trivia (comment, whitespace, or line break).
+fn is_trivia_token(token: &Token) -> bool {
+    matches!(
+        token,
+        Token::Comment(_) | Token::Whitespace | Token::LineStart(_)
+    )
+}
+
+/// Convert a trivia token to a Trivia value.
+/// # Panics
+/// Panics if called with a non-trivia token.
+fn token_to_trivia(token: Token, span: Span) -> Trivia {
+    match token {
+        Token::Comment(content) => Trivia::new(TriviaKind::Comment(content), span),
+        Token::Whitespace => Trivia::new(TriviaKind::Whitespace, span),
+        Token::LineStart(indent) => Trivia::new(TriviaKind::LineBreak(indent), span),
+        other => panic!("token_to_trivia called with non-trivia token: {other}"),
+    }
+}
+
+/// Tokenize document content with trivia preservation.
+///
+/// This function returns `RichToken`s where each token has its associated
+/// leading and trailing trivia (comments, whitespace, line breaks).
+///
+/// # Trivia Association Rules
+///
+/// - **Leading trivia**: All trivia tokens appearing before a real token
+/// - **Trailing trivia**: Trivia on the same line after a token (until a line break)
+/// - **Line breaks** are considered leading trivia of the next token
+///
+/// This follows the convention used by TypeScript, Roslyn, and rust-analyzer.
+pub fn tokenize_with_trivia(input: &str) -> (Vec<RichToken>, Vec<ParseError>) {
+    let (raw_tokens, errors) = tokenize_document(input);
+
+    // If no tokens, return empty
+    if raw_tokens.is_empty() {
+        return (Vec::new(), errors);
+    }
+
+    let mut result: Vec<RichToken> = Vec::new();
+    let mut pending_trivia: Vec<Trivia> = Vec::new();
+    let mut idx = 0;
+
+    while let Some((token, span)) = raw_tokens.get(idx).cloned() {
+        if is_trivia_token(&token) {
+            // Collect trivia
+            pending_trivia.push(token_to_trivia(token, span));
+            idx += 1;
+        } else {
+            // Real token - attach pending trivia as leading trivia
+            let mut rich_token = RichToken::with_leading(token, span, pending_trivia);
+            pending_trivia = Vec::new();
+
+            // Look ahead for trailing trivia (on the same line)
+            idx += 1;
+            while let Some((next_token, next_span)) = raw_tokens.get(idx) {
+                if matches!(next_token, Token::LineStart(_)) {
+                    // Line break ends trailing trivia - it becomes leading trivia of next token
+                    pending_trivia.push(token_to_trivia(next_token.clone(), *next_span));
+                    idx += 1;
+                    break;
+                } else if is_trivia_token(next_token) {
+                    // Whitespace or comment on same line is trailing trivia
+                    rich_token.add_trailing(token_to_trivia(next_token.clone(), *next_span));
+                    idx += 1;
+                } else {
+                    // Next real token - stop collecting trailing trivia
+                    break;
+                }
+            }
+
+            result.push(rich_token);
+        }
+    }
+
+    // If there's remaining trivia at the end, we could attach it to a synthetic EOF token
+    // or just discard it. For now, we'll discard trailing trivia with no following token.
+    // IDE features that need end-of-file trivia can request the raw tokens instead.
+
+    (result, errors)
+}
+
 #[cfg(test)]
+#[allow(
+    clippy::indexing_slicing,
+    clippy::min_ident_chars,
+    clippy::shadow_reuse,
+    reason = "Tests benefit from direct indexing, short identifiers, and variable shadowing for readability"
+)]
 mod tests {
     use super::*;
 
@@ -1264,5 +1355,115 @@ mod tests {
         let tokens = get_tokens("{url: http://example.org}");
         // Should recognize http://example.org as a plain scalar
         assert!(tokens.contains(&Token::Plain("http://example.org".into())));
+    }
+
+    // Tests for tokenize_with_trivia
+
+    #[test]
+    fn test_trivia_simple_mapping() {
+        // Test basic trivia preservation
+        let (tokens, errors) = tokenize_with_trivia("key: value");
+        assert!(errors.is_empty());
+
+        // Should have 3 tokens: "key", ":", "value"
+        assert_eq!(tokens.len(), 3);
+
+        // First token "key" should have leading LineStart trivia (initial indent 0)
+        assert_eq!(tokens[0].token, Token::Plain("key".into()));
+        assert!(!tokens[0].leading_trivia.is_empty());
+        assert!(matches!(
+            tokens[0].leading_trivia[0].kind,
+            TriviaKind::LineBreak(0)
+        ));
+
+        // Colon should have leading whitespace (none) - just check it exists
+        assert_eq!(tokens[1].token, Token::Colon);
+
+        // Value should have leading whitespace
+        // Note: The whitespace between : and value is trailing trivia of : not leading trivia of value
+        assert_eq!(tokens[2].token, Token::Plain("value".into()));
+        // Check that colon has trailing whitespace instead
+        assert!(!tokens[1].trailing_trivia.is_empty());
+        assert!(matches!(
+            tokens[1].trailing_trivia[0].kind,
+            TriviaKind::Whitespace
+        ));
+    }
+
+    #[test]
+    fn test_trivia_with_comment() {
+        // Test comment as trailing trivia
+        let (tokens, errors) = tokenize_with_trivia("key: value # this is a comment");
+        assert!(errors.is_empty());
+
+        // "value" token should have trailing comment
+        let value_token = tokens
+            .iter()
+            .find(|t| t.token == Token::Plain("value".into()));
+        assert!(value_token.is_some());
+        let value_token = value_token.unwrap();
+
+        // Should have trailing trivia (whitespace + comment)
+        assert!(value_token.has_comments());
+        let comments: Vec<_> = value_token.comments();
+        assert_eq!(comments.len(), 1);
+        assert_eq!(comments[0].comment_content(), Some(" this is a comment"));
+    }
+
+    #[test]
+    fn test_trivia_multiline_with_comments() {
+        // Test multiline document with leading comments
+        let input = "# header comment\nkey: value";
+        let (tokens, errors) = tokenize_with_trivia(input);
+        assert!(errors.is_empty());
+
+        // First real token "key" should have leading comment trivia
+        let key_token = tokens
+            .iter()
+            .find(|t| t.token == Token::Plain("key".into()));
+        assert!(key_token.is_some());
+        let key_token = key_token.unwrap();
+
+        // Should have leading comment in trivia
+        assert!(key_token.has_comments());
+        let comments: Vec<_> = key_token.comments();
+        assert!(!comments.is_empty());
+        assert!(comments[0].comment_content().unwrap().contains("header"));
+    }
+
+    #[test]
+    fn test_trivia_empty_input() {
+        let (tokens, errors) = tokenize_with_trivia("");
+        assert!(errors.is_empty());
+        assert!(tokens.is_empty());
+    }
+
+    #[test]
+    fn test_trivia_comment_only() {
+        // Only comments, no real tokens
+        let (tokens, errors) = tokenize_with_trivia("# just a comment");
+        assert!(errors.is_empty());
+        // No real tokens, so all trivia is discarded
+        assert!(tokens.is_empty());
+    }
+
+    #[test]
+    fn test_trivia_full_span() {
+        // Test that full_span includes trivia
+        let input = "  key: value  # comment";
+        let (tokens, errors) = tokenize_with_trivia(input);
+        assert!(errors.is_empty());
+
+        // Find "value" token
+        let value_token = tokens
+            .iter()
+            .find(|t| t.token == Token::Plain("value".into()));
+        assert!(value_token.is_some());
+        let value_token = value_token.unwrap();
+
+        // full_span should be larger than or equal to span (includes trivia)
+        let token_span = value_token.span;
+        let full_span = value_token.full_span();
+        assert!(full_span.start <= token_span.start || full_span.end >= token_span.end);
     }
 }

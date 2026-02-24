@@ -42,12 +42,15 @@ mod parser;
 mod span;
 mod stream_lexer;
 mod token;
+mod trivia;
 mod value;
 
+pub use context_lexer::tokenize_with_trivia;
 pub use error::{ErrorKind, ParseError};
 pub use lexer::{Token, tokenize};
 pub use parser::{Stream, parse_single_document, parse_tokens};
 pub use span::{Position, SourceMap, Span, Spanned};
+pub use trivia::{RichToken, Trivia, TriviaKind};
 pub use value::{Node, Value};
 
 /// Parse YAML input and return the parsed documents and any errors encountered.

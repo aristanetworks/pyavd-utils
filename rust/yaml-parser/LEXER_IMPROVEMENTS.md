@@ -42,7 +42,7 @@ This document tracks improvements to the YAML lexer for better IDE/language serv
 
 ### Phase 3: Error Recovery Improvements
 
-- [ ] **3.1 Rich Error Context** - Better error messages with suggestions
+- [x] **3.1 Rich Error Context** - Better error messages with suggestions ✅ 2026-02-24
 
 ### Phase 4: Architecture Refinements
 
@@ -54,11 +54,15 @@ This document tracks improvements to the YAML lexer for better IDE/language serv
 
 ## Change Log
 
-### 2026-02-24: Quick Wins and Phase 4 Complete
+### 2026-02-24: Quick Wins, Phase 3.1, and Phase 4 Complete
 
 - ✅ Quick Win #1: Added SourceMap for line/column position tracking
 - ✅ Quick Win #2: Extracted token types to dedicated `token.rs` module
 - ✅ Quick Win #3: Removed Vec<char> allocation, using string slicing instead
+- ✅ Phase 3.1: Rich error context with suggestions
+  - Added 10 new contextual error variants with embedded information
+  - Added `ErrorKind::suggestion()` with fix hints for common errors
+  - Added `ParseError::suggestion()` delegation method
 - ✅ Phase 4.2: Extracted state machine from `next_token()` (230→45 lines)
   - Added 10 helper methods for different token types
   - Improved maintainability and testability
