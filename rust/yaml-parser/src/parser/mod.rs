@@ -263,6 +263,42 @@ impl<'tokens, 'input> Parser<'tokens, 'input> {
         node_with_props
     }
 
+    /// Collect node properties (anchors/tags) from the current position.
+    ///
+    /// This helper loops over Anchor/Tag/Whitespace tokens, accumulating them
+    /// into a `NodeProperties` struct. Duplicate anchors/tags emit errors.
+    ///
+    /// Returns the collected properties and stops when a non-property token is found.
+    pub fn collect_node_properties(&mut self, mut props: NodeProperties) -> NodeProperties {
+        loop {
+            match self.peek() {
+                Some((Token::Anchor(name), anchor_span)) => {
+                    let anchor_name = name.to_string();
+                    self.advance();
+                    self.skip_ws();
+                    if props.anchor.is_some() {
+                        self.error(ErrorKind::DuplicateAnchor, anchor_span);
+                    }
+                    props.anchor = Some((anchor_name, anchor_span));
+                }
+                Some((Token::Tag(name), tag_span)) => {
+                    let tag_name = name.to_string();
+                    self.advance();
+                    self.skip_ws();
+                    if props.tag.is_some() {
+                        self.error(ErrorKind::DuplicateTag, tag_span);
+                    }
+                    props.tag = Some((tag_name, tag_span));
+                }
+                Some((Token::Whitespace | Token::WhitespaceWithTabs, _)) => {
+                    self.advance();
+                }
+                _ => break,
+            }
+        }
+        props
+    }
+
     /// Push an indentation level onto the stack when entering a block structure.
     pub fn push_indent(&mut self, indent: usize) {
         self.indent_stack.push(indent);

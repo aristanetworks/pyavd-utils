@@ -262,7 +262,14 @@ impl Parser<'_, '_> {
     }
 
     /// Parse a flow value with already-collected node properties.
-    pub fn parse_flow_value_with_properties(&mut self, mut props: NodeProperties) -> Option<Node> {
+    pub fn parse_flow_value_with_properties(
+        &mut self,
+        initial_props: NodeProperties,
+    ) -> Option<Node> {
+        self.skip_ws_and_newlines();
+
+        // Collect any properties (anchors/tags) before the value
+        let props = self.collect_node_properties(initial_props);
         self.skip_ws_and_newlines();
 
         let (tok, span) = self.peek()?;
@@ -275,35 +282,11 @@ impl Parser<'_, '_> {
             Token::FlowSeqStart => self
                 .parse_flow_sequence()
                 .map(|node| self.apply_properties_and_register(props, node)),
-            Token::Anchor(name) => {
-                let anchor_name = name.to_string();
-                let anchor_span = start_span;
-                self.advance();
-
-                if props.anchor.is_some() {
-                    self.error(ErrorKind::DuplicateAnchor, anchor_span);
-                }
-                props.anchor = Some((anchor_name, anchor_span));
-
-                self.parse_flow_value_with_properties(props)
-            }
             Token::Alias(_) => {
                 if !props.is_empty() {
                     self.error(ErrorKind::PropertiesOnAlias, start_span);
                 }
                 self.parse_alias()
-            }
-            Token::Tag(tag) => {
-                let tag_name = tag.to_string();
-                let tag_span = start_span;
-                self.advance();
-
-                if props.tag.is_some() {
-                    self.error(ErrorKind::DuplicateTag, tag_span);
-                }
-                props.tag = Some((tag_name, tag_span));
-
-                self.parse_flow_value_with_properties(props)
             }
             Token::Plain(string) => {
                 let mut combined = string.to_string();
