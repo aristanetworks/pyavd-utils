@@ -13,7 +13,7 @@ use crate::value::{Node, Value};
 
 use super::{NodeProperties, Parser};
 
-impl Parser<'_> {
+impl Parser<'_, '_> {
     /// Parse a simple scalar token.
     /// For mapping keys (typically single-line), uses `min_indent=0`.
     pub fn parse_scalar(&mut self) -> Option<Node> {
@@ -27,7 +27,7 @@ impl Parser<'_> {
 
         match tok {
             Token::Plain(string) => {
-                let value = Self::scalar_to_value(string.clone());
+                let value = Self::scalar_to_value(string.to_string());
                 self.advance();
                 Some(Node::new(value, span))
             }
@@ -186,7 +186,7 @@ impl Parser<'_> {
         let (tok, span) = self.advance()?;
 
         let name = if let Token::Alias(name) = tok {
-            name.clone()
+            name.to_string()
         } else {
             return None;
         };
@@ -622,7 +622,7 @@ impl Parser<'_> {
             loop {
                 match self.peek() {
                     Some((Token::Anchor(name), anchor_span)) => {
-                        let anchor_name = name.clone();
+                        let anchor_name = name.to_string();
                         self.advance();
                         self.skip_ws();
                         if key_props.anchor.is_some() {
@@ -631,7 +631,7 @@ impl Parser<'_> {
                         key_props.anchor = Some((anchor_name, anchor_span));
                     }
                     Some((Token::Tag(name), tag_span)) => {
-                        let tag = name.clone();
+                        let tag = name.to_string();
                         self.advance();
                         self.skip_ws();
                         if key_props.tag.is_some() {
@@ -649,7 +649,7 @@ impl Parser<'_> {
             // Try to parse another key (can be scalar or alias)
             let key = if let Some((Token::Alias(name), span)) = self.peek() {
                 // Check if the key is an alias with properties (invalid)
-                let alias_name = name.clone();
+                let alias_name = name.to_string();
                 if !key_props.is_empty() {
                     self.error(ErrorKind::PropertiesOnAlias, span);
                 }

@@ -7,6 +7,12 @@
 //! This module defines all token types produced by the lexer. These types
 //! are used by both the context-aware lexer (`context_lexer.rs`) and the
 //! legacy chumsky-based lexer (`lexer.rs`).
+//!
+//! Token content uses `Cow<'input, str>` for zero-copy tokenization:
+//! - `Borrowed`: Token content is a slice of the input (no allocation)
+//! - `Owned`: Token content was transformed (e.g., escape sequences)
+
+use std::borrow::Cow;
 
 /// Quote style for quoted strings.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -39,8 +45,11 @@ pub enum Chomping {
 }
 
 /// A YAML token.
+///
+/// The lifetime `'input` refers to the input string being tokenized.
+/// Token content uses `Cow<'input, str>` for zero-copy when possible.
 #[derive(Debug, Clone, PartialEq)]
-pub enum Token {
+pub enum Token<'input> {
     // Indicators (single characters with special meaning)
     /// `-` block sequence entry indicator (when followed by whitespace or newline)
     BlockSeqIndicator,
@@ -67,13 +76,13 @@ pub enum Token {
 
     // Scalars
     /// A plain (unquoted) scalar
-    Plain(String),
+    Plain(Cow<'input, str>),
     /// Opening quote for a quoted string (' or ")
     StringStart(QuoteStyle),
     /// Closing quote for a quoted string (' or ")
     StringEnd(QuoteStyle),
     /// Content segment inside a quoted string (escapes already processed)
-    StringContent(String),
+    StringContent(Cow<'input, str>),
     /// A literal block scalar (`|`) - header info only, content parsed separately
     LiteralBlockHeader(BlockScalarHeader),
     /// A folded block scalar (`>`) - header info only, content parsed separately
@@ -81,21 +90,21 @@ pub enum Token {
 
     // Anchors and aliases
     /// Anchor definition (`&name`)
-    Anchor(String),
+    Anchor(Cow<'input, str>),
     /// Alias reference (`*name`)
-    Alias(String),
+    Alias(Cow<'input, str>),
 
     // Tags
     /// Tag (`!tag` or `!!type` or `!<uri>`)
-    Tag(String),
+    Tag(Cow<'input, str>),
 
     // Directives
     /// `%YAML` directive
-    YamlDirective(String),
+    YamlDirective(Cow<'input, str>),
     /// `%TAG` directive
-    TagDirective(String),
+    TagDirective(Cow<'input, str>),
     /// Reserved/unknown directive (e.g., `%FOO`)
-    ReservedDirective(String),
+    ReservedDirective(Cow<'input, str>),
 
     // Whitespace and structure
     /// Start of a new line with indentation (number of spaces)
@@ -105,7 +114,7 @@ pub enum Token {
     /// Whitespace containing at least one tab character (not at line start)
     WhitespaceWithTabs,
     /// Comment content (after `#`, without the `#` prefix)
-    Comment(String),
+    Comment(Cow<'input, str>),
 
     // Indentation structure (Python-style INDENT/DEDENT)
     /// Indentation increased to this level (emitted after `LineStart` when indent > stack.top)
@@ -117,7 +126,7 @@ pub enum Token {
     Invalid,
 }
 
-impl Token {
+impl<'input> Token<'input> {
     /// Returns `true` if this is a scalar token.
     /// Note: StringStart/StringEnd/StringContent are components of a quoted scalar,
     /// not complete scalars themselves.
@@ -140,7 +149,7 @@ impl Token {
     }
 }
 
-impl std::fmt::Display for Token {
+impl std::fmt::Display for Token<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::BlockSeqIndicator => write!(f, "'-'"),

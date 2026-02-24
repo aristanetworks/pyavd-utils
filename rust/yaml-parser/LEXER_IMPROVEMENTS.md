@@ -36,7 +36,7 @@ This document tracks improvements to the YAML lexer for better IDE/language serv
 
 ### Phase 2: Performance Optimizations
 
-- [ ] **2.1 Zero-Copy Tokenization** - Use `Cow<'input, str>` for token content
+- [x] **2.1 Zero-Copy Tokenization** - Use `Cow<'input, str>` for token content ✅ 2026-02-24
 - [ ] **2.2 Lazy Token Iteration** - Return iterator instead of Vec
 - [x] **2.3 Character Iterator Optimization** ✅ 2026-02-24 (Quick Win #3)
 
@@ -53,6 +53,19 @@ This document tracks improvements to the YAML lexer for better IDE/language serv
 ---
 
 ## Change Log
+
+### 2026-02-24: Phase 2.1 Zero-Copy Tokenization
+
+- ✅ Implemented zero-copy tokenization using `Cow<'input, str>`
+  - `Token<'input>` - all string-containing variants now use `Cow<'input, str>`
+  - `RichToken<'input>` - updated to carry lifetime for token content
+  - `TriviaKind<'input>` - Comment variant updated for zero-copy
+  - Parser updated with two lifetimes: `Parser<'tokens, 'input>`
+- ✅ Zero-copy benefits:
+  - `Cow::Borrowed` used when token content is a direct slice of input (comments, anchor names)
+  - `Cow::Owned` used when content is transformed (escape sequences, tag construction, trim)
+  - Reduces allocations for simple token types
+- ✅ All tests pass: 91 unit tests, 333/333 YAML test suite (100%)
 
 ### 2026-02-24: Phase 1.1 Revised - Trivia Attachment Reverted
 
