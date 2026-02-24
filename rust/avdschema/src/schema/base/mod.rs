@@ -51,8 +51,12 @@ pub struct Deprecation {
     pub warning: bool,
     /// Relative path to new key
     pub new_key: Option<String>,
+    /// Allow the deprecated key to be configured simultaneously with the new key
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub allow_with_new_key: bool,
     /// Support for this key has been removed
-    pub removed: Option<bool>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub removed: bool,
     /// Version in which the key will be removed
     pub remove_in_version: Option<String>,
     /// Date after which the key will be removed in the next major version
