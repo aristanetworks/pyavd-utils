@@ -276,8 +276,14 @@ impl<'tokens, 'input> Parser<'tokens, 'input> {
                     let anchor_name = name.to_string();
                     self.advance();
                     self.skip_ws();
-                    if props.anchor.is_some() {
-                        self.error(ErrorKind::DuplicateAnchor, anchor_span);
+                    if let Some((first_anchor, _)) = &props.anchor {
+                        self.error(
+                            ErrorKind::DuplicateAnchorNamed {
+                                first: first_anchor.clone(),
+                                second: anchor_name.clone(),
+                            },
+                            anchor_span,
+                        );
                     }
                     props.anchor = Some((anchor_name, anchor_span));
                 }
@@ -285,8 +291,14 @@ impl<'tokens, 'input> Parser<'tokens, 'input> {
                     let tag_name = name.to_string();
                     self.advance();
                     self.skip_ws();
-                    if props.tag.is_some() {
-                        self.error(ErrorKind::DuplicateTag, tag_span);
+                    if let Some((first_tag, _)) = &props.tag {
+                        self.error(
+                            ErrorKind::DuplicateTagNamed {
+                                first: first_tag.clone(),
+                                second: tag_name.clone(),
+                            },
+                            tag_span,
+                        );
                     }
                     props.tag = Some((tag_name, tag_span));
                 }
@@ -833,8 +845,16 @@ impl<'tokens, 'input> Parser<'tokens, 'input> {
                 self.advance();
                 self.skip_ws();
 
-                if props.anchor.is_some() && !props.crossed_line_boundary {
-                    self.error(ErrorKind::DuplicateAnchor, anchor_span);
+                if let Some((first_anchor, _)) = &props.anchor
+                    && !props.crossed_line_boundary
+                {
+                    self.error(
+                        ErrorKind::DuplicateAnchorNamed {
+                            first: first_anchor.clone(),
+                            second: anchor_name.clone(),
+                        },
+                        anchor_span,
+                    );
                 }
 
                 if props.crossed_line_boundary && props.anchor.is_some() {
@@ -847,8 +867,17 @@ impl<'tokens, 'input> Parser<'tokens, 'input> {
                         self.parse_block_mapping_with_props(min_indent, inner_props)
                     {
                         Some(self.apply_properties_and_register(props, mapping))
+                    } else if let Some((first_anchor, _)) = &props.anchor {
+                        self.error(
+                            ErrorKind::DuplicateAnchorNamed {
+                                first: first_anchor.clone(),
+                                second: anchor_name.clone(),
+                            },
+                            anchor_span,
+                        );
+                        props.anchor = Some((anchor_name, anchor_span));
+                        self.parse_value_with_properties(min_indent, props)
                     } else {
-                        self.error(ErrorKind::DuplicateAnchor, anchor_span);
                         props.anchor = Some((anchor_name, anchor_span));
                         self.parse_value_with_properties(min_indent, props)
                     }
@@ -872,7 +901,10 @@ impl<'tokens, 'input> Parser<'tokens, 'input> {
                         Some(self.parse_alias_as_mapping_key(alias_name, alias_span, props))
                     } else {
                         if !self.anchors.contains_key(&alias_name) {
-                            self.error(ErrorKind::UndefinedAlias, alias_span);
+                            self.error(
+                                ErrorKind::UndefinedAliasNamed(alias_name.clone()),
+                                alias_span,
+                            );
                         }
                         Some(Node::new(Value::Alias(alias_name), alias_span))
                     }
@@ -905,8 +937,16 @@ impl<'tokens, 'input> Parser<'tokens, 'input> {
 
                 self.skip_ws();
 
-                if props.tag.is_some() && !props.crossed_line_boundary {
-                    self.error(ErrorKind::DuplicateTag, tag_span);
+                if let Some((first_tag, _)) = &props.tag
+                    && !props.crossed_line_boundary
+                {
+                    self.error(
+                        ErrorKind::DuplicateTagNamed {
+                            first: first_tag.clone(),
+                            second: tag_name.clone(),
+                        },
+                        tag_span,
+                    );
                 }
 
                 if props.crossed_line_boundary && props.tag.is_some() {
@@ -919,8 +959,17 @@ impl<'tokens, 'input> Parser<'tokens, 'input> {
                         self.parse_block_mapping_with_props(min_indent, inner_props)
                     {
                         Some(self.apply_properties_and_register(props, mapping))
+                    } else if let Some((first_tag, _)) = &props.tag {
+                        self.error(
+                            ErrorKind::DuplicateTagNamed {
+                                first: first_tag.clone(),
+                                second: tag_name.clone(),
+                            },
+                            tag_span,
+                        );
+                        props.tag = Some((tag_name, tag_span));
+                        self.parse_value_with_properties(min_indent, props)
                     } else {
-                        self.error(ErrorKind::DuplicateTag, tag_span);
                         props.tag = Some((tag_name, tag_span));
                         self.parse_value_with_properties(min_indent, props)
                     }
