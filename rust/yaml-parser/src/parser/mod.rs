@@ -409,24 +409,24 @@ impl<'tokens, 'input> Parser<'tokens, 'input> {
         }
 
         // Check for block sequence indicator (- item)
-        if let Some(rt) = self.tokens.get(check_pos) {
-            if matches!(rt.token, Token::BlockSeqIndicator) {
-                return true;
-            }
+        if let Some(rt) = self.tokens.get(check_pos)
+            && matches!(rt.token, Token::BlockSeqIndicator)
+        {
+            return true;
         }
 
         // Check for scalar followed by Colon (key: value pattern)
-        if let Some(rt) = self.tokens.get(check_pos) {
-            if matches!(rt.token, Token::Plain(_) | Token::StringStart(_)) {
-                // Look for Colon (:) after the scalar
-                // May have whitespace between scalar and :
-                let mut after_scalar = check_pos + 1;
-                while after_scalar < self.tokens.len() {
-                    match &self.tokens[after_scalar].token {
-                        Token::Whitespace | Token::WhitespaceWithTabs => after_scalar += 1,
-                        Token::Colon => return true,
-                        _ => break,
-                    }
+        if let Some(rt) = self.tokens.get(check_pos)
+            && matches!(rt.token, Token::Plain(_) | Token::StringStart(_))
+        {
+            // Look for Colon (:) after the scalar
+            // May have whitespace between scalar and :
+            let mut after_scalar = check_pos + 1;
+            while after_scalar < self.tokens.len() {
+                match &self.tokens[after_scalar].token {
+                    Token::Whitespace | Token::WhitespaceWithTabs => after_scalar += 1,
+                    Token::Colon => return true,
+                    _ => break,
                 }
             }
         }
