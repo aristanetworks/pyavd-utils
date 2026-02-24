@@ -285,128 +285,142 @@ impl<'a> ContextLexer<'a> {
         }
     }
 
-    /// Get the next token.
-    #[allow(
-        clippy::too_many_lines,
-        reason = "Complex lexer logic, will be refactored later"
-    )]
-    fn next_token(&mut self) -> Option<Spanned<Token>> {
-        let start = self.byte_pos;
-        let ch = self.peek()?;
+    // ========================================================================
+    // Token lexing helpers - extracted from next_token() for clarity
+    // ========================================================================
 
-        // Check for document markers at column 0
-        // `---` (document start) and `...` (document end) are only valid at column 0
-        if self.is_at_column_zero() {
-            // Check for `---` followed by whitespace/newline/EOF
-            if ch == '-' && self.peek_n(1) == Some('-') && self.peek_n(2) == Some('-') {
-                let after = self.peek_n(3);
-                if after.is_none()
-                    || after == Some(' ')
-                    || after == Some('\t')
-                    || Self::is_newline(after.unwrap_or('\n'))
-                {
-                    self.advance(); // -
-                    self.advance(); // -
-                    self.advance(); // -
-                    return Some((Token::DocStart, self.current_span(start)));
-                }
-            }
-            // Check for `...` followed by whitespace/newline/EOF
-            if ch == '.' && self.peek_n(1) == Some('.') && self.peek_n(2) == Some('.') {
-                let after = self.peek_n(3);
-                if after.is_none()
-                    || after == Some(' ')
-                    || after == Some('\t')
-                    || Self::is_newline(after.unwrap_or('\n'))
-                {
-                    self.advance(); // .
-                    self.advance(); // .
-                    self.advance(); // .
-                    return Some((Token::DocEnd, self.current_span(start)));
-                }
+    /// Try to lex a document marker (`---` or `...`) at column 0.
+    fn try_lex_document_marker(&mut self, start: usize, ch: char) -> Option<Spanned<Token>> {
+        if !self.is_at_column_zero() {
+            return None;
+        }
+
+        // Check for `---` followed by whitespace/newline/EOF
+        if ch == '-' && self.peek_n(1) == Some('-') && self.peek_n(2) == Some('-') {
+            let after = self.peek_n(3);
+            if after.is_none()
+                || after == Some(' ')
+                || after == Some('\t')
+                || Self::is_newline(after.unwrap_or('\n'))
+            {
+                self.advance(); // -
+                self.advance(); // -
+                self.advance(); // -
+                return Some((Token::DocStart, self.current_span(start)));
             }
         }
 
-        // Handle newlines -> produce LineStart with indentation
-        if Self::is_newline(ch) {
+        // Check for `...` followed by whitespace/newline/EOF
+        if ch == '.' && self.peek_n(1) == Some('.') && self.peek_n(2) == Some('.') {
+            let after = self.peek_n(3);
+            if after.is_none()
+                || after == Some(' ')
+                || after == Some('\t')
+                || Self::is_newline(after.unwrap_or('\n'))
+            {
+                self.advance(); // .
+                self.advance(); // .
+                self.advance(); // .
+                return Some((Token::DocEnd, self.current_span(start)));
+            }
+        }
+
+        None
+    }
+
+    /// Try to lex a newline and subsequent indentation.
+    fn try_lex_newline(&mut self, start: usize, ch: char) -> Option<Spanned<Token>> {
+        if !Self::is_newline(ch) {
+            return None;
+        }
+
+        self.advance();
+        // Handle \r\n
+        if ch == '\r' && self.peek() == Some('\n') {
             self.advance();
-            // Handle \r\n
-            if ch == '\r' && self.peek() == Some('\n') {
-                self.advance();
-            }
-
-            // Count indentation spaces only (tabs are NOT valid for indentation in YAML)
-            // The parser will validate that tabs aren't used as indentation in block context.
-            let mut indent = 0;
-            while self.peek() == Some(' ') {
-                self.advance();
-                indent += 1;
-            }
-
-            return Some((Token::LineStart(indent), self.current_span(start)));
         }
 
-        // Skip inline whitespace
-        if ch == ' ' || ch == '\t' {
-            self.skip_inline_whitespace();
-            return Some((Token::Whitespace, self.current_span(start)));
+        // Count indentation spaces only (tabs are NOT valid for indentation in YAML)
+        let mut indent = 0;
+        while self.peek() == Some(' ') {
+            self.advance();
+            indent += 1;
         }
 
-        // Comments - `#` only starts a comment if preceded by whitespace or at line start
-        if ch == '#' {
-            if !self.prev_was_separator {
-                // `#` without preceding whitespace is invalid - report error
-                self.advance();
-                let span = self.current_span(start);
-                self.add_error(ErrorKind::UnexpectedToken, span);
-                // Try to recover by consuming rest of line as if it were a comment
-                while let Some(peek_ch) = self.peek() {
-                    if Self::is_newline(peek_ch) {
-                        break;
-                    }
-                    self.advance();
-                }
-                // Return as invalid content - we'll report the error
-                return Some((Token::Comment(String::new()), self.current_span(start)));
-            }
-            let mut content = String::new();
-            self.advance(); // consume #
+        Some((Token::LineStart(indent), self.current_span(start)))
+    }
+
+    /// Try to lex inline whitespace.
+    fn try_lex_whitespace(&mut self, start: usize, ch: char) -> Option<Spanned<Token>> {
+        if ch != ' ' && ch != '\t' {
+            return None;
+        }
+        self.skip_inline_whitespace();
+        Some((Token::Whitespace, self.current_span(start)))
+    }
+
+    /// Try to lex a comment.
+    fn try_lex_comment(&mut self, start: usize, ch: char) -> Option<Spanned<Token>> {
+        if ch != '#' {
+            return None;
+        }
+
+        if !self.prev_was_separator {
+            // `#` without preceding whitespace is invalid - report error
+            self.advance();
+            let span = self.current_span(start);
+            self.add_error(ErrorKind::UnexpectedToken, span);
+            // Try to recover by consuming rest of line as if it were a comment
             while let Some(peek_ch) = self.peek() {
                 if Self::is_newline(peek_ch) {
                     break;
                 }
-                content.push(peek_ch);
                 self.advance();
             }
-            return Some((Token::Comment(content), self.current_span(start)));
+            return Some((Token::Comment(String::new()), self.current_span(start)));
         }
 
-        // Flow indicators - always recognized as flow indicators
-        // (but can appear in plain scalars in block mode - handled below)
+        let mut content = String::new();
+        self.advance(); // consume #
+        while let Some(peek_ch) = self.peek() {
+            if Self::is_newline(peek_ch) {
+                break;
+            }
+            content.push(peek_ch);
+            self.advance();
+        }
+        Some((Token::Comment(content), self.current_span(start)))
+    }
+
+    /// Try to lex a flow indicator (`{}[],`).
+    fn try_lex_flow_indicator(&mut self, start: usize, ch: char) -> Option<Spanned<Token>> {
         match ch {
             '{' => {
                 self.advance();
-                return Some((Token::FlowMapStart, self.current_span(start)));
+                Some((Token::FlowMapStart, self.current_span(start)))
             }
             '}' => {
                 self.advance();
-                return Some((Token::FlowMapEnd, self.current_span(start)));
+                Some((Token::FlowMapEnd, self.current_span(start)))
             }
             '[' => {
                 self.advance();
-                return Some((Token::FlowSeqStart, self.current_span(start)));
+                Some((Token::FlowSeqStart, self.current_span(start)))
             }
             ']' => {
                 self.advance();
-                return Some((Token::FlowSeqEnd, self.current_span(start)));
+                Some((Token::FlowSeqEnd, self.current_span(start)))
             }
             ',' if self.mode() == LexMode::Flow => {
                 self.advance();
-                return Some((Token::Comma, self.current_span(start)));
+                Some((Token::Comma, self.current_span(start)))
             }
-            _ => {}
+            _ => None,
         }
+    }
 
+    /// Try to lex a block indicator (`-` or `?` followed by whitespace).
+    fn try_lex_block_indicator(&mut self, start: usize, ch: char) -> Option<Spanned<Token>> {
         // Block sequence indicator: - followed by whitespace/newline
         if ch == '-' {
             if let Some(next) = self.peek_n(1) {
@@ -434,46 +448,50 @@ impl<'a> ContextLexer<'a> {
             }
         }
 
-        // Colon: Complex rules based on context
-        // - After JSON-like value (quoted string, alias, flow end): always indicator
-        // - In flow mode: : is indicator if followed by whitespace, newline, EOF, or flow indicator
-        //   Otherwise, it starts a plain scalar (e.g., :x or http://...)
-        // - In block mode: : is indicator only if followed by whitespace/newline/EOF
-        if ch == ':' {
-            let next = self.peek_n(1);
-            let is_indicator = if self.prev_was_json_like && self.mode() == LexMode::Flow {
-                // After a JSON-like value, : is ALWAYS an indicator in flow context
-                true
-            } else {
-                match self.mode() {
-                    LexMode::Flow => {
-                        // In flow context, : is indicator if followed by:
-                        // - whitespace, newline, EOF, or flow indicator
-                        // Otherwise, it's the start of a plain scalar like :x or ://
-                        next.is_none()
-                            || next == Some(' ')
-                            || next == Some('\t')
-                            || next.is_some_and(Self::is_newline)
-                            || next.is_some_and(Self::is_flow_indicator)
-                    }
-                    LexMode::Block => {
-                        // In block context, : is indicator only if followed by whitespace/newline/EOF
-                        next.is_none()
-                            || next == Some(' ')
-                            || next == Some('\t')
-                            || next.is_some_and(Self::is_newline)
-                    }
-                }
-            };
-            if is_indicator {
-                self.advance();
-                return Some((Token::Colon, self.current_span(start)));
-            }
-            // Otherwise, : starts a plain scalar - fall through to plain scalar parsing
+        None
+    }
+
+    /// Try to lex a colon as a mapping value indicator.
+    fn try_lex_colon(&mut self, start: usize, ch: char) -> Option<Spanned<Token>> {
+        if ch != ':' {
+            return None;
         }
 
+        let next = self.peek_n(1);
+        let is_indicator = if self.prev_was_json_like && self.mode() == LexMode::Flow {
+            // After a JSON-like value, : is ALWAYS an indicator in flow context
+            true
+        } else {
+            match self.mode() {
+                LexMode::Flow => {
+                    // In flow context, : is indicator if followed by:
+                    // - whitespace, newline, EOF, or flow indicator
+                    next.is_none()
+                        || next == Some(' ')
+                        || next == Some('\t')
+                        || next.is_some_and(Self::is_newline)
+                        || next.is_some_and(Self::is_flow_indicator)
+                }
+                LexMode::Block => {
+                    // In block context, : is indicator only if followed by whitespace/newline/EOF
+                    next.is_none()
+                        || next == Some(' ')
+                        || next == Some('\t')
+                        || next.is_some_and(Self::is_newline)
+                }
+            }
+        };
+
+        // Note: : starts a plain scalar if not an indicator - let caller handle it
+        is_indicator.then(|| {
+            self.advance();
+            (Token::Colon, self.current_span(start))
+        })
+    }
+
+    /// Try to lex an anchor (`&name`) or alias (`*name`).
+    fn try_lex_anchor_or_alias(&mut self, start: usize, ch: char) -> Option<Spanned<Token>> {
         // Anchors: &name
-        // Per YAML 1.2, anchor names can contain any non-whitespace char except flow indicators
         if ch == '&'
             && let Some(next) = self.peek_n(1)
             && is_anchor_char(next)
@@ -482,7 +500,6 @@ impl<'a> ContextLexer<'a> {
             let name = self.consume_anchor_name();
             return Some((Token::Anchor(name), self.current_span(start)));
         }
-        // & not followed by valid anchor char - will be part of plain scalar
 
         // Aliases: *name
         if ch == '*'
@@ -494,12 +511,11 @@ impl<'a> ContextLexer<'a> {
             return Some((Token::Alias(name), self.current_span(start)));
         }
 
-        // Tags: !, !!type, !<uri>
-        if ch == '!' {
-            return Some(self.consume_tag(start));
-        }
+        None
+    }
 
-        // Block scalar headers: | and >
+    /// Try to lex a block scalar header (`|` or `>`).
+    fn try_lex_block_scalar_header(&mut self, start: usize, ch: char) -> Option<Spanned<Token>> {
         if ch == '|' {
             self.advance();
             let header = self.consume_block_header();
@@ -510,16 +526,66 @@ impl<'a> ContextLexer<'a> {
             let header = self.consume_block_header();
             return Some((Token::FoldedBlockHeader(header), self.current_span(start)));
         }
+        None
+    }
 
-        // Quoted scalars
+    /// Try to lex a quoted scalar (`'...'` or `"..."`).
+    fn try_lex_quoted_scalar(&mut self, start: usize, ch: char) -> Option<Spanned<Token>> {
         if ch == '\'' {
             return Some(self.consume_single_quoted(start));
         }
         if ch == '"' {
             return Some(self.consume_double_quoted(start));
         }
+        None
+    }
 
-        // Plain scalar
+    /// Get the next token.
+    ///
+    /// This method dispatches to specialized helper methods for each token type.
+    fn next_token(&mut self) -> Option<Spanned<Token>> {
+        let start = self.byte_pos;
+        let ch = self.peek()?;
+
+        // Try each token type in order of precedence
+        if let Some(token) = self.try_lex_document_marker(start, ch) {
+            return Some(token);
+        }
+        if let Some(token) = self.try_lex_newline(start, ch) {
+            return Some(token);
+        }
+        if let Some(token) = self.try_lex_whitespace(start, ch) {
+            return Some(token);
+        }
+        if let Some(token) = self.try_lex_comment(start, ch) {
+            return Some(token);
+        }
+        if let Some(token) = self.try_lex_flow_indicator(start, ch) {
+            return Some(token);
+        }
+        if let Some(token) = self.try_lex_block_indicator(start, ch) {
+            return Some(token);
+        }
+        if let Some(token) = self.try_lex_colon(start, ch) {
+            return Some(token);
+        }
+        if let Some(token) = self.try_lex_anchor_or_alias(start, ch) {
+            return Some(token);
+        }
+
+        // Tags: !, !!type, !<uri>
+        if ch == '!' {
+            return Some(self.consume_tag(start));
+        }
+
+        if let Some(token) = self.try_lex_block_scalar_header(start, ch) {
+            return Some(token);
+        }
+        if let Some(token) = self.try_lex_quoted_scalar(start, ch) {
+            return Some(token);
+        }
+
+        // Default: plain scalar
         Some(self.consume_plain_scalar(start))
     }
 
