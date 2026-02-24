@@ -151,32 +151,37 @@ The parser uses a **three-layer architecture**:
 
 #### `value.rs` - AST Types
 
-- **`Node`**: The core AST node type
+- **`Node<'input>`**: The core AST node type with zero-copy support
 
   ```rust
-  pub struct Node {
-      pub anchor: Option<String>,  // &name
-      pub tag: Option<String>,     // !tag
-      pub value: Value,            // The actual content
-      pub span: Span,              // Source location
+  pub struct Node<'input> {
+      pub anchor: Option<Cow<'input, str>>,  // &name (zero-copy)
+      pub tag: Option<Cow<'input, str>>,     // !tag (zero-copy)
+      pub value: Value<'input>,              // The actual content
+      pub span: Span,                        // Source location
   }
   ```
 
-- **`Value`**: The actual YAML value
+- **`Value<'input>`**: The actual YAML value with zero-copy support
 
   ```rust
-  pub enum Value {
+  pub enum Value<'input> {
       Null,
       Bool(bool),
       Int(i64),
       Float(f64),
-      String(String),
-      Sequence(Vec<Node>),
-      Mapping(Vec<(Node, Node)>),
-      Alias(String),
+      String(Cow<'input, str>),       // Zero-copy when possible
+      Sequence(Vec<Node<'input>>),
+      Mapping(Vec<(Node<'input>, Node<'input>)>),
+      Alias(Cow<'input, str>),        // Zero-copy when possible
       Invalid,
   }
   ```
+
+- **Zero-Copy Design**: Uses `Cow<'input, str>` (Copy-on-Write) for string content
+  - `Cow::Borrowed(&str)` - zero allocation, borrows from input
+  - `Cow::Owned(String)` - allocated when content is transformed (escapes, multiline)
+  - `into_owned()` methods convert to `'static` lifetime when needed
 
 - **Key Design**: Anchors and tags are **node properties**, not value wrappers
   - This matches the YAML spec's data model
@@ -526,32 +531,38 @@ The `Token` enum (defined in `token.rs`) has 20+ variants:
 
 ### Node and Value Types
 
-**`Node` Structure:**
+**`Node<'input>` Structure:**
 
 ```rust
-pub struct Node {
-    pub anchor: Option<String>,  // Optional anchor name (&name)
-    pub tag: Option<String>,     // Optional tag (!tag)
-    pub value: Value,            // The actual YAML value
-    pub span: Span,              // Source location (byte range)
+pub struct Node<'input> {
+    pub anchor: Option<Cow<'input, str>>,  // Optional anchor name (&name)
+    pub tag: Option<Cow<'input, str>>,     // Optional tag (!tag)
+    pub value: Value<'input>,              // The actual YAML value
+    pub span: Span,                        // Source location (byte range)
 }
 ```
 
-**`Value` Enum:**
+**`Value<'input>` Enum:**
 
 ```rust
-pub enum Value {
-    Null,                        // null, ~, or empty
-    Bool(bool),                  // true, false
-    Int(i64),                    // 42, -17, 0o77, 0xFF
-    Float(f64),                  // 3.14, -0.5, .inf, .nan
-    String(String),              // Any string content
-    Sequence(Vec<Node>),         // Array/list of nodes
-    Mapping(Vec<(Node, Node)>),  // Key-value pairs
-    Alias(String),               // *anchor_name
-    Invalid,                     // Error recovery placeholder
+pub enum Value<'input> {
+    Null,                                  // null, ~, or empty
+    Bool(bool),                            // true, false
+    Int(i64),                              // 42, -17, 0o77, 0xFF
+    Float(f64),                            // 3.14, -0.5, .inf, .nan
+    String(Cow<'input, str>),              // Any string content (zero-copy)
+    Sequence(Vec<Node<'input>>),           // Array/list of nodes
+    Mapping(Vec<(Node<'input>, Node<'input>)>),  // Key-value pairs
+    Alias(Cow<'input, str>),               // *anchor_name (zero-copy)
+    Invalid,                               // Error recovery placeholder
 }
 ```
+
+**Zero-Copy API:**
+
+- `parse(input) -> (Vec<Node<'static>>, ...)` - Convenience API, returns owned data
+- `parse_single_document(tokens, input, ...) -> (Option<Node<'input>>, ...)` - Zero-copy API
+- `Node::into_owned()` / `Value::into_owned()` - Convert borrowed to owned
 
 **Design Note:** Mappings use `Vec<(Node, Node)>` instead of `HashMap` because:
 
@@ -762,12 +773,13 @@ See `TECHNICAL_DEBT.md` for comprehensive documentation. Key limitations:
 
 - Not optimized for speed (focus has been on correctness)
 - Three-layer architecture has some overhead
-- Lexer uses zero-copy (`Cow<'input, str>`), but parser still allocates owned strings
+- Block scalars still require allocation for processing (chomping, folding)
 
 ### 2. Memory Usage
 
-- Parser nodes use owned strings (not zero-copy yet)
-- Could use arena allocation or reference counting
+- Main `parse()` API returns owned data for convenience
+- Use `parse_single_document()` for zero-copy parsing when needed
+- Could use arena allocation for even better performance
 
 ### 3. Unicode Handling
 
@@ -823,6 +835,12 @@ See `TECHNICAL_DEBT.md` for comprehensive documentation. Key limitations:
 5. ✅ **Expected Token Sets** (Phase 3.2) - Better diagnostics
     - `error_expected()` method for reporting errors with expected tokens
     - Key decision points now populate `ParseError::expected` field
+6. ✅ **Zero-Copy Scalar Parsing** (Phase 2.1) - Reduced allocations
+    - Added `<'input>` lifetime to `Node` and `Value` types
+    - String content uses `Cow<'input, str>` for zero-copy when possible
+    - Anchors, tags, aliases, and plain scalars borrow from input
+    - `into_owned()` methods convert to `'static` lifetime
+    - Main `parse()` returns owned; `parse_single_document()` returns borrowed
 
 See `LEXER_IMPROVEMENTS.md` for detailed lexer progress tracking (including dropped items with rationale).
 

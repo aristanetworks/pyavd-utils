@@ -16,6 +16,7 @@ mod block;
 mod flow;
 mod scalar;
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 
 use chumsky::span::Span as _;
@@ -27,13 +28,15 @@ use crate::span::{Span, Spanned};
 use crate::value::{Node, Value};
 
 /// A stream of YAML documents.
-pub type Stream = Vec<Node>;
+pub type Stream<'input> = Vec<Node<'input>>;
 
 /// Pending node properties (anchor, tag) collected before parsing the value.
-#[derive(Debug, Default, Clone)]
-pub(crate) struct NodeProperties {
-    pub anchor: Option<(String, Span)>,
-    pub tag: Option<(String, Span)>,
+///
+/// The lifetime `'input` refers to the input string being parsed.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct NodeProperties<'input> {
+    pub anchor: Option<(Cow<'input, str>, Span)>,
+    pub tag: Option<(Cow<'input, str>, Span)>,
     /// Whether we've crossed a line boundary while accumulating these properties.
     /// This is important for distinguishing between:
     /// - `&a &b value` (invalid: two anchors on same node)
@@ -41,13 +44,13 @@ pub(crate) struct NodeProperties {
     pub crossed_line_boundary: bool,
 }
 
-impl NodeProperties {
+impl<'input> NodeProperties<'input> {
     pub fn is_empty(&self) -> bool {
         self.anchor.is_none() && self.tag.is_none()
     }
 
     /// Apply these properties to a node, updating its span to include properties.
-    pub fn apply_to(self, mut node: Node) -> Node {
+    pub fn apply_to(self, mut node: Node<'input>) -> Node<'input> {
         if let Some((anchor, anchor_span)) = self.anchor {
             node.anchor = Some(anchor);
             // Extend span to include the anchor
@@ -71,14 +74,17 @@ impl NodeProperties {
 /// The parser has two lifetimes:
 /// - `'tokens` is the lifetime of the token slice
 /// - `'input` is the lifetime of the input string (tokens borrow from input via `Cow`)
+///
+/// The bound `'tokens: 'input` ensures that when we return `Node<'input>`,
+/// the compiler knows the returned data borrows from `'input`, not from `&mut self`.
 #[derive(Debug)]
-pub(crate) struct Parser<'tokens, 'input> {
+pub(crate) struct Parser<'tokens: 'input, 'input> {
     pub tokens: &'tokens [RichToken<'input>],
     pub input: &'input str,
     pub pos: usize,
     pub errors: Vec<ParseError>,
     /// Map of anchor names to their nodes (for alias resolution)
-    pub anchors: HashMap<String, Node>,
+    pub anchors: HashMap<Cow<'input, str>, Node<'input>>,
     /// Flow depth tracking (0 = block context, > 0 = inside flow collections)
     pub flow_depth: usize,
     /// Stack of columns where each flow context started.
@@ -94,7 +100,7 @@ pub(crate) struct Parser<'tokens, 'input> {
     pub tag_handles: HashMap<String, String>,
 }
 
-impl<'tokens, 'input> Parser<'tokens, 'input> {
+impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
     pub fn new(tokens: &'tokens [RichToken<'input>], input: &'input str) -> Self {
         Self {
             tokens,
@@ -253,7 +259,11 @@ impl<'tokens, 'input> Parser<'tokens, 'input> {
     }
 
     /// Apply node properties to a node and register the anchor if present.
-    pub fn apply_properties_and_register(&mut self, props: NodeProperties, node: Node) -> Node {
+    pub fn apply_properties_and_register(
+        &mut self,
+        props: NodeProperties<'input>,
+        node: Node<'input>,
+    ) -> Node<'input> {
         let node_with_props = props.apply_to(node);
         // If the node has an anchor, register it in the anchors map
         if let Some(ref anchor_name) = node_with_props.anchor {
@@ -269,18 +279,21 @@ impl<'tokens, 'input> Parser<'tokens, 'input> {
     /// into a `NodeProperties` struct. Duplicate anchors/tags emit errors.
     ///
     /// Returns the collected properties and stops when a non-property token is found.
-    pub fn collect_node_properties(&mut self, mut props: NodeProperties) -> NodeProperties {
+    pub fn collect_node_properties(
+        &mut self,
+        mut props: NodeProperties<'input>,
+    ) -> NodeProperties<'input> {
         loop {
             match self.peek() {
                 Some((Token::Anchor(name), anchor_span)) => {
-                    let anchor_name = name.to_string();
+                    let anchor_name = name.clone();
                     self.advance();
                     self.skip_ws();
                     if let Some((first_anchor, _)) = &props.anchor {
                         self.error(
                             ErrorKind::DuplicateAnchorNamed {
-                                first: first_anchor.clone(),
-                                second: anchor_name.clone(),
+                                first: first_anchor.to_string(),
+                                second: anchor_name.to_string(),
                             },
                             anchor_span,
                         );
@@ -288,14 +301,14 @@ impl<'tokens, 'input> Parser<'tokens, 'input> {
                     props.anchor = Some((anchor_name, anchor_span));
                 }
                 Some((Token::Tag(name), tag_span)) => {
-                    let tag_name = name.to_string();
+                    let tag_name = name.clone();
                     self.advance();
                     self.skip_ws();
                     if let Some((first_tag, _)) = &props.tag {
                         self.error(
                             ErrorKind::DuplicateTagNamed {
-                                first: first_tag.clone(),
-                                second: tag_name.clone(),
+                                first: first_tag.to_string(),
+                                second: tag_name.to_string(),
                             },
                             tag_span,
                         );
@@ -712,7 +725,7 @@ impl<'tokens, 'input> Parser<'tokens, 'input> {
     }
 
     /// Parse a complete YAML stream (multiple documents).
-    pub fn parse_stream(&mut self) -> Stream {
+    pub fn parse_stream(&mut self) -> Stream<'input> {
         let mut documents = Vec::new();
 
         self.skip_ws_and_newlines();
@@ -756,7 +769,7 @@ impl<'tokens, 'input> Parser<'tokens, 'input> {
     }
 
     /// Parse a YAML value at the given minimum indentation level.
-    pub fn parse_value(&mut self, min_indent: usize) -> Option<Node> {
+    pub fn parse_value(&mut self, min_indent: usize) -> Option<Node<'input>> {
         self.parse_value_with_properties(min_indent, NodeProperties::default())
     }
 
@@ -768,11 +781,11 @@ impl<'tokens, 'input> Parser<'tokens, 'input> {
     /// - Checks for trailing content at root level
     fn handle_flow_collection_as_value(
         &mut self,
-        flow_node: Node,
+        flow_node: Node<'input>,
         start_pos: usize,
         min_indent: usize,
-        props: NodeProperties,
-    ) -> Option<Node> {
+        props: NodeProperties<'input>,
+    ) -> Option<Node<'input>> {
         self.check_content_after_flow(flow_node.span.end);
         self.check_multiline_implicit_key(start_pos, flow_node.span.end);
 
@@ -796,11 +809,11 @@ impl<'tokens, 'input> Parser<'tokens, 'input> {
     /// - Accumulates the anchor as a property and continues parsing
     fn handle_anchor_in_value(
         &mut self,
-        anchor_name: String,
+        anchor_name: Cow<'input, str>,
         anchor_span: Span,
         min_indent: usize,
-        mut props: NodeProperties,
-    ) -> Option<Node> {
+        mut props: NodeProperties<'input>,
+    ) -> Option<Node<'input>> {
         // Check anchor indentation - must be >= min_indent
         let anchor_col = self.column_of_position(anchor_span.start);
         if anchor_col < min_indent {
@@ -816,8 +829,8 @@ impl<'tokens, 'input> Parser<'tokens, 'input> {
         {
             self.error(
                 ErrorKind::DuplicateAnchorNamed {
-                    first: first_anchor.clone(),
-                    second: anchor_name.clone(),
+                    first: first_anchor.to_string(),
+                    second: anchor_name.to_string(),
                 },
                 anchor_span,
             );
@@ -834,8 +847,8 @@ impl<'tokens, 'input> Parser<'tokens, 'input> {
             } else if let Some((first_anchor, _)) = &props.anchor {
                 self.error(
                     ErrorKind::DuplicateAnchorNamed {
-                        first: first_anchor.clone(),
-                        second: anchor_name.clone(),
+                        first: first_anchor.to_string(),
+                        second: anchor_name.to_string(),
                     },
                     anchor_span,
                 );
@@ -859,11 +872,11 @@ impl<'tokens, 'input> Parser<'tokens, 'input> {
     /// - Accumulates the tag as a property and continues parsing
     fn handle_tag_in_value(
         &mut self,
-        tag_name: String,
+        tag_name: Cow<'input, str>,
         tag_span: Span,
         min_indent: usize,
-        mut props: NodeProperties,
-    ) -> Option<Node> {
+        mut props: NodeProperties<'input>,
+    ) -> Option<Node<'input>> {
         self.advance();
 
         // Validate that named tag handles are declared in this document
@@ -892,8 +905,8 @@ impl<'tokens, 'input> Parser<'tokens, 'input> {
         {
             self.error(
                 ErrorKind::DuplicateTagNamed {
-                    first: first_tag.clone(),
-                    second: tag_name.clone(),
+                    first: first_tag.to_string(),
+                    second: tag_name.to_string(),
                 },
                 tag_span,
             );
@@ -910,8 +923,8 @@ impl<'tokens, 'input> Parser<'tokens, 'input> {
             } else if let Some((first_tag, _)) = &props.tag {
                 self.error(
                     ErrorKind::DuplicateTagNamed {
-                        first: first_tag.clone(),
-                        second: tag_name.clone(),
+                        first: first_tag.to_string(),
+                        second: tag_name.to_string(),
                     },
                     tag_span,
                 );
@@ -935,8 +948,8 @@ impl<'tokens, 'input> Parser<'tokens, 'input> {
     pub fn parse_value_with_properties(
         &mut self,
         min_indent: usize,
-        props: NodeProperties,
-    ) -> Option<Node> {
+        props: NodeProperties<'input>,
+    ) -> Option<Node<'input>> {
         self.skip_ws();
 
         let (tok, span) = self.peek()?;
@@ -978,7 +991,7 @@ impl<'tokens, 'input> Parser<'tokens, 'input> {
             }
             // Anchor - collect as property and continue parsing
             Token::Anchor(name) => {
-                let anchor_name = name.to_string();
+                let anchor_name = name.clone();
                 self.handle_anchor_in_value(anchor_name, span, min_indent, props)
             }
             // Alias
@@ -987,7 +1000,7 @@ impl<'tokens, 'input> Parser<'tokens, 'input> {
                     self.error(ErrorKind::PropertiesOnAlias, span);
                     self.parse_alias()
                 } else {
-                    let alias_name = name.to_string();
+                    let alias_name = name.clone();
                     let alias_span = span;
                     self.advance();
                     self.skip_ws();
@@ -995,9 +1008,9 @@ impl<'tokens, 'input> Parser<'tokens, 'input> {
                     if matches!(self.peek(), Some((Token::Colon, _))) {
                         Some(self.parse_alias_as_mapping_key(alias_name, alias_span, props))
                     } else {
-                        if !self.anchors.contains_key(&alias_name) {
+                        if !self.anchors.contains_key(alias_name.as_ref()) {
                             self.error(
-                                ErrorKind::UndefinedAliasNamed(alias_name.clone()),
+                                ErrorKind::UndefinedAliasNamed(alias_name.to_string()),
                                 alias_span,
                             );
                         }
@@ -1007,7 +1020,7 @@ impl<'tokens, 'input> Parser<'tokens, 'input> {
             }
             // Tag - collect as property and continue parsing
             Token::Tag(tag) => {
-                let tag_name = tag.to_string();
+                let tag_name = tag.clone();
                 self.handle_tag_in_value(tag_name, span, min_indent, props)
             }
             // Block scalars
@@ -1097,7 +1110,10 @@ impl<'tokens, 'input> Parser<'tokens, 'input> {
 /// Returns the parsed documents and any errors encountered.
 /// Due to error recovery, partial values may be returned even when
 /// errors are present.
-pub fn parse_tokens(tokens: &[RichToken], input: &str) -> (Stream, Vec<ParseError>) {
+pub fn parse_tokens<'input>(
+    tokens: &'input [RichToken<'input>],
+    input: &'input str,
+) -> (Stream<'input>, Vec<ParseError>) {
     let mut parser = Parser::new(tokens, input);
     let stream = parser.parse_stream();
     (stream, parser.errors)
@@ -1113,11 +1129,11 @@ pub fn parse_tokens(tokens: &[RichToken], input: &str) -> (Stream, Vec<ParseErro
 /// document's prolog. These are used to validate tag handles.
 ///
 /// Returns the parsed node (or None if empty) and any errors encountered.
-pub fn parse_single_document(
-    tokens: &[RichToken],
-    input: &str,
+pub fn parse_single_document<'input>(
+    tokens: &'input [RichToken<'input>],
+    input: &'input str,
     directives: &[Spanned<crate::stream_lexer::Directive>],
-) -> (Option<Node>, Vec<ParseError>) {
+) -> (Option<Node<'input>>, Vec<ParseError>) {
     let mut parser = Parser::new(tokens, input);
 
     // Populate tag handles from the directives provided by the stream lexer
@@ -1219,9 +1235,11 @@ mod tests {
     use super::*;
     use crate::context_lexer::tokenize_document;
 
-    fn parse(input: &str) -> (Stream, Vec<ParseError>) {
+    fn parse(input: &str) -> (Stream<'static>, Vec<ParseError>) {
         let (tokens, _) = tokenize_document(input);
-        parse_tokens(&tokens, input)
+        let (stream, errors) = parse_tokens(&tokens, input);
+        // Convert to owned data since tokens is local
+        (stream.into_iter().map(Node::into_owned).collect(), errors)
     }
 
     #[test]

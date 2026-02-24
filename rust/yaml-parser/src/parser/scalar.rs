@@ -13,16 +13,16 @@ use crate::value::{Node, Value};
 
 use super::{NodeProperties, Parser};
 
-impl Parser<'_, '_> {
+impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
     /// Parse a simple scalar token.
     /// For mapping keys (typically single-line), uses `min_indent=0`.
-    pub fn parse_scalar(&mut self) -> Option<Node> {
+    pub fn parse_scalar(&mut self) -> Option<Node<'input>> {
         self.parse_scalar_with_indent(0)
     }
 
     /// Parse a scalar token with a specified minimum indentation for continuations.
     /// This is used when parsing values where multi-line strings must respect indentation.
-    pub fn parse_scalar_with_indent(&mut self, min_indent: usize) -> Option<Node> {
+    pub fn parse_scalar_with_indent(&mut self, min_indent: usize) -> Option<Node<'input>> {
         let (tok, span) = self.peek()?;
 
         match tok {
@@ -43,7 +43,7 @@ impl Parser<'_, '_> {
     /// `min_indent` is the minimum indentation required for continuation lines.
     /// For root-level strings (`min_indent=0`), continuation at column 0 is valid.
     /// For strings that are values in mappings, continuation must be >= `min_indent`.
-    pub fn parse_quoted_string(&mut self, min_indent: usize) -> Option<Node> {
+    pub fn parse_quoted_string(&mut self, min_indent: usize) -> Option<Node<'input>> {
         let (first_token, start_span) = self.peek()?;
 
         let style = match first_token {
@@ -140,11 +140,11 @@ impl Parser<'_, '_> {
         }
 
         let full_span = Span::new((), start_span.start..end_span.end);
-        Some(Node::new(Value::String(content), full_span))
+        Some(Node::new(Value::String(content.into()), full_span))
     }
 
     /// Convert a plain scalar string to an appropriate Value.
-    pub fn scalar_to_value(scalar: String) -> Value {
+    pub fn scalar_to_value(scalar: String) -> Value<'static> {
         match scalar.as_str() {
             "null" | "Null" | "NULL" | "~" | "" => Value::Null,
             "true" | "True" | "TRUE" => Value::Bool(true),
@@ -176,29 +176,29 @@ impl Parser<'_, '_> {
                     ".nan" | ".NaN" | ".NAN" => return Value::Float(f64::NAN),
                     _ => {}
                 }
-                Value::String(scalar)
+                Value::String(scalar.into())
             }
         }
     }
 
     /// Parse an alias: *name
-    pub fn parse_alias(&mut self) -> Option<Node> {
+    pub fn parse_alias(&mut self) -> Option<Node<'input>> {
         let (tok, span) = self.advance()?;
 
         let name = if let Token::Alias(name) = tok {
-            name.to_string()
+            name.clone()
         } else {
             return None;
         };
 
-        if !self.anchors.contains_key(&name) {
+        if !self.anchors.contains_key(name.as_ref()) {
             self.error(ErrorKind::UndefinedAlias, span);
         }
         Some(Node::new(Value::Alias(name), span))
     }
 
     /// Parse a literal block scalar: |
-    pub fn parse_literal_block_scalar(&mut self, _min_indent: usize) -> Option<Node> {
+    pub fn parse_literal_block_scalar(&mut self, _min_indent: usize) -> Option<Node<'input>> {
         let (tok, span) = self.advance()?;
         let start = span.start;
 
@@ -209,11 +209,14 @@ impl Parser<'_, '_> {
         };
 
         let (content, end) = self.collect_block_scalar_content(&header, true);
-        Some(Node::new(Value::String(content), Span::new((), start..end)))
+        Some(Node::new(
+            Value::String(content.into()),
+            Span::new((), start..end),
+        ))
     }
 
     /// Parse a folded block scalar: >
-    pub fn parse_folded_block_scalar(&mut self, _min_indent: usize) -> Option<Node> {
+    pub fn parse_folded_block_scalar(&mut self, _min_indent: usize) -> Option<Node<'input>> {
         let (tok, span) = self.advance()?;
         let start = span.start;
 
@@ -224,7 +227,10 @@ impl Parser<'_, '_> {
         };
 
         let (content, end) = self.collect_block_scalar_content(&header, false);
-        Some(Node::new(Value::String(content), Span::new((), start..end)))
+        Some(Node::new(
+            Value::String(content.into()),
+            Span::new((), start..end),
+        ))
     }
 
     /// Collect block scalar content, respecting indentation.
@@ -415,11 +421,11 @@ impl Parser<'_, '_> {
         had_continuations: bool,
         start: usize,
         end: usize,
-    ) -> Node {
+    ) -> Node<'static> {
         // If we had continuations, always treat as string (no type coercion)
         // If no continuations, apply normal scalar type detection
         let value = if had_continuations {
-            Value::String(content)
+            Value::String(content.into())
         } else {
             Self::scalar_to_value(content)
         };
@@ -427,7 +433,7 @@ impl Parser<'_, '_> {
     }
 
     /// Parse a scalar and check if it's actually a mapping key.
-    pub fn parse_scalar_or_mapping(&mut self, min_indent: usize) -> Option<Node> {
+    pub fn parse_scalar_or_mapping(&mut self, min_indent: usize) -> Option<Node<'input>> {
         // Remember if the scalar we're about to parse is a quoted scalar, and its start position
         let is_quoted_scalar = matches!(self.peek(), Some((Token::StringStart(_), _)));
         let scalar_start_pos = self.pos;
@@ -569,7 +575,7 @@ impl Parser<'_, '_> {
     )]
     fn parse_remaining_mapping_entries(
         &mut self,
-        pairs: &mut Vec<(Node, Node)>,
+        pairs: &mut Vec<(Node<'input>, Node<'input>)>,
         map_indent: usize,
     ) {
         loop {
@@ -622,7 +628,7 @@ impl Parser<'_, '_> {
             loop {
                 match self.peek() {
                     Some((Token::Anchor(name), anchor_span)) => {
-                        let anchor_name = name.to_string();
+                        let anchor_name = name.clone();
                         self.advance();
                         self.skip_ws();
                         if key_props.anchor.is_some() {
@@ -631,7 +637,7 @@ impl Parser<'_, '_> {
                         key_props.anchor = Some((anchor_name, anchor_span));
                     }
                     Some((Token::Tag(name), tag_span)) => {
-                        let tag = name.to_string();
+                        let tag = name.clone();
                         self.advance();
                         self.skip_ws();
                         if key_props.tag.is_some() {
@@ -649,12 +655,12 @@ impl Parser<'_, '_> {
             // Try to parse another key (can be scalar or alias)
             let key = if let Some((Token::Alias(name), span)) = self.peek() {
                 // Check if the key is an alias with properties (invalid)
-                let alias_name = name.to_string();
+                let alias_name = name.clone();
                 if !key_props.is_empty() {
                     self.error(ErrorKind::PropertiesOnAlias, span);
                 }
                 self.advance();
-                if !self.anchors.contains_key(&alias_name) {
+                if !self.anchors.contains_key(alias_name.as_ref()) {
                     self.error(ErrorKind::UndefinedAlias, span);
                 }
                 Node::new(Value::Alias(alias_name), span)
@@ -734,9 +740,9 @@ impl Parser<'_, '_> {
     )]
     pub fn consume_plain_scalar_continuations(
         &mut self,
-        initial: Node,
+        initial: Node<'input>,
         block_min_indent: usize,
-    ) -> Node {
+    ) -> Node<'input> {
         let start = initial.span.start;
         let mut end = initial.span.end;
 
@@ -747,7 +753,7 @@ impl Parser<'_, '_> {
 
         // Extract the initial content
         let mut content = match &initial.value {
-            Value::String(string) => string.clone(),
+            Value::String(string) => string.clone().into_owned(),
             Value::Bool(boolean) => boolean.to_string(),
             Value::Int(integer) => integer.to_string(),
             Value::Float(float) => float.to_string(),

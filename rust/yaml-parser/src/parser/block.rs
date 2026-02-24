@@ -4,6 +4,8 @@
 
 //! Block structure parsing (block sequences and mappings).
 
+use std::borrow::Cow;
+
 use chumsky::span::Span as _;
 
 use crate::error::ErrorKind;
@@ -13,13 +15,13 @@ use crate::value::{Node, Value};
 
 use super::{NodeProperties, Parser};
 
-impl Parser<'_, '_> {
+impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
     /// Parse a block sequence: - item\n- item
-    pub fn parse_block_sequence(&mut self, _min_indent: usize) -> Option<Node> {
+    pub fn parse_block_sequence(&mut self, _min_indent: usize) -> Option<Node<'input>> {
         let (_, start_span) = self.peek()?;
         let start = start_span.start;
         let seq_indent = self.current_token_column();
-        let mut items: Vec<Node> = Vec::new();
+        let mut items: Vec<Node<'input>> = Vec::new();
 
         self.push_indent(seq_indent);
 
@@ -98,10 +100,10 @@ impl Parser<'_, '_> {
         clippy::too_many_lines,
         reason = "Complex block mapping parsing logic, will be refactored later"
     )]
-    pub fn parse_block_mapping(&mut self, _min_indent: usize) -> Node {
+    pub fn parse_block_mapping(&mut self, _min_indent: usize) -> Node<'input> {
         let start = self.current_span().start;
         let map_indent = self.current_token_column();
-        let mut pairs: Vec<(Node, Node)> = Vec::new();
+        let mut pairs: Vec<(Node<'input>, Node<'input>)> = Vec::new();
 
         self.push_indent(map_indent);
 
@@ -146,13 +148,13 @@ impl Parser<'_, '_> {
             } else {
                 // Check if the key is an alias with properties (invalid)
                 if let Some((Token::Alias(name), span)) = self.peek() {
-                    let alias_name = name.to_string();
+                    let alias_name = name.clone();
                     if !key_props.is_empty() {
                         self.error(ErrorKind::PropertiesOnAlias, span);
                     }
                     self.advance();
-                    if !self.anchors.contains_key(&alias_name) {
-                        self.error(ErrorKind::UndefinedAliasNamed(alias_name.clone()), span);
+                    if !self.anchors.contains_key(alias_name.as_ref()) {
+                        self.error(ErrorKind::UndefinedAliasNamed(alias_name.to_string()), span);
                     }
                     Some(Node::new(Value::Alias(alias_name), span))
                 } else {
@@ -304,11 +306,11 @@ impl Parser<'_, '_> {
     pub fn parse_block_mapping_with_props(
         &mut self,
         _min_indent: usize,
-        first_key_props: NodeProperties,
-    ) -> Option<Node> {
+        first_key_props: NodeProperties<'input>,
+    ) -> Option<Node<'input>> {
         let start = self.current_span().start;
         let map_indent = self.current_indent();
-        let mut pairs: Vec<(Node, Node)> = Vec::new();
+        let mut pairs: Vec<(Node<'input>, Node<'input>)> = Vec::new();
 
         // Collect any additional properties after the initial ones
         let key_props = self.collect_node_properties(first_key_props);
@@ -390,11 +392,11 @@ impl Parser<'_, '_> {
     pub fn parse_block_mapping_starting_with_key(
         &mut self,
         _min_indent: usize,
-        first_key: Node,
-    ) -> Option<Node> {
+        first_key: Node<'input>,
+    ) -> Option<Node<'input>> {
         let start = first_key.span.start;
         let map_indent = self.current_indent();
-        let mut pairs: Vec<(Node, Node)> = Vec::new();
+        let mut pairs: Vec<(Node<'input>, Node<'input>)> = Vec::new();
 
         if !matches!(self.peek(), Some((Token::Colon, _))) {
             return Some(first_key);
@@ -494,11 +496,11 @@ impl Parser<'_, '_> {
     pub fn parse_block_mapping_with_tagged_null_key(
         &mut self,
         _min_indent: usize,
-        key_props: NodeProperties,
-    ) -> Option<Node> {
+        key_props: NodeProperties<'input>,
+    ) -> Option<Node<'input>> {
         let start = self.current_span().start;
         let map_indent = self.current_indent();
-        let mut pairs: Vec<(Node, Node)> = Vec::new();
+        let mut pairs: Vec<(Node<'input>, Node<'input>)> = Vec::new();
 
         let first_key =
             self.apply_properties_and_register(key_props, Node::null(self.current_span()));
@@ -633,10 +635,10 @@ impl Parser<'_, '_> {
     }
 
     /// Parse a block mapping starting with an empty key (colon at line start).
-    pub fn parse_block_mapping_with_empty_key(&mut self, _min_indent: usize) -> Node {
+    pub fn parse_block_mapping_with_empty_key(&mut self, _min_indent: usize) -> Node<'input> {
         let start = self.current_span().start;
         let map_indent = self.current_indent();
-        let mut pairs: Vec<(Node, Node)> = Vec::new();
+        let mut pairs: Vec<(Node<'input>, Node<'input>)> = Vec::new();
 
         while let Some((Token::Colon, _)) = self.peek() {
             let key = Node::null(self.current_span());
@@ -680,13 +682,13 @@ impl Parser<'_, '_> {
     /// Parse a block mapping where the key is an alias.
     pub fn parse_alias_as_mapping_key(
         &mut self,
-        alias_name: String,
+        alias_name: Cow<'input, str>,
         alias_span: Span,
-        props: NodeProperties,
-    ) -> Node {
-        if !self.anchors.contains_key(&alias_name) {
+        props: NodeProperties<'input>,
+    ) -> Node<'input> {
+        if !self.anchors.contains_key(alias_name.as_ref()) {
             self.error(
-                ErrorKind::UndefinedAliasNamed(alias_name.clone()),
+                ErrorKind::UndefinedAliasNamed(alias_name.to_string()),
                 alias_span,
             );
         }
@@ -738,10 +740,13 @@ impl Parser<'_, '_> {
             let key = match self.peek() {
                 Some((Token::Plain(_) | Token::StringStart(_), _)) => self.parse_scalar(),
                 Some((Token::Alias(name), span)) => {
-                    let new_alias_name = name.to_string();
+                    let new_alias_name = name.clone();
                     self.advance();
-                    if !self.anchors.contains_key(&new_alias_name) {
-                        self.error(ErrorKind::UndefinedAliasNamed(new_alias_name.clone()), span);
+                    if !self.anchors.contains_key(new_alias_name.as_ref()) {
+                        self.error(
+                            ErrorKind::UndefinedAliasNamed(new_alias_name.to_string()),
+                            span,
+                        );
                     }
                     Some(Node::new(Value::Alias(new_alias_name), span))
                 }

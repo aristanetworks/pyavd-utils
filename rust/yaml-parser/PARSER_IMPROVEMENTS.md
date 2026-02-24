@@ -84,28 +84,37 @@ The `parse_flow_mapping` function is now under clippy's 100 line threshold.
 
 #### 2.1 Zero-Copy Scalar Parsing
 
-**Status:** [ ] Not Started
+**Status:** [x] Complete
 **Complexity:** Medium-High
 **Impact:** Reduces allocations for string values
 
-**Problem:** Parser creates owned `String` values even when the input could be borrowed.
-The lexer already uses `Cow<'input, str>` for tokens.
+**Problem:** Parser created owned `String` values even when the input could be borrowed.
+The lexer already used `Cow<'input, str>` for tokens.
 
 **Solution:**
 
-- Change `Value::String(String)` to `Value::String(Cow<'input, str>)`
-- This requires adding a lifetime parameter to `Value` and `Node`
-- Benefits most for simple unquoted scalars and keys
+- Changed `Value::String(String)` to `Value::String(Cow<'input, str>)`
+- Changed `Value::Alias(String)` to `Value::Alias(Cow<'input, str>)`
+- Changed `Node::anchor` and `Node::tag` from `Option<String>` to `Option<Cow<'input, str>>`
+- Added `<'input>` lifetime parameter to `Node` and `Value`
+- Added `into_owned()` methods to convert to `'static` lifetime
+- The main `parse()` function returns owned data (`Node<'static>`) for convenience
+- Lower-level `parse_single_document()` returns borrowed data for zero-copy when needed
+
+**API Design:**
+
+- `parse(input: &str) -> (Vec<Node<'static>>, Vec<ParseError>)` - returns owned, easy to use
+- `parse_single_document(&tokens, &input, &directives) -> (Option<Node<'input>>, ...)` - zero-copy
 
 **Trade-offs:**
 
-- API complexity increases (lifetime parameter propagates)
-- May not be worth it if most use cases convert to owned anyway
-- Consider as optional optimization, not required
+- API complexity increased (lifetime parameter propagates through parser internals)
+- Users get owned data from `parse()` by default (no action needed)
+- Advanced users can use lower-level API for zero-copy benefits
 
 #### 2.2 Reduce Intermediate Allocations in Block Scalars
 
-**Status:** [ ] Not Started
+**Status:** [ ] Not Started (may be partially addressed by 2.1)
 **Complexity:** Medium
 **Impact:** Improves block scalar performance
 
@@ -117,6 +126,9 @@ then joins them. For large block scalars, this creates intermediate allocations.
 - Estimate final size based on byte range
 - Build result string directly with pre-allocated capacity
 - Track newlines without intermediate line vector
+
+**Note:** With zero-copy parsing (2.1), many simple scalars are already zero-copy.
+Block scalars still require processing (chomping, folding) so they create owned strings.
 
 ### Phase 3: Error Handling Improvements
 
@@ -164,10 +176,11 @@ was already in place. The implementation focused on populating these fields at k
 3. ~~**1.2 Method Extraction**~~ - ✓ Done
 4. ~~**1.3 Flow Unification**~~ - ✓ Done
 5. ~~**3.2 Expected Token Sets**~~ - ✓ Done
+6. ~~**2.1 Zero-Copy Scalar Parsing**~~ - ✓ Done
 
 **Remaining (recommended order):**
 
-1. **2.1/2.2 Performance** - Only if profiling shows need
+1. **2.2 Block Scalar Allocations** - Only if profiling shows need
 
 ## Dropped Items
 
