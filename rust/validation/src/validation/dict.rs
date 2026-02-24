@@ -162,7 +162,9 @@ fn check_deprecation(
             true
         } else {
             ctx.add_warning(Deprecated::from_schema(&ctx.state.path, deprecation));
-            if let Some(schema_new_key) = deprecation.new_key.as_ref() {
+            if !deprecation.allow_with_new_key.unwrap_or_default()
+                && let Some(schema_new_key) = deprecation.new_key.as_ref()
+            {
                 // Split the new_key on ' or ' in case of multiple new keys.
                 // Then check if any of the new keys are set in the inputs at the same time as the deprecated key,
                 // adding conflict errors if found
@@ -675,6 +677,155 @@ mod tests {
         assert!(ctx.result.infos.is_empty());
         assert!(ctx.result.warnings.is_empty());
         assert!(ctx.result.errors.is_empty());
+    }
+
+    // Tests that when allow_with_new_key is true, using both the deprecated key
+    // and the new key simultaneously does NOT produce a DeprecatedConflict error.
+    #[test]
+    fn validate_key_deprecated_with_allow_with_new_key_ok() {
+        let schema: Dict = Dict::deserialize(serde_json::json!({
+            "keys": {
+                "old_key": {
+                    "type": "str",
+                    "deprecation": {
+                        "warning": true,
+                        "new_key": "new_key",
+                        "allow_with_new_key": true,
+                        "remove_in_version": "2.0.0",
+                    }
+                },
+                "new_key": {
+                    "type": "str"
+                }
+            }
+        }))
+        .unwrap();
+        let input = serde_json::json!({"old_key": "old_value", "new_key": "new_value"});
+        let store = get_test_store();
+        let mut ctx = Context::new(&store, None);
+        schema.validate_value(&input, &mut ctx);
+        assert!(ctx.result.infos.is_empty());
+        // Should have a deprecation warning
+        assert_eq!(
+            ctx.result.warnings,
+            vec![Feedback {
+                path: vec!["old_key".into()].into(),
+                issue: WarningIssue::Deprecated(Deprecated {
+                    path: vec!["old_key".into()].into(),
+                    replacement: Some("new_key".into()).into(),
+                    version: Some("2.0.0".into()).into(),
+                    url: None.into()
+                })
+            }]
+        );
+        // Should NOT have a DeprecatedConflict error
+        assert!(ctx.result.errors.is_empty());
+    }
+
+    // Tests that when allow_with_new_key is not set (None/undefined), using both the
+    // deprecated key and the new key simultaneously DOES produce a DeprecatedConflict error.
+    // This tests the default behavior when the field is omitted.
+    #[test]
+    fn validate_key_deprecated_without_allow_with_new_key_err() {
+        let schema: Dict = Dict::deserialize(serde_json::json!({
+            "keys": {
+                "old_key": {
+                    "type": "str",
+                    "deprecation": {
+                        "warning": true,
+                        "new_key": "new_key",
+                        "remove_in_version": "2.0.0",
+                    }
+                },
+                "new_key": {
+                    "type": "str"
+                }
+            }
+        }))
+        .unwrap();
+        let input = serde_json::json!({"old_key": "old_value", "new_key": "new_value"});
+        let store = get_test_store();
+        let mut ctx = Context::new(&store, None);
+        schema.validate_value(&input, &mut ctx);
+        assert!(ctx.result.infos.is_empty());
+        // Should have a deprecation warning
+        assert_eq!(
+            ctx.result.warnings,
+            vec![Feedback {
+                path: vec!["old_key".into()].into(),
+                issue: WarningIssue::Deprecated(Deprecated {
+                    path: vec!["old_key".into()].into(),
+                    replacement: Some("new_key".into()).into(),
+                    version: Some("2.0.0".into()).into(),
+                    url: None.into()
+                })
+            }]
+        );
+        // Should have a DeprecatedConflict error
+        assert_eq!(
+            ctx.result.errors,
+            vec![Feedback {
+                path: vec!["old_key".into()].into(),
+                issue: Violation::DeprecatedConflict {
+                    other_path: "new_key".into(),
+                    url: None.into()
+                }
+                .into()
+            }]
+        );
+    }
+
+    // Tests that when allow_with_new_key is explicitly set to false, using both the
+    // deprecated key and the new key simultaneously DOES produce a DeprecatedConflict error.
+    #[test]
+    fn validate_key_deprecated_with_allow_with_new_key_false_err() {
+        let schema: Dict = Dict::deserialize(serde_json::json!({
+            "keys": {
+                "old_key": {
+                    "type": "str",
+                    "deprecation": {
+                        "warning": true,
+                        "new_key": "new_key",
+                        "allow_with_new_key": false,
+                        "remove_in_version": "2.0.0",
+                    }
+                },
+                "new_key": {
+                    "type": "str"
+                }
+            }
+        }))
+        .unwrap();
+        let input = serde_json::json!({"old_key": "old_value", "new_key": "new_value"});
+        let store = get_test_store();
+        let mut ctx = Context::new(&store, None);
+        schema.validate_value(&input, &mut ctx);
+        assert!(ctx.result.infos.is_empty());
+        // Should have a deprecation warning
+        assert_eq!(
+            ctx.result.warnings,
+            vec![Feedback {
+                path: vec!["old_key".into()].into(),
+                issue: WarningIssue::Deprecated(Deprecated {
+                    path: vec!["old_key".into()].into(),
+                    replacement: Some("new_key".into()).into(),
+                    version: Some("2.0.0".into()).into(),
+                    url: None.into()
+                })
+            }]
+        );
+        // Should have a DeprecatedConflict error
+        assert_eq!(
+            ctx.result.errors,
+            vec![Feedback {
+                path: vec!["old_key".into()].into(),
+                issue: Violation::DeprecatedConflict {
+                    other_path: "new_key".into(),
+                    url: None.into()
+                }
+                .into()
+            }]
+        );
     }
 
     #[test]

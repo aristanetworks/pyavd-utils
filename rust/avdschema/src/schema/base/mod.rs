@@ -51,6 +51,8 @@ pub struct Deprecation {
     pub warning: bool,
     /// Relative path to new key
     pub new_key: Option<String>,
+    /// Allow the deprecated key to be configured simultaneously with the new key
+    pub allow_with_new_key: Option<bool>,
     /// Support for this key has been removed
     pub removed: Option<bool>,
     /// Version in which the key will be removed
