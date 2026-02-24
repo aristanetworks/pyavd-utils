@@ -134,15 +134,16 @@ The parser uses a **three-layer architecture**:
   - And more...
 - **Error suggestions**: `ErrorKind::suggestion()` returns fix hints for common errors
 
-#### `trivia.rs` - Token Trivia Preservation (IDE Support)
+#### `trivia.rs` - Token Trivia Types (IDE Support)
 
 - **`TriviaKind`**: Types of non-semantic content
 
   ```rust
   pub enum TriviaKind {
-      Comment(String),    // # comment content
-      Whitespace,         // Spaces/tabs between tokens
-      LineBreak(usize),   // Newline with following indent level
+      Comment(String),      // # comment content
+      Whitespace,           // Spaces only
+      WhitespaceWithTabs,   // Contains at least one tab
+      LineBreak(usize),     // Newline with following indent level
   }
   ```
 
@@ -155,20 +156,24 @@ The parser uses a **three-layer architecture**:
   }
   ```
 
-- **`RichToken`**: Token with attached leading/trailing trivia
+- **`RichToken`**: Token wrapper (trivia not currently attached)
 
   ```rust
   pub struct RichToken {
       pub token: Token,
       pub span: Span,
-      pub leading_trivia: Vec<Trivia>,   // Trivia before this token
-      pub trailing_trivia: Vec<Trivia>,  // Trivia on same line after token
+      pub leading_trivia: Vec<Trivia>,   // Currently empty
+      pub trailing_trivia: Vec<Trivia>,  // Currently empty
   }
   ```
 
-- **`tokenize_with_trivia()`**: Alternative tokenizer returning `Vec<RichToken>`
-  - Follows industry pattern (TypeScript, Roslyn, rust-analyzer)
-  - Critical for IDE refactoring that must preserve comments/formatting
+- **Design Decision (2026-02-24)**: Trivia attachment was **reverted**
+  - Comments remain as real `Token::Comment(_)` tokens in the stream
+  - Whitespace remains as real `Token::Whitespace` / `Token::WhitespaceWithTabs` tokens
+  - **Reason**: Comments have semantic meaning in YAML - they terminate plain scalars
+  - The parser needs to see comments directly to correctly parse multiline plain scalars
+  - `RichToken` structure is preserved for future IDE features
+  - IDE features can filter/group tokens as needed post-parsing
 
 #### `value.rs` - AST Types
 
@@ -521,11 +526,14 @@ The `Token` enum (defined in `token.rs`) has 20+ variants:
 
 **Whitespace and Structure:**
 
-- `LineStart(usize)` - Newline + indentation count
-- `Whitespace` - Inline whitespace
+- `LineStart(usize)` - Newline + indentation count (spaces only, not tabs)
+- `Whitespace` - Inline whitespace (spaces only)
+- `WhitespaceWithTabs` - Inline whitespace containing at least one tab
 - `Comment(String)` - `# comment`
 - `Indent(usize)` - INDENT token (emitted by context lexer)
 - `Dedent` - DEDENT token (emitted by context lexer)
+
+**Note on Whitespace Tokens**: The `Whitespace` / `WhitespaceWithTabs` split enables O(1) tab detection in the parser. YAML forbids tabs for indentation but allows them for separation. The parser checks for `WhitespaceWithTabs` after `LineStart` to detect invalid tab indentation.
 
 **Error Recovery:**
 
@@ -802,8 +810,12 @@ See `TECHNICAL_DEBT.md` for comprehensive documentation. Key limitations:
 3. ✅ **SourceMap Utility** - Line/column position tracking for IDE integration
 4. ✅ **State Machine Extraction** - `next_token()` refactored from ~230 to ~45 lines
 5. ✅ **Unified Quoted String Handling** - Shared helpers reduce duplication
-6. ✅ **Token Trivia Preservation** (Phase 1.1) - `RichToken` with leading/trailing trivia
-7. ✅ **Rich Error Context** (Phase 3.1) - 10 contextual error variants with suggestions
+6. ✅ **Rich Error Context** (Phase 3.1) - 10 contextual error variants with suggestions
+7. ✅ **Whitespace Tab Detection** - Split `Whitespace` / `WhitespaceWithTabs` for O(1) tab detection
+8. ⚠️ **Token Trivia Preservation** (Phase 1.1) - **Reverted**; comments kept as real tokens
+   - Comments have semantic meaning in YAML (they terminate plain scalars)
+   - Parser needs to see `Token::Comment(_)` directly for correct parsing
+   - `RichToken` structure preserved for future IDE features (trivia not attached)
 
 See `LEXER_IMPROVEMENTS.md` for detailed progress tracking.
 
