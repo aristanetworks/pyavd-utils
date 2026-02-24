@@ -38,12 +38,11 @@ pub enum LexMode {
 /// Context-aware lexer state.
 pub struct ContextLexer<'a> {
     input: &'a str,
-    chars: Vec<char>,
-    pos: usize,
+    /// Byte offset of current position in the input string.
+    /// This replaces the previous `chars: Vec<char>` approach for zero-allocation iteration.
+    byte_pos: usize,
     /// Current flow depth (number of unclosed `{` or `[`)
     flow_depth: usize,
-    /// Byte offset of current position
-    byte_pos: usize,
     /// Whether the previous token was a "JSON-like" value
     /// (quoted string, alias, flow end). After these, `:` is always
     /// a mapping indicator in flow context.
@@ -67,10 +66,8 @@ impl<'a> ContextLexer<'a> {
     pub fn new(input: &'a str) -> Self {
         Self {
             input,
-            chars: input.chars().collect(),
-            pos: 0,
-            flow_depth: 0,
             byte_pos: 0,
+            flow_depth: 0,
             prev_was_json_like: false,
             prev_was_separator: true, // At start, we're at "line start"
             indent_stack: vec![0],    // Base indentation level
@@ -98,26 +95,26 @@ impl<'a> ContextLexer<'a> {
         }
     }
 
+    /// Returns true if we've reached the end of input.
     fn is_eof(&self) -> bool {
-        self.pos >= self.chars.len()
+        self.byte_pos >= self.input.len()
     }
 
+    /// Peek the current character without advancing.
     fn peek(&self) -> Option<char> {
-        self.chars.get(self.pos).copied()
+        self.input[self.byte_pos..].chars().next()
     }
 
+    /// Peek `n` characters ahead (0 = current character).
     fn peek_n(&self, n: usize) -> Option<char> {
-        self.chars.get(self.pos + n).copied()
+        self.input[self.byte_pos..].chars().nth(n)
     }
 
+    /// Advance to the next character and return the current one.
     fn advance(&mut self) -> Option<char> {
-        if let Some(ch) = self.chars.get(self.pos) {
-            self.pos += 1;
-            self.byte_pos += ch.len_utf8();
-            Some(*ch)
-        } else {
-            None
-        }
+        let ch = self.input[self.byte_pos..].chars().next()?;
+        self.byte_pos += ch.len_utf8();
+        Some(ch)
     }
 
     fn current_span(&self, start: usize) -> Span {
