@@ -14,8 +14,8 @@
 use std::collections::VecDeque;
 
 use crate::error::{ErrorKind, ParseError};
-use crate::lexer::{BlockScalarHeader, Chomping, QuoteStyle, Token};
 use crate::span::{Span, Spanned};
+use crate::token::{BlockScalarHeader, Chomping, QuoteStyle, Token};
 
 use chumsky::span::Span as _;
 

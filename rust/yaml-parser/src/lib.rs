@@ -41,6 +41,7 @@ mod lexer;
 mod parser;
 mod span;
 mod stream_lexer;
+mod token;
 mod value;
 
 pub use error::{ErrorKind, ParseError};
