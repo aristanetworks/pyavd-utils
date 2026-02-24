@@ -34,7 +34,6 @@ inherits = "release"
 lto = true
 
 [workspace.lints.clippy]
-allow_indexing_slicing_in_tests = "allow"
 # Pedantic group
 pedantic = { level = "warn", priority = -1 }
 must_use_candidate = "allow"
@@ -97,7 +96,6 @@ str_to_string = "deny"
 string_add = "allow"                          # TODO: discuss
 string_lit_chars_any = "warn"
 string_slice = "warn"
-string_to_string = "deny"
 suspicious_xor_used_as_pow = "warn"
 tests_outside_test_module = "deny"
 todo = "deny"

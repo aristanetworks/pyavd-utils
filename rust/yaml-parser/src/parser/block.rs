@@ -123,33 +123,7 @@ impl Parser<'_, '_> {
             let empty_key = !explicit_key && matches!(self.peek(), Some((Token::Colon, _)));
 
             // Collect any anchor/tag properties before the key
-            let mut key_props = NodeProperties::default();
-            loop {
-                match self.peek() {
-                    Some((Token::Anchor(name), anchor_span)) => {
-                        let anchor_name = name.to_string();
-                        self.advance();
-                        self.skip_ws();
-                        if key_props.anchor.is_some() {
-                            self.error(ErrorKind::DuplicateAnchor, anchor_span);
-                        }
-                        key_props.anchor = Some((anchor_name, anchor_span));
-                    }
-                    Some((Token::Tag(name), tag_span)) => {
-                        let tag = name.to_string();
-                        self.advance();
-                        self.skip_ws();
-                        if key_props.tag.is_some() {
-                            self.error(ErrorKind::DuplicateTag, tag_span);
-                        }
-                        key_props.tag = Some((tag, tag_span));
-                    }
-                    Some((Token::Whitespace | Token::WhitespaceWithTabs, _)) => {
-                        self.advance();
-                    }
-                    _ => break,
-                }
-            }
+            let key_props = self.collect_node_properties(NodeProperties::default());
 
             let key = if explicit_key {
                 match self.peek() {
@@ -178,7 +152,7 @@ impl Parser<'_, '_> {
                     }
                     self.advance();
                     if !self.anchors.contains_key(&alias_name) {
-                        self.error(ErrorKind::UndefinedAlias, span);
+                        self.error(ErrorKind::UndefinedAliasNamed(alias_name.clone()), span);
                     }
                     Some(Node::new(Value::Alias(alias_name), span))
                 } else {
@@ -588,33 +562,7 @@ impl Parser<'_, '_> {
                     pairs.push((key, value_node));
                 }
                 Some((Token::Tag(_) | Token::Anchor(_), _)) => {
-                    let mut inner_props = NodeProperties::default();
-                    loop {
-                        match self.peek() {
-                            Some((Token::Tag(name), tag_span)) => {
-                                let tag = name.to_string();
-                                self.advance();
-                                self.skip_ws();
-                                if inner_props.tag.is_some() {
-                                    self.error(ErrorKind::DuplicateTag, tag_span);
-                                }
-                                inner_props.tag = Some((tag, tag_span));
-                            }
-                            Some((Token::Anchor(name), anchor_span)) => {
-                                let anchor_name = name.to_string();
-                                self.advance();
-                                self.skip_ws();
-                                if inner_props.anchor.is_some() {
-                                    self.error(ErrorKind::DuplicateAnchor, anchor_span);
-                                }
-                                inner_props.anchor = Some((anchor_name, anchor_span));
-                            }
-                            Some((Token::Whitespace | Token::WhitespaceWithTabs, _)) => {
-                                self.advance();
-                            }
-                            _ => break,
-                        }
-                    }
+                    let inner_props = self.collect_node_properties(NodeProperties::default());
 
                     match self.peek() {
                         Some((Token::Plain(_) | Token::StringStart(_), _)) => {
@@ -737,7 +685,10 @@ impl Parser<'_, '_> {
         props: NodeProperties,
     ) -> Node {
         if !self.anchors.contains_key(&alias_name) {
-            self.error(ErrorKind::UndefinedAlias, alias_span);
+            self.error(
+                ErrorKind::UndefinedAliasNamed(alias_name.clone()),
+                alias_span,
+            );
         }
 
         let alias_node = Node::new(Value::Alias(alias_name), alias_span);
@@ -790,7 +741,7 @@ impl Parser<'_, '_> {
                     let new_alias_name = name.to_string();
                     self.advance();
                     if !self.anchors.contains_key(&new_alias_name) {
-                        self.error(ErrorKind::UndefinedAlias, span);
+                        self.error(ErrorKind::UndefinedAliasNamed(new_alias_name.clone()), span);
                     }
                     Some(Node::new(Value::Alias(new_alias_name), span))
                 }
