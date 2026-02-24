@@ -617,6 +617,16 @@ impl<'tokens, 'input> Parser<'tokens, 'input> {
         });
     }
 
+    /// Add an error with expected tokens for better diagnostics.
+    pub fn error_expected(&mut self, kind: ErrorKind, span: Span, expected: &[&str]) {
+        self.errors.push(ParseError {
+            kind,
+            span,
+            expected: expected.iter().map(|exp| (*exp).to_owned()).collect(),
+            found: None,
+        });
+    }
+
     /// Populate tag handles from directives provided by the stream lexer.
     /// This is the primary method for setting up tag handle validation.
     pub fn populate_tag_handles_from_directives(
@@ -1070,7 +1080,11 @@ impl<'tokens, 'input> Parser<'tokens, 'input> {
             }
             // Invalid or unexpected
             _ => {
-                self.error(ErrorKind::UnexpectedToken, span);
+                self.error_expected(
+                    ErrorKind::UnexpectedToken,
+                    span,
+                    &["scalar", "sequence", "mapping", "&anchor", "!tag", "*alias"],
+                );
                 self.advance();
                 Some(self.apply_properties_and_register(props, Node::invalid(span)))
             }
