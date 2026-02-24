@@ -252,7 +252,7 @@ The parser uses a **three-layer architecture**:
 
 ### Layer 3: Parser
 
-#### `parser/mod.rs` (1200 lines)
+#### `parser/mod.rs` (~1350 lines)
 
 - **Purpose**: Main parser orchestration
 - **Key Types**:
@@ -271,14 +271,21 @@ The parser uses a **three-layer architecture**:
   - `parse_tokens()`: Entry point
   - `parse_single_document()`: Parse one document
   - `parse_value()`: Dispatch to appropriate parser
-  - `parse_node_properties()`: Extract anchor/tag
+  - `collect_node_properties()`: Collect anchor/tag before value (Phase 1.1)
+- **Helper Methods** (Phase 1.2):
+  - `handle_flow_collection_as_value()`: Flow mapping/sequence as value
+  - `handle_anchor_in_value()`: Anchor property handling
+  - `handle_tag_in_value()`: Tag property handling
+- **Error Methods**:
+  - `error()`: Basic error reporting
+  - `error_expected()`: Error with expected tokens (Phase 3.2)
 - **Validation**:
   - Indentation rules
   - Flow context column tracking
   - Anchor/alias resolution
   - Tag handle validation
 
-#### `parser/scalar.rs` (988 lines)
+#### `parser/scalar.rs` (~980 lines)
 
 - **Purpose**: Parse all scalar types
 - **Functions**:
@@ -287,18 +294,22 @@ The parser uses a **three-layer architecture**:
   - `parse_block_scalar()`: Literal (`|`) and folded (`>`)
 - **Complexity**: Multiline string handling with indentation validation
 
-#### `parser/flow.rs` (380 lines)
+#### `parser/flow.rs` (~390 lines)
 
 - **Purpose**: Parse flow collections
 - **Functions**:
   - `parse_flow_mapping()`: `{ key: value, ... }`
   - `parse_flow_sequence()`: `[ item, ... ]`
+- **Helper Methods** (Phase 1.3):
+  - `enter_flow_collection()` / `exit_flow_collection()`: Depth tracking
+  - `handle_flow_comma()`: Consecutive comma detection
+  - `handle_flow_entry_end()`: Entry delimiter handling
 - **Features**:
   - Tracks flow context columns for indentation validation
   - Handles nested flow collections
   - Validates continuation line indentation
 
-#### `parser/block.rs` (861 lines)
+#### `parser/block.rs` (~860 lines)
 
 - **Purpose**: Parse block structures
 - **Functions**:
@@ -774,21 +785,44 @@ See `TECHNICAL_DEBT.md` for comprehensive documentation. Key limitations:
 
 ### Recently Completed (2026-02-24)
 
+**Lexer Improvements:**
+
 1. ✅ **Token Module Extraction** - Token types moved to dedicated `token.rs`
 2. ✅ **Zero-Allocation Character Iteration** - Replaced `Vec<char>` with string slicing
 3. ✅ **SourceMap Utility** - Line/column position tracking for IDE integration
 4. ✅ **State Machine Extraction** - `next_token()` refactored from ~230 to ~45 lines
 5. ✅ **Unified Quoted String Handling** - Shared helpers reduce duplication
-6. ✅ **Rich Error Context** (Phase 3.1) - 10 contextual error variants with suggestions
-7. ✅ **Whitespace Tab Detection** - Split `Whitespace` / `WhitespaceWithTabs` for O(1) tab detection
-8. ✅ **Zero-Copy Tokenization** (Phase 2.1) - `Token<'input>` uses `Cow<'input, str>`
+6. ✅ **Whitespace Tab Detection** - Split `Whitespace` / `WhitespaceWithTabs` for O(1) tab detection
+7. ✅ **Zero-Copy Tokenization** (Phase 2.1) - `Token<'input>` uses `Cow<'input, str>`
    - Borrows directly from input for comments, anchor names
    - Allocates only when content is transformed (escapes, trimming)
    - Parser updated with two lifetimes: `Parser<'tokens, 'input>`
-9. ⚠️ **Token Trivia Preservation** (Phase 1.1) - **Reverted**; comments kept as real tokens
+8. ⚠️ **Token Trivia Preservation** (Phase 1.1) - **Reverted**; comments kept as real tokens
    - Comments have semantic meaning in YAML (they terminate plain scalars)
    - Parser needs to see `Token::Comment(_)` directly for correct parsing
    - `RichToken` structure preserved for future IDE features (trivia not attached)
+
+**Parser Infrastructure Improvements:**
+
+1. ✅ **Property Collection Helper** (Phase 1.1) - `collect_node_properties()` method
+   - Reduces code duplication for anchor/tag collection loops
+   - Used in `parse_block_mapping_with_props()`, `parse_flow_value_with_properties()`
+2. ✅ **Contextual Error Variants** (Phase 3.1) - Named error variants with context
+    - `DuplicateAnchorNamed`, `DuplicateTagNamed`, `UndefinedAliasNamed`
+    - Error messages include specific anchor/tag/alias names
+3. ✅ **Method Extraction** (Phase 1.2) - Token-specific helpers in mod.rs
+    - `handle_flow_collection_as_value()` - Flow mapping/sequence handling
+    - `handle_anchor_in_value()` - Anchor property handling
+    - `handle_tag_in_value()` - Tag property handling
+    - Reduced `parse_value_with_properties` from ~300 to ~127 lines
+4. ✅ **Flow Collection Unification** (Phase 1.3) - Common flow utilities in flow.rs
+    - `enter_flow_collection()` / `exit_flow_collection()` - Depth tracking
+    - `handle_flow_comma()` - Consecutive comma detection
+    - `handle_flow_entry_end()` - Entry delimiter handling
+    - Removed `#[allow(clippy::too_many_lines)]` from `parse_flow_mapping`
+5. ✅ **Expected Token Sets** (Phase 3.2) - Better diagnostics
+    - `error_expected()` method for reporting errors with expected tokens
+    - Key decision points now populate `ParseError::expected` field
 
 See `LEXER_IMPROVEMENTS.md` for detailed lexer progress tracking (including dropped items with rationale).
 
