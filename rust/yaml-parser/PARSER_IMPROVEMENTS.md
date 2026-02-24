@@ -20,40 +20,42 @@ anchor/tag handling.
 
 #### 1.1 Extract Property Collection Helper
 
-**Status:** [ ] Not Started
+**Status:** [x] Complete
 **Complexity:** Low
 **Impact:** Reduces code duplication
 
-**Problem:** The anchor/tag collection pattern appears in multiple places:
+**Problem:** The anchor/tag collection pattern appeared in multiple places:
 
-- `parse_value_with_properties()` in `mod.rs` (lines 784-894)
-- `parse_block_mapping_with_props()` in `block.rs` (lines 341-366)
+- `parse_value_with_properties()` in `mod.rs`
+- `parse_block_mapping_with_props()` in `block.rs`
 - Similar inline patterns in flow parsing
 
-**Solution:** Create a `collect_node_properties()` method that:
+**Solution:** Created `collect_node_properties()` method in `mod.rs` that:
 
 - Loops over Anchor/Tag/Whitespace tokens
 - Accumulates into `NodeProperties`
-- Handles duplicate anchor/tag errors
+- Handles duplicate anchor/tag errors with Named variants
 - Returns the collected properties
+
+**Implementation:** `Parser::collect_node_properties()` in `mod.rs` (lines 272-312)
 
 #### 1.2 Reduce `parse_value_with_properties` Complexity
 
-**Status:** [ ] Not Started
+**Status:** [x] Complete
 **Complexity:** Medium
 **Impact:** Improves maintainability
 
-**Problem:** The method is ~260 lines with a large match statement handling 15+ token types.
-Currently has `#[allow(clippy::too_many_lines)]`.
+**Problem:** The method was ~300 lines with a large match statement handling 15+ token types.
 
-**Solution:** Extract token-specific handlers:
+**Solution:** Extracted token-specific helpers:
 
-- `handle_flow_mapping()` - Flow `{` parsing with key detection
-- `handle_flow_sequence()` - Flow `[` parsing with key detection
-- `handle_block_sequence()` - Block `-` parsing
-- `handle_anchor_property()` - `&name` accumulation
-- `handle_tag_property()` - `!tag` accumulation
-- `handle_line_start()` - Newline/indentation handling
+- `handle_flow_collection_as_value()` - Shared flow mapping/sequence logic with key detection
+- `handle_anchor_in_value()` - Anchor property accumulation with duplicate detection
+- `handle_tag_in_value()` - Tag property accumulation with handle validation
+
+**Result:** Reduced `parse_value_with_properties` from ~300 lines to ~127 lines.
+Still has `#[allow(clippy::too_many_lines)]` since clippy threshold is 100, but
+match arms are now minimal - further extraction would reduce clarity.
 
 #### 1.3 Unify Flow Collection Entry Parsing
 
@@ -116,18 +118,20 @@ then joins them. For large block scalars, this creates intermediate allocations.
 
 #### 3.1 Consistent Use of Contextual Error Variants
 
-**Status:** [ ] Not Started
+**Status:** [x] Complete
 **Complexity:** Low
 **Impact:** Better error messages
 
-**Problem:** Some errors use basic variants (e.g., `ErrorKind::UnexpectedToken`)
-when richer context is available.
+**Problem:** Some errors used basic variants when richer context was available.
 
-**Solution:**
+**Solution:** Audited error creation sites and updated to use Named variants:
 
-- Audit error creation sites
-- Use `Named` variants where context is available
-- Example: `DuplicateKey` → `DuplicateKeyNamed(key_string)`
+- `DuplicateAnchor` → `DuplicateAnchorNamed { first, second }`
+- `DuplicateTag` → `DuplicateTagNamed { first, second }`
+- `UndefinedAlias` → `UndefinedAliasNamed(name)`
+
+**Implementation:** Updated all error creation sites in `mod.rs`, `block.rs`, and `flow.rs`
+to use the contextual Named variants with specific anchor/tag/alias names.
 
 #### 3.2 Expected Token Sets for Better Diagnostics
 
@@ -144,13 +148,17 @@ when richer context is available.
 
 ## Implementation Priority
 
-**Recommended order:**
+**Completed:**
 
-1. **1.1 Property Collection Helper** - Quick win, reduces duplication
-2. **3.1 Contextual Error Variants** - Quick win, improves user experience
-3. **1.2 Method Extraction** - Larger effort, improves maintainability
-4. **1.3 Flow Unification** - Medium effort, reduces duplication
-5. **2.1/2.2 Performance** - Only if profiling shows need
+1. ~~**1.1 Property Collection Helper**~~ - ✓ Done
+2. ~~**3.1 Contextual Error Variants**~~ - ✓ Done
+3. ~~**1.2 Method Extraction**~~ - ✓ Done
+
+**Remaining (recommended order):**
+
+1. **1.3 Flow Unification** - Medium effort, reduces duplication
+2. **3.2 Expected Token Sets** - Low effort, better diagnostics
+3. **2.1/2.2 Performance** - Only if profiling shows need
 
 ## Dropped Items
 
