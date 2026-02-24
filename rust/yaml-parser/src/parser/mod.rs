@@ -23,7 +23,7 @@ use chumsky::span::Span as _;
 use crate::error::{ErrorKind, ParseError};
 use crate::lexer::Token;
 use crate::span::{Span, Spanned};
-use crate::trivia::{RichToken, TriviaKind};
+use crate::trivia::RichToken;
 use crate::value::{Node, Value};
 
 /// A stream of YAML documents.
@@ -284,31 +284,33 @@ impl<'a> Parser<'a> {
         }
 
         // Check: is the previous token LineStart?
-        // If so, check if the current token has WhitespaceWithTabs in its leading trivia
+        // If so, check if the current token is WhitespaceWithTabs
         // (which would indicate tabs used for indentation)
-        if let Some(prev_rt) = self.tokens.get(self.pos - 1)
-            && matches!(prev_rt.token, Token::LineStart(_))
-            && let Some(current_rt) = self.tokens.get(self.pos)
-        {
-            // Look for WhitespaceWithTabs in leading trivia of current token
-            if let Some(tab_trivia) = current_rt
-                .leading_trivia
-                .iter()
-                .find(|tr| matches!(tr.kind, TriviaKind::WhitespaceWithTabs))
-            {
-                // Check if next real token is flow content (tabs allowed there)
-                let is_flow_content = matches!(
-                    current_rt.token,
-                    Token::FlowMapStart
-                        | Token::FlowMapEnd
-                        | Token::FlowSeqStart
-                        | Token::FlowSeqEnd
-                );
+        #[allow(
+            clippy::indexing_slicing,
+            reason = "pos - 1 is valid because we check pos == 0 above"
+        )]
+        if !matches!(self.tokens[self.pos - 1].token, Token::LineStart(_)) {
+            return;
+        }
 
-                if !is_flow_content {
-                    self.error(ErrorKind::InvalidIndentation, tab_trivia.span);
+        // Current token might be WhitespaceWithTabs (tabs as indentation)
+        if let Some((Token::WhitespaceWithTabs, tab_span)) = self.peek() {
+            // Look ahead to see what real content follows the whitespace
+            // Tabs are allowed before flow content
+            let mut look_ahead = self.pos + 1;
+            while let Some(rt) = self.tokens.get(look_ahead) {
+                match &rt.token {
+                    Token::Whitespace | Token::WhitespaceWithTabs => look_ahead += 1,
+                    Token::FlowMapStart
+                    | Token::FlowMapEnd
+                    | Token::FlowSeqStart
+                    | Token::FlowSeqEnd => return, // Tabs allowed before flow content
+                    _ => break,
                 }
             }
+            // Not flow content - report error
+            self.error(ErrorKind::InvalidIndentation, tab_span);
         }
     }
 

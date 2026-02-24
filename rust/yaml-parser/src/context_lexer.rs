@@ -16,7 +16,7 @@ use std::collections::VecDeque;
 use crate::error::{ErrorKind, ParseError};
 use crate::span::{Span, Spanned};
 use crate::token::{BlockScalarHeader, Chomping, QuoteStyle, Token};
-use crate::trivia::{RichToken, Trivia, TriviaKind};
+use crate::trivia::RichToken;
 
 use chumsky::span::Span as _;
 
@@ -148,19 +148,21 @@ impl<'a> ContextLexer<'a> {
         matches!(ch, ',' | '[' | ']' | '{' | '}')
     }
 
-    /// Tokenize the document and return RichTokens with trivia attached.
+    /// Tokenize the document and return `RichToken`s.
     ///
-    /// Trivia tokens (`Whitespace`, `Comment`, `LineStart`) are attached to real tokens:
-    /// - **Leading trivia**: All trivia before a real token
-    /// - **Trailing trivia**: Trivia on the same line after a token (until line break)
-    /// - **Line breaks** become leading trivia of the next token
+    /// All tokens (including `Whitespace`, `WhitespaceWithTabs`, `Comment`) are
+    /// kept as real tokens in the stream. The `RichToken` wrapper supports trivia
+    /// attachment for future IDE features, but trivia is not currently attached.
     ///
-    /// `Indent`/`Dedent` are real tokens (structural for block parsing).
+    /// The parser sees all tokens directly because:
+    /// - Comments have semantic meaning (they terminate plain scalars)
+    /// - Whitespace carries indentation information for block structure
+    /// - Tab detection requires seeing `WhitespaceWithTabs` tokens
     pub fn tokenize(mut self) -> (Vec<RichToken>, Vec<ParseError>) {
-        // First pass: collect all raw tokens (including trivia)
+        // Collect all raw tokens
         let raw_tokens = self.collect_raw_tokens();
 
-        // Second pass: attach trivia to real tokens
+        // Wrap in RichToken (trivia not attached, kept for future IDE features)
         let rich_tokens = Self::attach_trivia(raw_tokens);
 
         (rich_tokens, self.errors)
@@ -213,6 +215,7 @@ impl<'a> ContextLexer<'a> {
                 //     :bar }
                 match &token {
                     Token::Whitespace
+                    | Token::WhitespaceWithTabs
                     | Token::LineStart(_)
                     | Token::Comment(_)
                     | Token::StringStart(_)
@@ -262,122 +265,21 @@ impl<'a> ContextLexer<'a> {
         tokens
     }
 
-    /// Check if a token is trivia (non-structural).
+    /// Wrap raw tokens in `RichToken` structure.
     ///
-    /// Note: `LineStart` is NOT trivia in YAML because it carries indentation
-    /// information that the parser needs for block structure detection.
-    /// Only `Whitespace`, `WhitespaceWithTabs`, and `Comment` are true trivia.
-    fn is_trivia_token(token: &Token) -> bool {
-        matches!(
-            token,
-            Token::Comment(_) | Token::Whitespace | Token::WhitespaceWithTabs
-        )
-    }
-
-    /// Convert a trivia token to a Trivia value.
-    fn token_to_trivia(token: Token, span: Span) -> Trivia {
-        match token {
-            Token::Comment(content) => Trivia::new(TriviaKind::Comment(content), span),
-            Token::Whitespace => Trivia::whitespace(span),
-            Token::WhitespaceWithTabs => Trivia::whitespace_with_tabs(span),
-            // Fallback, shouldn't happen
-            _ => Trivia::whitespace(span),
-        }
-    }
-
-    /// Attach trivia to real tokens, returning `RichTokens`.
+    /// Currently, all tokens (including Whitespace, Comment) are kept as real tokens
+    /// in the stream. The `RichToken` structure supports trivia attachment for future
+    /// IDE features, but trivia is not currently attached.
     ///
-    /// Trivia (Whitespace, Comment) is attached as leading/trailing trivia to real tokens.
-    /// `LineStart` is a real token (not trivia) because it carries structural indentation info.
-    ///
-    /// Rules:
-    /// - Trivia BEFORE a `LineStart` is trailing trivia of the previous real token
-    /// - `LineStart` can collect **comments** as trailing trivia (on the logical line it ends)
-    /// - **Whitespace** after `LineStart` becomes leading trivia of the next real token
-    ///   (it's the indentation of the new line, relevant for error detection)
+    /// The parser sees all tokens directly, which is needed because:
+    /// - Comments have semantic meaning (they terminate plain scalars)
+    /// - Whitespace carries indentation information for block structure
+    /// - Tab detection requires seeing whitespace tokens
     fn attach_trivia(raw_tokens: Vec<Spanned<Token>>) -> Vec<RichToken> {
-        if raw_tokens.is_empty() {
-            return Vec::new();
-        }
-
-        let mut result: Vec<RichToken> = Vec::new();
-        let mut pending_trivia: Vec<Trivia> = Vec::new();
-        let mut idx = 0;
-
-        while let Some((token, span)) = raw_tokens.get(idx).cloned() {
-            if Self::is_trivia_token(&token) {
-                // Collect trivia (Whitespace or Comment)
-                pending_trivia.push(Self::token_to_trivia(token, span));
-                idx += 1;
-            } else if matches!(token, Token::LineStart(_)) {
-                // LineStart is special: it marks a line boundary
-                // Any pending trivia becomes trailing trivia of the PREVIOUS token
-                if let Some(last_token) = result.last_mut() {
-                    for trivia in pending_trivia.drain(..) {
-                        last_token.add_trailing(trivia);
-                    }
-                } else {
-                    pending_trivia.clear();
-                }
-
-                // Create LineStart token
-                let mut rich_token = RichToken::new(token, span);
-                idx += 1;
-
-                // After LineStart, collect ONLY comments as trailing trivia
-                // Whitespace goes to pending_trivia for the next real token (it's indentation)
-                while let Some((next_token, _)) = raw_tokens.get(idx) {
-                    if matches!(next_token, Token::LineStart(_)) {
-                        // Another line break - stop
-                        break;
-                    } else if matches!(next_token, Token::Comment(_)) {
-                        // Comments after LineStart are trailing trivia of LineStart
-                        let (next_tok, next_span) = raw_tokens.get(idx).cloned().unwrap();
-                        rich_token.add_trailing(Self::token_to_trivia(next_tok, next_span));
-                        idx += 1;
-                    } else if matches!(next_token, Token::Whitespace | Token::WhitespaceWithTabs) {
-                        // Whitespace after LineStart is leading trivia of next real token
-                        let (next_tok, next_span) = raw_tokens.get(idx).cloned().unwrap();
-                        pending_trivia.push(Self::token_to_trivia(next_tok, next_span));
-                        idx += 1;
-                    } else {
-                        // Next real token - stop
-                        break;
-                    }
-                }
-
-                result.push(rich_token);
-            } else {
-                // Non-LineStart real token - attach pending trivia as leading trivia
-                let mut rich_token = RichToken::with_leading(token.clone(), span, pending_trivia);
-                pending_trivia = Vec::new();
-
-                // Look ahead for trailing trivia (on the same line)
-                // LineStart marks end of line, so stop collecting trailing trivia when we see it
-                idx += 1;
-                while let Some((next_token, _)) = raw_tokens.get(idx) {
-                    if matches!(next_token, Token::LineStart(_)) {
-                        // Line break ends trailing trivia - don't consume it, let it be next real token
-                        break;
-                    } else if Self::is_trivia_token(next_token) {
-                        // Whitespace or comment on same line is trailing trivia
-                        let (next_tok, next_span) = raw_tokens.get(idx).cloned().unwrap();
-                        rich_token.add_trailing(Self::token_to_trivia(next_tok, next_span));
-                        idx += 1;
-                    } else {
-                        // Next real token - stop collecting trailing trivia
-                        break;
-                    }
-                }
-
-                result.push(rich_token);
-            }
-        }
-
-        // Trailing trivia at end of file is discarded (no following token to attach to)
-        // IDE features that need EOF trivia can be added later if needed
-
-        result
+        raw_tokens
+            .into_iter()
+            .map(|(token, span)| RichToken::new(token, span))
+            .collect()
     }
 
     /// Emit INDENT/DEDENT tokens based on indentation change.
@@ -925,7 +827,7 @@ impl<'a> ContextLexer<'a> {
     ///
     /// Emits the current content as a `StringContent` token (if non-empty),
     /// consumes the newline and indentation, and emits a `LineStart` token.
-    /// Returns the new content_start position.
+    /// Returns the new `content_start` position.
     fn handle_quoted_newline(&mut self, content: &mut String, content_start: usize) -> usize {
         // Emit current content before newline
         if !content.is_empty() {
@@ -1447,141 +1349,93 @@ mod tests {
         assert!(tokens.contains(&Token::Plain("http://example.org".into())));
     }
 
-    // Tests for tokenize_document with trivia
+    // Tests for tokenize_document - tokens as real stream (not trivia)
+    //
+    // Note: Whitespace, WhitespaceWithTabs, and Comment are real tokens in the stream.
+    // Trivia attachment was reverted because comments have semantic meaning in YAML
+    // (they terminate plain scalars), so the parser needs to see them directly.
 
     #[test]
-    fn test_trivia_simple_mapping() {
-        // Test basic trivia preservation
+    fn test_simple_mapping_tokens() {
+        // Test token stream for simple mapping
         let (tokens, errors) = tokenize_document("key: value");
         assert!(errors.is_empty());
 
-        // Should have 4 tokens: LineStart(0), "key", ":", "value"
-        // LineStart is a real token (not trivia) because it carries structural indentation info
-        assert_eq!(tokens.len(), 4);
+        // Should have 5 tokens: LineStart(0), "key", ":", Whitespace, "value"
+        assert_eq!(tokens.len(), 5);
 
-        // First token is LineStart with indent 0
+        // Check token types
         assert!(matches!(tokens[0].token, Token::LineStart(0)));
-
-        // Second token "key"
         assert_eq!(tokens[1].token, Token::Plain("key".into()));
-
-        // Third token is Colon with trailing whitespace
         assert_eq!(tokens[2].token, Token::Colon);
-        assert!(!tokens[2].trailing_trivia.is_empty());
-        assert!(matches!(
-            tokens[2].trailing_trivia[0].kind,
-            TriviaKind::Whitespace
-        ));
-
-        // Fourth token is "value"
-        assert_eq!(tokens[3].token, Token::Plain("value".into()));
+        assert_eq!(tokens[3].token, Token::Whitespace);
+        assert_eq!(tokens[4].token, Token::Plain("value".into()));
     }
 
     #[test]
-    fn test_trivia_with_comment() {
-        // Test comment as trailing trivia
+    fn test_comment_as_token() {
+        // Test that comments are real tokens
         let (tokens, errors) = tokenize_document("key: value # this is a comment");
         assert!(errors.is_empty());
 
-        // "value" token should have trailing comment
-        let value_token = tokens
+        // Comment should be a real token in the stream
+        let comment_token = tokens
             .iter()
-            .find(|t| t.token == Token::Plain("value".into()));
-        assert!(value_token.is_some());
-        let value_token = value_token.unwrap();
-
-        // Should have trailing trivia (whitespace + comment)
-        assert!(value_token.has_comments());
-        let comments: Vec<_> = value_token.comments();
-        assert_eq!(comments.len(), 1);
-        assert_eq!(comments[0].comment_content(), Some(" this is a comment"));
+            .find(|t| matches!(&t.token, Token::Comment(s) if s.contains("this is a comment")));
+        assert!(comment_token.is_some(), "Should find comment token");
     }
 
     #[test]
-    fn test_trivia_multiline_with_comments() {
-        // Test multiline document with leading comments
+    fn test_multiline_with_comments() {
+        // Test multiline document with comments
         let input = "# header comment\nkey: value";
         let (tokens, errors) = tokenize_document(input);
         assert!(errors.is_empty());
 
-        // First LineStart should have the comment as trailing trivia
-        // (comment is on same line as first LineStart)
+        // First token is LineStart(0)
         assert!(matches!(tokens[0].token, Token::LineStart(0)));
-        assert!(tokens[0].has_comments());
-        let comments: Vec<_> = tokens[0].comments();
-        assert!(!comments.is_empty());
-        assert!(comments[0].comment_content().unwrap().contains("header"));
+
+        // Comment should be a real token
+        let comment_token = tokens
+            .iter()
+            .find(|t| matches!(&t.token, Token::Comment(s) if s.contains("header")));
+        assert!(comment_token.is_some(), "Should find header comment token");
     }
 
     #[test]
-    fn test_trivia_empty_input() {
+    fn test_empty_input() {
         let (tokens, errors) = tokenize_document("");
         assert!(errors.is_empty());
         // Empty input still gets initial LineStart(0) token
-        // (represents "at start of line at indent 0")
         assert_eq!(tokens.len(), 1);
         assert!(matches!(tokens[0].token, Token::LineStart(0)));
     }
 
     #[test]
-    fn test_trivia_comment_only() {
-        // Only comments - LineStart is a real token, comment is its trailing trivia
+    fn test_comment_only() {
+        // Only comments
         let (tokens, errors) = tokenize_document("# just a comment");
         assert!(errors.is_empty());
-        // LineStart(0) is emitted, with comment as trailing trivia
-        assert_eq!(tokens.len(), 1);
+        // LineStart(0) and Comment are separate tokens
+        assert_eq!(tokens.len(), 2);
         assert!(matches!(tokens[0].token, Token::LineStart(0)));
-        assert!(tokens[0].has_comments());
-        let comments: Vec<_> = tokens[0].comments();
-        assert_eq!(comments.len(), 1);
-        assert!(
-            comments[0]
-                .comment_content()
-                .unwrap()
-                .contains("just a comment")
-        );
+        assert!(matches!(&tokens[1].token, Token::Comment(s) if s.contains("just a comment")));
     }
 
     #[test]
-    fn test_trivia_full_span() {
-        // Test that full_span includes trivia
-        let input = "  key: value  # comment";
-        let (tokens, errors) = tokenize_document(input);
-        assert!(errors.is_empty());
-
-        // Find "value" token
-        let value_token = tokens
-            .iter()
-            .find(|t| t.token == Token::Plain("value".into()));
-        assert!(value_token.is_some());
-        let value_token = value_token.unwrap();
-
-        // full_span should be larger than or equal to span (includes trivia)
-        let token_span = value_token.span;
-        let full_span = value_token.full_span();
-        assert!(full_span.start <= token_span.start || full_span.end >= token_span.end);
-    }
-
-    #[test]
-    fn test_trivia_tab_indentation() {
-        // Test that tabs after LineStart are captured as WhitespaceWithTabs trivia
-        // (and become leading trivia of the next real token, not trailing trivia of LineStart)
+    fn test_tab_as_whitespace_with_tabs_token() {
+        // Test that tabs are WhitespaceWithTabs tokens (for error detection)
         let input = "key:\n\tvalue";
         let (tokens, errors) = tokenize_document(input);
         assert!(errors.is_empty());
 
-        // Find "value" token - should have WhitespaceWithTabs in leading trivia
-        let value_token = tokens
+        // WhitespaceWithTabs should be a real token
+        let tab_token = tokens
             .iter()
-            .find(|t| t.token == Token::Plain("value".into()));
-        assert!(value_token.is_some(), "Should find 'value' token");
-        let value_token = value_token.unwrap();
-
-        let has_tab_trivia = value_token.leading_trivia.iter().any(|t| t.has_tabs());
+            .find(|t| matches!(t.token, Token::WhitespaceWithTabs));
         assert!(
-            has_tab_trivia,
-            "Expected WhitespaceWithTabs in leading trivia of 'value', got: {:?}",
-            value_token.leading_trivia
+            tab_token.is_some(),
+            "Should find WhitespaceWithTabs token for tab"
         );
     }
 }
