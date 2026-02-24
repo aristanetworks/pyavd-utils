@@ -54,19 +54,26 @@ This document tracks improvements to the YAML lexer for better IDE/language serv
 
 ## Change Log
 
+### 2026-02-24: Phase 1.1 Revised - Trivia Attachment Reverted
+
+- ⚠️ **Reverted trivia attachment** - Comments and whitespace remain as real tokens
+  - **Root cause**: Comments have semantic meaning in YAML (they terminate plain scalars)
+  - Parser needs to see `Token::Comment(_)` directly to correctly parse multiline plain scalars
+  - Trivia attachment approach caused 6 test regressions (8XDJ, BF9H, BS4K, S98Z, DC7X, F8F9)
+  - **Decision**: Keep token stream "flat" for parsing, IDE features can filter as needed
+- ✅ `Token::WhitespaceWithTabs` still preserved for O(1) tab detection
+- ✅ `RichToken` structure preserved for future IDE features (trivia not currently attached)
+- ✅ 100% test pass rate restored (333/333)
+
 ### 2026-02-24: Phase 1.1 Trivia Optimization - Split Whitespace Variants
 
-- ✅ Split `TriviaKind::Whitespace` into `Whitespace` and `WhitespaceWithTabs`
+- ✅ Split `Token::Whitespace` into `Whitespace` and `WhitespaceWithTabs`
   - `Whitespace`: contains only spaces
   - `WhitespaceWithTabs`: contains at least one tab character
   - O(1) tab detection in parser (tabs detected during lexing, already O(n))
-  - Fixed trivia attachment for `LineStart` tokens:
-    - Comments after `LineStart` → trailing trivia of `LineStart`
-    - Whitespace after `LineStart` → leading trivia of next token
   - Enables proper tab-as-indentation error detection
-  - Follows industry standards (Ruff, LibCST)
 
-### 2026-02-24: Phase 1.1 Token Trivia Preservation
+### 2026-02-24: Phase 1.1 Token Trivia Preservation (Later Reverted)
 
 - ✅ Phase 1.1: Added token trivia preservation (commit f0e9504)
   - Created `trivia.rs` module with `TriviaKind`, `Trivia`, and `RichToken` types

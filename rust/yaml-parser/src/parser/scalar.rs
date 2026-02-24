@@ -874,7 +874,7 @@ impl Parser<'_> {
                 while content_pos < self.tokens.len() {
                     match &self.tokens[content_pos].token {
                         Token::Whitespace | Token::WhitespaceWithTabs | Token::Indent(_) => {
-                            content_pos += 1
+                            content_pos += 1;
                         }
                         _ => break,
                     }
