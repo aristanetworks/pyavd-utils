@@ -33,13 +33,17 @@ pub enum Directive {
 ///
 /// The content includes document markers (`---`, `...`) so the parser can see them.
 /// Only directives (`%YAML`, `%TAG`) are extracted separately.
+///
+/// The lifetime `'input` refers to the input string being parsed. The content
+/// is a slice of the original input for zero-copy parsing.
 #[derive(Debug, Clone)]
-pub struct RawDocument {
+pub struct RawDocument<'input> {
     /// Directives before this document (in the directive prologue).
     pub directives: Vec<Spanned<Directive>>,
     /// The raw content of the document, including `---` and `...` markers.
     /// The parser is responsible for interpreting these tokens.
-    pub content: String,
+    /// This is a slice of the original input (zero-copy).
+    pub content: &'input str,
     /// The span of the content in the original input.
     #[allow(
         dead_code,
@@ -67,12 +71,12 @@ pub struct RawDocument {
     clippy::string_slice,
     reason = "All positions are calculated from byte-level scanning and guaranteed to be on UTF-8 boundaries"
 )]
-pub fn parse_stream(input: &str) -> (Vec<RawDocument>, Vec<ParseError>) {
+pub fn parse_stream(input: &str) -> (Vec<RawDocument<'_>>, Vec<ParseError>) {
     let mut documents = Vec::new();
     let mut errors = Vec::new();
     let mut current_directives: Vec<Spanned<Directive>> = Vec::new();
-    let mut current_content = String::new();
-    let mut content_start: usize = 0;
+    let mut content_start: Option<usize> = None; // Start of content (None = no content yet)
+    let mut content_end: usize = 0; // End of content
     let mut in_directive_prologue = true; // At start, we can have directives
     let mut has_yaml_directive = false; // Track if we've seen a %YAML directive
 
@@ -92,33 +96,35 @@ pub fn parse_stream(input: &str) -> (Vec<RawDocument>, Vec<ParseError>) {
                 // If we have content, start a new document
                 // Note: After `...`, if we only have directives (no content), those directives
                 // belong to this new document, so don't finalize in that case.
-                if !current_content.is_empty() {
+                if let Some(start) = content_start {
                     // Finalize current document
                     documents.push(RawDocument {
                         directives: std::mem::take(&mut current_directives),
-                        content: std::mem::take(&mut current_content),
-                        content_span: Span::new((), content_start..pos),
+                        content: &input[start..content_end],
+                        content_span: Span::new((), start..pos),
                     });
                     has_yaml_directive = false;
+                    content_start = None;
                 }
 
                 // No longer in directive prologue after seeing ---
                 in_directive_prologue = false;
 
                 // Include the `---` marker in the content (parser will see it)
-                if current_content.is_empty() {
-                    content_start = pos;
+                if content_start.is_none() {
+                    content_start = Some(pos);
                 }
-                // Add `---` and the rest of the line
+                // Track the end of this line
                 let line_end = find_eol(input, pos);
-                current_content.push_str(&input[pos..line_end]);
 
                 // Include the newline
                 pos = line_end;
                 if pos < input.len() {
                     let newline_end = skip_newline(input, pos);
-                    current_content.push_str(&input[pos..newline_end]);
+                    content_end = newline_end;
                     pos = newline_end;
+                } else {
+                    content_end = line_end;
                 }
                 continue;
             }
@@ -131,7 +137,7 @@ pub fn parse_stream(input: &str) -> (Vec<RawDocument>, Vec<ParseError>) {
             if next_char.is_none() || matches!(next_char, Some(' ' | '\t' | '\n' | '\r')) {
                 // This is a document end marker
                 // Check for directives without a document start before ...
-                if !current_directives.is_empty() && current_content.is_empty() {
+                if !current_directives.is_empty() && content_start.is_none() {
                     let span = current_directives
                         .first()
                         .map_or(Span::new((), pos..marker_end), |(_, span)| *span);
@@ -144,28 +150,31 @@ pub fn parse_stream(input: &str) -> (Vec<RawDocument>, Vec<ParseError>) {
                 }
 
                 // Include `...` in content (parser will see it)
-                if current_content.is_empty() {
-                    content_start = pos;
+                if content_start.is_none() {
+                    content_start = Some(pos);
                 }
                 let line_end = find_eol(input, pos);
-                current_content.push_str(&input[pos..line_end]);
 
                 // Include the newline
                 pos = line_end;
                 if pos < input.len() {
                     let newline_end = skip_newline(input, pos);
-                    current_content.push_str(&input[pos..newline_end]);
+                    content_end = newline_end;
                     pos = newline_end;
+                } else {
+                    content_end = line_end;
                 }
 
                 // Finalize the current document BEFORE starting the directive prologue for the next
                 // This ensures directives after `...` go to the next document, not the current one.
-                if !current_content.is_empty() || !current_directives.is_empty() {
+                if content_start.is_some() || !current_directives.is_empty() {
+                    let start = content_start.unwrap_or(pos);
                     documents.push(RawDocument {
                         directives: std::mem::take(&mut current_directives),
-                        content: std::mem::take(&mut current_content),
-                        content_span: Span::new((), content_start..pos),
+                        content: &input[start..content_end],
+                        content_span: Span::new((), start..pos),
                     });
+                    content_start = None;
                 }
 
                 // After `...`, we're back in directive prologue for the NEXT document
@@ -289,24 +298,25 @@ pub fn parse_stream(input: &str) -> (Vec<RawDocument>, Vec<ParseError>) {
 
         // Add the line to current content
         let line_end = find_eol(input, pos);
-        if current_content.is_empty() {
-            content_start = pos;
+        if content_start.is_none() {
+            content_start = Some(pos);
         }
-        current_content.push_str(&input[pos..line_end]);
 
         // Include the newline
         pos = line_end;
         if pos < input.len() {
             let newline_end = skip_newline(input, pos);
-            current_content.push_str(&input[pos..newline_end]);
+            content_end = newline_end;
             pos = newline_end;
+        } else {
+            content_end = line_end;
         }
     }
 
     // Finalize any remaining document
-    if !current_content.is_empty() || !current_directives.is_empty() {
+    if content_start.is_some() || !current_directives.is_empty() {
         // Check for directives without a following document
-        if !current_directives.is_empty() && current_content.is_empty() {
+        if !current_directives.is_empty() && content_start.is_none() {
             let span = current_directives
                 .first()
                 .map_or(Span::new((), 0..0), |(_, span)| *span);
@@ -318,10 +328,12 @@ pub fn parse_stream(input: &str) -> (Vec<RawDocument>, Vec<ParseError>) {
             });
         }
 
+        // If no content was found, use content_end for both start and end to get an empty slice
+        let start = content_start.unwrap_or(content_end);
         documents.push(RawDocument {
             directives: current_directives,
-            content: current_content,
-            content_span: Span::new((), content_start..input.len()),
+            content: &input[start..content_end],
+            content_span: Span::new((), start..content_end),
         });
     }
 
@@ -384,7 +396,7 @@ mod tests {
         let (docs, _errors) = parse_stream(input);
         assert_eq!(docs.len(), 1);
         // No markers in content
-        let content = &docs.first().unwrap().content;
+        let content = docs.first().unwrap().content;
         assert!(!content.contains("---"));
         assert!(!content.contains("..."));
         assert_eq!(content, "key: value\n");

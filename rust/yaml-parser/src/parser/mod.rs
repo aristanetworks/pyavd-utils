@@ -75,8 +75,8 @@ impl<'input> NodeProperties<'input> {
 /// - `'tokens` is the lifetime of the token slice
 /// - `'input` is the lifetime of the input string (tokens borrow from input via `Cow`)
 ///
-/// The bound `'tokens: 'input` ensures that when we return `Node<'input>`,
-/// the compiler knows the returned data borrows from `'input`, not from `&mut self`.
+/// The bound `'tokens: 'input` ensures that tokens outlive the returned Node.
+/// This allows the returned `Node<'input>` to borrow data from the tokens.
 #[derive(Debug)]
 pub(crate) struct Parser<'tokens: 'input, 'input> {
     pub tokens: &'tokens [RichToken<'input>],
@@ -1129,8 +1129,15 @@ pub fn parse_tokens<'input>(
 /// document's prolog. These are used to validate tag handles.
 ///
 /// Returns the parsed node (or None if empty) and any errors encountered.
-pub fn parse_single_document<'input>(
-    tokens: &'input [RichToken<'input>],
+///
+/// # Lifetimes
+///
+/// - `'tokens`: lifetime of the token slice (must outlive `'input` for the bound)
+/// - `'input`: lifetime of the input string (returned Node borrows from this)
+///
+/// The returned Node borrows string data from `input`.
+pub fn parse_single_document<'tokens: 'input, 'input>(
+    tokens: &'tokens [RichToken<'input>],
     input: &'input str,
     directives: &[Spanned<crate::stream_lexer::Directive>],
 ) -> (Option<Node<'input>>, Vec<ParseError>) {
