@@ -59,22 +59,26 @@ match arms are now minimal - further extraction would reduce clarity.
 
 #### 1.3 Unify Flow Collection Entry Parsing
 
-**Status:** [ ] Not Started
+**Status:** [x] Complete
 **Complexity:** Medium
 **Impact:** Reduces duplication in `flow.rs`
 
-**Problem:** `parse_flow_mapping()` and `parse_flow_sequence()` have similar structure:
+**Problem:** `parse_flow_mapping()` and `parse_flow_sequence()` had similar structure:
 
 - Flow depth tracking
 - Comma handling
 - Error recovery with `skip_to_flow_delimiter()`
 - Loop progress guards
 
-**Solution:** Extract common flow parsing utilities:
+**Solution:** Extracted common flow parsing utilities:
 
-- `FlowContext` struct to track depth and delimiters
-- `parse_flow_entry()` helper for key-value or single value
-- Shared comma/delimiter handling
+- `enter_flow_collection()` - Flow depth and column tracking setup
+- `exit_flow_collection()` - Flow depth and column tracking cleanup
+- `handle_flow_comma()` - Consecutive comma detection and handling
+- `handle_flow_entry_end()` - Comma/end token handling after entries
+
+**Note:** Did not create a `FlowContext` struct as the helpers proved sufficient.
+The `parse_flow_mapping` function is now under clippy's 100 line threshold.
 
 ### Phase 2: Performance and Memory
 
@@ -153,12 +157,12 @@ to use the contextual Named variants with specific anchor/tag/alias names.
 1. ~~**1.1 Property Collection Helper**~~ - ✓ Done
 2. ~~**3.1 Contextual Error Variants**~~ - ✓ Done
 3. ~~**1.2 Method Extraction**~~ - ✓ Done
+4. ~~**1.3 Flow Unification**~~ - ✓ Done
 
 **Remaining (recommended order):**
 
-1. **1.3 Flow Unification** - Medium effort, reduces duplication
-2. **3.2 Expected Token Sets** - Low effort, better diagnostics
-3. **2.1/2.2 Performance** - Only if profiling shows need
+1. **3.2 Expected Token Sets** - Low effort, better diagnostics
+2. **2.1/2.2 Performance** - Only if profiling shows need
 
 ## Dropped Items
 
