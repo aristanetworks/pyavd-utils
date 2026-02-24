@@ -7,7 +7,7 @@
 # YAML Parser Architecture Documentation
 
 **Version:** 0.0.2
-**Date:** 2026-02-23
+**Date:** 2026-02-24
 **Status:** 100% YAML 1.2 Test Suite Compliance (333/333 tests passing)
 
 ---
@@ -117,6 +117,10 @@ The parser uses a **three-layer architecture**:
 
 - **`Span`**: Type alias for `SimpleSpan<usize>` (byte offsets)
 - **`Spanned<T>`**: Type alias for `(T, Span)` tuple
+- **`Position`**: 1-based line and column numbers for human-readable positions
+- **`SourceMap`**: Converts byte offsets to line/column positions using binary search
+  - `position(byte_offset) -> Position`: Get line/column for a byte offset
+  - `line_range(line) -> Option<Range<usize>>`: Get byte range for a line
 - Every token and node includes its source location
 
 #### `error.rs` - Error Types
@@ -179,7 +183,7 @@ The parser uses a **three-layer architecture**:
 
 ### Layer 2: Context Lexer
 
-#### `context_lexer.rs` (1210 lines)
+#### `context_lexer.rs` (~1280 lines)
 
 - **Purpose**: Context-aware tokenization
 - **Key Types**:
@@ -190,23 +194,45 @@ The parser uses a **three-layer architecture**:
   - `indent_stack`: Stack of indentation levels
   - `in_quoted_string`: Inside quoted string?
   - `prev_was_json_like`: For colon detection
+  - `byte_pos`: Current position in input (direct string slicing, no Vec<char>)
 - **Key Innovation**: Context-aware character interpretation
   - In **block context**: `,[]{}` are part of plain scalars
   - In **flow context**: `,[]{}` are delimiters
 - **INDENT/DEDENT Tokens**: Python-style indentation tracking
   - Emitted after `LineStart` in block context
   - Used by parser to determine block structure boundaries
+- **Modular Token Lexing**: The main `next_token()` method delegates to helper methods:
+  - `try_lex_document_marker()` - Document start/end markers (`---`, `...`)
+  - `try_lex_newline()` - Newline and indentation handling
+  - `try_lex_whitespace()` - Inline whitespace
+  - `try_lex_comment()` - Comments
+  - `try_lex_flow_indicator()` - Flow indicators `{}[],`
+  - `try_lex_block_indicator()` - Block indicators `-`, `?`
+  - `try_lex_colon()` - Colon handling with context awareness
+  - `try_lex_anchor_or_alias()` - Anchors `&` and aliases `*`
+  - `try_lex_block_scalar_header()` - Block scalar headers `|`, `>`
+  - `try_lex_quoted_scalar()` - Quoted scalars `'...'` and `"..."`
+- **Shared Helpers for Quoted Strings**:
+  - `handle_quoted_newline()` - Shared newline handling for both quote styles
+  - `finalize_quoted_string()` - Shared end-of-string handling
 
-#### `lexer.rs` (858 lines) - Legacy
+#### `token.rs` (~180 lines)
 
-- **Status**: Kept for comparison, not used by default
-- **Purpose**: Single-pass lexer (original implementation)
-- **Contains**: Token type definitions used by both lexers
+- **Purpose**: Token type definitions (extracted from legacy lexer)
 - **Key Types**:
   - `Token`: 20+ variants for all YAML constructs
   - `QuoteStyle`: `Single` or `Double`
   - `BlockScalarHeader`: For `|` and `>` scalars
   - `Chomping`: `Strip`, `Clip`, or `Keep` trailing newlines
+- **Helper Methods**:
+  - `is_scalar()`: Check if token is a scalar type
+  - `is_flow_indicator()`: Check if token is a flow indicator
+
+#### `lexer.rs` (~680 lines) - Legacy
+
+- **Status**: Kept for comparison, not used by default
+- **Purpose**: Single-pass lexer (original implementation)
+- **Note**: Token type definitions have been moved to `token.rs`; this module re-exports them for backwards compatibility
 
 ### Layer 3: Parser
 
@@ -414,7 +440,7 @@ The parser uses `Indent` and `Dedent` tokens to determine when block collections
 
 ### Token Types
 
-The `Token` enum (defined in `lexer.rs`) has 20+ variants:
+The `Token` enum (defined in `token.rs`) has 20+ variants:
 
 **Structure Indicators:**
 
@@ -732,19 +758,29 @@ See `TECHNICAL_DEBT.md` for comprehensive documentation. Key limitations:
 
 ## Future Improvements
 
+### Recently Completed (2026-02-24)
+
+1. ✅ **Token Module Extraction** - Token types moved to dedicated `token.rs`
+2. ✅ **Zero-Allocation Character Iteration** - Replaced `Vec<char>` with string slicing
+3. ✅ **SourceMap Utility** - Line/column position tracking for IDE integration
+4. ✅ **State Machine Extraction** - `next_token()` refactored from ~230 to ~45 lines
+5. ✅ **Unified Quoted String Handling** - Shared helpers reduce duplication
+
+See `LEXER_IMPROVEMENTS.md` for detailed progress tracking.
+
 ### Short-Term (Architectural Cleanup)
 
-1. **Reduce Code Duplication**
-   - Extract common patterns from parser modules
-   - Create helper functions for common operations
+1. **Token Trivia Preservation** (Phase 1.1)
+   - Associate comments/whitespace with adjacent tokens
+   - Critical for IDE refactoring features
 
-2. **Improve Error Messages**
+2. **Improve Error Messages** (Phase 3.1)
    - Add more context to errors
    - Include suggestions for common mistakes
 
 3. **Performance Optimization**
    - Profile and optimize hot paths
-   - Reduce allocations
+   - Zero-copy tokenization using `Cow<'input, str>` (Phase 2.1)
 
 ### Medium-Term (Feature Additions)
 
@@ -756,9 +792,13 @@ See `TECHNICAL_DEBT.md` for comprehensive documentation. Key limitations:
    - Format YAML output
    - Preserve comments and formatting
 
-3. **Incremental Parsing**
+3. **Incremental Parsing** (Phase 1.2)
    - Parse only changed parts of document
    - Useful for IDE integration
+
+4. **Lazy Token Iteration** (Phase 2.2)
+   - Return iterator instead of Vec
+   - Memory efficiency for large files
 
 ### Long-Term (Major Changes)
 
