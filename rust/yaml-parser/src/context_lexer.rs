@@ -148,7 +148,7 @@ impl<'a> ContextLexer<'a> {
         matches!(ch, ',' | '[' | ']' | '{' | '}')
     }
 
-    /// Tokenize the document and return `RichToken`s.
+    /// Tokenize the document and return `RichToken`s directly.
     ///
     /// All tokens (including `Whitespace`, `WhitespaceWithTabs`, `Comment`) are
     /// kept as real tokens in the stream. The `RichToken` wrapper supports trivia
@@ -159,21 +159,16 @@ impl<'a> ContextLexer<'a> {
     /// - Whitespace carries indentation information for block structure
     /// - Tab detection requires seeing `WhitespaceWithTabs` tokens
     pub fn tokenize(mut self) -> (Vec<RichToken>, Vec<ParseError>) {
-        // Collect all raw tokens
-        let raw_tokens = self.collect_raw_tokens();
-
-        // Wrap in RichToken (trivia not attached, kept for future IDE features)
-        let rich_tokens = Self::attach_trivia(raw_tokens);
-
-        (rich_tokens, self.errors)
+        let tokens = self.collect_tokens();
+        (tokens, self.errors)
     }
 
-    /// Collect all raw tokens including trivia tokens.
-    fn collect_raw_tokens(&mut self) -> Vec<Spanned<Token>> {
+    /// Collect all tokens as `RichToken`s directly (no intermediate allocation).
+    fn collect_tokens(&mut self) -> Vec<RichToken> {
         let mut tokens = Vec::new();
 
         // Start with LineStart(0) for initial indentation
-        tokens.push((Token::LineStart(0), Span::new((), 0..0)));
+        tokens.push(RichToken::new(Token::LineStart(0), Span::new((), 0..0)));
 
         while !self.is_eof() || !self.pending_tokens.is_empty() {
             // Check pending tokens first (from multi-token constructs like quoted strings)
@@ -241,14 +236,14 @@ impl<'a> ContextLexer<'a> {
                 // Emit INDENT/DEDENT tokens after LineStart in block context
                 // but NOT inside quoted strings
                 if let Token::LineStart(n) = &token {
-                    tokens.push((token.clone(), span));
+                    tokens.push(RichToken::new(token.clone(), span));
 
                     // Only emit INDENT/DEDENT in block context (not inside flow collections or strings)
                     if self.flow_depth == 0 && !self.in_quoted_string {
                         self.emit_indent_dedent_tokens(*n, span, &mut tokens);
                     }
                 } else {
-                    tokens.push((token, span));
+                    tokens.push(RichToken::new(token, span));
                 }
             }
         }
@@ -258,28 +253,11 @@ impl<'a> ContextLexer<'a> {
             let end_span = Span::new((), self.byte_pos..self.byte_pos);
             while self.indent_stack.len() > 1 {
                 self.indent_stack.pop();
-                tokens.push((Token::Dedent, end_span));
+                tokens.push(RichToken::new(Token::Dedent, end_span));
             }
         }
 
         tokens
-    }
-
-    /// Wrap raw tokens in `RichToken` structure.
-    ///
-    /// Currently, all tokens (including Whitespace, Comment) are kept as real tokens
-    /// in the stream. The `RichToken` structure supports trivia attachment for future
-    /// IDE features, but trivia is not currently attached.
-    ///
-    /// The parser sees all tokens directly, which is needed because:
-    /// - Comments have semantic meaning (they terminate plain scalars)
-    /// - Whitespace carries indentation information for block structure
-    /// - Tab detection requires seeing whitespace tokens
-    fn attach_trivia(raw_tokens: Vec<Spanned<Token>>) -> Vec<RichToken> {
-        raw_tokens
-            .into_iter()
-            .map(|(token, span)| RichToken::new(token, span))
-            .collect()
     }
 
     /// Emit INDENT/DEDENT tokens based on indentation change.
@@ -292,14 +270,14 @@ impl<'a> ContextLexer<'a> {
         &mut self,
         new_indent: usize,
         span: Span,
-        tokens: &mut Vec<Spanned<Token>>,
+        tokens: &mut Vec<RichToken>,
     ) {
         let current_indent = *self.indent_stack.last().unwrap_or(&0);
 
         if new_indent > current_indent {
             // Indent increased - push new level
             self.indent_stack.push(new_indent);
-            tokens.push((Token::Indent(new_indent), span));
+            tokens.push(RichToken::new(Token::Indent(new_indent), span));
         } else if new_indent < current_indent {
             // Indent decreased - pop levels and emit Dedent for each
             while let Some(&top) = self.indent_stack.last() {
@@ -307,7 +285,7 @@ impl<'a> ContextLexer<'a> {
                     break;
                 }
                 self.indent_stack.pop();
-                tokens.push((Token::Dedent, span));
+                tokens.push(RichToken::new(Token::Dedent, span));
             }
 
             // If new_indent doesn't match any level, push it as a new level
