@@ -751,24 +751,19 @@ See `TECHNICAL_DEBT.md` for comprehensive documentation. Key limitations:
 
 - Not optimized for speed (focus has been on correctness)
 - Three-layer architecture has some overhead
-- Could benefit from zero-copy parsing
+- Lexer uses zero-copy (`Cow<'input, str>`), but parser still allocates owned strings
 
 ### 2. Memory Usage
 
-- Tokens and nodes are cloned frequently
+- Parser nodes use owned strings (not zero-copy yet)
 - Could use arena allocation or reference counting
 
-### 3. Error Messages
-
-- Could be more user-friendly
-- Could include suggestions for fixes
-
-### 4. Unicode Handling
+### 3. Unicode Handling
 
 - Basic Unicode support, but not fully tested
 - Could improve handling of Unicode edge cases
 
-### 5. Streaming
+### 4. Streaming
 
 - Currently parses entire input at once
 - Could support streaming for large files
@@ -786,20 +781,21 @@ See `TECHNICAL_DEBT.md` for comprehensive documentation. Key limitations:
 5. ✅ **Unified Quoted String Handling** - Shared helpers reduce duplication
 6. ✅ **Rich Error Context** (Phase 3.1) - 10 contextual error variants with suggestions
 7. ✅ **Whitespace Tab Detection** - Split `Whitespace` / `WhitespaceWithTabs` for O(1) tab detection
-8. ⚠️ **Token Trivia Preservation** (Phase 1.1) - **Reverted**; comments kept as real tokens
+8. ✅ **Zero-Copy Tokenization** (Phase 2.1) - `Token<'input>` uses `Cow<'input, str>`
+   - Borrows directly from input for comments, anchor names
+   - Allocates only when content is transformed (escapes, trimming)
+   - Parser updated with two lifetimes: `Parser<'tokens, 'input>`
+9. ⚠️ **Token Trivia Preservation** (Phase 1.1) - **Reverted**; comments kept as real tokens
    - Comments have semantic meaning in YAML (they terminate plain scalars)
    - Parser needs to see `Token::Comment(_)` directly for correct parsing
    - `RichToken` structure preserved for future IDE features (trivia not attached)
 
-See `LEXER_IMPROVEMENTS.md` for detailed progress tracking.
+See `LEXER_IMPROVEMENTS.md` for detailed lexer progress tracking (including dropped items with rationale).
 
-### Short-Term (Performance)
+See `PARSER_IMPROVEMENTS.md` for parser infrastructure improvements (code organization,
+complexity reduction, and potential performance optimizations).
 
-1. **Zero-Copy Tokenization** (Phase 2.1)
-   - Use `Cow<'input, str>` for token content
-   - Reduce string allocations for better performance
-
-### Medium-Term (Feature Additions)
+### Short-Term (Feature Additions)
 
 1. **Schema Validation**
    - Support for YAML schemas
@@ -809,25 +805,13 @@ See `LEXER_IMPROVEMENTS.md` for detailed progress tracking.
    - Format YAML output
    - Preserve comments and formatting
 
-3. **Incremental Parsing** (Phase 1.2)
-   - Parse only changed parts of document
-   - Useful for IDE integration
-
-4. **Lazy Token Iteration** (Phase 2.2)
-   - Return iterator instead of Vec
-   - Memory efficiency for large files
-
 ### Long-Term (Major Changes)
 
-1. **Zero-Copy Parsing**
-   - Use string slices instead of owned strings
-   - Reduce memory allocations
-
-2. **Streaming API**
+1. **Streaming API**
    - Support for large files
    - Event-based parsing
 
-3. **YAML 1.3 Support**
+2. **YAML 1.3 Support**
    - When YAML 1.3 spec is finalized
    - Backward compatibility with 1.2
 

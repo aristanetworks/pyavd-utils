@@ -31,13 +31,13 @@ This document tracks improvements to the YAML lexer for better IDE/language serv
 ### Phase 1: Language Server Foundation
 
 - [x] **1.1 Token Trivia Preservation** - Associate comments/whitespace with tokens ✅ 2026-02-24
-- [ ] **1.2 Incremental Lexing Support** - Re-lex only affected regions
+- [-] **1.2 Incremental Lexing Support** - ~~Re-lex only affected regions~~ **Dropped** (see Dropped Items)
 - [x] **1.3 Line/Column Position Tracking** - SourceMap utility ✅ 2026-02-24 (Quick Win #1)
 
 ### Phase 2: Performance Optimizations
 
 - [x] **2.1 Zero-Copy Tokenization** - Use `Cow<'input, str>` for token content ✅ 2026-02-24
-- [ ] **2.2 Lazy Token Iteration** - Return iterator instead of Vec
+- [-] **2.2 Lazy Token Iteration** - ~~Return iterator instead of Vec~~ **Dropped** (see Change Log)
 - [x] **2.3 Character Iterator Optimization** ✅ 2026-02-24 (Quick Win #3)
 
 ### Phase 3: Error Recovery Improvements
@@ -117,6 +117,40 @@ This document tracks improvements to the YAML lexer for better IDE/language serv
 - Analyzed current architecture
 - Identified improvement areas
 - Created prioritized action plan
+
+---
+
+## Dropped Items
+
+### Phase 1.2: Incremental Lexing (Dropped 2026-02-24)
+
+**Original idea**: Re-lex only affected regions after edits, useful for IDE integration.
+
+**Why dropped**: YAML's heavy context-sensitivity makes this impractical:
+
+1. **Lexer state is pervasive** - Flow depth, indentation stack, and quote state from earlier in the document affect how all subsequent content is tokenized.
+
+2. **Small edits have large effects** - A single character change like adding `{`, `[`, `|`, or `"` can completely change how the rest of the document is lexed.
+
+3. **Checkpointing complexity** - Would need to store lexer state at many checkpoints and determine which checkpoint to resume from. The overhead may exceed the cost of full re-lexing.
+
+4. **Full re-lex is fast enough** - For typical YAML files (configs, manifests), full lexing is sub-millisecond. The complexity isn't justified.
+
+**Conclusion**: For IDE use cases, full re-lexing on each edit is acceptable given typical file sizes.
+
+### Phase 2.2: Lazy Token Iteration (Dropped 2026-02-24)
+
+**Original idea**: Return `impl Iterator<Item = Token>` instead of `Vec<Token>`.
+
+**Why dropped**: The benefits don't materialize for our use cases:
+
+1. **Error collection requires full consumption** - We want ALL errors from a document, not just the first one. This means we must consume the entire iterator anyway before returning results.
+
+2. **Parser needs look-ahead** - The parser uses `peek()` and `peek_nth()` which require buffering tokens. We'd end up collecting into a Vec internally anyway.
+
+3. **YAML is context-sensitive** - Indentation and flow depth from earlier lines affect later parsing. True streaming isn't possible without significant complexity.
+
+**Conclusion**: The implementation effort doesn't justify the minimal benefit.
 
 ---
 
