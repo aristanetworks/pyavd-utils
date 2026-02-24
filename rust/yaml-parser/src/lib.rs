@@ -47,7 +47,7 @@ mod value;
 pub use error::{ErrorKind, ParseError};
 pub use lexer::{Token, tokenize};
 pub use parser::{Stream, parse_single_document, parse_tokens};
-pub use span::{Span, Spanned};
+pub use span::{Position, SourceMap, Span, Spanned};
 pub use value::{Node, Value};
 
 /// Parse YAML input and return the parsed documents and any errors encountered.
