@@ -108,10 +108,6 @@ The parser uses a **three-layer architecture**:
 
 - **Main entry point**: `parse(input: &str) -> (Stream, Vec<ParseError>)`
 - **Exports**: All public types and functions
-- **Three parsing modes**:
-  - `parse()` - Default layered architecture (recommended)
-  - `parse_legacy()` - Single-pass lexer (kept for comparison)
-  - `parse_layered()` - Explicit layered parsing
 
 #### `span.rs` - Source Location Tracking
 
@@ -134,27 +130,7 @@ The parser uses a **three-layer architecture**:
   - And more...
 - **Error suggestions**: `ErrorKind::suggestion()` returns fix hints for common errors
 
-#### `trivia.rs` - Token Trivia Types (IDE Support)
-
-- **`TriviaKind`**: Types of non-semantic content
-
-  ```rust
-  pub enum TriviaKind {
-      Comment(String),      // # comment content
-      Whitespace,           // Spaces only
-      WhitespaceWithTabs,   // Contains at least one tab
-      LineBreak(usize),     // Newline with following indent level
-  }
-  ```
-
-- **`Trivia`**: A piece of trivia with its span
-
-  ```rust
-  pub struct Trivia {
-      pub kind: TriviaKind,
-      pub span: Span,
-  }
-  ```
+#### `rich_token.rs` - Wrapper for tokens
 
 - **`RichToken`**: Token wrapper (trivia not currently attached)
 
@@ -162,8 +138,6 @@ The parser uses a **three-layer architecture**:
   pub struct RichToken {
       pub token: Token,
       pub span: Span,
-      pub leading_trivia: Vec<Trivia>,   // Currently empty
-      pub trailing_trivia: Vec<Trivia>,  // Currently empty
   }
   ```
 

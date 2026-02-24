@@ -17,9 +17,9 @@ use std::borrow::Cow;
 use std::collections::VecDeque;
 
 use crate::error::{ErrorKind, ParseError};
+use crate::rich_token::RichToken;
 use crate::span::{Span, Spanned};
 use crate::token::{BlockScalarHeader, Chomping, QuoteStyle, Token};
-use crate::trivia::RichToken;
 
 use chumsky::span::Span as _;
 

@@ -22,8 +22,8 @@ use chumsky::span::Span as _;
 
 use crate::error::{ErrorKind, ParseError};
 use crate::lexer::Token;
+use crate::rich_token::RichToken;
 use crate::span::{Span, Spanned};
-use crate::trivia::RichToken;
 use crate::value::{Node, Value};
 
 /// A stream of YAML documents.
