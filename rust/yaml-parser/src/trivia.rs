@@ -2,14 +2,14 @@
 // Use of this source code is governed by the Apache License 2.0
 // that can be found in the LICENSE file.
 
-//! Trivia types for preserving comments and whitespace.
+//! Token wrapper and trivia types.
 //!
-//! In language server and IDE contexts, it's important to preserve "trivia" -
-//! comments, whitespace, and other non-semantic content - so that refactoring
-//! operations can maintain formatting and comments.
+//! This module provides [`RichToken`] which wraps tokens with span information,
+//! and trivia types for potential future IDE features (comment/whitespace attachment).
 //!
-//! This module provides types for attaching trivia to tokens, following the
-//! industry standard pattern used by TypeScript, Roslyn, and rust-analyzer.
+//! **Current State**: Comments and whitespace are kept as real tokens in the stream
+//! (not attached as trivia) because comments have semantic meaning in YAML - they
+//! terminate plain scalars. The trivia types are preserved for future IDE features.
 //!
 //! Trivia content uses `Cow<'input, str>` for zero-copy when possible.
 

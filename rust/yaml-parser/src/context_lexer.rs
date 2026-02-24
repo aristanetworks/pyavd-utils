@@ -156,10 +156,7 @@ impl<'input> ContextLexer<'input> {
     /// Tokenize the document and return `RichToken`s directly.
     ///
     /// All tokens (including `Whitespace`, `WhitespaceWithTabs`, `Comment`) are
-    /// kept as real tokens in the stream. The `RichToken` wrapper supports trivia
-    /// attachment for future IDE features, but trivia is not currently attached.
-    ///
-    /// The parser sees all tokens directly because:
+    /// kept as real tokens in the stream because:
     /// - Comments have semantic meaning (they terminate plain scalars)
     /// - Whitespace carries indentation information for block structure
     /// - Tab detection requires seeing `WhitespaceWithTabs` tokens
@@ -1145,19 +1142,14 @@ impl<'input> ContextLexer<'input> {
     }
 }
 
-/// Tokenize document content with context awareness and trivia preservation.
+/// Tokenize document content with context awareness.
 ///
-/// Returns `RichToken`s where each token has its associated leading and trailing
-/// trivia (comments, whitespace, line breaks). `Indent`/`Dedent` are real tokens
-/// (structural for block parsing), not trivia.
+/// Returns `RichToken`s wrapping each token. All tokens (including `Whitespace`,
+/// `WhitespaceWithTabs`, `Comment`) are kept as real tokens in the stream because
+/// comments have semantic meaning in YAML (they terminate plain scalars).
 ///
-/// # Trivia Association Rules
-///
-/// - **Leading trivia**: All trivia before a real token
-/// - **Trailing trivia**: Trivia on the same line after a token (until line break)
-/// - **Line breaks** become leading trivia of the next token
-///
-/// This follows the Python tokenizer pattern for indentation-sensitive languages.
+/// The `RichToken` wrapper supports future IDE features but currently has empty
+/// leading/trailing trivia vectors.
 pub fn tokenize_document(input: &str) -> (Vec<RichToken<'_>>, Vec<ParseError>) {
     ContextLexer::new(input).tokenize()
 }
@@ -1361,11 +1353,10 @@ mod tests {
         assert!(tokens.contains(&Token::Plain("http://example.org".into())));
     }
 
-    // Tests for tokenize_document - tokens as real stream (not trivia)
+    // Tests for tokenize_document
     //
-    // Note: Whitespace, WhitespaceWithTabs, and Comment are real tokens in the stream.
-    // Trivia attachment was reverted because comments have semantic meaning in YAML
-    // (they terminate plain scalars), so the parser needs to see them directly.
+    // Note: Whitespace, WhitespaceWithTabs, and Comment are real tokens in the stream
+    // because comments have semantic meaning in YAML (they terminate plain scalars).
 
     #[test]
     fn test_simple_mapping_tokens() {
