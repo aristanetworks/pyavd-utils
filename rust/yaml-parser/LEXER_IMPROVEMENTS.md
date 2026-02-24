@@ -47,12 +47,21 @@ This document tracks improvements to the YAML lexer for better IDE/language serv
 ### Phase 4: Architecture Refinements
 
 - [ ] **4.1 Consolidate Token Types** - (see Quick Win #2)
-- [ ] **4.2 State Machine Extraction** - Break up monolithic `next_token()`
+- [x] **4.2 State Machine Extraction** - Break up monolithic `next_token()` ✅ 2026-02-24
 - [ ] **4.3 Unify Quoted String Handling** - Reduce duplication
 
 ---
 
 ## Change Log
+
+### 2026-02-24: Quick Wins and Phase 4.2 Complete
+
+- ✅ Quick Win #1: Added SourceMap for line/column position tracking
+- ✅ Quick Win #2: Extracted token types to dedicated `token.rs` module
+- ✅ Quick Win #3: Removed Vec<char> allocation, using string slicing instead
+- ✅ Phase 4.2: Extracted state machine from `next_token()` (230→45 lines)
+  - Added 10 helper methods for different token types
+  - Improved maintainability and testability
 
 ### 2026-02-24: Initial Plan Created
 

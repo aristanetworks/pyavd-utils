@@ -762,6 +762,70 @@ impl<'a> ContextLexer<'a> {
         BlockScalarHeader { indent, chomping }
     }
 
+    /// Handle a newline within a quoted string.
+    ///
+    /// Emits the current content as a `StringContent` token (if non-empty),
+    /// consumes the newline and indentation, and emits a `LineStart` token.
+    /// Returns the new content_start position.
+    fn handle_quoted_newline(&mut self, content: &mut String, content_start: usize) -> usize {
+        // Emit current content before newline
+        if !content.is_empty() {
+            let content_span = Span::new((), content_start..self.byte_pos);
+            self.pending_tokens
+                .push_back((Token::StringContent(std::mem::take(content)), content_span));
+        }
+
+        // Consume newline
+        let newline_start = self.byte_pos;
+        let ch = self.advance().unwrap();
+        if ch == '\r' && self.peek() == Some('\n') {
+            self.advance();
+        }
+
+        // Count indentation
+        let mut indent = 0;
+        while self.peek() == Some(' ') {
+            self.advance();
+            indent += 1;
+        }
+
+        // Emit LineStart token
+        let line_span = Span::new((), newline_start..self.byte_pos);
+        self.pending_tokens
+            .push_back((Token::LineStart(indent), line_span));
+
+        self.byte_pos
+    }
+
+    /// Emit final string tokens after the main loop.
+    ///
+    /// Emits the remaining content (if any) and the `StringEnd` token.
+    /// Reports an error if the string was not terminated.
+    fn finalize_quoted_string(
+        &mut self,
+        start: usize,
+        content: String,
+        content_start: usize,
+        terminated: bool,
+        style: QuoteStyle,
+    ) {
+        // Emit final content segment if any
+        if !content.is_empty() {
+            let content_span = Span::new((), content_start..self.byte_pos);
+            self.pending_tokens
+                .push_back((Token::StringContent(content), content_span));
+        }
+
+        // Emit StringEnd
+        let end_span = Span::new((), self.byte_pos.saturating_sub(1)..self.byte_pos);
+        if !terminated {
+            let full_span = self.current_span(start);
+            self.add_error(ErrorKind::UnterminatedString, full_span);
+        }
+        self.pending_tokens
+            .push_back((Token::StringEnd(style), end_span));
+    }
+
     /// Consume a single-quoted string, emitting `StringStart`, `StringContent`, `LineStart` and `StringEnd` tokens.
     /// Pushes tokens to `pending_tokens` and returns the first token.
     fn consume_single_quoted(&mut self, start: usize) -> Spanned<Token> {
@@ -787,33 +851,7 @@ impl<'a> ContextLexer<'a> {
                     }
                 }
                 Some('\n' | '\r') => {
-                    // Emit current content before newline
-                    if !content.is_empty() {
-                        let content_span = Span::new((), content_start..self.byte_pos);
-                        self.pending_tokens
-                            .push_back((Token::StringContent(content), content_span));
-                        content = String::new();
-                    }
-
-                    // Consume newline
-                    let newline_start = self.byte_pos;
-                    let ch = self.advance().unwrap();
-                    if ch == '\r' && self.peek() == Some('\n') {
-                        self.advance();
-                    }
-
-                    // Count indentation
-                    let mut indent = 0;
-                    while self.peek() == Some(' ') {
-                        self.advance();
-                        indent += 1;
-                    }
-
-                    // Emit LineStart token
-                    let line_span = Span::new((), newline_start..self.byte_pos);
-                    self.pending_tokens
-                        .push_back((Token::LineStart(indent), line_span));
-                    content_start = self.byte_pos;
+                    content_start = self.handle_quoted_newline(&mut content, content_start);
                 }
                 Some(ch) => {
                     content.push(ch);
@@ -822,21 +860,13 @@ impl<'a> ContextLexer<'a> {
             }
         }
 
-        // Emit final content segment if any
-        if !content.is_empty() {
-            let content_span = Span::new((), content_start..self.byte_pos);
-            self.pending_tokens
-                .push_back((Token::StringContent(content), content_span));
-        }
-
-        // Emit StringEnd
-        let end_span = Span::new((), self.byte_pos - 1..self.byte_pos);
-        if !terminated {
-            let full_span = self.current_span(start);
-            self.add_error(ErrorKind::UnterminatedString, full_span);
-        }
-        self.pending_tokens
-            .push_back((Token::StringEnd(QuoteStyle::Single), end_span));
+        self.finalize_quoted_string(
+            start,
+            content,
+            content_start,
+            terminated,
+            QuoteStyle::Single,
+        );
 
         // Return StringStart as the immediate token
         (Token::StringStart(QuoteStyle::Single), start_span)
@@ -868,33 +898,7 @@ impl<'a> ContextLexer<'a> {
                     }
                 }
                 Some('\n' | '\r') => {
-                    // Emit current content before newline
-                    if !content.is_empty() {
-                        let content_span = Span::new((), content_start..self.byte_pos);
-                        self.pending_tokens
-                            .push_back((Token::StringContent(content), content_span));
-                        content = String::new();
-                    }
-
-                    // Consume newline
-                    let newline_start = self.byte_pos;
-                    let ch = self.advance().unwrap();
-                    if ch == '\r' && self.peek() == Some('\n') {
-                        self.advance();
-                    }
-
-                    // Count indentation
-                    let mut indent = 0;
-                    while self.peek() == Some(' ') {
-                        self.advance();
-                        indent += 1;
-                    }
-
-                    // Emit LineStart token
-                    let line_span = Span::new((), newline_start..self.byte_pos);
-                    self.pending_tokens
-                        .push_back((Token::LineStart(indent), line_span));
-                    content_start = self.byte_pos;
+                    content_start = self.handle_quoted_newline(&mut content, content_start);
                 }
                 Some(ch) => {
                     content.push(ch);
@@ -903,21 +907,13 @@ impl<'a> ContextLexer<'a> {
             }
         }
 
-        // Emit final content segment if any
-        if !content.is_empty() {
-            let content_span = Span::new((), content_start..self.byte_pos);
-            self.pending_tokens
-                .push_back((Token::StringContent(content), content_span));
-        }
-
-        // Emit StringEnd
-        let end_span = Span::new((), self.byte_pos - 1..self.byte_pos);
-        if !terminated {
-            let full_span = self.current_span(start);
-            self.add_error(ErrorKind::UnterminatedString, full_span);
-        }
-        self.pending_tokens
-            .push_back((Token::StringEnd(QuoteStyle::Double), end_span));
+        self.finalize_quoted_string(
+            start,
+            content,
+            content_start,
+            terminated,
+            QuoteStyle::Double,
+        );
 
         // Return StringStart as the immediate token
         (Token::StringStart(QuoteStyle::Double), start_span)
