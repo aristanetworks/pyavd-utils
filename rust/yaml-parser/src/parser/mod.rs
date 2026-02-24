@@ -750,15 +750,182 @@ impl<'tokens, 'input> Parser<'tokens, 'input> {
         self.parse_value_with_properties(min_indent, NodeProperties::default())
     }
 
+    /// Handle a flow collection (mapping or sequence) as a value.
+    ///
+    /// This is shared logic for flow mapping and flow sequence handling:
+    /// - Checks for content after the flow
+    /// - Detects if used as a mapping key (followed by `:`)
+    /// - Checks for trailing content at root level
+    fn handle_flow_collection_as_value(
+        &mut self,
+        flow_node: Node,
+        start_pos: usize,
+        min_indent: usize,
+        props: NodeProperties,
+    ) -> Option<Node> {
+        self.check_content_after_flow(flow_node.span.end);
+        self.check_multiline_implicit_key(start_pos, flow_node.span.end);
+
+        self.skip_ws();
+        if let Some((Token::Colon, _)) = self.peek() {
+            let key = self.apply_properties_and_register(props, flow_node);
+            self.parse_block_mapping_starting_with_key(min_indent, key)
+        } else {
+            // Flow collection not used as mapping key - check for trailing content
+            if min_indent == 0 {
+                self.check_trailing_content_at_root(0);
+            }
+            Some(self.apply_properties_and_register(props, flow_node))
+        }
+    }
+
+    /// Handle an anchor token in value parsing.
+    ///
+    /// Validates indentation, checks for duplicates, and either:
+    /// - Tries to parse as a block mapping key (if crossed line boundary with existing anchor)
+    /// - Accumulates the anchor as a property and continues parsing
+    fn handle_anchor_in_value(
+        &mut self,
+        anchor_name: String,
+        anchor_span: Span,
+        min_indent: usize,
+        mut props: NodeProperties,
+    ) -> Option<Node> {
+        // Check anchor indentation - must be >= min_indent
+        let anchor_col = self.column_of_position(anchor_span.start);
+        if anchor_col < min_indent {
+            self.error(ErrorKind::InvalidIndentation, anchor_span);
+            return None;
+        }
+
+        self.advance();
+        self.skip_ws();
+
+        if let Some((first_anchor, _)) = &props.anchor
+            && !props.crossed_line_boundary
+        {
+            self.error(
+                ErrorKind::DuplicateAnchorNamed {
+                    first: first_anchor.clone(),
+                    second: anchor_name.clone(),
+                },
+                anchor_span,
+            );
+        }
+
+        if props.crossed_line_boundary && props.anchor.is_some() {
+            let inner_props = NodeProperties {
+                anchor: Some((anchor_name.clone(), anchor_span)),
+                tag: None,
+                crossed_line_boundary: false,
+            };
+            if let Some(mapping) = self.parse_block_mapping_with_props(min_indent, inner_props) {
+                Some(self.apply_properties_and_register(props, mapping))
+            } else if let Some((first_anchor, _)) = &props.anchor {
+                self.error(
+                    ErrorKind::DuplicateAnchorNamed {
+                        first: first_anchor.clone(),
+                        second: anchor_name.clone(),
+                    },
+                    anchor_span,
+                );
+                props.anchor = Some((anchor_name, anchor_span));
+                self.parse_value_with_properties(min_indent, props)
+            } else {
+                props.anchor = Some((anchor_name, anchor_span));
+                self.parse_value_with_properties(min_indent, props)
+            }
+        } else {
+            props.anchor = Some((anchor_name, anchor_span));
+            self.parse_value_with_properties(min_indent, props)
+        }
+    }
+
+    /// Handle a tag token in value parsing.
+    ///
+    /// Validates tag handles, checks for missing separators, handles duplicates,
+    /// and either:
+    /// - Tries to parse as a block mapping key (if crossed line boundary with existing tag)
+    /// - Accumulates the tag as a property and continues parsing
+    fn handle_tag_in_value(
+        &mut self,
+        tag_name: String,
+        tag_span: Span,
+        min_indent: usize,
+        mut props: NodeProperties,
+    ) -> Option<Node> {
+        self.advance();
+
+        // Validate that named tag handles are declared in this document
+        self.validate_tag_handle(&tag_name, tag_span);
+
+        let tag_looks_legitimate = !tag_name.contains('"') && !tag_name.contains('`');
+        let tag_end = tag_span.end;
+        if tag_looks_legitimate && let Some((next_tok, next_span)) = self.peek() {
+            let is_content = matches!(
+                next_tok,
+                Token::Plain(_)
+                    | Token::StringStart(_)
+                    | Token::FlowSeqStart
+                    | Token::FlowMapStart
+                    | Token::BlockSeqIndicator
+            );
+            if is_content && next_span.start == tag_end {
+                self.error(ErrorKind::UnexpectedToken, next_span);
+            }
+        }
+
+        self.skip_ws();
+
+        if let Some((first_tag, _)) = &props.tag
+            && !props.crossed_line_boundary
+        {
+            self.error(
+                ErrorKind::DuplicateTagNamed {
+                    first: first_tag.clone(),
+                    second: tag_name.clone(),
+                },
+                tag_span,
+            );
+        }
+
+        if props.crossed_line_boundary && props.tag.is_some() {
+            let inner_props = NodeProperties {
+                anchor: None,
+                tag: Some((tag_name.clone(), tag_span)),
+                crossed_line_boundary: false,
+            };
+            if let Some(mapping) = self.parse_block_mapping_with_props(min_indent, inner_props) {
+                Some(self.apply_properties_and_register(props, mapping))
+            } else if let Some((first_tag, _)) = &props.tag {
+                self.error(
+                    ErrorKind::DuplicateTagNamed {
+                        first: first_tag.clone(),
+                        second: tag_name.clone(),
+                    },
+                    tag_span,
+                );
+                props.tag = Some((tag_name, tag_span));
+                self.parse_value_with_properties(min_indent, props)
+            } else {
+                props.tag = Some((tag_name, tag_span));
+                self.parse_value_with_properties(min_indent, props)
+            }
+        } else {
+            props.tag = Some((tag_name, tag_span));
+            self.parse_value_with_properties(min_indent, props)
+        }
+    }
+
     /// Parse a value with already-collected node properties.
     #[allow(
         clippy::too_many_lines,
-        reason = "Complex value parsing logic with properties, will be refactored later"
+        reason = "Match arms for token dispatch are minimal; further extraction would reduce clarity"
     )]
     pub fn parse_value_with_properties(
         &mut self,
         min_indent: usize,
-        mut props: NodeProperties,
+        props: NodeProperties,
     ) -> Option<Node> {
         self.skip_ws();
 
@@ -767,47 +934,17 @@ impl<'tokens, 'input> Parser<'tokens, 'input> {
         match tok {
             // Flow mapping
             Token::FlowMapStart => {
-                let result = self.parse_flow_mapping();
-                if let Some(flow_node) = result {
-                    self.check_content_after_flow(flow_node.span.end);
-                    self.check_multiline_implicit_key(span.start, flow_node.span.end);
-
-                    self.skip_ws();
-                    if let Some((Token::Colon, _)) = self.peek() {
-                        let key = self.apply_properties_and_register(props, flow_node);
-                        self.parse_block_mapping_starting_with_key(min_indent, key)
-                    } else {
-                        // Flow mapping not used as mapping key - check for trailing content
-                        if min_indent == 0 {
-                            self.check_trailing_content_at_root(0);
-                        }
-                        Some(self.apply_properties_and_register(props, flow_node))
-                    }
-                } else {
-                    None
-                }
+                let start_pos = span.start;
+                self.parse_flow_mapping().and_then(|flow_node| {
+                    self.handle_flow_collection_as_value(flow_node, start_pos, min_indent, props)
+                })
             }
             // Flow sequence
             Token::FlowSeqStart => {
-                let result = self.parse_flow_sequence();
-                if let Some(flow_node) = result {
-                    self.check_content_after_flow(flow_node.span.end);
-                    self.check_multiline_implicit_key(span.start, flow_node.span.end);
-
-                    self.skip_ws();
-                    if let Some((Token::Colon, _)) = self.peek() {
-                        let key = self.apply_properties_and_register(props, flow_node);
-                        self.parse_block_mapping_starting_with_key(min_indent, key)
-                    } else {
-                        // Flow sequence not used as mapping key - check for trailing content
-                        if min_indent == 0 {
-                            self.check_trailing_content_at_root(0);
-                        }
-                        Some(self.apply_properties_and_register(props, flow_node))
-                    }
-                } else {
-                    None
-                }
+                let start_pos = span.start;
+                self.parse_flow_sequence().and_then(|flow_node| {
+                    self.handle_flow_collection_as_value(flow_node, start_pos, min_indent, props)
+                })
             }
             // Block sequence
             Token::BlockSeqIndicator => {
@@ -832,59 +969,7 @@ impl<'tokens, 'input> Parser<'tokens, 'input> {
             // Anchor - collect as property and continue parsing
             Token::Anchor(name) => {
                 let anchor_name = name.to_string();
-                let anchor_span = span;
-
-                // Check anchor indentation - must be >= min_indent
-                let anchor_col = self.column_of_position(anchor_span.start);
-                if anchor_col < min_indent {
-                    self.error(ErrorKind::InvalidIndentation, anchor_span);
-                    // Return None - anchor at invalid indentation cannot be part of this value
-                    return None;
-                }
-
-                self.advance();
-                self.skip_ws();
-
-                if let Some((first_anchor, _)) = &props.anchor
-                    && !props.crossed_line_boundary
-                {
-                    self.error(
-                        ErrorKind::DuplicateAnchorNamed {
-                            first: first_anchor.clone(),
-                            second: anchor_name.clone(),
-                        },
-                        anchor_span,
-                    );
-                }
-
-                if props.crossed_line_boundary && props.anchor.is_some() {
-                    let inner_props = NodeProperties {
-                        anchor: Some((anchor_name.clone(), anchor_span)),
-                        tag: None,
-                        crossed_line_boundary: false,
-                    };
-                    if let Some(mapping) =
-                        self.parse_block_mapping_with_props(min_indent, inner_props)
-                    {
-                        Some(self.apply_properties_and_register(props, mapping))
-                    } else if let Some((first_anchor, _)) = &props.anchor {
-                        self.error(
-                            ErrorKind::DuplicateAnchorNamed {
-                                first: first_anchor.clone(),
-                                second: anchor_name.clone(),
-                            },
-                            anchor_span,
-                        );
-                        props.anchor = Some((anchor_name, anchor_span));
-                        self.parse_value_with_properties(min_indent, props)
-                    } else {
-                        props.anchor = Some((anchor_name, anchor_span));
-                        self.parse_value_with_properties(min_indent, props)
-                    }
-                } else {
-                    props.anchor = Some((anchor_name, anchor_span));
-                    self.parse_value_with_properties(min_indent, props)
-                }
+                self.handle_anchor_in_value(anchor_name, span, min_indent, props)
             }
             // Alias
             Token::Alias(name) => {
@@ -913,70 +998,7 @@ impl<'tokens, 'input> Parser<'tokens, 'input> {
             // Tag - collect as property and continue parsing
             Token::Tag(tag) => {
                 let tag_name = tag.to_string();
-                let tag_span = span;
-                self.advance();
-
-                // Validate that named tag handles are declared in this document
-                self.validate_tag_handle(&tag_name, tag_span);
-
-                let tag_looks_legitimate = !tag_name.contains('"') && !tag_name.contains('`');
-                let tag_end = tag_span.end;
-                if tag_looks_legitimate && let Some((next_tok, next_span)) = self.peek() {
-                    let is_content = matches!(
-                        next_tok,
-                        Token::Plain(_)
-                            | Token::StringStart(_)
-                            | Token::FlowSeqStart
-                            | Token::FlowMapStart
-                            | Token::BlockSeqIndicator
-                    );
-                    if is_content && next_span.start == tag_end {
-                        self.error(ErrorKind::UnexpectedToken, next_span);
-                    }
-                }
-
-                self.skip_ws();
-
-                if let Some((first_tag, _)) = &props.tag
-                    && !props.crossed_line_boundary
-                {
-                    self.error(
-                        ErrorKind::DuplicateTagNamed {
-                            first: first_tag.clone(),
-                            second: tag_name.clone(),
-                        },
-                        tag_span,
-                    );
-                }
-
-                if props.crossed_line_boundary && props.tag.is_some() {
-                    let inner_props = NodeProperties {
-                        anchor: None,
-                        tag: Some((tag_name.clone(), tag_span)),
-                        crossed_line_boundary: false,
-                    };
-                    if let Some(mapping) =
-                        self.parse_block_mapping_with_props(min_indent, inner_props)
-                    {
-                        Some(self.apply_properties_and_register(props, mapping))
-                    } else if let Some((first_tag, _)) = &props.tag {
-                        self.error(
-                            ErrorKind::DuplicateTagNamed {
-                                first: first_tag.clone(),
-                                second: tag_name.clone(),
-                            },
-                            tag_span,
-                        );
-                        props.tag = Some((tag_name, tag_span));
-                        self.parse_value_with_properties(min_indent, props)
-                    } else {
-                        props.tag = Some((tag_name, tag_span));
-                        self.parse_value_with_properties(min_indent, props)
-                    }
-                } else {
-                    props.tag = Some((tag_name, tag_span));
-                    self.parse_value_with_properties(min_indent, props)
-                }
+                self.handle_tag_in_value(tag_name, span, min_indent, props)
             }
             // Block scalars
             Token::LiteralBlockHeader(_) => self
