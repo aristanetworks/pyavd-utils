@@ -110,22 +110,20 @@ pub fn parse(input: &str) -> (Stream<'static>, Vec<ParseError>) {
         // Step 2: Tokenize document content with context awareness
         let (tokens, lexer_errors) = context_lexer::tokenize_document(raw_doc.content);
 
-        // Adjust error spans from local (relative to raw_doc.content) to global (relative to input)
+        // Set span_offset for converting local spans to global coordinates
         let doc_offset = raw_doc.content_span.start;
-        all_errors.extend(lexer_errors.into_iter().map(|mut err| {
-            err.span = Span::new((), err.span.start + doc_offset..err.span.end + doc_offset);
-            err
-        }));
+        all_errors.extend(
+            lexer_errors
+                .into_iter()
+                .map(|err| err.with_offset(doc_offset)),
+        );
 
         // Step 3: Parse tokens into a single document
         // Each raw document from the stream lexer should produce exactly one parsed document.
         // The stream lexer already handles document boundaries (--- and ...).
         // Pass the directives so the parser can validate tag handles.
         let (doc, errors) = parse_single_document(&tokens, raw_doc.content, &raw_doc.directives);
-        all_errors.extend(errors.into_iter().map(|mut err| {
-            err.span = Span::new((), err.span.start + doc_offset..err.span.end + doc_offset);
-            err
-        }));
+        all_errors.extend(errors.into_iter().map(|err| err.with_offset(doc_offset)));
 
         // Check if document has explicit markers (--- or ...) in the content
         let has_explicit_marker = raw_doc.content.trim_start().starts_with("---")

@@ -85,12 +85,7 @@ impl<'input> ContextLexer<'input> {
 
     /// Add an error at the given span
     fn add_error(&mut self, kind: ErrorKind, span: Span) {
-        self.errors.push(ParseError {
-            kind,
-            span,
-            expected: Vec::new(),
-            found: None,
-        });
+        self.errors.push(ParseError::new(kind, span));
     }
 
     fn mode(&self) -> LexMode {

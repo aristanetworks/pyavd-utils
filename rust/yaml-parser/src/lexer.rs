@@ -438,12 +438,16 @@ pub fn tokenize(input: &str) -> (Vec<Spanned<Token<'_>>>, Vec<crate::error::Pars
         .into_iter()
         .map(|err| {
             let span = err.span();
-            ParseError {
-                kind: ErrorKind::UnexpectedToken,
-                span: Span::new((), span.start..span.end),
-                expected: err.expected().map(|exp| format!("{exp:?}")).collect(),
-                found: err.found().map(std::string::ToString::to_string),
-            }
+            ParseError::new(
+                ErrorKind::UnexpectedToken,
+                Span::new((), span.start..span.end),
+            )
+            .with_expected(err.expected().map(|exp| format!("{exp:?}")).collect())
+            .with_found(
+                err.found()
+                    .map(std::string::ToString::to_string)
+                    .unwrap_or_default(),
+            )
         })
         .collect();
 

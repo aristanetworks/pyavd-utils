@@ -59,16 +59,18 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
         loop {
             let Some((tok, span)) = self.peek() else {
                 // Unexpected EOF - unterminated string
-                self.errors.push(crate::error::ParseError {
-                    kind: ErrorKind::UnterminatedString,
-                    span: Span::new(
-                        (),
-                        start_span.start
-                            ..self.tokens.last().map_or(start_span.end, |rt| rt.span.end),
-                    ),
-                    expected: vec!["closing quote".to_owned()],
-                    found: Some("end of input".to_owned()),
-                });
+                self.errors.push(
+                    crate::error::ParseError::new(
+                        ErrorKind::UnterminatedString,
+                        Span::new(
+                            (),
+                            start_span.start
+                                ..self.tokens.last().map_or(start_span.end, |rt| rt.span.end),
+                        ),
+                    )
+                    .with_expected(vec!["closing quote".to_owned()])
+                    .with_found("end of input".to_owned()),
+                );
                 break;
             };
 
@@ -101,26 +103,23 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                     let is_content_line = matches!(self.peek(), Some((Token::StringContent(_), _)));
 
                     if is_content_line && indent < min_indent {
-                        self.errors.push(crate::error::ParseError {
-                            kind: ErrorKind::InvalidIndentation,
-                            span,
-                            expected: vec![format!(
-                                "indentation of at least {} for continuation",
-                                min_indent
-                            )],
-                            found: Some(format!("indentation of {indent}")),
-                        });
+                        self.errors.push(
+                            crate::error::ParseError::new(ErrorKind::InvalidIndentation, span)
+                                .with_expected(vec![format!(
+                                    "indentation of at least {min_indent} for continuation",
+                                )])
+                                .with_found(format!("indentation of {indent}")),
+                        );
                     }
                 }
                 Token::StringEnd(end_style) => {
                     if *end_style != style {
                         // Mismatched quotes (shouldn't happen with proper lexing)
-                        self.errors.push(crate::error::ParseError {
-                            kind: ErrorKind::UnexpectedToken,
-                            span,
-                            expected: vec![format!("closing {style:?} quote")],
-                            found: Some(format!("{end_style:?} quote")),
-                        });
+                        self.errors.push(
+                            crate::error::ParseError::new(ErrorKind::UnexpectedToken, span)
+                                .with_expected(vec![format!("closing {style:?} quote")])
+                                .with_found(format!("{end_style:?} quote")),
+                        );
                     }
                     end_span = span;
                     self.advance();
@@ -128,12 +127,11 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                 }
                 _ => {
                     // Unexpected token inside string
-                    self.errors.push(crate::error::ParseError {
-                        kind: ErrorKind::UnexpectedToken,
-                        span,
-                        expected: vec!["string content or closing quote".to_owned()],
-                        found: Some(format!("{tok:?}")),
-                    });
+                    self.errors.push(
+                        crate::error::ParseError::new(ErrorKind::UnexpectedToken, span)
+                            .with_expected(vec!["string content or closing quote".to_owned()])
+                            .with_found(format!("{tok:?}")),
+                    );
                     break;
                 }
             }

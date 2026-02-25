@@ -201,17 +201,19 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                                 // Check actual column of content token
                                 let content_col = self.column_of_position(rt.span.start);
                                 if is_content && content_col == 0 {
-                                    self.errors.push(crate::error::ParseError {
-                                        kind: ErrorKind::InvalidIndentation,
-                                        span,
-                                        expected: vec![
+                                    self.errors.push(
+                                        crate::error::ParseError::new(
+                                            ErrorKind::InvalidIndentation,
+                                            span,
+                                        )
+                                        .with_expected(vec![
                                             "indentation > 0 for flow content continuation"
                                                 .to_owned(),
-                                        ],
-                                        found: Some(
+                                        ])
+                                        .with_found(
                                             "content at column 0 inside flow collection".to_owned(),
                                         ),
-                                    });
+                                    );
                                 }
                             }
                         }
@@ -622,22 +624,15 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
 
     /// Add an error.
     pub fn error(&mut self, kind: ErrorKind, span: Span) {
-        self.errors.push(ParseError {
-            kind,
-            span,
-            expected: Vec::new(),
-            found: None,
-        });
+        self.errors.push(ParseError::new(kind, span));
     }
 
     /// Add an error with expected tokens for better diagnostics.
     pub fn error_expected(&mut self, kind: ErrorKind, span: Span, expected: &[&str]) {
-        self.errors.push(ParseError {
-            kind,
-            span,
-            expected: expected.iter().map(|exp| (*exp).to_owned()).collect(),
-            found: None,
-        });
+        self.errors.push(
+            ParseError::new(kind, span)
+                .with_expected(expected.iter().map(|exp| (*exp).to_owned()).collect()),
+        );
     }
 
     /// Populate tag handles from directives provided by the stream lexer.
