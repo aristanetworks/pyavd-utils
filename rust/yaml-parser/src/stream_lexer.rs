@@ -141,12 +141,7 @@ pub fn parse_stream(input: &str) -> (Vec<RawDocument<'_>>, Vec<ParseError>) {
                     let span = current_directives
                         .first()
                         .map_or(Span::new((), pos..marker_end), |(_, span)| *span);
-                    errors.push(ParseError {
-                        kind: ErrorKind::UnexpectedToken,
-                        span,
-                        expected: Vec::new(),
-                        found: None,
-                    });
+                    errors.push(ParseError::new(ErrorKind::UnexpectedToken, span));
                 }
 
                 // Include `...` in content (parser will see it)
@@ -194,12 +189,10 @@ pub fn parse_stream(input: &str) -> (Vec<RawDocument<'_>>, Vec<ParseError>) {
             let directive = if let Some(stripped) = line.strip_prefix("%YAML") {
                 // Check for duplicate %YAML directive
                 if has_yaml_directive {
-                    errors.push(ParseError {
-                        kind: ErrorKind::DuplicateDirective,
-                        span: directive_span,
-                        expected: Vec::new(),
-                        found: None,
-                    });
+                    errors.push(ParseError::new(
+                        ErrorKind::DuplicateDirective,
+                        directive_span,
+                    ));
                 }
                 has_yaml_directive = true;
 
@@ -214,12 +207,7 @@ pub fn parse_stream(input: &str) -> (Vec<RawDocument<'_>>, Vec<ParseError>) {
                         .chars()
                         .all(|ch| ch.is_ascii_digit() || ch == '.');
                 if !is_valid_version {
-                    errors.push(ParseError {
-                        kind: ErrorKind::InvalidDirective,
-                        span: directive_span,
-                        expected: Vec::new(),
-                        found: None,
-                    });
+                    errors.push(ParseError::new(ErrorKind::InvalidDirective, directive_span));
                 }
                 Some(Directive::Yaml(version_and_rest.to_owned()))
             } else if let Some(stripped) = line.strip_prefix("%TAG") {
@@ -284,12 +272,10 @@ pub fn parse_stream(input: &str) -> (Vec<RawDocument<'_>>, Vec<ParseError>) {
                 break;
             }
             if found_doc_start {
-                errors.push(ParseError {
-                    kind: ErrorKind::UnexpectedToken,
-                    span: Span::new((), pos..line_end),
-                    expected: Vec::new(),
-                    found: None,
-                });
+                errors.push(ParseError::new(
+                    ErrorKind::UnexpectedToken,
+                    Span::new((), pos..line_end),
+                ));
             }
         }
 
@@ -320,12 +306,7 @@ pub fn parse_stream(input: &str) -> (Vec<RawDocument<'_>>, Vec<ParseError>) {
             let span = current_directives
                 .first()
                 .map_or(Span::new((), 0..0), |(_, span)| *span);
-            errors.push(ParseError {
-                kind: ErrorKind::UnexpectedToken,
-                span,
-                expected: Vec::new(),
-                found: None,
-            });
+            errors.push(ParseError::new(ErrorKind::UnexpectedToken, span));
         }
 
         // If no content was found, use content_end for both start and end to get an empty slice

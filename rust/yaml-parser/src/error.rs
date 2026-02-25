@@ -5,17 +5,35 @@
 //! Error types for YAML parsing.
 
 use crate::span::Span;
+use chumsky::span::Span as _;
 
 /// An error encountered during YAML parsing.
 ///
 /// Errors include their source span, enabling accurate error reporting
 /// with line/column information.
+///
+/// # Span Coordinates
+///
+/// The `span` field contains byte offsets relative to the document being parsed.
+/// For multi-document YAML streams, use `span_offset` to convert to global
+/// coordinates (relative to the original input):
+///
+/// ```ignore
+/// let global_start = error.span.start + error.span_offset;
+/// let global_end = error.span.end + error.span_offset;
+/// // Or use the helper method:
+/// let global_span = error.global_span();
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct ParseError {
     /// The kind of error
     pub kind: ErrorKind,
-    /// The span in the source where the error occurred
+    /// The span in the source where the error occurred (document-relative)
     pub span: Span,
+    /// Byte offset to add to span for global coordinates.
+    /// For single-document parsing this is 0. For multi-document streams,
+    /// this is the byte offset where the document starts in the original input.
+    pub span_offset: usize,
     /// Expected tokens/patterns (for diagnostic messages)
     pub expected: Vec<String>,
     /// What was actually found (for diagnostic messages)
@@ -171,14 +189,25 @@ impl ErrorKind {
 
 impl ParseError {
     /// Create a new error with just a kind and span.
+    ///
+    /// The `span_offset` is initialized to 0. Use [`with_offset`](Self::with_offset)
+    /// to set the offset for multi-document streams.
     #[must_use]
     pub const fn new(kind: ErrorKind, span: Span) -> Self {
         Self {
             kind,
             span,
+            span_offset: 0,
             expected: Vec::new(),
             found: None,
         }
+    }
+
+    /// Set the span offset for converting to global coordinates.
+    #[must_use]
+    pub const fn with_offset(mut self, offset: usize) -> Self {
+        self.span_offset = offset;
+        self
     }
 
     /// Add expected tokens to the error.
@@ -193,6 +222,19 @@ impl ParseError {
     pub fn with_found(mut self, found: String) -> Self {
         self.found = Some(found);
         self
+    }
+
+    /// Get the span in global coordinates (relative to original input).
+    ///
+    /// For single-document parsing, this returns the same as `span`.
+    /// For multi-document streams, this adds `span_offset` to get the
+    /// position relative to the original input.
+    #[must_use]
+    pub fn global_span(&self) -> Span {
+        Span::new(
+            (),
+            self.span.start + self.span_offset..self.span.end + self.span_offset,
+        )
     }
 
     /// Get a suggestion for how to fix this error.
@@ -287,7 +329,6 @@ impl std::error::Error for ParseError {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chumsky::span::Span as _;
 
     #[test]
     fn test_error_display() {
@@ -422,5 +463,23 @@ mod tests {
         let err = ParseError::new(ErrorKind::TabInIndentation, Span::new((), 0..1));
         assert!(err.suggestion().is_some());
         assert!(err.suggestion().unwrap().contains("spaces"));
+    }
+
+    #[test]
+    fn test_global_span() {
+        // Without offset, global_span equals span
+        let err = ParseError::new(ErrorKind::UnexpectedToken, Span::new((), 10..20));
+        let global = err.global_span();
+        assert_eq!(global.start, 10);
+        assert_eq!(global.end, 20);
+
+        // With offset, global_span adds the offset
+        let err_with_offset = err.with_offset(100);
+        let global_with_offset = err_with_offset.global_span();
+        assert_eq!(global_with_offset.start, 110);
+        assert_eq!(global_with_offset.end, 120);
+        // Original span is unchanged
+        assert_eq!(err_with_offset.span.start, 10);
+        assert_eq!(err_with_offset.span.end, 20);
     }
 }
