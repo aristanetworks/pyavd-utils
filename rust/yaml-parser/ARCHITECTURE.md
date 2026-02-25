@@ -808,7 +808,7 @@ See `TECHNICAL_DEBT.md` for comprehensive documentation. Key limitations:
 7. ✅ **Zero-Copy Tokenization** (Phase 2.1) - `Token<'input>` uses `Cow<'input, str>`
    - Borrows directly from input for comments, anchor names
    - Allocates only when content is transformed (escapes, trimming)
-   - Parser updated with two lifetimes: `Parser<'tokens, 'input>`
+   - Parser uses `Parser<'tokens, 'input>` where `'tokens: 'input` for variance safety
 8. ⚠️ **Token Trivia Preservation** (Phase 1.1) - **Reverted**; comments kept as real tokens
    - Comments have semantic meaning in YAML (they terminate plain scalars)
    - Parser needs to see `Token::Comment(_)` directly for correct parsing

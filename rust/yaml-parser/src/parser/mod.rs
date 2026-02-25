@@ -1119,7 +1119,11 @@ pub fn parse_tokens<'input>(
     (stream, parser.errors)
 }
 
-/// Parse a token stream as a single document (for use with layered architecture).
+/// Parse a token stream as a single document (zero-copy API).
+///
+/// This is the **zero-copy parsing API**. The returned `Node<'input>` borrows string data
+/// directly from the input string via `Cow<'input, str>`. Simple scalars that don't require
+/// transformation (escapes, multiline folding) will be `Cow::Borrowed`, avoiding allocation.
 ///
 /// Unlike `parse_tokens` which may produce multiple documents, this function:
 /// 1. Parses exactly ONE value at indent 0
@@ -1135,7 +1139,22 @@ pub fn parse_tokens<'input>(
 /// - `'tokens`: lifetime of the token slice (must outlive `'input` for the bound)
 /// - `'input`: lifetime of the input string (returned Node borrows from this)
 ///
-/// The returned Node borrows string data from `input`.
+/// The returned `Node<'input>` borrows string data from `input`. Call [`Node::into_owned()`]
+/// to convert to `Node<'static>` with owned data when needed.
+///
+/// # Example
+///
+/// ```ignore
+/// let (raw_docs, _) = stream_lexer::parse_stream(input);
+/// for raw_doc in raw_docs {
+///     let (tokens, _) = context_lexer::tokenize_document(raw_doc.content);
+///     let (node, errors) = parse_single_document(&tokens, raw_doc.content, &raw_doc.directives);
+///     // `node` borrows from `raw_doc.content` - zero-copy for simple scalars
+///     if let Some(n) = node {
+///         let owned: Node<'static> = n.into_owned(); // Convert to owned when needed
+///     }
+/// }
+/// ```
 pub fn parse_single_document<'tokens: 'input, 'input>(
     tokens: &'tokens [RichToken<'input>],
     input: &'input str,
