@@ -70,20 +70,32 @@ pub use value::{Node, Value};
 /// # Returns
 ///
 /// A tuple of:
-/// - `Stream` (Vec<Node>) - The parsed documents with owned data
+/// - `Stream<'static>` (Vec<Node<'static>>) - The parsed documents with owned data
 /// - `Vec<ParseError>` - Any errors encountered during parsing (from both lexer and parser)
 ///
 /// # Owned vs Zero-Copy
 ///
-/// This function returns owned data (`Node<'static>`) for convenience.
-/// For zero-copy parsing where nodes borrow directly from the input,
-/// use [`parse_single_document`] with tokens from [`tokenize_document`].
+/// This function returns **owned data** (`Node<'static>`) for convenience and ease of use.
+/// All string data in the returned nodes is `Cow::Owned`, meaning there are no borrows
+/// from the input string. This allows the returned `Stream` to outlive the input.
 ///
-/// The nodes contain `Cow<'static, str>` where:
-/// - Simple scalars that required no transformation are `Cow::Owned` (converted from borrowed)
-/// - Scalars that needed transformation (escapes, multiline) are `Cow::Owned`
+/// ## Zero-Copy Alternative
 ///
-/// To convert individual nodes to owned, use [`Node::into_owned()`].
+/// For zero-copy parsing where nodes borrow directly from the input string (avoiding
+/// allocations for simple scalars), use [`parse_single_document`] with tokens from
+/// [`context_lexer::tokenize_document`]. This returns `Node<'input>` with `Cow::Borrowed`
+/// for scalars that don't require transformation.
+///
+/// Example of zero-copy usage:
+/// ```ignore
+/// let (raw_docs, _) = stream_lexer::parse_stream(input);
+/// for raw_doc in raw_docs {
+///     let (tokens, _) = context_lexer::tokenize_document(raw_doc.content);
+///     let (node, _) = parse_single_document(&tokens, raw_doc.content, &raw_doc.directives);
+///     // node borrows from raw_doc.content (which borrows from input)
+///     // Call node.into_owned() when you need owned data
+/// }
+/// ```
 pub fn parse(input: &str) -> (Stream<'static>, Vec<ParseError>) {
     use chumsky::span::Span as _;
 
