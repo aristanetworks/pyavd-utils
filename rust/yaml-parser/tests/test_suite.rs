@@ -7,7 +7,6 @@
 //! This module runs the parser against the official YAML 1.2 test suite
 //! from <https://github.com/yaml/yaml-test-suite>.
 
-use std::fmt::Write as _;
 use std::fs;
 use std::path::Path;
 
@@ -537,22 +536,22 @@ fn error_recovery_combined_stream() {
 fn run_combined_error_test(error_cases: &[(String, String, String)], order_name: &str) {
     eprintln!("\n=== Testing combined error stream ({order_name} order) ===");
 
-    // Build a combined YAML stream with explicit document markers
-    // Each error input becomes its own document with ---/... markers
+    // Build a combined YAML input WITHOUT document markers.
+    // This tests whether the parser can recover from errors within a document
+    // and continue parsing subsequent content, rather than relying on the
+    // stream lexer to separate inputs into clean documents.
     let mut combined_input = String::new();
-    for (test_id, _name, input) in error_cases {
-        // Add document start marker with test ID as comment
-        let _ = writeln!(combined_input, "--- # {test_id}");
+    for (_test_id, _name, input) in error_cases {
+        // Just concatenate inputs with newlines - no document markers
         combined_input.push_str(input);
-        // Ensure newline before document end
+        // Ensure newline between inputs
         if !input.ends_with('\n') {
             combined_input.push('\n');
         }
-        combined_input.push_str("...\n");
     }
 
     eprintln!(
-        "Combined input size: {} bytes, {} documents",
+        "Combined input size: {} bytes, {} error inputs",
         combined_input.len(),
         error_cases.len()
     );
