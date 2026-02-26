@@ -466,7 +466,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                     | Token::BlockSeqIndicator
             );
             if is_content && span.start == flow_end {
-                self.error(ErrorKind::UnexpectedToken, span);
+                self.error(ErrorKind::ContentOnSameLine, span);
             }
         }
     }
@@ -513,7 +513,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
             let col = self.current_token_column();
 
             if is_content && col <= root_indent {
-                self.error(ErrorKind::UnexpectedToken, span);
+                self.error(ErrorKind::TrailingContent, span);
             }
         }
 
@@ -594,7 +594,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
 
         let key_text = &self.input[key_start..key_end.min(self.input.len())];
         if key_text.contains('\n') {
-            self.error(ErrorKind::UnexpectedToken, colon_span);
+            self.error(ErrorKind::MultilineImplicitKey, colon_span);
             return;
         }
 
@@ -603,7 +603,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                 && rt.span.end <= key_end
                 && matches!(rt.token, Token::LineStart(_))
             {
-                self.error(ErrorKind::UnexpectedToken, colon_span);
+                self.error(ErrorKind::MultilineImplicitKey, colon_span);
                 return;
             }
         }
@@ -630,7 +630,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
         }
 
         if let Some((_, span)) = self.peek() {
-            self.error(ErrorKind::UnexpectedToken, span);
+            self.error(ErrorKind::TrailingContent, span);
         }
     }
 
@@ -945,7 +945,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                     | Token::BlockSeqIndicator
             );
             if is_content && next_span.start == tag_end {
-                self.error(ErrorKind::UnexpectedToken, next_span);
+                self.error(ErrorKind::ContentOnSameLine, next_span);
             }
         }
 
@@ -1010,10 +1010,10 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
             Token::BlockSeqIndicator => {
                 if !props.is_empty() && !props.crossed_line_boundary {
                     if let Some((_, anchor_span)) = &props.anchor {
-                        self.error(ErrorKind::UnexpectedToken, *anchor_span);
+                        self.error(ErrorKind::ContentOnSameLine, *anchor_span);
                     }
                     if let Some((_, tag_span)) = &props.tag {
-                        self.error(ErrorKind::UnexpectedToken, *tag_span);
+                        self.error(ErrorKind::ContentOnSameLine, *tag_span);
                     }
                 }
                 if let Some(n) = self.parse_block_sequence(min_indent) {
@@ -1237,7 +1237,7 @@ pub fn parse_single_document<'tokens: 'input, 'input>(
         let has_block_mapping_on_start_line = parser.check_block_mapping_on_start_line();
         if has_block_mapping_on_start_line {
             // Report error but continue parsing for recovery
-            parser.error(ErrorKind::UnexpectedToken, parser.current_span());
+            parser.error(ErrorKind::ContentOnSameLine, parser.current_span());
         }
     }
 
@@ -1279,7 +1279,7 @@ pub fn parse_single_document<'tokens: 'input, 'input>(
         let col = parser.current_token_column();
 
         if col > 0 {
-            parser.error(ErrorKind::UnexpectedToken, parser.current_span());
+            parser.error(ErrorKind::TrailingContent, parser.current_span());
             parser.advance();
             parser.skip_ws_and_newlines();
         } else {

@@ -139,7 +139,7 @@ pub fn parse_stream(input: &str) -> (Vec<RawDocument<'_>>, Vec<ParseError>) {
                     let span = current_directives
                         .first()
                         .map_or(Span::new(pos..marker_end), |(_, span)| *span);
-                    errors.push(ParseError::new(ErrorKind::UnexpectedToken, span));
+                    errors.push(ParseError::new(ErrorKind::TrailingContent, span));
                 }
 
                 // Include `...` in content (parser will see it)
@@ -271,7 +271,7 @@ pub fn parse_stream(input: &str) -> (Vec<RawDocument<'_>>, Vec<ParseError>) {
             }
             if found_doc_start {
                 errors.push(ParseError::new(
-                    ErrorKind::UnexpectedToken,
+                    ErrorKind::TrailingContent,
                     Span::new(pos..line_end),
                 ));
             }
@@ -304,7 +304,7 @@ pub fn parse_stream(input: &str) -> (Vec<RawDocument<'_>>, Vec<ParseError>) {
             let span = current_directives
                 .first()
                 .map_or(Span::new(0..0), |(_, span)| *span);
-            errors.push(ParseError::new(ErrorKind::UnexpectedToken, span));
+            errors.push(ParseError::new(ErrorKind::TrailingContent, span));
         }
 
         // If no content was found, use content_end for both start and end to get an empty slice

@@ -822,7 +822,7 @@ impl<'input> ContextLexer<'input> {
 
         if has_invalid_content {
             let span = Span::new(error_start..self.byte_pos);
-            self.add_error(ErrorKind::UnexpectedToken, span);
+            self.add_error(ErrorKind::ContentOnSameLine, span);
         }
 
         BlockScalarHeader { indent, chomping }

@@ -600,3 +600,65 @@ fn run_combined_error_test(error_cases: &[(String, String, String)], order_name:
 
     eprintln!("✓ All error spans are valid");
 }
+
+/// Analyze error kind distribution across all error test cases.
+/// This helps identify which errors use generic types vs specific ones.
+#[test]
+#[allow(
+    clippy::print_stderr,
+    clippy::tests_outside_test_module,
+    reason = "Integration test with analysis output"
+)]
+fn analyze_error_kinds() {
+    use std::collections::HashMap;
+
+    let manifest_dir = env!("CARGO_MANIFEST_DIR");
+    let test_dir = Path::new(manifest_dir).join("tests/yaml-test-suite");
+
+    if !test_dir.exists() {
+        eprintln!("Test suite not found");
+        return;
+    }
+
+    let error_cases = collect_error_test_cases(&test_dir);
+    eprintln!("Analyzing {} error test cases...\n", error_cases.len());
+
+    let mut error_kinds: HashMap<String, Vec<String>> = HashMap::new();
+
+    for (test_id, _name, input) in &error_cases {
+        let (_, errors) = parse(input);
+        for error in &errors {
+            let kind = format!("{:?}", error.kind);
+            error_kinds.entry(kind).or_default().push(test_id.clone());
+        }
+    }
+
+    let mut sorted: Vec<_> = error_kinds.iter().collect();
+    sorted.sort_by(|kind_a, kind_b| kind_b.1.len().cmp(&kind_a.1.len()));
+
+    eprintln!("=== Error Kind Distribution ===");
+    for (kind, test_ids) in &sorted {
+        eprintln!("  {kind}: {} occurrences", test_ids.len());
+    }
+
+    // Show UnexpectedToken cases with test names for analysis
+    if let Some(unexpected) = error_kinds.get("UnexpectedToken") {
+        // Dedupe and show unique test IDs with names
+        let unique_tests: std::collections::HashSet<_> = unexpected.iter().collect();
+        eprintln!(
+            "\n=== UnexpectedToken: {} unique tests ({} total occurrences) ===",
+            unique_tests.len(),
+            unexpected.len()
+        );
+        // Count occurrences per test
+        let mut test_counts: HashMap<&String, usize> = HashMap::new();
+        for test_id in unexpected {
+            *test_counts.entry(test_id).or_insert(0) += 1;
+        }
+        let mut sorted_tests: Vec<_> = test_counts.into_iter().collect();
+        sorted_tests.sort_by(|test_a, test_b| test_b.1.cmp(&test_a.1));
+        for (test_id, count) in sorted_tests.iter().take(30) {
+            eprintln!("  {test_id}: {count} errors");
+        }
+    }
+}

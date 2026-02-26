@@ -43,7 +43,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
         if let Some((Token::Comma, comma_span)) = self.peek() {
             if *just_saw_comma {
                 self.error_expected(
-                    ErrorKind::UnexpectedToken,
+                    ErrorKind::MissingSeparator,
                     comma_span,
                     &["value", "key", "}"],
                 );
@@ -76,7 +76,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                 // Will be handled at top of loop
             } else if !self.is_eof() {
                 self.error_expected(
-                    ErrorKind::UnexpectedToken,
+                    ErrorKind::MissingSeparator,
                     self.current_span(),
                     &[",", end_delimiter],
                 );
@@ -185,7 +185,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                 Node::null(self.current_span())
             } else {
                 self.error_expected(
-                    ErrorKind::UnexpectedToken,
+                    ErrorKind::MissingSeparator,
                     self.current_span(),
                     &[":", ",", "}"],
                 );
