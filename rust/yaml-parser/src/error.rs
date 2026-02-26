@@ -45,8 +45,31 @@ pub enum ErrorKind {
     /// Unexpected end of input
     UnexpectedEof,
 
-    /// Unexpected character or token
+    /// Unexpected character or token (generic fallback)
     UnexpectedToken,
+
+    /// Trailing content after a valid value
+    /// e.g., `key: "value" extra content`
+    TrailingContent,
+
+    /// Missing comma between flow collection elements
+    /// e.g., `[a b]` instead of `[a, b]`
+    MissingSeparator,
+
+    /// Extra closing bracket/brace in flow collection
+    /// e.g., `[a, b]]`
+    UnmatchedBracket,
+
+    /// Content on same line as previous mapping entry
+    /// e.g., `{y: z}invalid` or `- item- invalid`
+    ContentOnSameLine,
+
+    /// Invalid multiline implicit key (implicit keys must be single line)
+    MultilineImplicitKey,
+
+    /// Invalid colon placement (unexpected colon in value context)
+    /// e.g., `a: b: c` in plain scalar context
+    UnexpectedColon,
 
     /// Invalid indentation.
     InvalidIndentation,
@@ -140,6 +163,22 @@ impl ErrorKind {
             Self::InvalidBlockScalar => Some(
                 "Block scalar header format: | or > followed by optional [1-9] indent and [-+] chomping",
             ),
+            Self::TrailingContent => {
+                Some("Remove extra content after the value, or quote the entire value")
+            }
+            Self::MissingSeparator => Some("Add a comma between flow collection elements"),
+            Self::UnmatchedBracket => {
+                Some("Remove the extra closing bracket/brace, or add the matching opening")
+            }
+            Self::ContentOnSameLine => {
+                Some("Start new mapping entries or sequence items on their own line")
+            }
+            Self::MultilineImplicitKey => Some(
+                "Use explicit key syntax (? key) for multiline keys, or keep the key on one line",
+            ),
+            Self::UnexpectedColon => {
+                Some("Quote the value to include colons, or remove the extra colon")
+            }
             // No specific suggestion for these
             Self::UnexpectedEof
             | Self::UnexpectedToken
@@ -251,6 +290,16 @@ impl std::fmt::Display for ParseError {
             ErrorKind::DuplicateDirective => write!(f, "duplicate directive"),
             ErrorKind::InvalidDirective => write!(f, "invalid directive format"),
             ErrorKind::UndefinedTagHandle => write!(f, "tag handle not declared in document"),
+            ErrorKind::TrailingContent => write!(f, "unexpected content after value"),
+            ErrorKind::MissingSeparator => {
+                write!(f, "missing separator (comma) in flow collection")
+            }
+            ErrorKind::UnmatchedBracket => write!(f, "unmatched closing bracket"),
+            ErrorKind::ContentOnSameLine => {
+                write!(f, "invalid content on same line as previous entry")
+            }
+            ErrorKind::MultilineImplicitKey => write!(f, "implicit keys must be on a single line"),
+            ErrorKind::UnexpectedColon => write!(f, "unexpected colon in value"),
         }
     }
 }
@@ -320,6 +369,13 @@ mod tests {
             ErrorKind::PropertiesOnAlias,
             ErrorKind::UndefinedTagHandle,
             ErrorKind::InvalidBlockScalar,
+            // New specific error kinds
+            ErrorKind::TrailingContent,
+            ErrorKind::MissingSeparator,
+            ErrorKind::UnmatchedBracket,
+            ErrorKind::ContentOnSameLine,
+            ErrorKind::MultilineImplicitKey,
+            ErrorKind::UnexpectedColon,
         ];
 
         for kind in with_suggestions {

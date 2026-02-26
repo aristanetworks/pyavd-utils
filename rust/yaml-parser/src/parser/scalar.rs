@@ -510,7 +510,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
             };
 
             if is_nested_value_position {
-                self.error(ErrorKind::UnexpectedToken, colon_span);
+                self.error(ErrorKind::UnexpectedColon, colon_span);
                 return Some(scalar);
             }
 
@@ -527,7 +527,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
 
             // Check for block sequence indicator on same line as key - invalid in YAML
             if let Some((Token::BlockSeqIndicator, span)) = self.peek() {
-                self.error(ErrorKind::UnexpectedToken, span);
+                self.error(ErrorKind::ContentOnSameLine, span);
             }
 
             // Parse the value
@@ -704,7 +704,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
 
             // Check for block sequence indicator on same line as key - invalid
             if let Some((Token::BlockSeqIndicator, span)) = self.peek() {
-                self.error(ErrorKind::UnexpectedToken, span);
+                self.error(ErrorKind::ContentOnSameLine, span);
             }
 
             let value_on_same_line = !matches!(self.peek(), Some((Token::LineStart(_), _)));
