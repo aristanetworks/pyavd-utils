@@ -37,7 +37,6 @@
 
 mod context_lexer;
 mod error;
-mod lexer;
 mod parser;
 mod rich_token;
 mod span;
@@ -47,10 +46,10 @@ mod value;
 
 pub use context_lexer::tokenize_document;
 pub use error::{ErrorKind, ParseError};
-pub use lexer::{Token, tokenize};
 pub use parser::{Stream, parse_single_document, parse_tokens};
 pub use rich_token::RichToken;
 pub use span::{Position, SourceMap, Span, Spanned};
+pub use token::Token;
 pub use value::{Node, Value};
 
 /// Parse YAML input and return the parsed documents and any errors encountered.

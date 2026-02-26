@@ -67,11 +67,8 @@ pub enum ErrorKind {
     /// Invalid number format
     InvalidNumber,
 
-    /// Duplicate key in a mapping (includes key name if available)
+    /// Duplicate key in a mapping
     DuplicateKey,
-
-    /// Duplicate key with the key name
-    DuplicateKeyNamed(String),
 
     /// Invalid anchor name
     InvalidAnchor,
@@ -79,14 +76,8 @@ pub enum ErrorKind {
     /// Duplicate anchor on same node (e.g., &a &b value)
     DuplicateAnchor,
 
-    /// Duplicate anchor with names
-    DuplicateAnchorNamed { first: String, second: String },
-
     /// Undefined alias reference
     UndefinedAlias,
-
-    /// Undefined alias with the alias name
-    UndefinedAliasNamed(String),
 
     /// Invalid tag
     InvalidTag,
@@ -94,17 +85,11 @@ pub enum ErrorKind {
     /// Duplicate tag on same node (e.g., !a !b value)
     DuplicateTag,
 
-    /// Duplicate tag with names
-    DuplicateTagNamed { first: String, second: String },
-
     /// Properties (anchor/tag) cannot be applied to alias
     PropertiesOnAlias,
 
-    /// Invalid block scalar header (with details)
+    /// Invalid block scalar header
     InvalidBlockScalar,
-
-    /// Invalid block scalar header with detail message
-    InvalidBlockScalarDetail(String),
 
     /// Tab character in indentation (not allowed in YAML)
     TabInIndentation,
@@ -112,23 +97,11 @@ pub enum ErrorKind {
     /// Duplicate directive (e.g., two %YAML directives)
     DuplicateDirective,
 
-    /// Duplicate directive with name
-    DuplicateDirectiveNamed(String),
-
     /// Invalid directive format
     InvalidDirective,
 
-    /// Invalid directive with detail
-    InvalidDirectiveDetail(String),
-
     /// Tag handle used but not declared in document prolog
     UndefinedTagHandle,
-
-    /// Undefined tag handle with the handle name
-    UndefinedTagHandleNamed(String),
-
-    /// Custom error message
-    Custom(String),
 }
 
 impl ErrorKind {
@@ -151,25 +124,21 @@ impl ErrorKind {
             Self::InvalidEscape(_) => {
                 Some("Valid escape sequences: \\n, \\r, \\t, \\\\, \\\", \\', \\0, \\x##, \\u####")
             }
-            Self::DuplicateKey | Self::DuplicateKeyNamed(_) => {
-                Some("Remove or rename one of the duplicate keys")
-            }
-            Self::UndefinedAlias | Self::UndefinedAliasNamed(_) => {
+            Self::DuplicateKey => Some("Remove or rename one of the duplicate keys"),
+            Self::UndefinedAlias => {
                 Some("Define the anchor with &name before referencing it with *name")
             }
-            Self::DuplicateAnchor | Self::DuplicateAnchorNamed { .. } => {
+            Self::DuplicateAnchor => {
                 Some("A node can only have one anchor; remove the extra &anchor")
             }
-            Self::DuplicateTag | Self::DuplicateTagNamed { .. } => {
-                Some("A node can only have one tag; remove the extra !tag")
-            }
+            Self::DuplicateTag => Some("A node can only have one tag; remove the extra !tag"),
             Self::PropertiesOnAlias => Some(
                 "Aliases (*name) cannot have anchors or tags; apply them to the original value",
             ),
-            Self::UndefinedTagHandle | Self::UndefinedTagHandleNamed(_) => Some(
+            Self::UndefinedTagHandle => Some(
                 "Add a %TAG directive to define the handle, e.g., %TAG !e! tag:example.com,2000:",
             ),
-            Self::InvalidBlockScalar | Self::InvalidBlockScalarDetail(_) => Some(
+            Self::InvalidBlockScalar => Some(
                 "Block scalar header format: | or > followed by optional [1-9] indent and [-+] chomping",
             ),
             // No specific suggestion for these
@@ -179,10 +148,7 @@ impl ErrorKind {
             | Self::InvalidAnchor
             | Self::InvalidTag
             | Self::DuplicateDirective
-            | Self::DuplicateDirectiveNamed(_)
-            | Self::InvalidDirective
-            | Self::InvalidDirectiveDetail(_)
-            | Self::Custom(_) => None,
+            | Self::InvalidDirective => None,
         }
     }
 }
@@ -276,50 +242,19 @@ impl std::fmt::Display for ParseError {
             ErrorKind::InvalidEscape(ch) => write!(f, "invalid escape sequence '\\{ch}'"),
             ErrorKind::InvalidNumber => write!(f, "invalid number format"),
             ErrorKind::DuplicateKey => write!(f, "duplicate key in mapping"),
-            ErrorKind::DuplicateKeyNamed(key) => {
-                write!(f, "duplicate key '{key}' in mapping")
-            }
             ErrorKind::InvalidAnchor => write!(f, "invalid anchor name"),
             ErrorKind::DuplicateAnchor => write!(f, "duplicate anchor on same node"),
-            ErrorKind::DuplicateAnchorNamed { first, second } => {
-                write!(
-                    f,
-                    "duplicate anchor: node already has anchor '&{first}', cannot add '&{second}'"
-                )
-            }
             ErrorKind::UndefinedAlias => write!(f, "undefined alias"),
-            ErrorKind::UndefinedAliasNamed(name) => {
-                write!(f, "undefined alias '*{name}': anchor '&{name}' not defined")
-            }
             ErrorKind::InvalidTag => write!(f, "invalid tag"),
             ErrorKind::DuplicateTag => write!(f, "duplicate tag on same node"),
-            ErrorKind::DuplicateTagNamed { first, second } => {
-                write!(
-                    f,
-                    "duplicate tag: node already has tag '{first}', cannot add '{second}'"
-                )
-            }
             ErrorKind::PropertiesOnAlias => write!(f, "anchor/tag cannot be applied to alias"),
             ErrorKind::InvalidBlockScalar => write!(f, "invalid block scalar header"),
-            ErrorKind::InvalidBlockScalarDetail(detail) => {
-                write!(f, "invalid block scalar header: {detail}")
-            }
             ErrorKind::TabInIndentation => {
                 write!(f, "tab character in indentation (use spaces)")
             }
             ErrorKind::DuplicateDirective => write!(f, "duplicate directive"),
-            ErrorKind::DuplicateDirectiveNamed(name) => {
-                write!(f, "duplicate %{name} directive")
-            }
             ErrorKind::InvalidDirective => write!(f, "invalid directive format"),
-            ErrorKind::InvalidDirectiveDetail(detail) => {
-                write!(f, "invalid directive: {detail}")
-            }
             ErrorKind::UndefinedTagHandle => write!(f, "tag handle not declared in document"),
-            ErrorKind::UndefinedTagHandleNamed(handle) => {
-                write!(f, "tag handle '{handle}' not declared in document")
-            }
-            ErrorKind::Custom(msg) => write!(f, "{msg}"),
         }
     }
 }
@@ -359,44 +294,6 @@ mod tests {
                 },
                 "unterminated string literal, missing closing '",
             ),
-            (
-                ErrorKind::DuplicateKeyNamed("name".to_owned()),
-                "duplicate key 'name' in mapping",
-            ),
-            (
-                ErrorKind::UndefinedAliasNamed("foo".to_owned()),
-                "undefined alias '*foo': anchor '&foo' not defined",
-            ),
-            (
-                ErrorKind::DuplicateAnchorNamed {
-                    first: "a".to_owned(),
-                    second: "b".to_owned(),
-                },
-                "duplicate anchor: node already has anchor '&a', cannot add '&b'",
-            ),
-            (
-                ErrorKind::DuplicateTagNamed {
-                    first: "!str".to_owned(),
-                    second: "!int".to_owned(),
-                },
-                "duplicate tag: node already has tag '!str', cannot add '!int'",
-            ),
-            (
-                ErrorKind::UndefinedTagHandleNamed("!e!".to_owned()),
-                "tag handle '!e!' not declared in document",
-            ),
-            (
-                ErrorKind::DuplicateDirectiveNamed("YAML".to_owned()),
-                "duplicate %YAML directive",
-            ),
-            (
-                ErrorKind::InvalidDirectiveDetail("expected version".to_owned()),
-                "invalid directive: expected version",
-            ),
-            (
-                ErrorKind::InvalidBlockScalarDetail("invalid indent".to_owned()),
-                "invalid block scalar header: invalid indent",
-            ),
         ];
 
         for (kind, expected_msg) in test_cases {
@@ -421,9 +318,7 @@ mod tests {
             },
             ErrorKind::InvalidEscape('x'),
             ErrorKind::DuplicateKey,
-            ErrorKind::DuplicateKeyNamed("key".to_owned()),
             ErrorKind::UndefinedAlias,
-            ErrorKind::UndefinedAliasNamed("foo".to_owned()),
             ErrorKind::DuplicateAnchor,
             ErrorKind::DuplicateTag,
             ErrorKind::PropertiesOnAlias,
@@ -447,7 +342,6 @@ mod tests {
             ErrorKind::InvalidTag,
             ErrorKind::DuplicateDirective,
             ErrorKind::InvalidDirective,
-            ErrorKind::Custom("custom error".to_owned()),
         ];
 
         for kind in without_suggestions {

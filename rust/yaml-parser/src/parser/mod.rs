@@ -22,9 +22,9 @@ use std::collections::HashMap;
 use chumsky::span::Span as _;
 
 use crate::error::{ErrorKind, ParseError};
-use crate::lexer::Token;
 use crate::rich_token::RichToken;
 use crate::span::{Span, Spanned};
+use crate::token::Token;
 use crate::value::{Node, Value};
 
 /// A stream of YAML documents.
@@ -223,6 +223,10 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                     // This indicates tabs being used as indentation
                     if self.flow_context_columns.is_empty() {
                         self.check_tabs_as_indentation();
+                    } else {
+                        // In flow context, tabs at start of line before content are also invalid
+                        // (tabs can never be used for indentation, even in flow)
+                        self.check_tabs_at_line_start_in_flow(indent);
                     }
                 }
                 Token::Indent(_) | Token::Dedent => {
@@ -291,14 +295,8 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                     let anchor_name = name.clone();
                     self.advance();
                     self.skip_ws();
-                    if let Some((first_anchor, _)) = &props.anchor {
-                        self.error(
-                            ErrorKind::DuplicateAnchorNamed {
-                                first: first_anchor.to_string(),
-                                second: anchor_name.to_string(),
-                            },
-                            anchor_span,
-                        );
+                    if props.anchor.is_some() {
+                        self.error(ErrorKind::DuplicateAnchor, anchor_span);
                     }
                     props.anchor = Some((anchor_name, anchor_span));
                 }
@@ -306,14 +304,8 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                     let tag_name = name.clone();
                     self.advance();
                     self.skip_ws();
-                    if let Some((first_tag, _)) = &props.tag {
-                        self.error(
-                            ErrorKind::DuplicateTagNamed {
-                                first: first_tag.to_string(),
-                                second: tag_name.to_string(),
-                            },
-                            tag_span,
-                        );
+                    if props.tag.is_some() {
+                        self.error(ErrorKind::DuplicateTag, tag_span);
                     }
                     props.tag = Some((tag_name, tag_span));
                 }
@@ -357,7 +349,8 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
             clippy::indexing_slicing,
             reason = "pos - 1 is valid because we check pos == 0 above"
         )]
-        if !matches!(self.tokens[self.pos - 1].token, Token::LineStart(_)) {
+        let prev_tok = &self.tokens[self.pos - 1].token;
+        if !matches!(prev_tok, Token::LineStart(_)) {
             return;
         }
 
@@ -379,6 +372,87 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
             // Not flow content - report error
             self.error(ErrorKind::InvalidIndentation, tab_span);
         }
+    }
+
+    /// Check for tabs at the start of a line in flow context.
+    /// Tabs are never valid as indentation, even in flow. If a tab appears after
+    /// `LineStart(0)` and is followed by actual content (not just another newline),
+    /// it's an error.
+    pub fn check_tabs_at_line_start_in_flow(&mut self, line_indent: usize) {
+        // Only check if line started at column 0 (no space indentation)
+        if line_indent > 0 {
+            return;
+        }
+
+        // Check if current token is WhitespaceWithTabs
+        if let Some((Token::WhitespaceWithTabs, tab_span)) = self.peek() {
+            // Look ahead to see if there's actual content after the tab(s)
+            let mut look_ahead = self.pos + 1;
+            while let Some(rt) = self.tokens.get(look_ahead) {
+                match &rt.token {
+                    Token::Whitespace | Token::WhitespaceWithTabs => look_ahead += 1,
+                    // Empty line (another LineStart) - tabs are allowed
+                    Token::LineStart(_) => return,
+                    // Content follows the tab - error
+                    _ => {
+                        self.error(ErrorKind::InvalidIndentation, tab_span);
+                        return;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Check if the current token is whitespace containing tabs.
+    /// In block context, tabs after block indicators (`?`, `:`) are always invalid.
+    /// Tabs after `-` are only invalid when followed by block structure indicators.
+    /// Call this after advancing past a block indicator before calling `skip_ws()`.
+    ///
+    /// The `allow_before_scalars` parameter should be true for `-` and false for `?`/`:`.
+    pub fn check_tabs_after_block_indicator_conditional(&mut self, allow_before_scalars: bool) {
+        // Tabs are only invalid in BLOCK context
+        if self.flow_depth > 0 {
+            return;
+        }
+
+        // Check if current token is WhitespaceWithTabs
+        if let Some((Token::WhitespaceWithTabs, tab_span)) = self.peek() {
+            if !allow_before_scalars {
+                // For ? and : indicators, tabs are always invalid
+                self.error(ErrorKind::InvalidIndentation, tab_span);
+                return;
+            }
+
+            // For - indicator: tabs are invalid before block structure indicators,
+            // but allowed before scalar content
+            let mut lookahead = self.pos + 1;
+            while let Some(rt) = self.tokens.get(lookahead) {
+                match &rt.token {
+                    Token::Whitespace | Token::WhitespaceWithTabs => lookahead += 1,
+                    // Block structure indicators after tab - error
+                    Token::BlockSeqIndicator | Token::MappingKey | Token::Colon => {
+                        self.error(ErrorKind::InvalidIndentation, tab_span);
+                        return;
+                    }
+                    // Scalar content after tab - allowed
+                    _ => return,
+                }
+            }
+        }
+    }
+
+    /// Check for tabs after block indicators.
+    /// For `-` indicator: tabs are allowed before scalar content.
+    /// For `?` and `:` indicators: tabs are always invalid.
+    pub fn check_tabs_after_block_indicator(&mut self) {
+        // This is the strict version for ? and : indicators
+        self.check_tabs_after_block_indicator_conditional(false);
+    }
+
+    /// Check for tabs after the sequence indicator `-`.
+    /// Tabs are allowed before scalar content, but invalid before block structure.
+    pub fn check_tabs_after_seq_indicator(&mut self) {
+        self.check_tabs_after_block_indicator_conditional(true);
     }
 
     /// Check for invalid content immediately after a flow collection in block context.
@@ -819,16 +893,8 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
         self.advance();
         self.skip_ws();
 
-        if let Some((first_anchor, _)) = &props.anchor
-            && !props.crossed_line_boundary
-        {
-            self.error(
-                ErrorKind::DuplicateAnchorNamed {
-                    first: first_anchor.to_string(),
-                    second: anchor_name.to_string(),
-                },
-                anchor_span,
-            );
+        if props.anchor.is_some() && !props.crossed_line_boundary {
+            self.error(ErrorKind::DuplicateAnchor, anchor_span);
         }
 
         if props.crossed_line_boundary && props.anchor.is_some() {
@@ -839,14 +905,8 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
             };
             if let Some(mapping) = self.parse_block_mapping_with_props(min_indent, inner_props) {
                 Some(self.apply_properties_and_register(props, mapping))
-            } else if let Some((first_anchor, _)) = &props.anchor {
-                self.error(
-                    ErrorKind::DuplicateAnchorNamed {
-                        first: first_anchor.to_string(),
-                        second: anchor_name.to_string(),
-                    },
-                    anchor_span,
-                );
+            } else if props.anchor.is_some() {
+                self.error(ErrorKind::DuplicateAnchor, anchor_span);
                 props.anchor = Some((anchor_name, anchor_span));
                 self.parse_value_with_properties(min_indent, props)
             } else {
@@ -895,16 +955,8 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
 
         self.skip_ws();
 
-        if let Some((first_tag, _)) = &props.tag
-            && !props.crossed_line_boundary
-        {
-            self.error(
-                ErrorKind::DuplicateTagNamed {
-                    first: first_tag.to_string(),
-                    second: tag_name.to_string(),
-                },
-                tag_span,
-            );
+        if props.tag.is_some() && !props.crossed_line_boundary {
+            self.error(ErrorKind::DuplicateTag, tag_span);
         }
 
         if props.crossed_line_boundary && props.tag.is_some() {
@@ -915,14 +967,8 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
             };
             if let Some(mapping) = self.parse_block_mapping_with_props(min_indent, inner_props) {
                 Some(self.apply_properties_and_register(props, mapping))
-            } else if let Some((first_tag, _)) = &props.tag {
-                self.error(
-                    ErrorKind::DuplicateTagNamed {
-                        first: first_tag.to_string(),
-                        second: tag_name.to_string(),
-                    },
-                    tag_span,
-                );
+            } else if props.tag.is_some() {
+                self.error(ErrorKind::DuplicateTag, tag_span);
                 props.tag = Some((tag_name, tag_span));
                 self.parse_value_with_properties(min_indent, props)
             } else {
@@ -1004,10 +1050,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                         Some(self.parse_alias_as_mapping_key(alias_name, alias_span, props))
                     } else {
                         if !self.anchors.contains_key(alias_name.as_ref()) {
-                            self.error(
-                                ErrorKind::UndefinedAliasNamed(alias_name.to_string()),
-                                alias_span,
-                            );
+                            self.error(ErrorKind::UndefinedAlias, alias_span);
                         }
                         Some(Node::new(Value::Alias(alias_name), alias_span))
                     }

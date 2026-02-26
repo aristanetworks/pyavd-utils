@@ -9,8 +9,8 @@ use std::borrow::Cow;
 use chumsky::span::Span as _;
 
 use crate::error::ErrorKind;
-use crate::lexer::Token;
 use crate::span::Span;
+use crate::token::Token;
 use crate::value::{Node, Value};
 
 use super::{NodeProperties, Parser};
@@ -35,6 +35,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
             }
 
             self.advance(); // consume '-'
+            self.check_tabs_after_seq_indicator();
             self.skip_ws();
 
             let item = if let Some((Token::LineStart(_), _)) = self.peek() {
@@ -119,6 +120,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
             let explicit_key = matches!(self.peek(), Some((Token::MappingKey, _)));
             if explicit_key {
                 self.advance();
+                self.check_tabs_after_block_indicator();
                 self.skip_ws();
             }
 
@@ -154,7 +156,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                     }
                     self.advance();
                     if !self.anchors.contains_key(alias_name.as_ref()) {
-                        self.error(ErrorKind::UndefinedAliasNamed(alias_name.to_string()), span);
+                        self.error(ErrorKind::UndefinedAlias, span);
                     }
                     Some(Node::new(Value::Alias(alias_name), span))
                 } else {
@@ -206,6 +208,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
             }
             if has_value && matches!(self.peek(), Some((Token::Colon, _))) {
                 self.advance();
+                self.check_tabs_after_block_indicator();
                 self.skip_ws();
             }
 
@@ -614,6 +617,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                 Some((Token::Colon, _)) => {
                     let key = Node::null(self.current_span());
                     self.advance();
+                    self.check_tabs_after_block_indicator();
                     self.skip_ws();
 
                     let value = if let Some((Token::LineStart(_), _)) = self.peek() {
@@ -644,6 +648,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
             let key = Node::null(self.current_span());
 
             self.advance();
+            self.check_tabs_after_block_indicator();
             self.skip_ws();
 
             let value = if let Some((Token::LineStart(_), _)) = self.peek() {
@@ -687,10 +692,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
         props: NodeProperties<'input>,
     ) -> Node<'input> {
         if !self.anchors.contains_key(alias_name.as_ref()) {
-            self.error(
-                ErrorKind::UndefinedAliasNamed(alias_name.to_string()),
-                alias_span,
-            );
+            self.error(ErrorKind::UndefinedAlias, alias_span);
         }
 
         let alias_node = Node::new(Value::Alias(alias_name), alias_span);
@@ -743,10 +745,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                     let new_alias_name = name.clone();
                     self.advance();
                     if !self.anchors.contains_key(new_alias_name.as_ref()) {
-                        self.error(
-                            ErrorKind::UndefinedAliasNamed(new_alias_name.to_string()),
-                            span,
-                        );
+                        self.error(ErrorKind::UndefinedAlias, span);
                     }
                     Some(Node::new(Value::Alias(new_alias_name), span))
                 }
