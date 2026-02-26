@@ -7,8 +7,8 @@
 use chumsky::span::Span as _;
 
 use crate::error::ErrorKind;
-use crate::lexer::{BlockScalarHeader, Chomping, QuoteStyle, Token};
 use crate::span::Span;
+use crate::token::{BlockScalarHeader, Chomping, QuoteStyle, Token};
 use crate::value::{Node, Value};
 
 use super::{NodeProperties, Parser};
@@ -302,6 +302,16 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                 self.advance();
             }
 
+            // Check for tabs used as indentation in block scalar content.
+            // Tabs are invalid for indentation at the start of a line (after LineStart).
+            // However, tabs are allowed AFTER space-based indentation (as content).
+            // Only report error if LineStart showed 0 indentation (no spaces before tab).
+            if n == 0
+                && let Some((Token::WhitespaceWithTabs, tab_span)) = self.peek()
+            {
+                self.error(ErrorKind::InvalidIndentation, tab_span);
+            }
+
             if is_empty_line {
                 // Track this empty line's indentation if we haven't found content yet
                 if content_indent.is_none() {
@@ -515,6 +525,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
             let key = scalar;
 
             self.advance(); // consume ':'
+            self.check_tabs_after_block_indicator();
             self.skip_ws();
 
             // Check for block sequence indicator on same line as key - invalid in YAML
@@ -595,6 +606,8 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                         while let Some((Token::Dedent, _)) = self.peek() {
                             self.advance();
                         }
+                        // Check for tabs used as indentation after LineStart
+                        self.check_tabs_as_indentation();
                         break true;
                     }
                     self.advance();
@@ -787,9 +800,34 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                             break;
                         }
                         Token::Whitespace | Token::WhitespaceWithTabs => {
-                            // Tab at start of line followed by content
+                            // Tab/whitespace at start of line followed by content
                             let after_ws = next_pos + 1;
                             if after_ws < self.tokens.len() {
+                                // Check if this is a mapping key (Plain followed by Colon)
+                                // If so, it's NOT a scalar continuation - return early
+                                if let Token::Plain(_) = &self.tokens[after_ws].token {
+                                    let mut lookahead = after_ws + 1;
+                                    while lookahead < self.tokens.len() {
+                                        match &self.tokens[lookahead].token {
+                                            Token::Whitespace | Token::WhitespaceWithTabs => {
+                                                lookahead += 1;
+                                            }
+                                            Token::Colon => {
+                                                // This is a mapping key, not a scalar continuation
+                                                // Don't emit tab error here - let the mapping
+                                                // parser handle it via check_tabs_as_indentation
+                                                return Self::finalize_multiline_scalar(
+                                                    content,
+                                                    had_continuations,
+                                                    start,
+                                                    end,
+                                                );
+                                            }
+                                            _ => break,
+                                        }
+                                    }
+                                }
+
                                 match &self.tokens[after_ws].token {
                                     Token::Plain(_)
                                     | Token::Anchor(_)
