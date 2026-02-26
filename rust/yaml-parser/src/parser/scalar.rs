@@ -4,8 +4,6 @@
 
 //! Scalar parsing (plain, quoted, and block scalars).
 
-use chumsky::span::Span as _;
-
 use crate::error::ErrorKind;
 use crate::span::Span;
 use crate::token::{BlockScalarHeader, Chomping, QuoteStyle, Token};
@@ -63,7 +61,6 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                     crate::error::ParseError::new(
                         ErrorKind::UnterminatedString,
                         Span::new(
-                            (),
                             start_span.start
                                 ..self.tokens.last().map_or(start_span.end, |rt| rt.span.end),
                         ),
@@ -137,7 +134,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
             }
         }
 
-        let full_span = Span::new((), start_span.start..end_span.end);
+        let full_span = Span::new(start_span.start..end_span.end);
         Some(Node::new(Value::String(content.into()), full_span))
     }
 
@@ -209,7 +206,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
         let (content, end) = self.collect_block_scalar_content(&header, true);
         Some(Node::new(
             Value::String(content.into()),
-            Span::new((), start..end),
+            Span::new(start..end),
         ))
     }
 
@@ -227,7 +224,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
         let (content, end) = self.collect_block_scalar_content(&header, false);
         Some(Node::new(
             Value::String(content.into()),
-            Span::new((), start..end),
+            Span::new(start..end),
         ))
     }
 
@@ -437,7 +434,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
         } else {
             Self::scalar_to_value(content)
         };
-        Node::new(value, Span::new((), start..end))
+        Node::new(value, Span::new(start..end))
     }
 
     /// Parse a scalar and check if it's actually a mapping key.
@@ -556,7 +553,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
             self.parse_remaining_mapping_entries(&mut pairs, map_indent);
 
             let end = pairs.last().map_or(start, |(_, val)| val.span.end);
-            Some(Node::new(Value::Mapping(pairs), Span::new((), start..end)))
+            Some(Node::new(Value::Mapping(pairs), Span::new(start..end)))
         } else {
             // Just a scalar - check for multiline continuation (plain scalars only)
             // Note: If we saw a comment after the scalar, it terminates the plain scalar

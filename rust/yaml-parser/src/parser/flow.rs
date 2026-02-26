@@ -4,8 +4,6 @@
 
 //! Flow collection parsing (sequences and mappings in `[]` and `{}`).
 
-use chumsky::span::Span as _;
-
 use crate::error::ErrorKind;
 use crate::span::Span;
 use crate::token::Token;
@@ -107,7 +105,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                 let end = end_span.end;
                 self.advance();
                 self.exit_flow_collection();
-                return Some(Node::new(Value::Mapping(pairs), Span::new((), start..end)));
+                return Some(Node::new(Value::Mapping(pairs), Span::new(start..end)));
             }
 
             // Check for consecutive commas (e.g., `{ a: 1, , b: 2 }`)
@@ -215,7 +213,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
         self.error(ErrorKind::UnexpectedEof, self.current_span());
         self.exit_flow_collection();
         let end = self.tokens.last().map_or(start, |rt| rt.span.end);
-        Some(Node::new(Value::Mapping(pairs), Span::new((), start..end)))
+        Some(Node::new(Value::Mapping(pairs), Span::new(start..end)))
     }
 
     /// Parse a flow sequence: [ item, ... ]
@@ -234,7 +232,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                 let end = end_span.end;
                 self.advance();
                 self.exit_flow_collection();
-                return Some(Node::new(Value::Sequence(items), Span::new((), start..end)));
+                return Some(Node::new(Value::Sequence(items), Span::new(start..end)));
             }
 
             // Check for consecutive commas
@@ -262,7 +260,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                     let map_end = value.span.end;
                     let mapping_node = Node::new(
                         Value::Mapping(vec![(item, value)]),
-                        Span::new((), map_start..map_end),
+                        Span::new(map_start..map_end),
                     );
                     items.push(mapping_node);
                 } else {
@@ -290,7 +288,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
         self.error(ErrorKind::UnexpectedEof, self.current_span());
         self.exit_flow_collection();
         let end = self.tokens.last().map_or(start, |rt| rt.span.end);
-        Some(Node::new(Value::Sequence(items), Span::new((), start..end)))
+        Some(Node::new(Value::Sequence(items), Span::new(start..end)))
     }
 
     /// Parse a value in flow context (no block structures).
@@ -368,7 +366,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                 }
 
                 let value = Self::scalar_to_value(combined);
-                let node = Node::new(value, Span::new((), start_span.start..end_span.end));
+                let node = Node::new(value, Span::new(start_span.start..end_span.end));
                 Some(self.apply_properties_and_register(props, node))
             }
             Token::StringStart(_) => {

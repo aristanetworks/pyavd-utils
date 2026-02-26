@@ -5,7 +5,6 @@
 //! Error types for YAML parsing.
 
 use crate::span::Span;
-use chumsky::span::Span as _;
 
 /// An error encountered during YAML parsing.
 ///
@@ -197,10 +196,7 @@ impl ParseError {
     /// position relative to the original input.
     #[must_use]
     pub fn global_span(&self) -> Span {
-        Span::new(
-            (),
-            self.span.start + self.span_offset..self.span.end + self.span_offset,
-        )
+        Span::new(self.span.start + self.span_offset..self.span.end + self.span_offset)
     }
 
     /// Get a suggestion for how to fix this error.
@@ -267,7 +263,7 @@ mod tests {
 
     #[test]
     fn test_error_display() {
-        let err = ParseError::new(ErrorKind::UnterminatedString, Span::new((), 0..10));
+        let err = ParseError::new(ErrorKind::UnterminatedString, Span::new(0..10));
         assert_eq!(err.to_string(), "unterminated string literal");
     }
 
@@ -297,7 +293,7 @@ mod tests {
         ];
 
         for (kind, expected_msg) in test_cases {
-            let err = ParseError::new(kind, Span::new((), 0..10));
+            let err = ParseError::new(kind, Span::new(0..10));
             assert_eq!(err.to_string(), expected_msg);
         }
     }
@@ -354,7 +350,7 @@ mod tests {
 
     #[test]
     fn test_parse_error_suggestion_delegation() {
-        let err = ParseError::new(ErrorKind::TabInIndentation, Span::new((), 0..1));
+        let err = ParseError::new(ErrorKind::TabInIndentation, Span::new(0..1));
         assert!(err.suggestion().is_some());
         assert!(err.suggestion().unwrap().contains("spaces"));
     }
@@ -362,7 +358,7 @@ mod tests {
     #[test]
     fn test_global_span() {
         // Without offset, global_span equals span
-        let err = ParseError::new(ErrorKind::UnexpectedToken, Span::new((), 10..20));
+        let err = ParseError::new(ErrorKind::UnexpectedToken, Span::new(10..20));
         let global = err.global_span();
         assert_eq!(global.start, 10);
         assert_eq!(global.end, 20);

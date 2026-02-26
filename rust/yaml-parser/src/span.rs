@@ -4,13 +4,86 @@
 
 //! Span types for tracking source locations.
 
-use chumsky::span::SimpleSpan;
+use std::ops::Range;
 
-/// A span representing a range in the source code.
+/// A span representing a range in the data.
 ///
-/// This is an alias for chumsky's `SimpleSpan`, which tracks byte offsets.
-/// The span is a half-open range `[start, end)`.
-pub type Span = SimpleSpan<usize>;
+/// This is a simple span type that tracks byte offsets as a half-open range `[start, end)`.
+/// The span is used throughout the parser to track source locations for error reporting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct Span {
+    /// The start byte offset (inclusive).
+    pub start: usize,
+    /// The end byte offset (exclusive).
+    pub end: usize,
+}
+
+impl Span {
+    /// Create a new span from a range.
+    #[must_use]
+    #[inline]
+    pub const fn new(range: Range<usize>) -> Self {
+        Self {
+            start: range.start,
+            end: range.end,
+        }
+    }
+
+    /// Create a zero-width span at a single position.
+    #[must_use]
+    #[inline]
+    pub const fn at(pos: usize) -> Self {
+        Self {
+            start: pos,
+            end: pos,
+        }
+    }
+
+    /// Return the length of the span in bytes.
+    #[must_use]
+    #[inline]
+    pub const fn len(&self) -> usize {
+        self.end.saturating_sub(self.start)
+    }
+
+    /// Check if the span is empty (zero-width).
+    #[must_use]
+    #[inline]
+    pub const fn is_empty(&self) -> bool {
+        self.start >= self.end
+    }
+
+    /// Create a span that encompasses both this span and another.
+    #[must_use]
+    #[inline]
+    pub fn union(self, other: Self) -> Self {
+        Self {
+            start: self.start.min(other.start),
+            end: self.end.max(other.end),
+        }
+    }
+
+    /// Convert to a `Range<usize>`.
+    #[must_use]
+    #[inline]
+    pub const fn to_range(self) -> Range<usize> {
+        self.start..self.end
+    }
+}
+
+impl From<Range<usize>> for Span {
+    #[inline]
+    fn from(range: Range<usize>) -> Self {
+        Self::new(range)
+    }
+}
+
+impl From<Span> for Range<usize> {
+    #[inline]
+    fn from(span: Span) -> Self {
+        span.to_range()
+    }
+}
 
 /// A value with an associated source span.
 ///
