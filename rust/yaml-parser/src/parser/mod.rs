@@ -19,8 +19,6 @@ mod scalar;
 use std::borrow::Cow;
 use std::collections::HashMap;
 
-use chumsky::span::Span as _;
-
 use crate::error::{ErrorKind, ParseError};
 use crate::rich_token::RichToken;
 use crate::span::{Span, Spanned};
@@ -55,14 +53,14 @@ impl<'input> NodeProperties<'input> {
             node.anchor = Some(anchor);
             // Extend span to include the anchor
             if anchor_span.start < node.span.start {
-                node.span = Span::new((), anchor_span.start..node.span.end);
+                node.span = Span::new(anchor_span.start..node.span.end);
             }
         }
         if let Some((tag, tag_span)) = self.tag {
             node.tag = Some(tag);
             // Extend span to include the tag
             if tag_span.start < node.span.start {
-                node.span = Span::new((), tag_span.start..node.span.end);
+                node.span = Span::new(tag_span.start..node.span.end);
             }
         }
         node
@@ -653,7 +651,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
     /// Get the span of the current position.
     pub fn current_span(&self) -> Span {
         self.peek()
-            .map_or_else(|| Span::new((), 0..0), |(_, span)| span)
+            .map_or_else(|| Span::new(0..0), |(_, span)| span)
     }
 
     /// Check if current position is a mapping key pattern (scalar followed by colon).
@@ -812,10 +810,8 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
 
             if self.is_eof() || matches!(self.peek(), Some((Token::DocStart | Token::DocEnd, _))) {
                 if explicit_doc_start.is_some() || !documents.is_empty() || self.pos > start_pos {
-                    let span = explicit_doc_start.map_or_else(
-                        || self.current_span(),
-                        |span| Span::new((), span.end..span.end),
-                    );
+                    let span = explicit_doc_start
+                        .map_or_else(|| self.current_span(), |span| Span::new(span.end..span.end));
                     documents.push(Node::null(span));
                 }
             } else if let Some(node) = self.parse_value(0) {
@@ -1248,7 +1244,7 @@ pub fn parse_single_document<'tokens: 'input, 'input>(
     let doc = if parser.is_eof() || matches!(parser.peek(), Some((Token::DocEnd, _))) {
         // If we had an explicit document start (---), we should return a null node
         // rather than None. An explicit document with no content is a null value.
-        has_doc_start.then(|| Node::null(Span::new((), 0..0)))
+        has_doc_start.then(|| Node::null(Span::new(0..0)))
     } else {
         parser.parse_value(0)
     };

@@ -13,8 +13,6 @@
 //! The output is a sequence of "raw documents" where each document contains
 //! the raw content string to be parsed by the document-level lexer.
 
-use chumsky::span::Span as _;
-
 use crate::error::{ErrorKind, ParseError};
 use crate::span::{Span, Spanned};
 
@@ -101,7 +99,7 @@ pub fn parse_stream(input: &str) -> (Vec<RawDocument<'_>>, Vec<ParseError>) {
                     documents.push(RawDocument {
                         directives: std::mem::take(&mut current_directives),
                         content: &input[start..content_end],
-                        content_span: Span::new((), start..pos),
+                        content_span: Span::new(start..pos),
                     });
                     has_yaml_directive = false;
                     content_start = None;
@@ -140,7 +138,7 @@ pub fn parse_stream(input: &str) -> (Vec<RawDocument<'_>>, Vec<ParseError>) {
                 if !current_directives.is_empty() && content_start.is_none() {
                     let span = current_directives
                         .first()
-                        .map_or(Span::new((), pos..marker_end), |(_, span)| *span);
+                        .map_or(Span::new(pos..marker_end), |(_, span)| *span);
                     errors.push(ParseError::new(ErrorKind::UnexpectedToken, span));
                 }
 
@@ -167,7 +165,7 @@ pub fn parse_stream(input: &str) -> (Vec<RawDocument<'_>>, Vec<ParseError>) {
                     documents.push(RawDocument {
                         directives: std::mem::take(&mut current_directives),
                         content: &input[start..content_end],
-                        content_span: Span::new((), start..pos),
+                        content_span: Span::new(start..pos),
                     });
                     content_start = None;
                 }
@@ -184,7 +182,7 @@ pub fn parse_stream(input: &str) -> (Vec<RawDocument<'_>>, Vec<ParseError>) {
             let directive_start = pos;
             let line_end = find_eol(input, pos);
             let line = &input[pos..line_end];
-            let directive_span = Span::new((), directive_start..line_end);
+            let directive_span = Span::new(directive_start..line_end);
 
             let directive = if let Some(stripped) = line.strip_prefix("%YAML") {
                 // Check for duplicate %YAML directive
@@ -274,7 +272,7 @@ pub fn parse_stream(input: &str) -> (Vec<RawDocument<'_>>, Vec<ParseError>) {
             if found_doc_start {
                 errors.push(ParseError::new(
                     ErrorKind::UnexpectedToken,
-                    Span::new((), pos..line_end),
+                    Span::new(pos..line_end),
                 ));
             }
         }
@@ -305,7 +303,7 @@ pub fn parse_stream(input: &str) -> (Vec<RawDocument<'_>>, Vec<ParseError>) {
         if !current_directives.is_empty() && content_start.is_none() {
             let span = current_directives
                 .first()
-                .map_or(Span::new((), 0..0), |(_, span)| *span);
+                .map_or(Span::new(0..0), |(_, span)| *span);
             errors.push(ParseError::new(ErrorKind::UnexpectedToken, span));
         }
 
@@ -314,7 +312,7 @@ pub fn parse_stream(input: &str) -> (Vec<RawDocument<'_>>, Vec<ParseError>) {
         documents.push(RawDocument {
             directives: current_directives,
             content: &input[start..content_end],
-            content_span: Span::new((), start..content_end),
+            content_span: Span::new(start..content_end),
         });
     }
 

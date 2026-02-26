@@ -96,8 +96,6 @@ pub use value::{Node, Value};
 /// }
 /// ```
 pub fn parse(input: &str) -> (Stream<'static>, Vec<ParseError>) {
-    use chumsky::span::Span as _;
-
     let mut all_docs: Stream<'static> = Vec::new();
     let mut all_errors = Vec::new();
 
@@ -133,7 +131,7 @@ pub fn parse(input: &str) -> (Stream<'static>, Vec<ParseError>) {
             all_docs.push(doc_.into_owned());
         } else if has_explicit_marker {
             // Empty explicit document -> produce null
-            all_docs.push(Node::null(Span::new((), 0..0)));
+            all_docs.push(Node::null(Span::new(0..0)));
         }
     }
 

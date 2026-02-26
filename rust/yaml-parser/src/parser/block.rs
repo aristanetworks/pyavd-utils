@@ -6,8 +6,6 @@
 
 use std::borrow::Cow;
 
-use chumsky::span::Span as _;
-
 use crate::error::ErrorKind;
 use crate::span::Span;
 use crate::token::Token;
@@ -67,10 +65,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                         if n < seq_indent {
                             let end = items.last().map_or(start, |node| node.span.end);
                             self.pop_indent();
-                            return Some(Node::new(
-                                Value::Sequence(items),
-                                Span::new((), start..end),
-                            ));
+                            return Some(Node::new(Value::Sequence(items), Span::new(start..end)));
                         }
                         self.advance();
                     }
@@ -93,7 +88,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
 
         let end = items.last().map_or(start, |node| node.span.end);
         self.pop_indent();
-        Some(Node::new(Value::Sequence(items), Span::new((), start..end)))
+        Some(Node::new(Value::Sequence(items), Span::new(start..end)))
     }
 
     /// Parse a block mapping with explicit key indicator or implicit keys.
@@ -245,7 +240,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                 self.advance();
                 let end = pairs.last().map_or(start, |(_, node)| node.span.end);
                 self.pop_indent();
-                return Node::new(Value::Mapping(pairs), Span::new((), start..end));
+                return Node::new(Value::Mapping(pairs), Span::new(start..end));
             }
 
             while let Some((tok, _)) = self.peek() {
@@ -255,7 +250,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                         if n < map_indent {
                             let end = pairs.last().map_or(start, |(_, node)| node.span.end);
                             self.pop_indent();
-                            return Node::new(Value::Mapping(pairs), Span::new((), start..end));
+                            return Node::new(Value::Mapping(pairs), Span::new(start..end));
                         }
                         if n == map_indent {
                             self.advance();
@@ -273,7 +268,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                         self.advance();
                         let end = pairs.last().map_or(start, |(_, node)| node.span.end);
                         self.pop_indent();
-                        return Node::new(Value::Mapping(pairs), Span::new((), start..end));
+                        return Node::new(Value::Mapping(pairs), Span::new(start..end));
                     }
                     _ => break,
                 }
@@ -302,7 +297,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
 
         let end = pairs.last().map_or(start, |(_, node)| node.span.end);
         self.pop_indent();
-        Node::new(Value::Mapping(pairs), Span::new((), start..end))
+        Node::new(Value::Mapping(pairs), Span::new(start..end))
     }
 
     /// Parse a block mapping where the first key already has properties (anchor/tag).
@@ -388,7 +383,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
         }
 
         let end = pairs.last().map_or(start, |(_, node)| node.span.end);
-        Some(Node::new(Value::Mapping(pairs), Span::new((), start..end)))
+        Some(Node::new(Value::Mapping(pairs), Span::new(start..end)))
     }
 
     /// Parse a block mapping when we already have the first key.
@@ -488,7 +483,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
         }
 
         let end = pairs.last().map_or(start, |(_, node)| node.span.end);
-        Some(Node::new(Value::Mapping(pairs), Span::new((), start..end)))
+        Some(Node::new(Value::Mapping(pairs), Span::new(start..end)))
     }
 
     /// Parse a block mapping where the first key is a null with properties.
@@ -635,7 +630,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
         }
 
         let end = pairs.last().map_or(start, |(_, node)| node.span.end);
-        Some(Node::new(Value::Mapping(pairs), Span::new((), start..end)))
+        Some(Node::new(Value::Mapping(pairs), Span::new(start..end)))
     }
 
     /// Parse a block mapping starting with an empty key (colon at line start).
@@ -666,7 +661,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
             while let Some((Token::LineStart(n), _)) = self.peek() {
                 if *n < map_indent {
                     let end = pairs.last().map_or(start, |(_, node)| node.span.end);
-                    return Node::new(Value::Mapping(pairs), Span::new((), start..end));
+                    return Node::new(Value::Mapping(pairs), Span::new(start..end));
                 }
                 if *n == map_indent {
                     self.advance();
@@ -681,7 +676,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
         }
 
         let end = pairs.last().map_or(start, |(_, node)| node.span.end);
-        Node::new(Value::Mapping(pairs), Span::new((), start..end))
+        Node::new(Value::Mapping(pairs), Span::new(start..end))
     }
 
     /// Parse a block mapping where the key is an alias.
@@ -778,7 +773,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
         let end = pairs
             .last()
             .map_or(alias_span.start, |(_, node)| node.span.end);
-        let mapping = Node::new(Value::Mapping(pairs), Span::new((), alias_span.start..end));
+        let mapping = Node::new(Value::Mapping(pairs), Span::new(alias_span.start..end));
 
         self.apply_properties_and_register(props, mapping)
     }
