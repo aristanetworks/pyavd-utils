@@ -8,7 +8,7 @@
 
 **Version:** 0.0.2
 **Date:** 2026-02-27
-**Status:** 100% YAML 1.2 Test Suite Compliance (333/333 tests passing)
+**Status:** 100% YAML 1.2 Test Suite Compliance (402/402 tests passing)
 **Dependencies:** Zero external dependencies
 
 ---
@@ -34,7 +34,7 @@ This is a YAML 1.2 parser written in Rust with the following key features:
 
 - **Error Recovery**: Continues parsing after errors, collecting multiple errors in a single pass
 - **Span Tracking**: Every parsed value includes its source location (byte range)
-- **100% YAML 1.2 Compliance**: Passes all 333 tests from the official YAML test suite
+- **100% YAML 1.2 Compliance**: Passes all 402 tests from the official YAML test suite
 - **Zero Dependencies**: Self-contained with custom span/error handling
 - **Zero-Copy Design**: Uses `Cow<'input, str>` throughout to minimize allocations
 - **Layered Architecture**: Separates stream-level parsing from document-level parsing
@@ -779,8 +779,8 @@ Output:
 
 The parser is tested against the official YAML 1.2 test suite:
 
-- **333 tests** covering all YAML 1.2 features
-- **333 passing (100%)** - Full compliance achieved
+- **402 tests** covering all YAML 1.2 features (including subtests)
+- **402 passing (100%)** - Full compliance achieved
 - Tests are in `tests/test_suite.rs`
 - Error analysis test (`analyze_error_kinds`) tracks error distribution across 440+ error test cases
 
@@ -930,7 +930,7 @@ See `LEXER_IMPROVEMENTS.md` and `PARSER_IMPROVEMENTS.md` for detailed progress t
 
 ## Conclusion
 
-This YAML parser achieves **100% YAML 1.2 compliance** (333/333 tests) through a carefully designed three-layer architecture with **zero external dependencies**:
+This YAML parser achieves **100% YAML 1.2 compliance** (402/402 tests) through a carefully designed three-layer architecture with **zero external dependencies**:
 
 1. **Stream Lexer**: Handles document boundaries and directives
 2. **Context Lexer**: Provides context-aware tokenization with INDENT/DEDENT
