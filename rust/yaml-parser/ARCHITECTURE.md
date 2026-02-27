@@ -127,20 +127,26 @@ The parser uses a **three-layer architecture**:
   - `line_range(line) -> Option<Range<usize>>`: Get byte range for a line
 - Every token and node includes its source location
 
-#### `error.rs` (~375 lines) - Error Types
+#### `error.rs` (~480 lines) - Error Types
 
 - **`ParseError`**: Contains `kind`, `span`, `span_offset`, `expected`, `found`
   - `global_span()`: Convert document-relative span to input-relative coordinates
   - `suggestion()`: Delegates to `ErrorKind::suggestion()`
-- **`ErrorKind`**: 23 error variants organized by category:
+- **`ErrorKind`**: 28 error variants organized by category:
 
   **Syntax Errors:**
-  - `UnexpectedEof`, `UnexpectedToken` (generic fallback)
+  - `UnexpectedEof`, `UnexpectedToken` (generic fallback, currently unused)
   - `TrailingContent` - content after a value where none allowed
   - `MissingSeparator` - missing comma in flow collections
   - `UnmatchedBracket` - extra closing bracket/brace
   - `ContentOnSameLine` - invalid content on same line as entry
   - `UnexpectedColon` - colon in invalid position
+  - `MissingColon` - mapping key not followed by `:` (e.g., `key\n  value`)
+  - `InvalidComment` - comment `#` without preceding whitespace
+
+  **Context Errors:**
+  - `BlockIndicatorInFlow` - block indicators `-`, `?` inside flow collections
+  - `DocumentMarkerInFlow` - `---` or `...` inside flow collections
 
   **Indentation Errors:**
   - `InvalidIndentation`, `InvalidIndentationContext { expected, found }`
@@ -155,12 +161,13 @@ The parser uses a **three-layer architecture**:
   - `DuplicateTag`, `InvalidTag`, `PropertiesOnAlias`
   - `UndefinedTagHandle`
   - `MultilineImplicitKey` - implicit keys must be single line
+  - `OrphanedProperties` - anchor/tag without following value
 
   **Directive Errors:**
   - `DuplicateDirective`, `InvalidDirective`
   - `InvalidNumber`, `InvalidBlockScalar`
 
-- **Error suggestions**: `ErrorKind::suggestion()` returns fix hints for 16+ error types
+- **Error suggestions**: `ErrorKind::suggestion()` returns fix hints for 20+ error types
 
 #### `rich_token.rs` - Wrapper for tokens
 
@@ -859,9 +866,9 @@ See `TECHNICAL_DEBT.md` for comprehensive documentation. Key limitations:
 
 **Error Improvements:**
 
-1. ✅ **Specific Error Kinds** - Replaced 87% of generic `UnexpectedToken` errors
+1. ✅ **Specific Error Kinds** - Eliminated all generic `UnexpectedToken` errors
    - **Before:** 535 `UnexpectedToken` occurrences across 120 test cases
-   - **After:** 69 `UnexpectedToken` occurrences across 26 test cases
+   - **After:** 0 `UnexpectedToken` occurrences (100% specific errors)
    - New error kinds with actionable suggestions:
      - `TrailingContent` (346 occurrences) - "Remove extra content after value"
      - `ContentOnSameLine` (62) - "Move content to new indented line"
@@ -869,6 +876,11 @@ See `TECHNICAL_DEBT.md` for comprehensive documentation. Key limitations:
      - `MultilineImplicitKey` (17) - "Use explicit key syntax"
      - `UnexpectedColon` (9) - "Use quoted string for colons in values"
      - `UnmatchedBracket` - "Check for extra closing brackets"
+     - `InvalidComment` - "Add whitespace before `#` for comments"
+     - `MissingColon` - "Add `:` after mapping key"
+     - `BlockIndicatorInFlow` - "Block indicators not allowed in flow"
+     - `DocumentMarkerInFlow` - "Document markers not allowed in flow"
+     - `OrphanedProperties` - "Ensure anchor/tag is followed by a value"
 
 **Lexer Improvements:**
 
@@ -940,7 +952,7 @@ This YAML parser achieves **100% YAML 1.2 compliance** (402/402 tests) through a
 
 - **Zero dependencies**: Self-contained crate with custom `Span` implementation
 - **Zero-copy parsing**: `Cow<'input, str>` throughout for minimal allocations
-- **Actionable errors**: 23 error kinds with specific suggestions (87% reduction in generic errors)
+- **Actionable errors**: 28 error kinds with specific suggestions (100% specific, no generic fallback errors)
 - **~7,200 lines**: Readable, hand-written recursive descent parser
 
 The architecture prioritizes **correctness** and **error recovery** over performance, making it suitable for IDE integration and user-facing tools where helpful error messages are crucial.
