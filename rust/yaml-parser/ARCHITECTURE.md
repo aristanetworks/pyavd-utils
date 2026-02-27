@@ -7,8 +7,9 @@
 # YAML Parser Architecture Documentation
 
 **Version:** 0.0.2
-**Date:** 2026-02-24
-**Status:** 100% YAML 1.2 Test Suite Compliance (333/333 tests passing)
+**Date:** 2026-02-27
+**Status:** 99.4% YAML 1.2 Test Suite Compliance (331/333 tests passing)
+**Dependencies:** Zero external dependencies
 
 ---
 
@@ -33,7 +34,9 @@ This is a YAML 1.2 parser written in Rust with the following key features:
 
 - **Error Recovery**: Continues parsing after errors, collecting multiple errors in a single pass
 - **Span Tracking**: Every parsed value includes its source location (byte range)
-- **Full YAML 1.2 Compliance**: Passes all 333 tests from the official YAML test suite
+- **99.4% YAML 1.2 Compliance**: Passes 331/333 tests from the official YAML test suite
+- **Zero Dependencies**: Self-contained with custom span/error handling
+- **Zero-Copy Design**: Uses `Cow<'input, str>` throughout to minimize allocations
 - **Layered Architecture**: Separates stream-level parsing from document-level parsing
 - **Context-Aware Lexing**: Tracks flow depth and quote state to correctly tokenize context-dependent characters
 
@@ -109,9 +112,14 @@ The parser uses a **three-layer architecture**:
 - **Main entry point**: `parse(input: &str) -> (Stream, Vec<ParseError>)`
 - **Exports**: All public types and functions
 
-#### `span.rs` - Source Location Tracking
+#### `span.rs` (~275 lines) - Source Location Tracking
 
-- **`Span`**: Type alias for `SimpleSpan<usize>` (byte offsets)
+- **`Span`**: Custom struct with `start: usize` and `end: usize` (byte offsets)
+  - `new(range)`: Create from a `Range<usize>`
+  - `at(pos)`: Create a zero-width span at a position
+  - `len()`: Get span length in bytes
+  - `union(other)`: Create span encompassing both spans
+  - `to_range()`: Convert back to `Range<usize>`
 - **`Spanned<T>`**: Type alias for `(T, Span)` tuple
 - **`Position`**: 1-based line and column numbers for human-readable positions
 - **`SourceMap`**: Converts byte offsets to line/column positions using binary search
@@ -119,16 +127,40 @@ The parser uses a **three-layer architecture**:
   - `line_range(line) -> Option<Range<usize>>`: Get byte range for a line
 - Every token and node includes its source location
 
-#### `error.rs` - Error Types
+#### `error.rs` (~375 lines) - Error Types
 
-- **`ParseError`**: Contains `kind`, `span`, `expected`, `found`
-- **`ErrorKind`**: 17 error variants including:
-  - `UnexpectedEof`, `UnterminatedString`
-  - `InvalidIndentation`, `TabInIndentation`
-  - `DuplicateAnchor`, `UndefinedAlias`
-  - `InvalidTag`, `InvalidDirective`
-  - And more...
-- **Error suggestions**: `ErrorKind::suggestion()` returns fix hints for common errors
+- **`ParseError`**: Contains `kind`, `span`, `span_offset`, `expected`, `found`
+  - `global_span()`: Convert document-relative span to input-relative coordinates
+  - `suggestion()`: Delegates to `ErrorKind::suggestion()`
+- **`ErrorKind`**: 23 error variants organized by category:
+
+  **Syntax Errors:**
+  - `UnexpectedEof`, `UnexpectedToken` (generic fallback)
+  - `TrailingContent` - content after a value where none allowed
+  - `MissingSeparator` - missing comma in flow collections
+  - `UnmatchedBracket` - extra closing bracket/brace
+  - `ContentOnSameLine` - invalid content on same line as entry
+  - `UnexpectedColon` - colon in invalid position
+
+  **Indentation Errors:**
+  - `InvalidIndentation`, `InvalidIndentationContext { expected, found }`
+  - `TabInIndentation` - tabs not allowed for indentation
+
+  **String Errors:**
+  - `UnterminatedString`, `UnterminatedQuotedString { double_quoted }`
+  - `InvalidEscape(char)` - invalid escape sequence
+
+  **Anchor/Alias/Tag Errors:**
+  - `DuplicateAnchor`, `InvalidAnchor`, `UndefinedAlias`
+  - `DuplicateTag`, `InvalidTag`, `PropertiesOnAlias`
+  - `UndefinedTagHandle`
+  - `MultilineImplicitKey` - implicit keys must be single line
+
+  **Directive Errors:**
+  - `DuplicateDirective`, `InvalidDirective`
+  - `InvalidNumber`, `InvalidBlockScalar`
+
+- **Error suggestions**: `ErrorKind::suggestion()` returns fix hints for 16+ error types
 
 #### `rich_token.rs` - Wrapper for tokens
 
@@ -189,33 +221,36 @@ The parser uses a **three-layer architecture**:
 
 ### Layer 1: Stream Lexer
 
-#### `stream_lexer.rs` (477 lines)
+#### `stream_lexer.rs` (~468 lines)
 
 - **Purpose**: Split YAML stream into raw documents
 - **Key Types**:
-  - `RawDocument`: Contains directives, content, and content span
+  - `RawDocument<'input>`: Contains directives, content (slice of input), and content span
   - `Directive`: Enum for `%YAML`, `%TAG`, and reserved directives
-- **Main Function**: `parse_stream(input: &str) -> Vec<RawDocument>`
+- **Main Function**: `parse_stream(input) -> (Vec<RawDocument>, Vec<ParseError>)`
 - **Responsibilities**:
   - Detect document boundaries (`---`, `...`)
   - Extract directives from document headers
   - Handle multi-document streams
-  - Preserve raw content for next layer
+  - Preserve raw content (zero-copy) for next layer
+- **Error Handling**: Emits `TrailingContent` errors for invalid content after directives
 
 ### Layer 2: Context Lexer
 
-#### `context_lexer.rs` (~1280 lines)
+#### `context_lexer.rs` (~1,447 lines)
 
 - **Purpose**: Context-aware tokenization
 - **Key Types**:
-  - `ContextLexer`: Main lexer state machine
+  - `ContextLexer<'input>`: Main lexer state machine with zero-copy tokenization
   - `LexMode`: `Block` or `Flow` context
 - **State Tracking**:
   - `flow_depth`: Nesting level of `{}`/`[]`
   - `indent_stack`: Stack of indentation levels
   - `in_quoted_string`: Inside quoted string?
-  - `prev_was_json_like`: For colon detection
+  - `prev_was_json_like`: For colon detection after JSON-like values
+  - `prev_was_separator`: For comment validation (# after whitespace)
   - `byte_pos`: Current position in input (direct string slicing, no Vec<char>)
+  - `pending_tokens`: Queue for multi-token constructs
 - **Key Innovation**: Context-aware character interpretation
   - In **block context**: `,[]{}` are part of plain scalars
   - In **flow context**: `,[]{}` are delimiters
@@ -237,90 +272,97 @@ The parser uses a **three-layer architecture**:
   - `handle_quoted_newline()` - Shared newline handling for both quote styles
   - `finalize_quoted_string()` - Shared end-of-string handling
 
-#### `token.rs` (~180 lines)
+#### `token.rs` (~188 lines)
 
-- **Purpose**: Token type definitions (extracted from legacy lexer)
+- **Purpose**: Token type definitions with zero-copy support
 - **Key Types**:
-  - `Token`: 20+ variants for all YAML constructs
+  - `Token<'input>`: 23 variants using `Cow<'input, str>` for content
   - `QuoteStyle`: `Single` or `Double`
   - `BlockScalarHeader`: For `|` and `>` scalars
   - `Chomping`: `Strip`, `Clip`, or `Keep` trailing newlines
 - **Helper Methods**:
   - `is_scalar()`: Check if token is a scalar type
   - `is_flow_indicator()`: Check if token is a flow indicator
+- **Display Implementation**: Human-readable token formatting for errors
 
-#### `lexer.rs` (~680 lines) - Legacy
+#### `rich_token.rs` (~36 lines)
 
-- **Status**: Kept for comparison, not used by default
-- **Purpose**: Single-pass lexer (original implementation)
-- **Note**: Token type definitions have been moved to `token.rs`; this module re-exports them for backwards compatibility
+- **Purpose**: Token wrapper with span information
+- **Key Type**: `RichToken<'input>` - combines `Token<'input>` with `Span`
+- **Usage**: The context lexer produces `Vec<RichToken>` for the parser
 
 ### Layer 3: Parser
 
-#### `parser/mod.rs` (~1350 lines)
+#### `parser/mod.rs` (~1,419 lines)
 
 - **Purpose**: Main parser orchestration
 - **Key Types**:
-  - `Parser`: Main parser state
-  - `NodeProperties`: Temporary storage for anchor/tag before value
+  - `Parser<'tokens, 'input>`: Main parser state with two lifetimes for zero-copy
+  - `NodeProperties<'input>`: Temporary storage for anchor/tag before value
+  - `Stream<'input>`: Type alias for `Vec<Node<'input>>`
 - **Parser State**:
-  - `tokens`: Token stream
-  - `pos`: Current position
+  - `tokens`: Reference to token slice (`&'tokens [RichToken<'input>]`)
+  - `input`: Reference to input string (`&'input str`)
+  - `pos`: Current position in token stream
   - `errors`: Collected errors
   - `anchors`: Map of anchor names to nodes
   - `flow_depth`: Current flow nesting
   - `flow_context_columns`: Stack of flow collection start columns
   - `indent_stack`: Stack of indentation levels
-  - `tag_handles`: Map of tag prefixes
+  - `tag_handles`: Map of tag prefixes (from %TAG directives)
 - **Main Functions**:
   - `parse_tokens()`: Entry point
-  - `parse_single_document()`: Parse one document
+  - `parse_single_document()`: Parse one document with zero-copy support
   - `parse_value()`: Dispatch to appropriate parser
-  - `collect_node_properties()`: Collect anchor/tag before value (Phase 1.1)
-- **Helper Methods** (Phase 1.2):
+  - `collect_node_properties()`: Collect anchor/tag before value
+- **Helper Methods**:
   - `handle_flow_collection_as_value()`: Flow mapping/sequence as value
   - `handle_anchor_in_value()`: Anchor property handling
   - `handle_tag_in_value()`: Tag property handling
 - **Error Methods**:
-  - `error()`: Basic error reporting
-  - `error_expected()`: Error with expected tokens (Phase 3.2)
+  - `error()`: Basic error reporting with specific `ErrorKind`
+  - `error_expected()`: Error with expected tokens list
 - **Validation**:
-  - Indentation rules
+  - Indentation rules (uses `InvalidIndentation`, `InvalidIndentationContext`)
   - Flow context column tracking
-  - Anchor/alias resolution
-  - Tag handle validation
+  - Anchor/alias resolution (`DuplicateAnchor`, `UndefinedAlias`)
+  - Tag handle validation (`UndefinedTagHandle`)
 
-#### `parser/scalar.rs` (~980 lines)
+#### `parser/scalar.rs` (~1,014 lines)
 
 - **Purpose**: Parse all scalar types
 - **Functions**:
   - `parse_scalar()`: Dispatch to appropriate scalar parser
   - `parse_quoted_string()`: Single and double quoted
   - `parse_block_scalar()`: Literal (`|`) and folded (`>`)
+  - `parse_plain_multiline()`: Multiline plain scalars
+- **Error Handling**: Emits `ContentOnSameLine`, `UnexpectedColon` for specific errors
 - **Complexity**: Multiline string handling with indentation validation
 
-#### `parser/flow.rs` (~390 lines)
+#### `parser/flow.rs` (~400 lines)
 
 - **Purpose**: Parse flow collections
 - **Functions**:
   - `parse_flow_mapping()`: `{ key: value, ... }`
   - `parse_flow_sequence()`: `[ item, ... ]`
-- **Helper Methods** (Phase 1.3):
+- **Helper Methods**:
   - `enter_flow_collection()` / `exit_flow_collection()`: Depth tracking
   - `handle_flow_comma()`: Consecutive comma detection
   - `handle_flow_entry_end()`: Entry delimiter handling
+- **Error Handling**: Emits `MissingSeparator` for missing commas
 - **Features**:
   - Tracks flow context columns for indentation validation
   - Handles nested flow collections
   - Validates continuation line indentation
 
-#### `parser/block.rs` (~860 lines)
+#### `parser/block.rs` (~780 lines)
 
 - **Purpose**: Parse block structures
 - **Functions**:
   - `parse_block_sequence()`: Block sequences with `-`
   - `parse_block_mapping()`: Block mappings with `key: value`
 - **Key Feature**: Uses INDENT/DEDENT tokens to determine structure boundaries
+- **Error Handling**: Emits `TrailingContent`, `MultilineImplicitKey` for specific errors
 - **Complexity**: Handles complex indentation rules
 
 ---
@@ -648,19 +690,24 @@ This matches the YAML 1.2 specification's data model:
 
 - **Rejected because**: Doesn't match YAML spec, complicates type handling
 
-### 5. Error Recovery with Chumsky
+### 5. Hand-Written Parser (No External Dependencies)
 
-**Why use the Chumsky parser combinator library?**
+**Why not use a parser combinator library like chumsky?**
 
-- **Error Recovery**: Chumsky has built-in error recovery capabilities
-- **Composability**: Easy to build complex parsers from simple combinators
-- **Type Safety**: Rust's type system ensures correctness
+After analysis, we chose a hand-written recursive descent parser because:
+
+- **Context Sensitivity**: YAML's grammar is highly context-sensitive (flow vs block context, indentation-based structure). Parser combinators struggle with stateful parsing.
+- **Performance**: Direct control over memory allocation and iteration (zero-copy `Cow<'input, str>`)
+- **Error Recovery**: Custom recovery logic tailored to YAML's specific error patterns
+- **Zero Dependencies**: The entire crate has zero external dependencies, simplifying auditing and deployment
+- **Maintainability**: ~7,200 lines of readable, imperative Rust code
 
 **Error Recovery Strategy:**
 
 - Parser continues after errors, collecting all errors in a single pass
 - Invalid nodes are marked with `Value::Invalid`
 - Partial output is still produced (useful for IDE features)
+- Specific error kinds (23 variants) provide actionable error messages
 
 ### 6. Span Tracking
 
@@ -692,11 +739,15 @@ Errors are collected in `Parser.errors: Vec<ParseError>`:
 ```rust
 pub struct ParseError {
     pub kind: ErrorKind,
-    pub span: Span,
+    pub span: Span,           // Document-relative byte range
+    pub span_offset: usize,   // Add to span for global coordinates
     pub expected: Vec<String>,
     pub found: Option<String>,
 }
 ```
+
+The `span_offset` field enables accurate error positioning in multi-document streams.
+Use `error.global_span()` to get the span relative to the original input.
 
 ### Recovery Strategies
 
@@ -729,8 +780,9 @@ Output:
 The parser is tested against the official YAML 1.2 test suite:
 
 - **333 tests** covering all YAML 1.2 features
-- **100% passing** (as of version 0.0.2)
+- **331 passing (99.4%)** - 2 tests fail due to tab-in-indentation edge cases
 - Tests are in `tests/test_suite.rs`
+- Error analysis test (`analyze_error_kinds`) tracks error distribution across 440+ error test cases
 
 ### Test Suite Format
 
@@ -795,57 +847,56 @@ See `TECHNICAL_DEBT.md` for comprehensive documentation. Key limitations:
 
 ## Future Improvements
 
-### Recently Completed (2026-02-24)
+### Recently Completed (2026-02-27)
+
+**Dependency Removal:**
+
+1. ✅ **Chumsky Removal** - Completely removed the `chumsky` parser combinator library
+   - Implemented custom `Span` struct (was `chumsky::span::SimpleSpan`)
+   - `Span::new(range)` creates from `Range<usize>`
+   - `Span::at(pos)` for zero-width spans, `Span::union()` for merging
+   - **Zero external dependencies** - entire crate is now self-contained
+
+**Error Improvements:**
+
+1. ✅ **Specific Error Kinds** - Replaced 87% of generic `UnexpectedToken` errors
+   - **Before:** 535 `UnexpectedToken` occurrences across 120 test cases
+   - **After:** 69 `UnexpectedToken` occurrences across 26 test cases
+   - New error kinds with actionable suggestions:
+     - `TrailingContent` (346 occurrences) - "Remove extra content after value"
+     - `ContentOnSameLine` (62) - "Move content to new indented line"
+     - `MissingSeparator` (32) - "Add comma between items"
+     - `MultilineImplicitKey` (17) - "Use explicit key syntax"
+     - `UnexpectedColon` (9) - "Use quoted string for colons in values"
+     - `UnmatchedBracket` - "Check for extra closing brackets"
 
 **Lexer Improvements:**
 
 1. ✅ **Token Module Extraction** - Token types moved to dedicated `token.rs`
-2. ✅ **Zero-Allocation Character Iteration** - Replaced `Vec<char>` with string slicing
+2. ✅ **Zero-Allocation Character Iteration** - Direct string slicing (no `Vec<char>`)
 3. ✅ **SourceMap Utility** - Line/column position tracking for IDE integration
 4. ✅ **State Machine Extraction** - `next_token()` refactored from ~230 to ~45 lines
 5. ✅ **Unified Quoted String Handling** - Shared helpers reduce duplication
-6. ✅ **Whitespace Tab Detection** - Split `Whitespace` / `WhitespaceWithTabs` for O(1) tab detection
-7. ✅ **Zero-Copy Tokenization** (Phase 2.1) - `Token<'input>` uses `Cow<'input, str>`
+6. ✅ **Zero-Copy Tokenization** - `Token<'input>` uses `Cow<'input, str>`
    - Borrows directly from input for comments, anchor names
    - Allocates only when content is transformed (escapes, trimming)
-   - Parser uses `Parser<'tokens, 'input>` where `'tokens: 'input` for variance safety
-8. ⚠️ **Token Trivia Preservation** (Phase 1.1) - **Reverted**; comments kept as real tokens
-   - Comments have semantic meaning in YAML (they terminate plain scalars)
-   - Parser needs to see `Token::Comment(_)` directly for correct parsing
-   - `RichToken` structure preserved for future IDE features (trivia not attached)
 
 **Parser Infrastructure Improvements:**
 
-1. ✅ **Property Collection Helper** (Phase 1.1) - `collect_node_properties()` method
+1. ✅ **Property Collection Helper** - `collect_node_properties()` method
    - Reduces code duplication for anchor/tag collection loops
-   - Used in `parse_block_mapping_with_props()`, `parse_flow_value_with_properties()`
-2. ✅ **Contextual Error Variants** (Phase 3.1) - Named error variants with context
-    - `DuplicateAnchorNamed`, `DuplicateTagNamed`, `UndefinedAliasNamed`
-    - Error messages include specific anchor/tag/alias names
-3. ✅ **Method Extraction** (Phase 1.2) - Token-specific helpers in mod.rs
+2. ✅ **Method Extraction** - Token-specific helpers in mod.rs
     - `handle_flow_collection_as_value()` - Flow mapping/sequence handling
-    - `handle_anchor_in_value()` - Anchor property handling
-    - `handle_tag_in_value()` - Tag property handling
+    - `handle_anchor_in_value()` / `handle_tag_in_value()` - Property handling
     - Reduced `parse_value_with_properties` from ~300 to ~127 lines
-4. ✅ **Flow Collection Unification** (Phase 1.3) - Common flow utilities in flow.rs
+3. ✅ **Flow Collection Unification** - Common flow utilities in flow.rs
     - `enter_flow_collection()` / `exit_flow_collection()` - Depth tracking
-    - `handle_flow_comma()` - Consecutive comma detection
-    - `handle_flow_entry_end()` - Entry delimiter handling
-    - Removed `#[allow(clippy::too_many_lines)]` from `parse_flow_mapping`
-5. ✅ **Expected Token Sets** (Phase 3.2) - Better diagnostics
-    - `error_expected()` method for reporting errors with expected tokens
-    - Key decision points now populate `ParseError::expected` field
-6. ✅ **Zero-Copy Scalar Parsing** (Phase 2.1) - Reduced allocations
-    - Added `<'input>` lifetime to `Node` and `Value` types
-    - String content uses `Cow<'input, str>` for zero-copy when possible
-    - Anchors, tags, aliases, and plain scalars borrow from input
-    - `into_owned()` methods convert to `'static` lifetime
-    - Main `parse()` returns owned; `parse_single_document()` returns borrowed
+    - `handle_flow_comma()` / `handle_flow_entry_end()` - Entry handling
+4. ✅ **Zero-Copy Scalar Parsing** - Reduced allocations
+    - `Node<'input>` and `Value<'input>` use lifetimed `Cow<'input, str>`
+    - `into_owned()` methods convert to `'static` lifetime when needed
 
-See `LEXER_IMPROVEMENTS.md` for detailed lexer progress tracking (including dropped items with rationale).
-
-See `PARSER_IMPROVEMENTS.md` for parser infrastructure improvements (code organization,
-complexity reduction, and potential performance optimizations).
+See `LEXER_IMPROVEMENTS.md` and `PARSER_IMPROVEMENTS.md` for detailed progress tracking.
 
 ### Short-Term (Feature Additions)
 
@@ -873,19 +924,25 @@ complexity reduction, and potential performance optimizations).
 
 - **YAML 1.2 Specification**: https://yaml.org/spec/1.2/spec.html
 - **YAML Test Suite**: https://github.com/yaml/yaml-test-suite
-- **Chumsky Parser Combinator**: https://github.com/zesterer/chumsky
 - **Technical Debt Documentation**: See `TECHNICAL_DEBT.md` in this directory
 
 ---
 
 ## Conclusion
 
-This YAML parser achieves 100% YAML 1.2 compliance through a carefully designed three-layer architecture:
+This YAML parser achieves **99.4% YAML 1.2 compliance** (331/333 tests) through a carefully designed three-layer architecture with **zero external dependencies**:
 
 1. **Stream Lexer**: Handles document boundaries and directives
 2. **Context Lexer**: Provides context-aware tokenization with INDENT/DEDENT
 3. **Parser**: Builds AST with error recovery
 
+**Key achievements:**
+
+- **Zero dependencies**: Self-contained crate with custom `Span` implementation
+- **Zero-copy parsing**: `Cow<'input, str>` throughout for minimal allocations
+- **Actionable errors**: 23 error kinds with specific suggestions (87% reduction in generic errors)
+- **~7,200 lines**: Readable, hand-written recursive descent parser
+
 The architecture prioritizes **correctness** and **error recovery** over performance, making it suitable for IDE integration and user-facing tools where helpful error messages are crucial.
 
-The codebase is now clean of clippy warnings and ready for architectural improvements while maintaining the 100% test compliance milestone.
+The codebase is clean of clippy warnings and ready for production use.
