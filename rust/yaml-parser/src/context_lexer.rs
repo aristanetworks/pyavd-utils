@@ -1092,7 +1092,7 @@ impl<'input> ContextLexer<'input> {
                     let error_kind = if self.mode() == LexMode::Flow {
                         ErrorKind::BlockIndicatorInFlow
                     } else {
-                        ErrorKind::UnexpectedToken
+                        ErrorKind::InvalidCharacter
                     };
                     self.add_error(error_kind, span);
                     self.advance(); // Consume the invalid character to avoid infinite loop
