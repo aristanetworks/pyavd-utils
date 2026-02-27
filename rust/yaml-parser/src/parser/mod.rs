@@ -217,13 +217,15 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                         }
                     }
 
-                    // After LineStart, check if next token is Whitespace containing tabs
-                    // This indicates tabs being used as indentation.
-                    // In flow context, tabs are allowed (no block structure to indent).
+                    // After LineStart, check if next token is Whitespace containing tabs.
+                    // This indicates tabs being used as indentation, which is invalid.
+                    // In flow context, only tabs at column 0 are invalid (Y79Y-003).
+                    // Tabs after spaces in flow are allowed (6HB6).
                     if self.flow_context_columns.is_empty() {
                         self.check_tabs_as_indentation();
+                    } else {
+                        self.check_tabs_at_column_zero_in_flow();
                     }
-                    // Note: In flow context, tabs are allowed as whitespace (no block indentation rules)
                 }
                 Token::Indent(_) | Token::Dedent => {
                     // `Indent`/`Dedent` tokens are structural markers - skip them when skipping whitespace
@@ -327,13 +329,12 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
     }
 
     /// Check if there's whitespace (tabs) after `LineStart` that would indicate
-    /// invalid tab indentation in block context.
+    /// invalid tab indentation.
+    ///
+    /// Tabs are invalid for indentation in both block and flow contexts.
+    /// Even inside flow collections, if a line starts with tabs before content,
+    /// that's considered invalid indentation (test Y79Y-003).
     pub fn check_tabs_as_indentation(&mut self) {
-        // Tabs are only invalid for indentation in BLOCK context
-        if self.flow_depth > 0 {
-            return;
-        }
-
         if self.pos == 0 {
             return;
         }
@@ -353,20 +354,58 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
         // Current token might be WhitespaceWithTabs (tabs as indentation)
         if let Some((Token::WhitespaceWithTabs, tab_span)) = self.peek() {
             // Look ahead to see what real content follows the whitespace
-            // Tabs are allowed before flow content
+            // Tabs are allowed:
+            // - before flow collection start/end indicators (entering/exiting flow)
+            // - on blank lines (line contains only whitespace)
+            // - at EOF (trailing whitespace)
             let mut look_ahead = self.pos + 1;
             while let Some(rt) = self.tokens.get(look_ahead) {
                 match &rt.token {
                     Token::Whitespace | Token::WhitespaceWithTabs => look_ahead += 1,
+                    // Tabs allowed before:
+                    // - Flow collection start/end (entering/exiting flow)
+                    // - Blank line (line has only whitespace)
                     Token::FlowMapStart
                     | Token::FlowMapEnd
                     | Token::FlowSeqStart
-                    | Token::FlowSeqEnd => return, // Tabs allowed before flow content
+                    | Token::FlowSeqEnd
+                    | Token::LineStart(_) => return,
+                    // Any other content - tabs used for indentation, which is invalid
                     _ => break,
                 }
             }
-            // Not flow content - report error
+            // If we exhausted tokens (EOF), tabs are allowed (trailing whitespace)
+            if self.tokens.get(look_ahead).is_none() {
+                return;
+            }
+            // Content after tabs - report error
             self.error(ErrorKind::InvalidIndentation, tab_span);
+        }
+    }
+
+    /// Check for tabs at column 0 in flow context.
+    /// In flow context, tabs at the start of a line (column 0) are invalid (Y79Y-003),
+    /// but tabs after spaces are allowed (6HB6).
+    pub fn check_tabs_at_column_zero_in_flow(&mut self) {
+        // Only check if current token is WhitespaceWithTabs at column 0
+        if let Some((Token::WhitespaceWithTabs, tab_span)) = self.peek() {
+            let col = self.column_of_position(tab_span.start);
+            if col == 0 {
+                // Look ahead to check it's not a blank line
+                let mut look_ahead = self.pos + 1;
+                while let Some(rt) = self.tokens.get(look_ahead) {
+                    match &rt.token {
+                        Token::Whitespace | Token::WhitespaceWithTabs => look_ahead += 1,
+                        // Blank line or flow end - tabs allowed
+                        Token::LineStart(_) | Token::FlowMapEnd | Token::FlowSeqEnd => return,
+                        // Content at column 0 with leading tab - error
+                        _ => {
+                            self.error(ErrorKind::InvalidIndentation, tab_span);
+                            return;
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -403,16 +442,49 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
     }
 
     /// Check for tabs after block indicators `:` and `?`.
-    /// Per YAML 1.2 spec, tabs ARE allowed here as separation spaces (s-separate-in-line).
-    /// This function is a no-op kept for API consistency.
-    #[inline]
-    #[allow(
-        clippy::unused_self,
-        reason = "API consistency with check_tabs_after_seq_indicator"
-    )]
+    /// Per YAML 1.2 spec, tabs ARE allowed here as separation spaces (s-separate-in-line)
+    /// EXCEPT when followed by block structure indicators (`-`, `?`, `:`).
+    /// In those cases, tabs would make the structure appear indented.
     pub fn check_tabs_after_block_indicator(&mut self) {
-        // Tabs after : and ? are allowed per YAML 1.2 spec (they are separation spaces)
-        // Only indentation (at line start) forbids tabs
+        // Tabs are only problematic in BLOCK context
+        if self.flow_depth > 0 {
+            return;
+        }
+
+        // Check if current token is WhitespaceWithTabs
+        if let Some((Token::WhitespaceWithTabs, tab_span)) = self.peek() {
+            // Tabs are invalid before block structure indicators (could look like indentation).
+            // Also check if a scalar is immediately followed by a colon (like `key:`),
+            // which creates an implicit mapping and is also ambiguous (Y79Y-008, Y79Y-009).
+            let mut lookahead = self.pos + 1;
+            while let Some(rt) = self.tokens.get(lookahead) {
+                match &rt.token {
+                    Token::Whitespace | Token::WhitespaceWithTabs => lookahead += 1,
+                    // Block structure indicators after tab - error (ambiguous indentation)
+                    Token::BlockSeqIndicator | Token::MappingKey | Token::Colon => {
+                        self.error(ErrorKind::InvalidIndentation, tab_span);
+                        return;
+                    }
+                    // Scalar followed by colon - this creates an implicit mapping (like `key:`)
+                    // which is also ambiguous after tabs (Y79Y-008, Y79Y-009)
+                    Token::Plain(_) => {
+                        // Check if the scalar is followed by a colon
+                        if self
+                            .tokens
+                            .get(lookahead + 1)
+                            .is_some_and(|next| matches!(next.token, Token::Colon))
+                        {
+                            self.error(ErrorKind::InvalidIndentation, tab_span);
+                            return;
+                        }
+                        // Simple scalar without colon - allowed
+                        return;
+                    }
+                    // Other content after tab - allowed (separation space)
+                    _ => return,
+                }
+            }
+        }
     }
 
     /// Check for tabs after the sequence indicator `-`.
@@ -957,7 +1029,15 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
     ) -> Option<Node<'input>> {
         self.skip_ws();
 
-        let (tok, span) = self.peek()?;
+        // If at EOF and we have properties (anchor/tag), return a null node with those properties.
+        // This handles cases like `!` alone where the tag applies to an implicit null (UKK6-02).
+        let Some((tok, span)) = self.peek() else {
+            return if props.is_empty() {
+                None
+            } else {
+                Some(self.apply_properties_and_register(props, Node::null(self.current_span())))
+            };
+        };
 
         match tok {
             // Flow mapping

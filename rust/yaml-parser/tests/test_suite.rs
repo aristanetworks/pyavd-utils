@@ -256,22 +256,22 @@ struct TestCase {
     expects_error: bool,
 }
 
-/// Load a test case from a directory.
-fn load_test_case(dir: &Path) -> Option<TestCase> {
-    let id = dir.file_name()?.to_str()?.to_owned();
+/// Load test case(s) from a directory.
+/// Returns a vector because some test directories contain numbered subtests.
+fn load_test_cases(dir: &Path) -> Vec<TestCase> {
+    let Some(id) = dir.file_name().and_then(|name| name.to_str()) else {
+        return Vec::new();
+    };
 
     // Skip special directories
     if id == "name" || id == "tags" || id.starts_with('.') {
-        return None;
+        return Vec::new();
     }
 
-    // Check if this is a numbered sub-test directory (e.g., "00", "01")
-    // Skip those for now - we'll handle them separately
-    if id.len() == 2 && id.chars().all(|ch| ch.is_ascii_digit()) {
-        return None;
-    }
-    if id.len() == 3 && id.chars().all(|ch| ch.is_ascii_digit()) {
-        return None;
+    // Skip numbered sub-test directories when accessed directly
+    // (they'll be loaded via their parent)
+    if is_numbered_subtest(id) {
+        return Vec::new();
     }
 
     let name_file = dir.join("===");
@@ -279,22 +279,104 @@ fn load_test_case(dir: &Path) -> Option<TestCase> {
     let event_file = dir.join("test.event");
     let error_file = dir.join("error");
 
-    // Must have in.yaml and test.event
-    if !input_file.exists() || !event_file.exists() {
-        // Check for sub-directories (numbered tests)
-        return None;
+    // Check if this directory has direct test files
+    if input_file.exists() && event_file.exists() {
+        // Single test case in this directory
+        if let Some(test) =
+            load_single_test_case(dir, id, &name_file, &input_file, &event_file, &error_file)
+        {
+            return vec![test];
+        }
+        return Vec::new();
     }
 
-    let name = fs::read_to_string(&name_file)
-        .map_or_else(|_| id.clone(), |content| content.trim().to_owned());
+    // Check for numbered subdirectories (subtests)
+    load_subtests(dir, id)
+}
 
-    let input = fs::read_to_string(&input_file).ok()?;
-    let event_content = fs::read_to_string(&event_file).ok()?;
+/// Check if a directory name is a numbered subtest (e.g., "00", "01", "000", "001")
+fn is_numbered_subtest(name: &str) -> bool {
+    (name.len() == 2 || name.len() == 3) && name.chars().all(|ch| ch.is_ascii_digit())
+}
+
+/// Load numbered subtests from a parent directory.
+fn load_subtests(parent_dir: &Path, parent_id: &str) -> Vec<TestCase> {
+    let mut tests = Vec::new();
+
+    let Ok(entries) = fs::read_dir(parent_dir) else {
+        return tests;
+    };
+
+    let mut subtest_dirs: Vec<_> = entries
+        .filter_map(Result::ok)
+        .filter(|entry| entry.path().is_dir())
+        .filter(|entry| entry.file_name().to_str().is_some_and(is_numbered_subtest))
+        .collect();
+
+    // Sort for deterministic order
+    subtest_dirs.sort_by_key(std::fs::DirEntry::path);
+
+    // Get parent name from === file (shared across subtests)
+    let parent_name_file = parent_dir.join("===");
+    let parent_name = fs::read_to_string(&parent_name_file).map_or_else(
+        |_| parent_id.to_owned(),
+        |content| content.trim().to_owned(),
+    );
+
+    for entry in subtest_dirs {
+        let subtest_path = entry.path();
+        let subtest_num = entry.file_name().to_string_lossy().to_string();
+
+        let input_file = subtest_path.join("in.yaml");
+        let event_file = subtest_path.join("test.event");
+        let error_file = subtest_path.join("error");
+        let name_file = subtest_path.join("===");
+
+        if input_file.exists() && event_file.exists() {
+            // Subtest-specific name or inherit from parent
+            let test_name = fs::read_to_string(&name_file).map_or_else(
+                |_| format!("{parent_name} (subtest {subtest_num})"),
+                |content| content.trim().to_owned(),
+            );
+
+            let test_id = format!("{parent_id}-{subtest_num}");
+
+            if let Some(mut test_case) = load_single_test_case(
+                &subtest_path,
+                &test_id,
+                &name_file,
+                &input_file,
+                &event_file,
+                &error_file,
+            ) {
+                test_case.name = test_name;
+                tests.push(test_case);
+            }
+        }
+    }
+
+    tests
+}
+
+/// Load a single test case from its files.
+fn load_single_test_case(
+    _dir: &Path,
+    id: &str,
+    name_file: &Path,
+    input_file: &Path,
+    event_file: &Path,
+    error_file: &Path,
+) -> Option<TestCase> {
+    let name = fs::read_to_string(name_file)
+        .map_or_else(|_| id.to_owned(), |content| content.trim().to_owned());
+
+    let input = fs::read_to_string(input_file).ok()?;
+    let event_content = fs::read_to_string(event_file).ok()?;
     let expected_events = parse_event_file(&event_content);
     let expects_error = error_file.exists();
 
     Some(TestCase {
-        id,
+        id: id.to_owned(),
         name,
         input,
         expected_events,
@@ -318,31 +400,32 @@ fn run_test_suite(test_dir: &Path) -> (usize, usize, Vec<String>) {
     // Sort for deterministic order
     entries.sort_by_key(std::fs::DirEntry::path);
 
-    let total = entries.len();
-
-    for (i, entry) in entries.iter().enumerate() {
+    // Collect all test cases (including subtests)
+    let mut all_tests: Vec<TestCase> = Vec::new();
+    for entry in &entries {
         let path = entry.path();
-        if !path.is_dir() {
-            continue;
+        if path.is_dir() {
+            all_tests.extend(load_test_cases(&path));
         }
+    }
 
-        if let Some(test_case) = load_test_case(&path) {
-            eprintln!(
-                "[{}/{}] Running test: {} - {}",
-                i + 1,
-                total,
-                test_case.id,
-                test_case.name
-            );
-            let result = run_single_test(&test_case);
-            if let Err(err) = result {
-                failed += 1;
-                eprintln!("  -> FAIL: {err}");
-                failures.push(format!("{}: {} - {err}", test_case.id, test_case.name));
-            } else {
-                passed += 1;
-                eprintln!("  -> PASS");
-            }
+    let total = all_tests.len();
+
+    for (i, test_case) in all_tests.iter().enumerate() {
+        eprintln!(
+            "[{}/{}] Running test: {} - {}",
+            i + 1,
+            total,
+            test_case.id,
+            test_case.name
+        );
+        let result = run_single_test(test_case);
+        if let Err(err) = result {
+            failed += 1;
+            eprintln!("  -> FAIL: {err}");
+            failures.push(format!("{}: {} - {err}", test_case.id, test_case.name));
+        } else {
+            passed += 1;
         }
     }
 

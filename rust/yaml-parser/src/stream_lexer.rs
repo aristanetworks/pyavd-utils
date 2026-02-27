@@ -185,31 +185,67 @@ pub fn parse_stream(input: &str) -> (Vec<RawDocument<'_>>, Vec<ParseError>) {
             let directive_span = Span::new(directive_start..line_end);
 
             let directive = if let Some(stripped) = line.strip_prefix("%YAML") {
-                // Check for duplicate %YAML directive
-                if has_yaml_directive {
-                    errors.push(ParseError::new(
-                        ErrorKind::DuplicateDirective,
-                        directive_span,
-                    ));
-                }
-                has_yaml_directive = true;
+                // %YAML must be followed by whitespace, not more characters
+                // e.g., %YAMLL is a reserved directive, not an invalid YAML directive
+                let first_char = stripped.chars().next();
+                if matches!(first_char, Some(' ' | '\t') | None) {
+                    // Valid %YAML directive prefix
+                    // Check for duplicate %YAML directive
+                    if has_yaml_directive {
+                        errors.push(ParseError::new(
+                            ErrorKind::DuplicateDirective,
+                            directive_span,
+                        ));
+                    }
+                    has_yaml_directive = true;
 
-                // Validate %YAML directive format
-                let after_yaml = stripped.trim();
-                let version_and_rest = after_yaml.split('#').next().unwrap().trim();
-                let parts: Vec<&str> = version_and_rest.split_whitespace().collect();
-                let is_valid_version = parts.len() == 1
-                    && parts
-                        .first()
-                        .unwrap()
-                        .chars()
-                        .all(|ch| ch.is_ascii_digit() || ch == '.');
-                if !is_valid_version {
-                    errors.push(ParseError::new(ErrorKind::InvalidDirective, directive_span));
+                    // Validate %YAML directive format
+                    // A comment (#) must be preceded by whitespace per YAML spec
+                    let after_yaml = stripped.trim();
+
+                    // Check if there's a # without preceding whitespace
+                    // Valid: "1.2 # comment" or "1.2" or "1.2\t#comment"
+                    // Invalid: "1.1#..." (no space before #)
+                    let chars_vec: Vec<char> = after_yaml.chars().collect();
+                    #[allow(
+                        clippy::indexing_slicing,
+                        reason = "windows(2) guarantees exactly 2 elements"
+                    )]
+                    let has_valid_comment_separator = chars_vec
+                        .windows(2)
+                        .any(|w| (w[0] == ' ' || w[0] == '\t') && w[1] == '#');
+                    let has_invalid_comment =
+                        after_yaml.contains('#') && !has_valid_comment_separator;
+
+                    // Extract version (everything before # or end of string)
+                    let version_part = if let Some(hash_pos) = after_yaml.find('#') {
+                        &after_yaml[..hash_pos]
+                    } else {
+                        after_yaml
+                    };
+                    let version = version_part.trim();
+
+                    let is_valid_version = !version.is_empty()
+                        && !version.contains(' ')
+                        && !version.contains('\t')
+                        && version.chars().all(|ch| ch.is_ascii_digit() || ch == '.');
+
+                    if !is_valid_version || has_invalid_comment {
+                        errors.push(ParseError::new(ErrorKind::InvalidDirective, directive_span));
+                    }
+                    Some(Directive::Yaml(version.to_owned()))
+                } else {
+                    // Not a valid %YAML directive - treat as reserved
+                    Some(Directive::Reserved(line[1..].trim().to_owned()))
                 }
-                Some(Directive::Yaml(version_and_rest.to_owned()))
             } else if let Some(stripped) = line.strip_prefix("%TAG") {
-                Some(Directive::Tag(stripped.trim().to_owned()))
+                // %TAG must also be followed by whitespace
+                let first_char = stripped.chars().next();
+                if matches!(first_char, Some(' ' | '\t') | None) {
+                    Some(Directive::Tag(stripped.trim().to_owned()))
+                } else {
+                    Some(Directive::Reserved(line[1..].trim().to_owned()))
+                }
             } else {
                 Some(Directive::Reserved(line[1..].trim().to_owned()))
             };
