@@ -77,6 +77,7 @@ pub fn parse_stream(input: &str) -> (Vec<RawDocument<'_>>, Vec<ParseError>) {
     let mut content_end: usize = 0; // End of content
     let mut in_directive_prologue = true; // At start, we can have directives
     let mut has_yaml_directive = false; // Track if we've seen a %YAML directive
+    let mut flow_depth: usize = 0; // Track flow collection nesting to avoid splitting inside flow
 
     let mut pos: usize = 0;
     let chars: Vec<char> = input.chars().collect();
@@ -85,8 +86,8 @@ pub fn parse_stream(input: &str) -> (Vec<RawDocument<'_>>, Vec<ParseError>) {
         // Check for document markers or directives at line start
         let remaining = &input[pos..];
 
-        // Check for `---` document start marker
-        if remaining.starts_with("---") {
+        // Check for `---` document start marker (only outside flow collections)
+        if flow_depth == 0 && remaining.starts_with("---") {
             let marker_end = pos + 3;
             let next_char = chars.get(marker_end);
             if next_char.is_none() || matches!(next_char, Some(' ' | '\t' | '\n' | '\r')) {
@@ -128,8 +129,8 @@ pub fn parse_stream(input: &str) -> (Vec<RawDocument<'_>>, Vec<ParseError>) {
             }
         }
 
-        // Check for `...` document end marker
-        if remaining.starts_with("...") {
+        // Check for `...` document end marker (only outside flow collections)
+        if flow_depth == 0 && remaining.starts_with("...") {
             let marker_end = pos + 3;
             let next_char = chars.get(marker_end);
             if next_char.is_none() || matches!(next_char, Some(' ' | '\t' | '\n' | '\r')) {
@@ -320,6 +321,21 @@ pub fn parse_stream(input: &str) -> (Vec<RawDocument<'_>>, Vec<ParseError>) {
         let line_end = find_eol(input, pos);
         if content_start.is_none() {
             content_start = Some(pos);
+        }
+
+        // Track flow depth by scanning for flow indicators in this line
+        // This is needed to avoid treating --- or ... inside flow collections as document markers
+        for i in pos..line_end {
+            if let Some(&byte) = input.as_bytes().get(i) {
+                match byte {
+                    b'[' | b'{' => flow_depth += 1,
+                    b']' | b'}' => flow_depth = flow_depth.saturating_sub(1),
+                    // Note: We don't handle quoted strings here, which could contain
+                    // unmatched brackets. This is a simplified heuristic that works
+                    // for valid YAML and for detecting flow context in error cases.
+                    _ => {}
+                }
+            }
         }
 
         // Include the newline

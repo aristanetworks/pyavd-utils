@@ -334,7 +334,12 @@ impl<'input> ContextLexer<'input> {
                 self.advance(); // -
                 self.advance(); // -
                 self.advance(); // -
-                return Some((Token::DocStart, self.current_span(start)));
+                let span = self.current_span(start);
+                // Document markers are invalid in flow context
+                if self.mode() == LexMode::Flow {
+                    self.add_error(ErrorKind::DocumentMarkerInFlow, span);
+                }
+                return Some((Token::DocStart, span));
             }
         }
 
@@ -349,7 +354,12 @@ impl<'input> ContextLexer<'input> {
                 self.advance(); // .
                 self.advance(); // .
                 self.advance(); // .
-                return Some((Token::DocEnd, self.current_span(start)));
+                let span = self.current_span(start);
+                // Document markers are invalid in flow context
+                if self.mode() == LexMode::Flow {
+                    self.add_error(ErrorKind::DocumentMarkerInFlow, span);
+                }
+                return Some((Token::DocEnd, span));
             }
         }
 
@@ -407,7 +417,7 @@ impl<'input> ContextLexer<'input> {
             // `#` without preceding whitespace is invalid - report error
             self.advance();
             let span = self.current_span(start);
-            self.add_error(ErrorKind::UnexpectedToken, span);
+            self.add_error(ErrorKind::InvalidComment, span);
             // Try to recover by consuming rest of line as if it were a comment
             while let Some(peek_ch) = self.peek() {
                 if Self::is_newline(peek_ch) {
@@ -1078,7 +1088,13 @@ impl<'input> ContextLexer<'input> {
                 if !is_safe {
                     // Cannot start plain scalar with this character - emit error and skip it
                     let span = self.current_span(start);
-                    self.add_error(ErrorKind::UnexpectedToken, span);
+                    // In flow mode, block indicators like `-` are invalid
+                    let error_kind = if self.mode() == LexMode::Flow {
+                        ErrorKind::BlockIndicatorInFlow
+                    } else {
+                        ErrorKind::UnexpectedToken
+                    };
+                    self.add_error(error_kind, span);
                     self.advance(); // Consume the invalid character to avoid infinite loop
                     return (Token::Plain(Cow::Borrowed("")), self.current_span(start));
                 }

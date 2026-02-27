@@ -124,6 +124,27 @@ pub enum ErrorKind {
 
     /// Tag handle used but not declared in document prolog
     UndefinedTagHandle,
+
+    /// Comment without preceding whitespace
+    /// e.g., `key: "value"#comment` instead of `key: "value" #comment`
+    InvalidComment,
+
+    /// Missing colon after mapping key
+    /// e.g., `key\n  value` instead of `key:\n  value`
+    MissingColon,
+
+    /// Block indicator used in flow context
+    /// e.g., `[-]` using `-` block indicator inside flow sequence
+    BlockIndicatorInFlow,
+
+    /// Document marker (`---` or `...`) in flow context
+    /// e.g., `[\n---\n]` using document marker inside flow sequence
+    DocumentMarkerInFlow,
+
+    /// Anchor or tag without a following value
+    /// e.g., `key: &anchor` on its own line, or `&x\n- item` where the anchor
+    /// cannot attach to the block sequence
+    OrphanedProperties,
 }
 
 impl ErrorKind {
@@ -179,6 +200,14 @@ impl ErrorKind {
             Self::UnexpectedColon => {
                 Some("Quote the value to include colons, or remove the extra colon")
             }
+            Self::InvalidComment => Some("Add a space before the # character to start a comment"),
+            Self::MissingColon => Some("Add a colon after the mapping key"),
+            Self::BlockIndicatorInFlow => Some(
+                "Block indicators (-, ?, :) cannot be used inside flow collections []/{}; use commas to separate elements",
+            ),
+            Self::DocumentMarkerInFlow => {
+                Some("Document markers (--- and ...) cannot appear inside flow collections")
+            }
             // No specific suggestion for these
             Self::UnexpectedEof
             | Self::UnexpectedToken
@@ -186,7 +215,8 @@ impl ErrorKind {
             | Self::InvalidAnchor
             | Self::InvalidTag
             | Self::DuplicateDirective
-            | Self::InvalidDirective => None,
+            | Self::InvalidDirective
+            | Self::OrphanedProperties => None,
         }
     }
 }
@@ -300,6 +330,19 @@ impl std::fmt::Display for ParseError {
             }
             ErrorKind::MultilineImplicitKey => write!(f, "implicit keys must be on a single line"),
             ErrorKind::UnexpectedColon => write!(f, "unexpected colon in value"),
+            ErrorKind::InvalidComment => {
+                write!(f, "comment must be preceded by whitespace")
+            }
+            ErrorKind::MissingColon => write!(f, "missing colon after mapping key"),
+            ErrorKind::BlockIndicatorInFlow => {
+                write!(f, "block indicator not allowed in flow context")
+            }
+            ErrorKind::DocumentMarkerInFlow => {
+                write!(f, "document marker not allowed in flow context")
+            }
+            ErrorKind::OrphanedProperties => {
+                write!(f, "anchor or tag without a following value")
+            }
         }
     }
 }
@@ -376,6 +419,10 @@ mod tests {
             ErrorKind::ContentOnSameLine,
             ErrorKind::MultilineImplicitKey,
             ErrorKind::UnexpectedColon,
+            ErrorKind::InvalidComment,
+            ErrorKind::MissingColon,
+            ErrorKind::BlockIndicatorInFlow,
+            ErrorKind::DocumentMarkerInFlow,
         ];
 
         for kind in with_suggestions {
