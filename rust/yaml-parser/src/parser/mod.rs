@@ -218,14 +218,12 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                     }
 
                     // After LineStart, check if next token is Whitespace containing tabs
-                    // This indicates tabs being used as indentation
+                    // This indicates tabs being used as indentation.
+                    // In flow context, tabs are allowed (no block structure to indent).
                     if self.flow_context_columns.is_empty() {
                         self.check_tabs_as_indentation();
-                    } else {
-                        // In flow context, tabs at start of line before content are also invalid
-                        // (tabs can never be used for indentation, even in flow)
-                        self.check_tabs_at_line_start_in_flow(indent);
                     }
+                    // Note: In flow context, tabs are allowed as whitespace (no block indentation rules)
                 }
                 Token::Indent(_) | Token::Dedent => {
                     // `Indent`/`Dedent` tokens are structural markers - skip them when skipping whitespace
@@ -372,85 +370,55 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
         }
     }
 
-    /// Check for tabs at the start of a line in flow context.
-    /// Tabs are never valid as indentation, even in flow. If a tab appears after
-    /// `LineStart(0)` and is followed by actual content (not just another newline),
-    /// it's an error.
-    pub fn check_tabs_at_line_start_in_flow(&mut self, line_indent: usize) {
-        // Only check if line started at column 0 (no space indentation)
-        if line_indent > 0 {
-            return;
-        }
-
-        // Check if current token is WhitespaceWithTabs
-        if let Some((Token::WhitespaceWithTabs, tab_span)) = self.peek() {
-            // Look ahead to see if there's actual content after the tab(s)
-            let mut look_ahead = self.pos + 1;
-            while let Some(rt) = self.tokens.get(look_ahead) {
-                match &rt.token {
-                    Token::Whitespace | Token::WhitespaceWithTabs => look_ahead += 1,
-                    // Empty line (another LineStart) - tabs are allowed
-                    Token::LineStart(_) => return,
-                    // Content follows the tab - error
-                    _ => {
-                        self.error(ErrorKind::InvalidIndentation, tab_span);
-                        return;
-                    }
-                }
-            }
-        }
-    }
-
-    /// Check if the current token is whitespace containing tabs.
-    /// In block context, tabs after block indicators (`?`, `:`) are always invalid.
+    /// Check if the current token is whitespace containing tabs after `-` indicator.
     /// Tabs after `-` are only invalid when followed by block structure indicators.
-    /// Call this after advancing past a block indicator before calling `skip_ws()`.
+    /// This is because `-\t-` would make the second `-` look like indentation.
     ///
-    /// The `allow_before_scalars` parameter should be true for `-` and false for `?`/`:`.
-    pub fn check_tabs_after_block_indicator_conditional(&mut self, allow_before_scalars: bool) {
-        // Tabs are only invalid in BLOCK context
+    /// Note: Tabs after `:` and `?` are ALLOWED per YAML 1.2 spec, as they are
+    /// separation spaces (s-separate-in-line), not indentation (s-indent).
+    pub fn check_tabs_after_block_seq_indicator(&mut self) {
+        // Tabs are only problematic in BLOCK context
         if self.flow_depth > 0 {
             return;
         }
 
         // Check if current token is WhitespaceWithTabs
         if let Some((Token::WhitespaceWithTabs, tab_span)) = self.peek() {
-            if !allow_before_scalars {
-                // For ? and : indicators, tabs are always invalid
-                self.error(ErrorKind::InvalidIndentation, tab_span);
-                return;
-            }
-
-            // For - indicator: tabs are invalid before block structure indicators,
+            // Tabs are invalid before block structure indicators (could look like indentation),
             // but allowed before scalar content
             let mut lookahead = self.pos + 1;
             while let Some(rt) = self.tokens.get(lookahead) {
                 match &rt.token {
                     Token::Whitespace | Token::WhitespaceWithTabs => lookahead += 1,
-                    // Block structure indicators after tab - error
+                    // Block structure indicators after tab - error (ambiguous indentation)
                     Token::BlockSeqIndicator | Token::MappingKey | Token::Colon => {
                         self.error(ErrorKind::InvalidIndentation, tab_span);
                         return;
                     }
-                    // Scalar content after tab - allowed
+                    // Scalar content after tab - allowed (separation space)
                     _ => return,
                 }
             }
         }
     }
 
-    /// Check for tabs after block indicators.
-    /// For `-` indicator: tabs are allowed before scalar content.
-    /// For `?` and `:` indicators: tabs are always invalid.
+    /// Check for tabs after block indicators `:` and `?`.
+    /// Per YAML 1.2 spec, tabs ARE allowed here as separation spaces (s-separate-in-line).
+    /// This function is a no-op kept for API consistency.
+    #[inline]
+    #[allow(
+        clippy::unused_self,
+        reason = "API consistency with check_tabs_after_seq_indicator"
+    )]
     pub fn check_tabs_after_block_indicator(&mut self) {
-        // This is the strict version for ? and : indicators
-        self.check_tabs_after_block_indicator_conditional(false);
+        // Tabs after : and ? are allowed per YAML 1.2 spec (they are separation spaces)
+        // Only indentation (at line start) forbids tabs
     }
 
     /// Check for tabs after the sequence indicator `-`.
     /// Tabs are allowed before scalar content, but invalid before block structure.
     pub fn check_tabs_after_seq_indicator(&mut self) {
-        self.check_tabs_after_block_indicator_conditional(true);
+        self.check_tabs_after_block_seq_indicator();
     }
 
     /// Check for invalid content immediately after a flow collection in block context.
