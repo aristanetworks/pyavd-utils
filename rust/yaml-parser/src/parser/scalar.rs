@@ -683,9 +683,9 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                 // report an error for the orphaned properties (e.g., &anchor at column 0
                 // followed by a block sequence indicator on the next line)
                 if let Some((_, anchor_span)) = key_props.anchor {
-                    self.error(ErrorKind::UnexpectedToken, anchor_span);
+                    self.error(ErrorKind::OrphanedProperties, anchor_span);
                 } else if let Some((_, tag_span)) = key_props.tag {
-                    self.error(ErrorKind::UnexpectedToken, tag_span);
+                    self.error(ErrorKind::OrphanedProperties, tag_span);
                 }
                 break;
             };
@@ -696,7 +696,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                 self.check_multiline_implicit_key(key.span.start, key.span.end);
                 self.advance();
             } else {
-                self.error(ErrorKind::UnexpectedToken, key.span);
+                self.error(ErrorKind::MissingColon, key.span);
                 break;
             }
 
