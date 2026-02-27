@@ -199,19 +199,13 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                                 // Check actual column of content token
                                 let content_col = self.column_of_position(rt.span.start);
                                 if is_content && content_col == 0 {
-                                    self.errors.push(
-                                        crate::error::ParseError::new(
-                                            ErrorKind::InvalidIndentation,
-                                            span,
-                                        )
-                                        .with_expected(vec![
-                                            "indentation > 0 for flow content continuation"
-                                                .to_owned(),
-                                        ])
-                                        .with_found(
-                                            "content at column 0 inside flow collection".to_owned(),
-                                        ),
-                                    );
+                                    self.errors.push(crate::error::ParseError::new(
+                                        ErrorKind::InvalidIndentationContext {
+                                            expected: 1,
+                                            found: 0,
+                                        },
+                                        span,
+                                    ));
                                 }
                             }
                         }
@@ -739,14 +733,6 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
         self.errors.push(ParseError::new(kind, span));
     }
 
-    /// Add an error with expected tokens for better diagnostics.
-    pub fn error_expected(&mut self, kind: ErrorKind, span: Span, expected: &[&str]) {
-        self.errors.push(
-            ParseError::new(kind, span)
-                .with_expected(expected.iter().map(|exp| (*exp).to_owned()).collect()),
-        );
-    }
-
     /// Populate tag handles from directives provided by the stream lexer.
     /// This is the primary method for setting up tag handle validation.
     pub fn populate_tag_handles_from_directives(
@@ -1175,11 +1161,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
             }
             // Invalid or unexpected
             _ => {
-                self.error_expected(
-                    ErrorKind::UnexpectedToken,
-                    span,
-                    &["scalar", "sequence", "mapping", "&anchor", "!tag", "*alias"],
-                );
+                self.error(ErrorKind::InvalidValue, span);
                 self.advance();
                 Some(self.apply_properties_and_register(props, Node::invalid(span)))
             }

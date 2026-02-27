@@ -57,17 +57,13 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
         loop {
             let Some((tok, span)) = self.peek() else {
                 // Unexpected EOF - unterminated string
-                self.errors.push(
-                    crate::error::ParseError::new(
-                        ErrorKind::UnterminatedString,
-                        Span::new(
-                            start_span.start
-                                ..self.tokens.last().map_or(start_span.end, |rt| rt.span.end),
-                        ),
-                    )
-                    .with_expected(vec!["closing quote".to_owned()])
-                    .with_found("end of input".to_owned()),
-                );
+                self.errors.push(crate::error::ParseError::new(
+                    ErrorKind::UnterminatedString,
+                    Span::new(
+                        start_span.start
+                            ..self.tokens.last().map_or(start_span.end, |rt| rt.span.end),
+                    ),
+                ));
                 break;
             };
 
@@ -100,35 +96,33 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                     let is_content_line = matches!(self.peek(), Some((Token::StringContent(_), _)));
 
                     if is_content_line && indent < min_indent {
-                        self.errors.push(
-                            crate::error::ParseError::new(ErrorKind::InvalidIndentation, span)
-                                .with_expected(vec![format!(
-                                    "indentation of at least {min_indent} for continuation",
-                                )])
-                                .with_found(format!("indentation of {indent}")),
-                        );
+                        self.errors.push(crate::error::ParseError::new(
+                            ErrorKind::InvalidIndentationContext {
+                                expected: min_indent,
+                                found: indent,
+                            },
+                            span,
+                        ));
                     }
                 }
                 Token::StringEnd(end_style) => {
                     if *end_style != style {
                         // Mismatched quotes (shouldn't happen with proper lexing)
-                        self.errors.push(
-                            crate::error::ParseError::new(ErrorKind::UnexpectedToken, span)
-                                .with_expected(vec![format!("closing {style:?} quote")])
-                                .with_found(format!("{end_style:?} quote")),
-                        );
+                        self.errors.push(crate::error::ParseError::new(
+                            ErrorKind::MismatchedQuotes,
+                            span,
+                        ));
                     }
                     end_span = span;
                     self.advance();
                     break;
                 }
                 _ => {
-                    // Unexpected token inside string
-                    self.errors.push(
-                        crate::error::ParseError::new(ErrorKind::UnexpectedToken, span)
-                            .with_expected(vec!["string content or closing quote".to_owned()])
-                            .with_found(format!("{tok:?}")),
-                    );
+                    // Unexpected token inside string - treat as unterminated
+                    self.errors.push(crate::error::ParseError::new(
+                        ErrorKind::UnterminatedString,
+                        span,
+                    ));
                     break;
                 }
             }

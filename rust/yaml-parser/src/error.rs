@@ -5,6 +5,7 @@
 //! Error types for YAML parsing.
 
 use crate::span::Span;
+use derive_more::Display;
 
 /// An error encountered during YAML parsing.
 ///
@@ -33,117 +34,148 @@ pub struct ParseError {
     /// For single-document parsing this is 0. For multi-document streams,
     /// this is the byte offset where the document starts in the original input.
     pub span_offset: usize,
-    /// Expected tokens/patterns (for diagnostic messages)
-    pub expected: Vec<String>,
-    /// What was actually found (for diagnostic messages)
-    pub found: Option<String>,
 }
 
 /// The kind of parse error.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Display)]
 pub enum ErrorKind {
     /// Unexpected end of input
+    #[display("unexpected end of input")]
     UnexpectedEof,
 
-    /// Unexpected character or token (generic fallback)
-    UnexpectedToken,
+    /// Invalid character that cannot be parsed
+    #[display("invalid character")]
+    InvalidCharacter,
+
+    /// Invalid value where a scalar, sequence, or mapping was expected
+    #[display("invalid value")]
+    InvalidValue,
+
+    /// Mismatched quote styles (e.g., opening with ' but closing with ")
+    #[display("mismatched quote styles")]
+    MismatchedQuotes,
 
     /// Trailing content after a valid value
     /// e.g., `key: "value" extra content`
+    #[display("unexpected content after value")]
     TrailingContent,
 
     /// Missing comma between flow collection elements
     /// e.g., `[a b]` instead of `[a, b]`
+    #[display("missing separator (comma) in flow collection")]
     MissingSeparator,
 
     /// Extra closing bracket/brace in flow collection
     /// e.g., `[a, b]]`
+    #[display("unmatched closing bracket")]
     UnmatchedBracket,
 
     /// Content on same line as previous mapping entry
     /// e.g., `{y: z}invalid` or `- item- invalid`
+    #[display("invalid content on same line as previous entry")]
     ContentOnSameLine,
 
     /// Invalid multiline implicit key (implicit keys must be single line)
+    #[display("implicit keys must be on a single line")]
     MultilineImplicitKey,
 
     /// Invalid colon placement (unexpected colon in value context)
     /// e.g., `a: b: c` in plain scalar context
+    #[display("unexpected colon in value")]
     UnexpectedColon,
 
     /// Invalid indentation.
+    #[display("invalid indentation")]
     InvalidIndentation,
 
     /// Invalid indentation with context.
+    #[display("invalid indentation: expected {expected} spaces, found {found}")]
     InvalidIndentationContext { expected: usize, found: usize },
 
-    /// Unterminated string literal (includes quote style for better messaging)
+    /// Unterminated string literal
+    #[display("unterminated string literal")]
     UnterminatedString,
 
-    /// Unterminated string literal with quote style
-    UnterminatedQuotedString { double_quoted: bool },
-
     /// Invalid escape sequence in a string (contains the invalid character)
+    #[display("invalid escape sequence '\\{_0}'")]
     InvalidEscape(char),
 
     /// Invalid number format
+    #[display("invalid number format")]
     InvalidNumber,
 
     /// Duplicate key in a mapping
+    #[display("duplicate key in mapping")]
     DuplicateKey,
 
     /// Invalid anchor name
+    #[display("invalid anchor name")]
     InvalidAnchor,
 
     /// Duplicate anchor on same node (e.g., &a &b value)
+    #[display("duplicate anchor on same node")]
     DuplicateAnchor,
 
     /// Undefined alias reference
+    #[display("undefined alias")]
     UndefinedAlias,
 
     /// Invalid tag
+    #[display("invalid tag")]
     InvalidTag,
 
     /// Duplicate tag on same node (e.g., !a !b value)
+    #[display("duplicate tag on same node")]
     DuplicateTag,
 
     /// Properties (anchor/tag) cannot be applied to alias
+    #[display("anchor/tag cannot be applied to alias")]
     PropertiesOnAlias,
 
     /// Invalid block scalar header
+    #[display("invalid block scalar header")]
     InvalidBlockScalar,
 
     /// Tab character in indentation (not allowed in YAML)
+    #[display("tab character in indentation (use spaces)")]
     TabInIndentation,
 
     /// Duplicate directive (e.g., two %YAML directives)
+    #[display("duplicate directive")]
     DuplicateDirective,
 
     /// Invalid directive format
+    #[display("invalid directive format")]
     InvalidDirective,
 
     /// Tag handle used but not declared in document prolog
+    #[display("tag handle not declared in document")]
     UndefinedTagHandle,
 
     /// Comment without preceding whitespace
     /// e.g., `key: "value"#comment` instead of `key: "value" #comment`
+    #[display("comment must be preceded by whitespace")]
     InvalidComment,
 
     /// Missing colon after mapping key
     /// e.g., `key\n  value` instead of `key:\n  value`
+    #[display("missing colon after mapping key")]
     MissingColon,
 
     /// Block indicator used in flow context
     /// e.g., `[-]` using `-` block indicator inside flow sequence
+    #[display("block indicator not allowed in flow context")]
     BlockIndicatorInFlow,
 
     /// Document marker (`---` or `...`) in flow context
     /// e.g., `[\n---\n]` using document marker inside flow sequence
+    #[display("document marker not allowed in flow context")]
     DocumentMarkerInFlow,
 
     /// Anchor or tag without a following value
     /// e.g., `key: &anchor` on its own line, or `&x\n- item` where the anchor
     /// cannot attach to the block sequence
+    #[display("anchor or tag without a following value")]
     OrphanedProperties,
 }
 
@@ -159,58 +191,58 @@ impl ErrorKind {
                 Some("YAML uses spaces for indentation; ensure consistent indentation levels")
             }
             Self::TabInIndentation => {
-                Some("Replace tabs with spaces; YAML requires space-based indentation")
+                Some("replace tabs with spaces; YAML requires space-based indentation")
             }
-            Self::UnterminatedString | Self::UnterminatedQuotedString { .. } => {
-                Some("Add the matching closing quote character")
-            }
+            Self::UnterminatedString => Some("add the matching closing quote character"),
             Self::InvalidEscape(_) => {
-                Some("Valid escape sequences: \\n, \\r, \\t, \\\\, \\\", \\', \\0, \\x##, \\u####")
+                Some("valid escape sequences: \\n, \\r, \\t, \\\\, \\\", \\', \\0, \\x##, \\u####")
             }
-            Self::DuplicateKey => Some("Remove or rename one of the duplicate keys"),
+            Self::DuplicateKey => Some("remove or rename one of the duplicate keys"),
             Self::UndefinedAlias => {
-                Some("Define the anchor with &name before referencing it with *name")
+                Some("define the anchor with &name before referencing it with *name")
             }
             Self::DuplicateAnchor => {
-                Some("A node can only have one anchor; remove the extra &anchor")
+                Some("a node can only have one anchor; remove the extra &anchor")
             }
-            Self::DuplicateTag => Some("A node can only have one tag; remove the extra !tag"),
+            Self::DuplicateTag => Some("a node can only have one tag; remove the extra !tag"),
             Self::PropertiesOnAlias => Some(
-                "Aliases (*name) cannot have anchors or tags; apply them to the original value",
+                "aliases (*name) cannot have anchors or tags; apply them to the original value",
             ),
             Self::UndefinedTagHandle => Some(
-                "Add a %TAG directive to define the handle, e.g., %TAG !e! tag:example.com,2000:",
+                "add a %TAG directive to define the handle, e.g., %TAG !e! tag:example.com,2000:",
             ),
             Self::InvalidBlockScalar => Some(
-                "Block scalar header format: | or > followed by optional [1-9] indent and [-+] chomping",
+                "use | or > followed by optional indent [1-9] and chomping [+-], e.g., |2- or >+",
             ),
             Self::TrailingContent => {
-                Some("Remove extra content after the value, or quote the entire value")
+                Some("remove extra content after the value, or quote the entire value")
             }
-            Self::MissingSeparator => Some("Add a comma between flow collection elements"),
+            Self::MissingSeparator => Some("add a comma between flow collection elements"),
             Self::UnmatchedBracket => {
-                Some("Remove the extra closing bracket/brace, or add the matching opening")
+                Some("remove the extra closing bracket/brace, or add the matching opening")
             }
             Self::ContentOnSameLine => {
-                Some("Start new mapping entries or sequence items on their own line")
+                Some("start new mapping entries or sequence items on their own line")
             }
             Self::MultilineImplicitKey => Some(
-                "Use explicit key syntax (? key) for multiline keys, or keep the key on one line",
+                "use explicit key syntax (? key) for multiline keys, or keep the key on one line",
             ),
             Self::UnexpectedColon => {
-                Some("Quote the value to include colons, or remove the extra colon")
+                Some("quote the value to include colons, or remove the extra colon")
             }
-            Self::InvalidComment => Some("Add a space before the # character to start a comment"),
-            Self::MissingColon => Some("Add a colon after the mapping key"),
+            Self::InvalidComment => Some("add a space before the # character to start a comment"),
+            Self::MissingColon => Some("add a colon after the mapping key"),
             Self::BlockIndicatorInFlow => Some(
-                "Block indicators (-, ?, :) cannot be used inside flow collections []/{}; use commas to separate elements",
+                "block indicators (-, ?, :) cannot be used inside flow collections []/{}; use commas to separate elements",
             ),
             Self::DocumentMarkerInFlow => {
-                Some("Document markers (--- and ...) cannot appear inside flow collections")
+                Some("document markers (--- and ...) cannot appear inside flow collections")
             }
             // No specific suggestion for these
             Self::UnexpectedEof
-            | Self::UnexpectedToken
+            | Self::InvalidCharacter
+            | Self::InvalidValue
+            | Self::MismatchedQuotes
             | Self::InvalidNumber
             | Self::InvalidAnchor
             | Self::InvalidTag
@@ -232,8 +264,6 @@ impl ParseError {
             kind,
             span,
             span_offset: 0,
-            expected: Vec::new(),
-            found: None,
         }
     }
 
@@ -241,20 +271,6 @@ impl ParseError {
     #[must_use]
     pub const fn with_offset(mut self, offset: usize) -> Self {
         self.span_offset = offset;
-        self
-    }
-
-    /// Add expected tokens to the error.
-    #[must_use]
-    pub fn with_expected(mut self, expected: Vec<String>) -> Self {
-        self.expected = expected;
-        self
-    }
-
-    /// Add the found token to the error.
-    #[must_use]
-    pub fn with_found(mut self, found: String) -> Self {
-        self.found = Some(found);
         self
     }
 
@@ -279,71 +295,7 @@ impl ParseError {
 
 impl std::fmt::Display for ParseError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match &self.kind {
-            ErrorKind::UnexpectedEof => write!(f, "unexpected end of input"),
-            ErrorKind::UnexpectedToken => {
-                if let Some(found) = &self.found {
-                    write!(f, "unexpected token '{found}'")?;
-                } else {
-                    write!(f, "unexpected token")?;
-                }
-                if !self.expected.is_empty() {
-                    write!(f, ", expected one of: {}", self.expected.join(", "))?;
-                }
-                Ok(())
-            }
-            ErrorKind::InvalidIndentation => write!(f, "invalid indentation"),
-            ErrorKind::InvalidIndentationContext { expected, found } => {
-                write!(
-                    f,
-                    "invalid indentation: expected {expected} spaces, found {found}"
-                )
-            }
-            ErrorKind::UnterminatedString => write!(f, "unterminated string literal"),
-            ErrorKind::UnterminatedQuotedString { double_quoted } => {
-                let quote = if *double_quoted { '"' } else { '\'' };
-                write!(f, "unterminated string literal, missing closing {quote}")
-            }
-            ErrorKind::InvalidEscape(ch) => write!(f, "invalid escape sequence '\\{ch}'"),
-            ErrorKind::InvalidNumber => write!(f, "invalid number format"),
-            ErrorKind::DuplicateKey => write!(f, "duplicate key in mapping"),
-            ErrorKind::InvalidAnchor => write!(f, "invalid anchor name"),
-            ErrorKind::DuplicateAnchor => write!(f, "duplicate anchor on same node"),
-            ErrorKind::UndefinedAlias => write!(f, "undefined alias"),
-            ErrorKind::InvalidTag => write!(f, "invalid tag"),
-            ErrorKind::DuplicateTag => write!(f, "duplicate tag on same node"),
-            ErrorKind::PropertiesOnAlias => write!(f, "anchor/tag cannot be applied to alias"),
-            ErrorKind::InvalidBlockScalar => write!(f, "invalid block scalar header"),
-            ErrorKind::TabInIndentation => {
-                write!(f, "tab character in indentation (use spaces)")
-            }
-            ErrorKind::DuplicateDirective => write!(f, "duplicate directive"),
-            ErrorKind::InvalidDirective => write!(f, "invalid directive format"),
-            ErrorKind::UndefinedTagHandle => write!(f, "tag handle not declared in document"),
-            ErrorKind::TrailingContent => write!(f, "unexpected content after value"),
-            ErrorKind::MissingSeparator => {
-                write!(f, "missing separator (comma) in flow collection")
-            }
-            ErrorKind::UnmatchedBracket => write!(f, "unmatched closing bracket"),
-            ErrorKind::ContentOnSameLine => {
-                write!(f, "invalid content on same line as previous entry")
-            }
-            ErrorKind::MultilineImplicitKey => write!(f, "implicit keys must be on a single line"),
-            ErrorKind::UnexpectedColon => write!(f, "unexpected colon in value"),
-            ErrorKind::InvalidComment => {
-                write!(f, "comment must be preceded by whitespace")
-            }
-            ErrorKind::MissingColon => write!(f, "missing colon after mapping key"),
-            ErrorKind::BlockIndicatorInFlow => {
-                write!(f, "block indicator not allowed in flow context")
-            }
-            ErrorKind::DocumentMarkerInFlow => {
-                write!(f, "document marker not allowed in flow context")
-            }
-            ErrorKind::OrphanedProperties => {
-                write!(f, "anchor or tag without a following value")
-            }
-        }
+        write!(f, "{}", self.kind)
     }
 }
 
@@ -362,27 +314,13 @@ mod tests {
     #[test]
     fn test_error_display_with_context() {
         // Test error variants with contextual information
-        let test_cases = [
-            (
-                ErrorKind::InvalidIndentationContext {
-                    expected: 4,
-                    found: 2,
-                },
-                "invalid indentation: expected 4 spaces, found 2",
-            ),
-            (
-                ErrorKind::UnterminatedQuotedString {
-                    double_quoted: true,
-                },
-                "unterminated string literal, missing closing \"",
-            ),
-            (
-                ErrorKind::UnterminatedQuotedString {
-                    double_quoted: false,
-                },
-                "unterminated string literal, missing closing '",
-            ),
-        ];
+        let test_cases = [(
+            ErrorKind::InvalidIndentationContext {
+                expected: 4,
+                found: 2,
+            },
+            "invalid indentation: expected 4 spaces, found 2",
+        )];
 
         for (kind, expected_msg) in test_cases {
             let err = ParseError::new(kind, Span::new(0..10));
@@ -401,9 +339,6 @@ mod tests {
             },
             ErrorKind::TabInIndentation,
             ErrorKind::UnterminatedString,
-            ErrorKind::UnterminatedQuotedString {
-                double_quoted: true,
-            },
             ErrorKind::InvalidEscape('x'),
             ErrorKind::DuplicateKey,
             ErrorKind::UndefinedAlias,
@@ -435,7 +370,8 @@ mod tests {
         // These errors don't have specific suggestions
         let without_suggestions = [
             ErrorKind::UnexpectedEof,
-            ErrorKind::UnexpectedToken,
+            ErrorKind::InvalidCharacter,
+            ErrorKind::InvalidValue,
             ErrorKind::InvalidNumber,
             ErrorKind::InvalidAnchor,
             ErrorKind::InvalidTag,
@@ -461,7 +397,7 @@ mod tests {
     #[test]
     fn test_global_span() {
         // Without offset, global_span equals span
-        let err = ParseError::new(ErrorKind::UnexpectedToken, Span::new(10..20));
+        let err = ParseError::new(ErrorKind::InvalidValue, Span::new(10..20));
         let global = err.global_span();
         assert_eq!(global.start, 10);
         assert_eq!(global.end, 20);

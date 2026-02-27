@@ -9,6 +9,7 @@ keywords = ["yaml", "parser", "error-recovery", "span"]
 categories = ["parsing", "text-processing"]
 
 [dependencies]
+derive_more = { workspace = true, features = ["display"] }
 
 [dev-dependencies]
 

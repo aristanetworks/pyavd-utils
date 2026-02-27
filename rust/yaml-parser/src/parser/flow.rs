@@ -42,11 +42,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
     fn handle_flow_comma(&mut self, just_saw_comma: &mut bool) -> bool {
         if let Some((Token::Comma, comma_span)) = self.peek() {
             if *just_saw_comma {
-                self.error_expected(
-                    ErrorKind::MissingSeparator,
-                    comma_span,
-                    &["value", "key", "}"],
-                );
+                self.error(ErrorKind::MissingSeparator, comma_span);
             }
             self.advance();
             self.skip_ws_and_newlines();
@@ -65,7 +61,6 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
         &mut self,
         just_saw_comma: &mut bool,
         is_end_token: impl Fn(&Token) -> bool,
-        end_delimiter: &str,
     ) {
         if let Some((Token::Comma, _)) = self.peek() {
             self.advance();
@@ -75,11 +70,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
             if is_end_token(tok) {
                 // Will be handled at top of loop
             } else if !self.is_eof() {
-                self.error_expected(
-                    ErrorKind::MissingSeparator,
-                    self.current_span(),
-                    &[",", end_delimiter],
-                );
+                self.error(ErrorKind::MissingSeparator, self.current_span());
                 self.skip_to_flow_delimiter();
             }
         }
@@ -184,11 +175,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
             } else if matches!(self.peek(), Some((Token::Comma | Token::FlowMapEnd, _))) {
                 Node::null(self.current_span())
             } else {
-                self.error_expected(
-                    ErrorKind::MissingSeparator,
-                    self.current_span(),
-                    &[":", ",", "}"],
-                );
+                self.error(ErrorKind::MissingSeparator, self.current_span());
                 Node::null(self.current_span())
             };
 
@@ -197,11 +184,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
             self.skip_ws_and_newlines();
 
             // Check for comma or end
-            self.handle_flow_entry_end(
-                &mut just_saw_comma,
-                |tok| matches!(tok, Token::FlowMapEnd),
-                "}",
-            );
+            self.handle_flow_entry_end(&mut just_saw_comma, |tok| matches!(tok, Token::FlowMapEnd));
 
             // Ensure progress
             if self.pos == loop_start_pos && !self.is_eof() {
@@ -274,11 +257,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
             self.skip_ws_and_newlines();
 
             // Check for comma or end
-            self.handle_flow_entry_end(
-                &mut just_saw_comma,
-                |tok| matches!(tok, Token::FlowSeqEnd),
-                "]",
-            );
+            self.handle_flow_entry_end(&mut just_saw_comma, |tok| matches!(tok, Token::FlowSeqEnd));
 
             if self.pos == loop_start_pos && !self.is_eof() {
                 self.advance();

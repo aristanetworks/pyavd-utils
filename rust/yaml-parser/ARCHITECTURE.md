@@ -132,7 +132,7 @@ The parser uses a **three-layer architecture**:
 - **`ParseError`**: Contains `kind`, `span`, `span_offset`, `expected`, `found`
   - `global_span()`: Convert document-relative span to input-relative coordinates
   - `suggestion()`: Delegates to `ErrorKind::suggestion()`
-- **`ErrorKind`**: 28 error variants organized by category:
+- **`ErrorKind`**: 27 error variants organized by category:
 
   **Syntax Errors:**
   - `UnexpectedEof`, `UnexpectedToken` (generic fallback, currently unused)
@@ -153,7 +153,7 @@ The parser uses a **three-layer architecture**:
   - `TabInIndentation` - tabs not allowed for indentation
 
   **String Errors:**
-  - `UnterminatedString`, `UnterminatedQuotedString { double_quoted }`
+  - `UnterminatedString` - missing closing quote
   - `InvalidEscape(char)` - invalid escape sequence
 
   **Anchor/Alias/Tag Errors:**
@@ -952,7 +952,7 @@ This YAML parser achieves **100% YAML 1.2 compliance** (402/402 tests) through a
 
 - **Zero dependencies**: Self-contained crate with custom `Span` implementation
 - **Zero-copy parsing**: `Cow<'input, str>` throughout for minimal allocations
-- **Actionable errors**: 28 error kinds with specific suggestions (100% specific, no generic fallback errors)
+- **Actionable errors**: 27 error kinds with specific suggestions (100% specific, no generic fallback errors)
 - **~7,200 lines**: Readable, hand-written recursive descent parser
 
 The architecture prioritizes **correctness** and **error recovery** over performance, making it suitable for IDE integration and user-facing tools where helpful error messages are crucial.
