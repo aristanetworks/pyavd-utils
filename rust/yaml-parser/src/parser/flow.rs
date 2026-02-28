@@ -18,7 +18,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
     /// Returns the start position for span tracking.
     fn enter_flow_collection(&mut self) -> Option<usize> {
         let (_, start_span) = self.advance()?;
-        let start = start_span.start as usize;
+        let start = start_span.start_usize();
         let flow_start_column = self.column_of_position(start);
 
         self.flow_depth += 1;
@@ -93,7 +93,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
 
             // Check for end of mapping
             if let Some((Token::FlowMapEnd, end_span)) = self.peek() {
-                let end = end_span.end as usize;
+                let end = end_span.end_usize();
                 self.advance();
                 self.exit_flow_collection();
                 return Some(Node::new(Value::Mapping(pairs), Span::new(start..end)));
@@ -195,7 +195,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
         // Unterminated mapping
         self.error(ErrorKind::UnexpectedEof, self.current_span());
         self.exit_flow_collection();
-        let end = self.tokens.last().map_or(start, |rt| rt.span.end as usize);
+        let end = self.tokens.last().map_or(start, |rt| rt.span.end_usize());
         Some(Node::new(Value::Mapping(pairs), Span::new(start..end)))
     }
 
@@ -212,7 +212,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
             let loop_start_pos = self.pos;
 
             if let Some((Token::FlowSeqEnd, end_span)) = self.peek() {
-                let end = end_span.end as usize;
+                let end = end_span.end_usize();
                 self.advance();
                 self.exit_flow_collection();
                 return Some(Node::new(Value::Sequence(items), Span::new(start..end)));
@@ -239,8 +239,8 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                                 .unwrap_or_else(|| Node::null(self.current_span()))
                         };
 
-                    let map_start = item.span.start as usize;
-                    let map_end = value.span.end as usize;
+                    let map_start = item.span.start_usize();
+                    let map_end = value.span.end_usize();
                     let mapping_node = Node::new(
                         Value::Mapping(vec![(item, value)]),
                         Span::new(map_start..map_end),
@@ -266,7 +266,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
 
         self.error(ErrorKind::UnexpectedEof, self.current_span());
         self.exit_flow_collection();
-        let end = self.tokens.last().map_or(start, |rt| rt.span.end as usize);
+        let end = self.tokens.last().map_or(start, |rt| rt.span.end_usize());
         Some(Node::new(Value::Sequence(items), Span::new(start..end)))
     }
 
@@ -347,7 +347,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                 let value = Self::scalar_to_value(combined);
                 let node = Node::new(
                     value,
-                    Span::new(start_span.start as usize..end_span.end as usize),
+                    Span::new(start_span.start_usize()..end_span.end_usize()),
                 );
                 Some(self.apply_properties_and_register(props, node))
             }

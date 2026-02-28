@@ -48,7 +48,10 @@ pub use context_lexer::tokenize_document;
 pub use error::{ErrorKind, ParseError};
 pub use parser::{Stream, parse_single_document, parse_tokens};
 pub use rich_token::RichToken;
-pub use span::{Position, SourceMap, Span, Spanned};
+pub use span::{
+    BytePosition, IndentLevel, Position, SourceMap, Span, Spanned, indent_to_u16, pos_to_usize,
+    usize_to_pos,
+};
 pub use token::Token;
 pub use value::{Node, Properties, Value};
 
@@ -99,7 +102,7 @@ pub fn parse(input: &str) -> (Stream<'static>, Vec<ParseError>) {
         let (tokens, lexer_errors) = context_lexer::tokenize_document(raw_doc.content);
 
         // Set span_offset for converting local spans to global coordinates
-        let doc_offset = raw_doc.content_span.start as usize;
+        let doc_offset = raw_doc.content_span.start_usize();
         all_errors.extend(
             lexer_errors
                 .into_iter()

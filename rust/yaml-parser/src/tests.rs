@@ -350,11 +350,11 @@ mod error_recovery {
         // The error span should be within the input range
         for error in &errors {
             assert!(
-                (error.span.start as usize) < input.len(),
+                error.span.start_usize() < input.len(),
                 "Error span start should be valid"
             );
             assert!(
-                (error.span.end as usize) <= input.len(),
+                error.span.end_usize() <= input.len(),
                 "Error span end should be valid"
             );
         }

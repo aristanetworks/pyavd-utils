@@ -276,7 +276,7 @@ impl ParseError {
     #[must_use]
     pub fn global_span(&self) -> Span {
         Span::new(
-            self.span.start as usize + self.span_offset..self.span.end as usize + self.span_offset,
+            self.span.start_usize() + self.span_offset..self.span.end_usize() + self.span_offset,
         )
     }
 

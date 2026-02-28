@@ -13,6 +13,8 @@
 
 use std::borrow::Cow;
 
+use crate::span::IndentLevel;
+
 /// Quote style for quoted strings.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum QuoteStyle {
@@ -107,7 +109,7 @@ pub enum Token<'input> {
 
     // Whitespace and structure
     /// Start of a new line with indentation (number of spaces)
-    LineStart(usize),
+    LineStart(IndentLevel),
     /// Whitespace (spaces only, not at line start)
     Whitespace,
     /// Whitespace containing at least one tab character (not at line start)
@@ -117,7 +119,7 @@ pub enum Token<'input> {
 
     // Indentation structure (Python-style INDENT/DEDENT)
     /// Indentation increased to this level (emitted after `LineStart` when indent > stack.top)
-    Indent(usize),
+    Indent(IndentLevel),
     /// Indentation decreased by one level (emitted when indent < stack.top, one per level popped)
     Dedent,
 
