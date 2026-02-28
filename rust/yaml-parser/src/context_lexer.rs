@@ -18,7 +18,7 @@ use std::collections::VecDeque;
 
 use crate::error::{ErrorKind, ParseError};
 use crate::rich_token::RichToken;
-use crate::span::{Span, Spanned};
+use crate::span::{IndentLevel, Span, Spanned};
 use crate::token::{BlockScalarHeader, Chomping, QuoteStyle, Token};
 
 /// Check if a character is valid in an anchor/alias name.
@@ -56,7 +56,7 @@ pub struct ContextLexer<'input> {
     prev_was_separator: bool,
     /// Indentation stack for INDENT/DEDENT tokens (like Python).
     /// Starts with [0] representing the base indentation level.
-    indent_stack: Vec<usize>,
+    indent_stack: Vec<IndentLevel>,
     /// Collected errors during lexing
     errors: Vec<ParseError>,
     /// Pending tokens to be returned (used for multi-token constructs like quoted strings)
@@ -263,7 +263,7 @@ impl<'input> ContextLexer<'input> {
     /// 2. The parser has better context to determine if indentation is valid
     fn emit_indent_dedent_tokens(
         &mut self,
-        new_indent: usize,
+        new_indent: IndentLevel,
         span: Span,
         tokens: &mut Vec<RichToken<'input>>,
     ) {

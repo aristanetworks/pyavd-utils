@@ -21,7 +21,7 @@ use std::collections::HashMap;
 
 use crate::error::{ErrorKind, ParseError};
 use crate::rich_token::RichToken;
-use crate::span::{Span, Spanned};
+use crate::span::{IndentLevel, Span, Spanned};
 use crate::token::Token;
 use crate::value::{Node, Properties, Value};
 
@@ -53,15 +53,15 @@ impl<'input> NodeProperties<'input> {
         let tag_val = self.tag.as_ref().map(|(tag, _)| tag.clone());
 
         // Update span to include properties
-        if let Some((_, anchor_span)) = &self.anchor {
-            if anchor_span.start < node.span.start {
-                node.span = Span::new(anchor_span.start as usize..node.span.end as usize);
-            }
+        if let Some((_, anchor_span)) = &self.anchor
+            && anchor_span.start < node.span.start
+        {
+            node.span = Span::from_positions(anchor_span.start, node.span.end);
         }
-        if let Some((_, tag_span)) = &self.tag {
-            if tag_span.start < node.span.start {
-                node.span = Span::new(tag_span.start as usize..node.span.end as usize);
-            }
+        if let Some((_, tag_span)) = &self.tag
+            && tag_span.start < node.span.start
+        {
+            node.span = Span::from_positions(tag_span.start, node.span.end);
         }
 
         // Only allocate a box if there are actual properties
@@ -97,11 +97,11 @@ pub(crate) struct Parser<'tokens: 'input, 'input> {
     /// Stack of columns where each flow context started.
     /// Used to validate that continuation lines are indented relative to the flow start.
     /// Empty when not in flow context.
-    pub flow_context_columns: Vec<usize>,
+    pub flow_context_columns: Vec<IndentLevel>,
     /// Indentation stack tracking active block structure levels.
     /// Each entry is the indentation level of an active block structure.
     /// Used to detect orphan indentation (content at levels not in the stack).
-    pub indent_stack: Vec<usize>,
+    pub indent_stack: Vec<IndentLevel>,
     /// Tag handles declared in this document's prolog via %TAG directives.
     /// Key: handle like "!prefix!", Value: prefix/URI like "tag:example.com,2011:"
     pub tag_handles: HashMap<String, String>,
@@ -206,7 +206,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                                         | Token::DocEnd
                                 );
                                 // Check actual column of content token
-                                let content_col = self.column_of_position(rt.span.start as usize);
+                                let content_col = self.column_of_position(rt.span.start_usize());
                                 if is_content && content_col == 0 {
                                     self.errors.push(crate::error::ParseError::new(
                                         ErrorKind::InvalidIndentationContext {
@@ -243,9 +243,9 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
     }
 
     /// Get the column (0-based) of the current token by looking back to the last newline.
-    pub fn current_token_column(&self) -> usize {
+    pub fn current_token_column(&self) -> IndentLevel {
         if let Some((_, span)) = self.peek() {
-            self.column_of_position(span.start as usize)
+            self.column_of_position(span.start_usize())
         } else {
             0
         }
@@ -256,7 +256,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
         clippy::string_slice,
         reason = "Position is validated to be within input bounds"
     )]
-    pub fn column_of_position(&self, pos: usize) -> usize {
+    pub fn column_of_position(&self, pos: usize) -> IndentLevel {
         let before = &self.input[..pos];
         if let Some(newline_pos) = before.rfind('\n') {
             pos - newline_pos - 1
@@ -320,7 +320,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
     }
 
     /// Push an indentation level onto the stack when entering a block structure.
-    pub fn push_indent(&mut self, indent: usize) {
+    pub fn push_indent(&mut self, indent: IndentLevel) {
         self.indent_stack.push(indent);
     }
 
@@ -392,7 +392,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
     pub fn check_tabs_at_column_zero_in_flow(&mut self) {
         // Only check if current token is WhitespaceWithTabs at column 0
         if let Some((Token::WhitespaceWithTabs, tab_span)) = self.peek() {
-            let col = self.column_of_position(tab_span.start as usize);
+            let col = self.column_of_position(tab_span.start_usize());
             if col == 0 {
                 // Look ahead to check it's not a blank line
                 let mut look_ahead = self.pos + 1;
@@ -508,7 +508,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                     | Token::Tag(_)
                     | Token::BlockSeqIndicator
             );
-            if is_content && span.start as usize == flow_end {
+            if is_content && span.start_usize() == flow_end {
                 self.error(ErrorKind::ContentOnSameLine, span);
             }
         }
@@ -642,8 +642,8 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
         }
 
         for rt in &self.tokens[..self.pos] {
-            if rt.span.start as usize > key_start
-                && rt.span.end as usize <= key_end
+            if rt.span.start_usize() > key_start
+                && rt.span.end_usize() <= key_end
                 && matches!(rt.token, Token::LineStart(_))
             {
                 self.error(ErrorKind::MultilineImplicitKey, colon_span);
@@ -682,7 +682,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
         clippy::indexing_slicing,
         reason = "Loop index i is guaranteed to be < self.pos which is <= tokens.len()"
     )]
-    pub fn current_indent(&self) -> usize {
+    pub fn current_indent(&self) -> IndentLevel {
         for i in (0..self.pos).rev() {
             if let Token::LineStart(n) = self.tokens[i].token {
                 return n;
@@ -845,10 +845,8 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
 
             if self.is_eof() || matches!(self.peek(), Some((Token::DocStart | Token::DocEnd, _))) {
                 if explicit_doc_start.is_some() || !documents.is_empty() || self.pos > start_pos {
-                    let span = explicit_doc_start.map_or_else(
-                        || self.current_span(),
-                        |span| Span::new(span.end as usize..span.end as usize),
-                    );
+                    let span = explicit_doc_start
+                        .map_or_else(|| self.current_span(), |span| Span::at_pos(span.end));
                     documents.push(Node::null(span));
                 }
             } else if let Some(node) = self.parse_value(0) {
@@ -871,7 +869,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
     }
 
     /// Parse a YAML value at the given minimum indentation level.
-    pub fn parse_value(&mut self, min_indent: usize) -> Option<Node<'input>> {
+    pub fn parse_value(&mut self, min_indent: IndentLevel) -> Option<Node<'input>> {
         self.parse_value_with_properties(min_indent, NodeProperties::default())
     }
 
@@ -885,11 +883,11 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
         &mut self,
         flow_node: Node<'input>,
         start_pos: usize,
-        min_indent: usize,
+        min_indent: IndentLevel,
         props: NodeProperties<'input>,
     ) -> Option<Node<'input>> {
-        self.check_content_after_flow(flow_node.span.end as usize);
-        self.check_multiline_implicit_key(start_pos, flow_node.span.end as usize);
+        self.check_content_after_flow(flow_node.span.end_usize());
+        self.check_multiline_implicit_key(start_pos, flow_node.span.end_usize());
 
         self.skip_ws();
         if let Some((Token::Colon, _)) = self.peek() {
@@ -913,11 +911,11 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
         &mut self,
         anchor_name: Cow<'input, str>,
         anchor_span: Span,
-        min_indent: usize,
+        min_indent: IndentLevel,
         mut props: NodeProperties<'input>,
     ) -> Option<Node<'input>> {
         // Check anchor indentation - must be >= min_indent
-        let anchor_col = self.column_of_position(anchor_span.start as usize);
+        let anchor_col = self.column_of_position(anchor_span.start_usize());
         if anchor_col < min_indent {
             self.error(ErrorKind::InvalidIndentation, anchor_span);
             return None;
@@ -962,7 +960,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
         &mut self,
         tag_name: Cow<'input, str>,
         tag_span: Span,
-        min_indent: usize,
+        min_indent: IndentLevel,
         mut props: NodeProperties<'input>,
     ) -> Option<Node<'input>> {
         self.advance();
@@ -1021,7 +1019,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
     )]
     pub fn parse_value_with_properties(
         &mut self,
-        min_indent: usize,
+        min_indent: IndentLevel,
         props: NodeProperties<'input>,
     ) -> Option<Node<'input>> {
         self.skip_ws();
@@ -1039,14 +1037,14 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
         match tok {
             // Flow mapping
             Token::FlowMapStart => {
-                let start_pos = span.start as usize;
+                let start_pos = span.start_usize();
                 self.parse_flow_mapping().and_then(|flow_node| {
                     self.handle_flow_collection_as_value(flow_node, start_pos, min_indent, props)
                 })
             }
             // Flow sequence
             Token::FlowSeqStart => {
-                let start_pos = span.start as usize;
+                let start_pos = span.start_usize();
                 self.parse_flow_sequence().and_then(|flow_node| {
                     self.handle_flow_collection_as_value(flow_node, start_pos, min_indent, props)
                 })

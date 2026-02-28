@@ -114,9 +114,17 @@ The parser uses a **three-layer architecture**:
 
 #### `span.rs` (~275 lines) - Source Location Tracking
 
-- **`Span`**: Custom struct with `start: u32` and `end: u32` (byte offsets, max 4GB)
+- **Type Aliases** (for consistency and future optimization):
+  - **`BytePosition`**: Type alias for `u32`, used for all byte offsets in source text
+    - `pos_to_usize(pos)`: Convert `BytePosition` to `usize` for string indexing
+    - `usize_to_pos(n)`: Convert `usize` to `BytePosition` (saturating at `u32::MAX`)
+  - **`IndentLevel`**: Type alias for `usize`, used for indentation levels and column positions
+    - `indent_to_u16(level)`: Convert to `u16` for compact storage in error contexts
+- **`Span`**: Custom struct with `start: BytePosition` and `end: BytePosition` (byte offsets, max 4GB)
   - `new(range)`: Create from a `Range<usize>`
-  - `at(pos)`: Create a zero-width span at a position
+  - `at_pos(pos)`: Create a zero-width span at a `BytePosition`
+  - `from_positions(start, end)`: Create from two `BytePosition` values
+  - `start_usize()`, `end_usize()`: Get offsets as `usize` for string indexing
   - `len()`: Get span length in bytes
   - `union(other)`: Create span encompassing both spans
   - `to_range()`: Convert back to `Range<usize>`

@@ -6,47 +6,140 @@
 
 use std::ops::Range;
 
+/// Type alias for byte positions/offsets in the source.
+///
+/// Uses `u32` for compact storage, supporting files up to 4GB.
+/// This can be changed to `usize` via feature flag if larger files are needed.
+pub type BytePosition = u32;
+
+/// Convert a `BytePosition` to `usize` for string indexing.
+///
+/// This is a lossless conversion on all supported platforms (32-bit and 64-bit).
+#[must_use]
+#[inline]
+#[allow(
+    clippy::as_conversions,
+    reason = "BytePosition to usize is lossless on 32/64-bit"
+)]
+pub const fn pos_to_usize(pos: BytePosition) -> usize {
+    pos as usize
+}
+
+/// Convert a `usize` to `BytePosition`.
+///
+/// This may truncate on 64-bit platforms for values > 4GB.
+#[must_use]
+#[inline]
+#[allow(
+    clippy::as_conversions,
+    clippy::cast_possible_truncation,
+    reason = "intentional truncation for files > 4GB"
+)]
+pub const fn usize_to_pos(val: usize) -> BytePosition {
+    val as BytePosition
+}
+
+/// Type alias for indentation levels and column positions.
+///
+/// Represents the number of spaces from the start of a line.
+/// Used for:
+/// - Indentation levels in block structures (e.g., `min_indent`, `map_indent`)
+/// - Column positions from `column_of_position()` and `current_token_column()`
+/// - Token payloads like `LineStart(n)` and `Indent(n)`
+///
+/// Currently `usize` for compatibility with string indexing. This can be
+/// changed to a smaller type if memory optimization is needed.
+pub type IndentLevel = usize;
+
+/// Convert an `IndentLevel` to `u16` for compact error storage.
+///
+/// This may truncate for indentation levels > 65,535.
+/// Such deep indentation is unrealistic in practice.
+#[must_use]
+#[inline]
+#[allow(
+    clippy::as_conversions,
+    clippy::cast_possible_truncation,
+    reason = "intentional truncation for very deep indentation"
+)]
+pub const fn indent_to_u16(level: IndentLevel) -> u16 {
+    level as u16
+}
+
 /// A span representing a range in the data.
 ///
 /// This is a simple span type that tracks byte offsets as a half-open range `[start, end)`.
 /// The span is used throughout the parser to track source locations for error reporting.
 ///
-/// Uses `u32` for compact storage (8 bytes instead of 16), supporting files up to 4GB.
+/// Uses [`BytePosition`] for compact storage (8 bytes instead of 16), supporting files up to 4GB.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct Span {
     /// The start byte offset (inclusive).
-    pub start: u32,
+    pub start: BytePosition,
     /// The end byte offset (exclusive).
-    pub end: u32,
+    pub end: BytePosition,
 }
 
 impl Span {
     /// Create a new span from a range.
     ///
-    /// # Panics
-    /// Panics in debug mode if the range exceeds `u32::MAX`.
+    /// # Note
+    /// Values exceeding `BytePosition::MAX` (4GB) will be truncated.
     #[must_use]
     #[inline]
     pub const fn new(range: Range<usize>) -> Self {
         Self {
-            start: range.start as u32,
-            end: range.end as u32,
+            start: usize_to_pos(range.start),
+            end: usize_to_pos(range.end),
         }
+    }
+
+    /// Create a new span from `BytePosition` values directly.
+    #[must_use]
+    #[inline]
+    pub const fn from_positions(start: BytePosition, end: BytePosition) -> Self {
+        Self { start, end }
     }
 
     /// Create a zero-width span at a single position.
     #[must_use]
     #[inline]
     pub const fn at(pos: usize) -> Self {
+        let byte_pos = usize_to_pos(pos);
         Self {
-            start: pos as u32,
-            end: pos as u32,
+            start: byte_pos,
+            end: byte_pos,
         }
+    }
+
+    /// Create a zero-width span at a `BytePosition`.
+    #[must_use]
+    #[inline]
+    pub const fn at_pos(pos: BytePosition) -> Self {
+        Self {
+            start: pos,
+            end: pos,
+        }
+    }
+
+    /// Return the start offset as `usize` for string indexing.
+    #[must_use]
+    #[inline]
+    pub const fn start_usize(self) -> usize {
+        pos_to_usize(self.start)
+    }
+
+    /// Return the end offset as `usize` for string indexing.
+    #[must_use]
+    #[inline]
+    pub const fn end_usize(self) -> usize {
+        pos_to_usize(self.end)
     }
 
     /// Return the length of the span in bytes.
     #[must_use]
     #[inline]
+    #[allow(clippy::as_conversions, reason = "u32 difference fits in usize")]
     pub const fn len(&self) -> usize {
         (self.end.saturating_sub(self.start)) as usize
     }
@@ -68,11 +161,11 @@ impl Span {
         }
     }
 
-    /// Convert to a `Range<usize>`.
+    /// Convert to a `Range<usize>` for string slicing.
     #[must_use]
     #[inline]
     pub const fn to_range(self) -> Range<usize> {
-        self.start as usize..self.end as usize
+        pos_to_usize(self.start)..pos_to_usize(self.end)
     }
 }
 
