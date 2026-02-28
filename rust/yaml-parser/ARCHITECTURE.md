@@ -114,7 +114,7 @@ The parser uses a **three-layer architecture**:
 
 #### `span.rs` (~275 lines) - Source Location Tracking
 
-- **`Span`**: Custom struct with `start: usize` and `end: usize` (byte offsets)
+- **`Span`**: Custom struct with `start: u32` and `end: u32` (byte offsets, max 4GB)
   - `new(range)`: Create from a `Range<usize>`
   - `at(pos)`: Create a zero-width span at a position
   - `len()`: Get span length in bytes
@@ -129,7 +129,7 @@ The parser uses a **three-layer architecture**:
 
 #### `error.rs` (~480 lines) - Error Types
 
-- **`ParseError`**: Contains `kind`, `span`, `span_offset`, `expected`, `found`
+- **`ParseError`**: Contains `kind`, `span`, `span_offset`
   - `global_span()`: Convert document-relative span to input-relative coordinates
   - `suggestion()`: Delegates to `ErrorKind::suggestion()`
 - **`ErrorKind`**: 27 error variants organized by category:
@@ -748,13 +748,14 @@ pub struct ParseError {
     pub kind: ErrorKind,
     pub span: Span,           // Document-relative byte range
     pub span_offset: usize,   // Add to span for global coordinates
-    pub expected: Vec<String>,
-    pub found: Option<String>,
 }
 ```
 
 The `span_offset` field enables accurate error positioning in multi-document streams.
 Use `error.global_span()` to get the span relative to the original input.
+
+Context information (expected values, indentation levels) is embedded directly in `ErrorKind` variants
+where needed (e.g., `InvalidIndentationContext { expected: u16, found: u16 }`).
 
 ### Recovery Strategies
 
@@ -840,12 +841,37 @@ See `TECHNICAL_DEBT.md` for comprehensive documentation. Key limitations:
 - Use `parse_single_document()` for zero-copy parsing when needed
 - Could use arena allocation for even better performance
 
-### 3. Unicode Handling
+### 3. Memory Optimization Trade-offs
+
+The parser uses optimized type sizes to reduce memory footprint. This introduces the following limitations:
+
+| Type | Optimization | Limitation |
+| ---- | ------------ | ---------- |
+| `Span` | Uses `u32` for `start` and `end` | **Maximum file size: 4GB** (2³² bytes). Files larger than 4GB will have truncated span offsets. |
+| `ErrorKind` | `InvalidIndentationContext` uses `u16` for `expected` and `found` | **Maximum indentation level: 65,535**. Indentation values above 65,535 will be truncated. |
+| `Node` | Anchors and tags stored in `Option<Box<Properties>>` | **Heap allocation for anchors/tags**: Nodes with anchors or tags incur one additional heap allocation. This is a trade-off for reducing base `Node` size from 96 to 48 bytes. |
+
+**Size reductions achieved:**
+
+| Type | Before | After | Savings |
+| ---- | ------ | ----- | ------- |
+| `Span` | 16 bytes | 8 bytes | 50% |
+| `Node` | 96 bytes | 48 bytes | 50% |
+| `ErrorKind` | 24 bytes | 8 bytes | 67% |
+| `ParseError` | 48 bytes | 24 bytes | 50% |
+
+**Practical impact:** These limits are rarely encountered in practice:
+
+- 4GB is significantly larger than any typical YAML file
+- 65,535 levels of indentation exceeds any reasonable use case
+- Anchors and tags are uncommon in most YAML documents
+
+### 4. Unicode Handling
 
 - Basic Unicode support, but not fully tested
 - Could improve handling of Unicode edge cases
 
-### 4. Streaming
+### 5. Streaming
 
 - Currently parses entire input at once
 - Could support streaming for large files

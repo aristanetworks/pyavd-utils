@@ -23,7 +23,7 @@ use crate::error::{ErrorKind, ParseError};
 use crate::rich_token::RichToken;
 use crate::span::{Span, Spanned};
 use crate::token::Token;
-use crate::value::{Node, Value};
+use crate::value::{Node, Properties, Value};
 
 /// A stream of YAML documents.
 pub type Stream<'input> = Vec<Node<'input>>;
@@ -49,20 +49,29 @@ impl<'input> NodeProperties<'input> {
 
     /// Apply these properties to a node, updating its span to include properties.
     pub fn apply_to(self, mut node: Node<'input>) -> Node<'input> {
-        if let Some((anchor, anchor_span)) = self.anchor {
-            node.anchor = Some(anchor);
-            // Extend span to include the anchor
+        let anchor_val = self.anchor.as_ref().map(|(anchor, _)| anchor.clone());
+        let tag_val = self.tag.as_ref().map(|(tag, _)| tag.clone());
+
+        // Update span to include properties
+        if let Some((_, anchor_span)) = &self.anchor {
             if anchor_span.start < node.span.start {
-                node.span = Span::new(anchor_span.start..node.span.end);
+                node.span = Span::new(anchor_span.start as usize..node.span.end as usize);
             }
         }
-        if let Some((tag, tag_span)) = self.tag {
-            node.tag = Some(tag);
-            // Extend span to include the tag
+        if let Some((_, tag_span)) = &self.tag {
             if tag_span.start < node.span.start {
-                node.span = Span::new(tag_span.start..node.span.end);
+                node.span = Span::new(tag_span.start as usize..node.span.end as usize);
             }
         }
+
+        // Only allocate a box if there are actual properties
+        if anchor_val.is_some() || tag_val.is_some() {
+            node.properties = Some(Box::new(Properties {
+                anchor: anchor_val,
+                tag: tag_val,
+            }));
+        }
+
         node
     }
 }
@@ -197,7 +206,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                                         | Token::DocEnd
                                 );
                                 // Check actual column of content token
-                                let content_col = self.column_of_position(rt.span.start);
+                                let content_col = self.column_of_position(rt.span.start as usize);
                                 if is_content && content_col == 0 {
                                     self.errors.push(crate::error::ParseError::new(
                                         ErrorKind::InvalidIndentationContext {
@@ -236,7 +245,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
     /// Get the column (0-based) of the current token by looking back to the last newline.
     pub fn current_token_column(&self) -> usize {
         if let Some((_, span)) = self.peek() {
-            self.column_of_position(span.start)
+            self.column_of_position(span.start as usize)
         } else {
             0
         }
@@ -264,7 +273,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
     ) -> Node<'input> {
         let node_with_props = props.apply_to(node);
         // If the node has an anchor, register it in the anchors map
-        if let Some(ref anchor_name) = node_with_props.anchor {
+        if let Some(anchor_name) = node_with_props.anchor() {
             self.anchors
                 .insert(anchor_name.clone(), node_with_props.clone());
         }
@@ -383,7 +392,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
     pub fn check_tabs_at_column_zero_in_flow(&mut self) {
         // Only check if current token is WhitespaceWithTabs at column 0
         if let Some((Token::WhitespaceWithTabs, tab_span)) = self.peek() {
-            let col = self.column_of_position(tab_span.start);
+            let col = self.column_of_position(tab_span.start as usize);
             if col == 0 {
                 // Look ahead to check it's not a blank line
                 let mut look_ahead = self.pos + 1;
@@ -499,7 +508,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                     | Token::Tag(_)
                     | Token::BlockSeqIndicator
             );
-            if is_content && span.start == flow_end {
+            if is_content && span.start as usize == flow_end {
                 self.error(ErrorKind::ContentOnSameLine, span);
             }
         }
@@ -633,8 +642,8 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
         }
 
         for rt in &self.tokens[..self.pos] {
-            if rt.span.start > key_start
-                && rt.span.end <= key_end
+            if rt.span.start as usize > key_start
+                && rt.span.end as usize <= key_end
                 && matches!(rt.token, Token::LineStart(_))
             {
                 self.error(ErrorKind::MultilineImplicitKey, colon_span);
@@ -836,8 +845,10 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
 
             if self.is_eof() || matches!(self.peek(), Some((Token::DocStart | Token::DocEnd, _))) {
                 if explicit_doc_start.is_some() || !documents.is_empty() || self.pos > start_pos {
-                    let span = explicit_doc_start
-                        .map_or_else(|| self.current_span(), |span| Span::new(span.end..span.end));
+                    let span = explicit_doc_start.map_or_else(
+                        || self.current_span(),
+                        |span| Span::new(span.end as usize..span.end as usize),
+                    );
                     documents.push(Node::null(span));
                 }
             } else if let Some(node) = self.parse_value(0) {
@@ -877,8 +888,8 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
         min_indent: usize,
         props: NodeProperties<'input>,
     ) -> Option<Node<'input>> {
-        self.check_content_after_flow(flow_node.span.end);
-        self.check_multiline_implicit_key(start_pos, flow_node.span.end);
+        self.check_content_after_flow(flow_node.span.end as usize);
+        self.check_multiline_implicit_key(start_pos, flow_node.span.end as usize);
 
         self.skip_ws();
         if let Some((Token::Colon, _)) = self.peek() {
@@ -906,7 +917,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
         mut props: NodeProperties<'input>,
     ) -> Option<Node<'input>> {
         // Check anchor indentation - must be >= min_indent
-        let anchor_col = self.column_of_position(anchor_span.start);
+        let anchor_col = self.column_of_position(anchor_span.start as usize);
         if anchor_col < min_indent {
             self.error(ErrorKind::InvalidIndentation, anchor_span);
             return None;
@@ -1028,14 +1039,14 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
         match tok {
             // Flow mapping
             Token::FlowMapStart => {
-                let start_pos = span.start;
+                let start_pos = span.start as usize;
                 self.parse_flow_mapping().and_then(|flow_node| {
                     self.handle_flow_collection_as_value(flow_node, start_pos, min_indent, props)
                 })
             }
             // Flow sequence
             Token::FlowSeqStart => {
-                let start_pos = span.start;
+                let start_pos = span.start as usize;
                 self.parse_flow_sequence().and_then(|flow_node| {
                     self.handle_flow_collection_as_value(flow_node, start_pos, min_indent, props)
                 })
@@ -1206,19 +1217,7 @@ pub fn parse_tokens<'input>(
 /// The returned `Node<'input>` borrows string data from `input`. Call [`Node::into_owned()`]
 /// to convert to `Node<'static>` with owned data when needed.
 ///
-/// # Example
-///
-/// ```ignore
-/// let (raw_docs, _) = stream_lexer::parse_stream(input);
-/// for raw_doc in raw_docs {
-///     let (tokens, _) = context_lexer::tokenize_document(raw_doc.content);
-///     let (node, errors) = parse_single_document(&tokens, raw_doc.content, &raw_doc.directives);
-///     // `node` borrows from `raw_doc.content` - zero-copy for simple scalars
-///     if let Some(n) = node {
-///         let owned: Node<'static> = n.into_owned(); // Convert to owned when needed
-///     }
-/// }
-/// ```
+/// See `test_zero_copy_parsing` in the test module for a usage example.
 pub fn parse_single_document<'tokens: 'input, 'input>(
     tokens: &'tokens [RichToken<'input>],
     input: &'input str,

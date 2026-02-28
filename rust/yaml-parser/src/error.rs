@@ -15,15 +15,9 @@ use derive_more::Display;
 /// # Span Coordinates
 ///
 /// The `span` field contains byte offsets relative to the document being parsed.
-/// For multi-document YAML streams, use `span_offset` to convert to global
-/// coordinates (relative to the original input):
-///
-/// ```ignore
-/// let global_start = error.span.start + error.span_offset;
-/// let global_end = error.span.end + error.span_offset;
-/// // Or use the helper method:
-/// let global_span = error.global_span();
-/// ```
+/// For multi-document YAML streams, use `global_span()` to convert to global
+/// coordinates (relative to the original input). See `test_global_span` in the
+/// test module for usage examples.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ParseError {
     /// The kind of error
@@ -90,7 +84,7 @@ pub enum ErrorKind {
 
     /// Invalid indentation with context.
     #[display("invalid indentation: expected {expected} spaces, found {found}")]
-    InvalidIndentationContext { expected: usize, found: usize },
+    InvalidIndentationContext { expected: u16, found: u16 },
 
     /// Unterminated string literal
     #[display("unterminated string literal")]
@@ -281,7 +275,9 @@ impl ParseError {
     /// position relative to the original input.
     #[must_use]
     pub fn global_span(&self) -> Span {
-        Span::new(self.span.start + self.span_offset..self.span.end + self.span_offset)
+        Span::new(
+            self.span.start as usize + self.span_offset..self.span.end as usize + self.span_offset,
+        )
     }
 
     /// Get a suggestion for how to fix this error.
