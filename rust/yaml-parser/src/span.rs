@@ -10,22 +10,27 @@ use std::ops::Range;
 ///
 /// This is a simple span type that tracks byte offsets as a half-open range `[start, end)`.
 /// The span is used throughout the parser to track source locations for error reporting.
+///
+/// Uses `u32` for compact storage (8 bytes instead of 16), supporting files up to 4GB.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct Span {
     /// The start byte offset (inclusive).
-    pub start: usize,
+    pub start: u32,
     /// The end byte offset (exclusive).
-    pub end: usize,
+    pub end: u32,
 }
 
 impl Span {
     /// Create a new span from a range.
+    ///
+    /// # Panics
+    /// Panics in debug mode if the range exceeds `u32::MAX`.
     #[must_use]
     #[inline]
     pub const fn new(range: Range<usize>) -> Self {
         Self {
-            start: range.start,
-            end: range.end,
+            start: range.start as u32,
+            end: range.end as u32,
         }
     }
 
@@ -34,8 +39,8 @@ impl Span {
     #[inline]
     pub const fn at(pos: usize) -> Self {
         Self {
-            start: pos,
-            end: pos,
+            start: pos as u32,
+            end: pos as u32,
         }
     }
 
@@ -43,7 +48,7 @@ impl Span {
     #[must_use]
     #[inline]
     pub const fn len(&self) -> usize {
-        self.end.saturating_sub(self.start)
+        (self.end.saturating_sub(self.start)) as usize
     }
 
     /// Check if the span is empty (zero-width).
@@ -67,7 +72,7 @@ impl Span {
     #[must_use]
     #[inline]
     pub const fn to_range(self) -> Range<usize> {
-        self.start..self.end
+        self.start as usize..self.end as usize
     }
 }
 

@@ -675,7 +675,7 @@ fn run_combined_error_test(error_cases: &[(String, String, String)], order_name:
     for error in &errors {
         let span = &error.span;
         assert!(
-            span.end <= combined_input.len(),
+            (span.end as usize) <= combined_input.len(),
             "Error span {span:?} exceeds input length {}",
             combined_input.len()
         );

@@ -17,7 +17,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
     /// Parse a block sequence: - item\n- item
     pub fn parse_block_sequence(&mut self, _min_indent: usize) -> Option<Node<'input>> {
         let (_, start_span) = self.peek()?;
-        let start = start_span.start;
+        let start = start_span.start as usize;
         let seq_indent = self.current_token_column();
         let mut items: Vec<Node<'input>> = Vec::new();
 
@@ -63,7 +63,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                     Some((Token::LineStart(n), _)) => {
                         let n = *n;
                         if n < seq_indent {
-                            let end = items.last().map_or(start, |node| node.span.end);
+                            let end = items.last().map_or(start, |node| node.span.end as usize);
                             self.pop_indent();
                             return Some(Node::new(Value::Sequence(items), Span::new(start..end)));
                         }
@@ -86,7 +86,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
             }
         }
 
-        let end = items.last().map_or(start, |node| node.span.end);
+        let end = items.last().map_or(start, |node| node.span.end as usize);
         self.pop_indent();
         Some(Node::new(Value::Sequence(items), Span::new(start..end)))
     }
@@ -97,7 +97,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
         reason = "Complex block mapping parsing logic, will be refactored later"
     )]
     pub fn parse_block_mapping(&mut self, _min_indent: usize) -> Node<'input> {
-        let start = self.current_span().start;
+        let start = self.current_span().start as usize;
         let map_indent = self.current_token_column();
         let mut pairs: Vec<(Node<'input>, Node<'input>)> = Vec::new();
 
@@ -238,7 +238,9 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
 
             if let Some((Token::Dedent, _)) = self.peek() {
                 self.advance();
-                let end = pairs.last().map_or(start, |(_, node)| node.span.end);
+                let end = pairs
+                    .last()
+                    .map_or(start, |(_, node)| node.span.end as usize);
                 self.pop_indent();
                 return Node::new(Value::Mapping(pairs), Span::new(start..end));
             }
@@ -248,7 +250,9 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                     Token::LineStart(n) => {
                         let n = *n;
                         if n < map_indent {
-                            let end = pairs.last().map_or(start, |(_, node)| node.span.end);
+                            let end = pairs
+                                .last()
+                                .map_or(start, |(_, node)| node.span.end as usize);
                             self.pop_indent();
                             return Node::new(Value::Mapping(pairs), Span::new(start..end));
                         }
@@ -266,7 +270,9 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                     }
                     Token::Dedent => {
                         self.advance();
-                        let end = pairs.last().map_or(start, |(_, node)| node.span.end);
+                        let end = pairs
+                            .last()
+                            .map_or(start, |(_, node)| node.span.end as usize);
                         self.pop_indent();
                         return Node::new(Value::Mapping(pairs), Span::new(start..end));
                     }
@@ -295,7 +301,9 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
             }
         }
 
-        let end = pairs.last().map_or(start, |(_, node)| node.span.end);
+        let end = pairs
+            .last()
+            .map_or(start, |(_, node)| node.span.end as usize);
         self.pop_indent();
         Node::new(Value::Mapping(pairs), Span::new(start..end))
     }
@@ -306,7 +314,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
         _min_indent: usize,
         first_key_props: NodeProperties<'input>,
     ) -> Option<Node<'input>> {
-        let start = self.current_span().start;
+        let start = self.current_span().start as usize;
         let map_indent = self.current_indent();
         let mut pairs: Vec<(Node<'input>, Node<'input>)> = Vec::new();
 
@@ -382,7 +390,9 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
             }
         }
 
-        let end = pairs.last().map_or(start, |(_, node)| node.span.end);
+        let end = pairs
+            .last()
+            .map_or(start, |(_, node)| node.span.end as usize);
         Some(Node::new(Value::Mapping(pairs), Span::new(start..end)))
     }
 
@@ -392,7 +402,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
         _min_indent: usize,
         first_key: Node<'input>,
     ) -> Option<Node<'input>> {
-        let start = first_key.span.start;
+        let start = first_key.span.start as usize;
         let map_indent = self.current_indent();
         let mut pairs: Vec<(Node<'input>, Node<'input>)> = Vec::new();
 
@@ -482,7 +492,9 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
             }
         }
 
-        let end = pairs.last().map_or(start, |(_, node)| node.span.end);
+        let end = pairs
+            .last()
+            .map_or(start, |(_, node)| node.span.end as usize);
         Some(Node::new(Value::Mapping(pairs), Span::new(start..end)))
     }
 
@@ -496,7 +508,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
         _min_indent: usize,
         key_props: NodeProperties<'input>,
     ) -> Option<Node<'input>> {
-        let start = self.current_span().start;
+        let start = self.current_span().start as usize;
         let map_indent = self.current_indent();
         let mut pairs: Vec<(Node<'input>, Node<'input>)> = Vec::new();
 
@@ -629,13 +641,15 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
             }
         }
 
-        let end = pairs.last().map_or(start, |(_, node)| node.span.end);
+        let end = pairs
+            .last()
+            .map_or(start, |(_, node)| node.span.end as usize);
         Some(Node::new(Value::Mapping(pairs), Span::new(start..end)))
     }
 
     /// Parse a block mapping starting with an empty key (colon at line start).
     pub fn parse_block_mapping_with_empty_key(&mut self, _min_indent: usize) -> Node<'input> {
-        let start = self.current_span().start;
+        let start = self.current_span().start as usize;
         let map_indent = self.current_indent();
         let mut pairs: Vec<(Node<'input>, Node<'input>)> = Vec::new();
 
@@ -660,7 +674,9 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
             self.skip_ws();
             while let Some((Token::LineStart(n), _)) = self.peek() {
                 if *n < map_indent {
-                    let end = pairs.last().map_or(start, |(_, node)| node.span.end);
+                    let end = pairs
+                        .last()
+                        .map_or(start, |(_, node)| node.span.end as usize);
                     return Node::new(Value::Mapping(pairs), Span::new(start..end));
                 }
                 if *n == map_indent {
@@ -675,7 +691,9 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
             }
         }
 
-        let end = pairs.last().map_or(start, |(_, node)| node.span.end);
+        let end = pairs
+            .last()
+            .map_or(start, |(_, node)| node.span.end as usize);
         Node::new(Value::Mapping(pairs), Span::new(start..end))
     }
 
@@ -695,7 +713,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
         self.advance(); // ':'
         self.skip_ws();
 
-        let map_indent = self.column_of_position(alias_span.start);
+        let map_indent = self.column_of_position(alias_span.start as usize);
 
         let value = if let Some((Token::LineStart(_), _)) = self.peek() {
             self.advance();
@@ -770,10 +788,13 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
             pairs.push((key_node, linestart_node));
         }
 
-        let end = pairs
-            .last()
-            .map_or(alias_span.start, |(_, node)| node.span.end);
-        let mapping = Node::new(Value::Mapping(pairs), Span::new(alias_span.start..end));
+        let end = pairs.last().map_or(alias_span.start as usize, |(_, node)| {
+            node.span.end as usize
+        });
+        let mapping = Node::new(
+            Value::Mapping(pairs),
+            Span::new(alias_span.start as usize..end),
+        );
 
         self.apply_properties_and_register(props, mapping)
     }

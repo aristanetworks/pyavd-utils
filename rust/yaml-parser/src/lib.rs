@@ -50,7 +50,7 @@ pub use parser::{Stream, parse_single_document, parse_tokens};
 pub use rich_token::RichToken;
 pub use span::{Position, SourceMap, Span, Spanned};
 pub use token::Token;
-pub use value::{Node, Value};
+pub use value::{Node, Properties, Value};
 
 /// Parse YAML input and return the parsed documents and any errors encountered.
 ///
@@ -82,19 +82,10 @@ pub use value::{Node, Value};
 ///
 /// For zero-copy parsing where nodes borrow directly from the input string (avoiding
 /// allocations for simple scalars), use [`parse_single_document`] with tokens from
-/// [`context_lexer::tokenize_document`]. This returns `Node<'input>` with `Cow::Borrowed`
+/// [`tokenize_document`]. This returns `Node<'input>` with `Cow::Borrowed`
 /// for scalars that don't require transformation.
 ///
-/// Example of zero-copy usage:
-/// ```ignore
-/// let (raw_docs, _) = stream_lexer::parse_stream(input);
-/// for raw_doc in raw_docs {
-///     let (tokens, _) = context_lexer::tokenize_document(raw_doc.content);
-///     let (node, _) = parse_single_document(&tokens, raw_doc.content, &raw_doc.directives);
-///     // node borrows from raw_doc.content (which borrows from input)
-///     // Call node.into_owned() when you need owned data
-/// }
-/// ```
+/// See `test_zero_copy_parsing` in the test module for a usage example.
 pub fn parse(input: &str) -> (Stream<'static>, Vec<ParseError>) {
     let mut all_docs: Stream<'static> = Vec::new();
     let mut all_errors = Vec::new();
@@ -108,7 +99,7 @@ pub fn parse(input: &str) -> (Stream<'static>, Vec<ParseError>) {
         let (tokens, lexer_errors) = context_lexer::tokenize_document(raw_doc.content);
 
         // Set span_offset for converting local spans to global coordinates
-        let doc_offset = raw_doc.content_span.start;
+        let doc_offset = raw_doc.content_span.start as usize;
         all_errors.extend(
             lexer_errors
                 .into_iter()

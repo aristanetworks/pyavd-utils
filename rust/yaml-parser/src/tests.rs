@@ -350,11 +350,11 @@ mod error_recovery {
         // The error span should be within the input range
         for error in &errors {
             assert!(
-                error.span.start < input.len(),
+                (error.span.start as usize) < input.len(),
                 "Error span start should be valid"
             );
             assert!(
-                error.span.end <= input.len(),
+                (error.span.end as usize) <= input.len(),
                 "Error span end should be valid"
             );
         }
@@ -362,4 +362,71 @@ mod error_recovery {
         // Should still produce output
         assert_eq!(docs.len(), 1);
     }
+}
+
+/// Test to verify memory sizes of key types.
+/// Run with `cargo test measure_type_sizes -- --nocapture` to see output.
+/// Verify that memory optimizations are effective.
+///
+/// This test asserts on type sizes to catch regressions in memory layout.
+/// Run with `--nocapture` to see current sizes.
+#[test]
+fn measure_type_sizes() {
+    use std::mem::size_of;
+
+    // Verify the optimizations are effective
+    assert!(
+        size_of::<Span>() <= 8,
+        "Span should be 8 bytes or less with u32 offsets, got {}",
+        size_of::<Span>()
+    );
+    assert!(
+        size_of::<Node>() <= 64,
+        "Node should be 64 bytes or less with boxed properties, got {}",
+        size_of::<Node>()
+    );
+    assert!(
+        size_of::<ErrorKind>() <= 16,
+        "ErrorKind should be 16 bytes or less with u16 indentation, got {}",
+        size_of::<ErrorKind>()
+    );
+}
+
+/// Test parsing using `parse_single_document` directly.
+///
+/// This demonstrates using the lower-level API that allows working with
+/// `Node<'input>` before converting to owned data. This can avoid allocations
+/// when the node doesn't need to outlive the input.
+#[test]
+fn test_zero_copy_parsing() {
+    let input = "key: value";
+
+    // Tokenize the document
+    let (tokens, lexer_errors) = tokenize_document(input);
+    assert!(lexer_errors.is_empty());
+
+    // Parse - node lifetime is tied to input
+    let (parsed_node, parse_errors) = parse_single_document(&tokens, input, &[]);
+    assert!(parse_errors.is_empty());
+
+    let node = parsed_node.unwrap();
+
+    // Verify it's a mapping with the expected content
+    assert!(matches!(&node.value, Value::Mapping(pairs) if pairs.len() == 1));
+
+    // Extract and verify key/value using pattern matching
+    if let Value::Mapping(pairs) = &node.value {
+        if let Some((key, val)) = pairs.first() {
+            if let Value::String(key_str) = &key.value {
+                assert_eq!(key_str, "key");
+            }
+            if let Value::String(val_str) = &val.value {
+                assert_eq!(val_str, "value");
+            }
+        }
+    }
+
+    // Convert to owned when needed (e.g., to outlive the input)
+    let owned_node: Node<'static> = node.into_owned();
+    assert!(matches!(&owned_node.value, Value::Mapping(_)));
 }

@@ -60,8 +60,11 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                 self.errors.push(crate::error::ParseError::new(
                     ErrorKind::UnterminatedString,
                     Span::new(
-                        start_span.start
-                            ..self.tokens.last().map_or(start_span.end, |rt| rt.span.end),
+                        start_span.start as usize
+                            ..self
+                                .tokens
+                                .last()
+                                .map_or(start_span.end as usize, |rt| rt.span.end as usize),
                     ),
                 ));
                 break;
@@ -98,8 +101,8 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                     if is_content_line && indent < min_indent {
                         self.errors.push(crate::error::ParseError::new(
                             ErrorKind::InvalidIndentationContext {
-                                expected: min_indent,
-                                found: indent,
+                                expected: min_indent as u16,
+                                found: indent as u16,
                             },
                             span,
                         ));
@@ -128,7 +131,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
             }
         }
 
-        let full_span = Span::new(start_span.start..end_span.end);
+        let full_span = Span::new(start_span.start as usize..end_span.end as usize);
         Some(Node::new(Value::String(content.into()), full_span))
     }
 
@@ -189,7 +192,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
     /// Parse a literal block scalar: |
     pub fn parse_literal_block_scalar(&mut self, _min_indent: usize) -> Option<Node<'input>> {
         let (tok, span) = self.advance()?;
-        let start = span.start;
+        let start = span.start as usize;
 
         let header = if let Token::LiteralBlockHeader(hdr) = tok {
             hdr.clone()
@@ -207,7 +210,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
     /// Parse a folded block scalar: >
     pub fn parse_folded_block_scalar(&mut self, _min_indent: usize) -> Option<Node<'input>> {
         let (tok, span) = self.advance()?;
-        let start = span.start;
+        let start = span.start as usize;
 
         let header = if let Token::FoldedBlockHeader(hdr) = tok {
             hdr.clone()
@@ -238,7 +241,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
     ) -> (String, usize) {
         let mut lines: Vec<String> = Vec::new();
         let mut content_indent: Option<usize> = header.indent.map(usize::from);
-        let mut end_pos = self.current_span().end;
+        let mut end_pos = self.current_span().end as usize;
 
         // Track whitespace-only lines before the first content line.
         // These must have at most as many spaces as the first content line's indentation.
@@ -287,7 +290,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
             }
 
             self.advance(); // consume LineStart
-            end_pos = span.end;
+            end_pos = span.end as usize;
 
             if let Some((Token::Indent(_), _)) = self.peek() {
                 self.advance();
@@ -326,7 +329,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                     }
                     Token::Plain(string) | Token::StringContent(string) => {
                         line_content.push_str(string);
-                        end_pos = tok_span.end;
+                        end_pos = tok_span.end as usize;
                         self.advance();
                     }
                     Token::StringStart(style) => {
@@ -336,7 +339,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                             QuoteStyle::Double => '"',
                         };
                         line_content.push(quote_char);
-                        end_pos = tok_span.end;
+                        end_pos = tok_span.end as usize;
                         self.advance();
                     }
                     Token::StringEnd(style) => {
@@ -345,23 +348,23 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                             QuoteStyle::Double => '"',
                         };
                         line_content.push(quote_char);
-                        end_pos = tok_span.end;
+                        end_pos = tok_span.end as usize;
                         self.advance();
                     }
                     Token::Whitespace | Token::WhitespaceWithTabs => {
                         line_content.push(' ');
-                        end_pos = tok_span.end;
+                        end_pos = tok_span.end as usize;
                         self.advance();
                     }
                     Token::Comment(comment) => {
                         line_content.push('#');
                         line_content.push_str(comment);
-                        end_pos = tok_span.end;
+                        end_pos = tok_span.end as usize;
                         self.advance();
                     }
                     Token::LineStart(_) | Token::DocStart | Token::DocEnd => break,
                     _ => {
-                        end_pos = tok_span.end;
+                        end_pos = tok_span.end as usize;
                         self.advance();
                     }
                 }
@@ -459,7 +462,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
         // Check if this is a mapping key (followed by colon)
         if let Some((Token::Colon, colon_span)) = self.peek() {
             // Check for multiline implicit key (invalid in block context)
-            self.check_multiline_implicit_key(scalar.span.start, scalar.span.end);
+            self.check_multiline_implicit_key(scalar.span.start as usize, scalar.span.end as usize);
 
             // Check for invalid nested mapping on same line.
             // Pattern like `a: b: c` or `a: 'b': c` is invalid
@@ -509,8 +512,8 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
             }
 
             // This is actually a mapping - reparse
-            let start = scalar.span.start;
-            let map_indent = self.column_of_position(scalar.span.start);
+            let start = scalar.span.start as usize;
+            let map_indent = self.column_of_position(scalar.span.start as usize);
             let mut pairs: Vec<(Node, Node)> = Vec::new();
 
             let key = scalar;
@@ -546,7 +549,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
             // Continue parsing more key-value pairs at same indentation
             self.parse_remaining_mapping_entries(&mut pairs, map_indent);
 
-            let end = pairs.last().map_or(start, |(_, val)| val.span.end);
+            let end = pairs.last().map_or(start, |(_, val)| val.span.end as usize);
             Some(Node::new(Value::Mapping(pairs), Span::new(start..end)))
         } else {
             // Just a scalar - check for multiline continuation (plain scalars only)
@@ -687,7 +690,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
             self.skip_ws();
 
             if let Some((Token::Colon, _)) = self.peek() {
-                self.check_multiline_implicit_key(key.span.start, key.span.end);
+                self.check_multiline_implicit_key(key.span.start as usize, key.span.end as usize);
                 self.advance();
             } else {
                 self.error(ErrorKind::MissingColon, key.span);
@@ -745,8 +748,8 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
         initial: Node<'input>,
         block_min_indent: usize,
     ) -> Node<'input> {
-        let start = initial.span.start;
-        let mut end = initial.span.end;
+        let start = initial.span.start as usize;
+        let mut end = initial.span.end as usize;
 
         // For plain scalar continuations, the minimum indent for continuation lines is:
         // - At least 1 (continuation must be indented)
@@ -842,7 +845,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                                         match self.peek() {
                                             Some((Token::Plain(string), plain_span)) => {
                                                 let continuation = string.clone();
-                                                end = plain_span.end;
+                                                end = plain_span.end as usize;
                                                 content.push_str(&continuation);
                                                 self.advance();
                                             }
@@ -853,13 +856,13 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                                                 | Token::BlockSeqIndicator,
                                                 span,
                                             )) => {
-                                                let line_start_pos = span.start;
-                                                let mut line_end = span.end;
+                                                let line_start_pos = span.start as usize;
+                                                let mut line_end = span.end as usize;
                                                 while let Some((tok, tok_span)) = self.peek() {
                                                     if let Token::LineStart(_) = tok {
                                                         break;
                                                     }
-                                                    line_end = tok_span.end;
+                                                    line_end = tok_span.end as usize;
                                                     self.advance();
                                                 }
                                                 let line_text =
@@ -946,7 +949,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
             match self.peek() {
                 Some((Token::Plain(string), plain_span)) => {
                     let continuation = string.clone();
-                    end = plain_span.end;
+                    end = plain_span.end as usize;
                     had_continuations = true;
 
                     if consecutive_newlines == 0 {
@@ -969,14 +972,14 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                     Token::Anchor(_) | Token::Tag(_) | Token::Alias(_) | Token::BlockSeqIndicator,
                     span,
                 )) => {
-                    let line_start_pos = span.start;
-                    let mut line_end = span.end;
+                    let line_start_pos = span.start as usize;
+                    let mut line_end = span.end as usize;
 
                     while let Some((tok, tok_span)) = self.peek() {
                         if let Token::LineStart(_) = tok {
                             break;
                         }
-                        line_end = tok_span.end;
+                        line_end = tok_span.end as usize;
                         self.advance();
                     }
 
