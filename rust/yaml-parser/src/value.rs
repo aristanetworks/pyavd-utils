@@ -295,7 +295,7 @@ mod tests {
 
     #[test]
     fn test_node_construction() {
-        let span = Span::new(0..4);
+        let span = Span::from_usize_range(0..4);
 
         // Basic node
         let node1 = Node::new(Value::String(Cow::Borrowed("test")), span);
@@ -325,7 +325,7 @@ mod tests {
 
     #[test]
     fn test_into_owned() {
-        let span = Span::new(0..4);
+        let span = Span::from_usize_range(0..4);
 
         // Test Value::into_owned
         let borrowed: Value<'_> = Value::String(Cow::Borrowed("test"));

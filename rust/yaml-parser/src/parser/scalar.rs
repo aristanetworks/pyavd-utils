@@ -5,7 +5,7 @@
 //! Scalar parsing (plain, quoted, and block scalars).
 
 use crate::error::ErrorKind;
-use crate::span::{IndentLevel, Span, indent_to_u16};
+use crate::span::{IndentLevel, Span, indent_to_usize};
 use crate::token::{BlockScalarHeader, Chomping, QuoteStyle, Token};
 use crate::value::{Node, Value};
 
@@ -59,7 +59,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                 // Unexpected EOF - unterminated string
                 self.errors.push(crate::error::ParseError::new(
                     ErrorKind::UnterminatedString,
-                    Span::new(
+                    Span::from_usize_range(
                         start_span.start_usize()
                             ..self
                                 .tokens
@@ -101,8 +101,8 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                     if is_content_line && indent < min_indent {
                         self.errors.push(crate::error::ParseError::new(
                             ErrorKind::InvalidIndentationContext {
-                                expected: indent_to_u16(min_indent),
-                                found: indent_to_u16(indent),
+                                expected: min_indent,
+                                found: indent,
                             },
                             span,
                         ));
@@ -131,7 +131,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
             }
         }
 
-        let full_span = Span::new(start_span.start_usize()..end_span.end_usize());
+        let full_span = Span::from_usize_range(start_span.start_usize()..end_span.end_usize());
         Some(Node::new(Value::String(content.into()), full_span))
     }
 
@@ -203,7 +203,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
         let (content, end) = self.collect_block_scalar_content(&header, true);
         Some(Node::new(
             Value::String(content.into()),
-            Span::new(start..end),
+            Span::from_usize_range(start..end),
         ))
     }
 
@@ -221,7 +221,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
         let (content, end) = self.collect_block_scalar_content(&header, false);
         Some(Node::new(
             Value::String(content.into()),
-            Span::new(start..end),
+            Span::from_usize_range(start..end),
         ))
     }
 
@@ -253,10 +253,11 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                 self.advance();
             }
 
-            let Some((Token::LineStart(n), span)) = self.peek() else {
+            let Some((Token::LineStart(indent_level), span)) = self.peek() else {
                 break;
             };
-            let n = *n;
+            // Convert to usize for internal arithmetic/comparisons
+            let n = indent_to_usize(*indent_level);
 
             let is_empty_line = {
                 let mut check_pos = self.pos + 1;
@@ -431,7 +432,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
         } else {
             Self::scalar_to_value(content)
         };
-        Node::new(value, Span::new(start..end))
+        Node::new(value, Span::from_usize_range(start..end))
     }
 
     /// Parse a scalar and check if it's actually a mapping key.
@@ -550,7 +551,10 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
             self.parse_remaining_mapping_entries(&mut pairs, map_indent);
 
             let end = pairs.last().map_or(start, |(_, val)| val.span.end_usize());
-            Some(Node::new(Value::Mapping(pairs), Span::new(start..end)))
+            Some(Node::new(
+                Value::Mapping(pairs),
+                Span::from_usize_range(start..end),
+            ))
         } else {
             // Just a scalar - check for multiline continuation (plain scalars only)
             // Note: If we saw a comment after the scalar, it terminates the plain scalar

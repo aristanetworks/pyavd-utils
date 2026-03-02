@@ -4,7 +4,7 @@
 
 //! Error types for YAML parsing.
 
-use crate::span::Span;
+use crate::span::{IndentLevel, Span};
 use derive_more::Display;
 
 /// An error encountered during YAML parsing.
@@ -84,7 +84,10 @@ pub enum ErrorKind {
 
     /// Invalid indentation with context.
     #[display("invalid indentation: expected {expected} spaces, found {found}")]
-    InvalidIndentationContext { expected: u16, found: u16 },
+    InvalidIndentationContext {
+        expected: IndentLevel,
+        found: IndentLevel,
+    },
 
     /// Unterminated string literal
     #[display("unterminated string literal")]
@@ -275,7 +278,7 @@ impl ParseError {
     /// position relative to the original input.
     #[must_use]
     pub fn global_span(&self) -> Span {
-        Span::new(
+        Span::from_usize_range(
             self.span.start_usize() + self.span_offset..self.span.end_usize() + self.span_offset,
         )
     }
@@ -303,7 +306,7 @@ mod tests {
 
     #[test]
     fn test_error_display() {
-        let err = ParseError::new(ErrorKind::UnterminatedString, Span::new(0..10));
+        let err = ParseError::new(ErrorKind::UnterminatedString, Span::from_usize_range(0..10));
         assert_eq!(err.to_string(), "unterminated string literal");
     }
 
@@ -319,7 +322,7 @@ mod tests {
         )];
 
         for (kind, expected_msg) in test_cases {
-            let err = ParseError::new(kind, Span::new(0..10));
+            let err = ParseError::new(kind, Span::from_usize_range(0..10));
             assert_eq!(err.to_string(), expected_msg);
         }
     }
@@ -385,7 +388,7 @@ mod tests {
 
     #[test]
     fn test_parse_error_suggestion_delegation() {
-        let err = ParseError::new(ErrorKind::TabInIndentation, Span::new(0..1));
+        let err = ParseError::new(ErrorKind::TabInIndentation, Span::from_usize_range(0..1));
         assert!(err.suggestion().is_some());
         assert!(err.suggestion().unwrap().contains("spaces"));
     }
@@ -393,7 +396,7 @@ mod tests {
     #[test]
     fn test_global_span() {
         // Without offset, global_span equals span
-        let err = ParseError::new(ErrorKind::InvalidValue, Span::new(10..20));
+        let err = ParseError::new(ErrorKind::InvalidValue, Span::from_usize_range(10..20));
         let global = err.global_span();
         assert_eq!(global.start, 10);
         assert_eq!(global.end, 20);

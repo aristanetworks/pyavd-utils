@@ -49,8 +49,8 @@ pub use error::{ErrorKind, ParseError};
 pub use parser::{Stream, parse_single_document, parse_tokens};
 pub use rich_token::RichToken;
 pub use span::{
-    BytePosition, IndentLevel, Position, SourceMap, Span, Spanned, indent_to_u16, pos_to_usize,
-    usize_to_pos,
+    BytePosition, IndentLevel, Position, SourceMap, Span, Spanned, indent_to_usize, pos_to_usize,
+    usize_to_indent, usize_to_pos,
 };
 pub use token::Token;
 pub use value::{Node, Properties, Value};
@@ -125,7 +125,7 @@ pub fn parse(input: &str) -> (Stream<'static>, Vec<ParseError>) {
             all_docs.push(doc_.into_owned());
         } else if has_explicit_marker {
             // Empty explicit document -> produce null
-            all_docs.push(Node::null(Span::new(0..0)));
+            all_docs.push(Node::null(Span::from_usize_range(0..0)));
         }
     }
 

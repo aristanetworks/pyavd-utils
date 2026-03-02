@@ -100,7 +100,7 @@ pub fn parse_stream(input: &str) -> (Vec<RawDocument<'_>>, Vec<ParseError>) {
                     documents.push(RawDocument {
                         directives: std::mem::take(&mut current_directives),
                         content: &input[start..content_end],
-                        content_span: Span::new(start..pos),
+                        content_span: Span::from_usize_range(start..pos),
                     });
                     has_yaml_directive = false;
                     content_start = None;
@@ -139,7 +139,7 @@ pub fn parse_stream(input: &str) -> (Vec<RawDocument<'_>>, Vec<ParseError>) {
                 if !current_directives.is_empty() && content_start.is_none() {
                     let span = current_directives
                         .first()
-                        .map_or(Span::new(pos..marker_end), |(_, span)| *span);
+                        .map_or(Span::from_usize_range(pos..marker_end), |(_, span)| *span);
                     errors.push(ParseError::new(ErrorKind::TrailingContent, span));
                 }
 
@@ -166,7 +166,7 @@ pub fn parse_stream(input: &str) -> (Vec<RawDocument<'_>>, Vec<ParseError>) {
                     documents.push(RawDocument {
                         directives: std::mem::take(&mut current_directives),
                         content: &input[start..content_end],
-                        content_span: Span::new(start..pos),
+                        content_span: Span::from_usize_range(start..pos),
                     });
                     content_start = None;
                 }
@@ -183,7 +183,7 @@ pub fn parse_stream(input: &str) -> (Vec<RawDocument<'_>>, Vec<ParseError>) {
             let directive_start = pos;
             let line_end = find_eol(input, pos);
             let line = &input[pos..line_end];
-            let directive_span = Span::new(directive_start..line_end);
+            let directive_span = Span::from_usize_range(directive_start..line_end);
 
             let directive = if let Some(stripped) = line.strip_prefix("%YAML") {
                 // %YAML must be followed by whitespace, not more characters
@@ -208,13 +208,8 @@ pub fn parse_stream(input: &str) -> (Vec<RawDocument<'_>>, Vec<ParseError>) {
                     // Valid: "1.2 # comment" or "1.2" or "1.2\t#comment"
                     // Invalid: "1.1#..." (no space before #)
                     let chars_vec: Vec<char> = after_yaml.chars().collect();
-                    #[allow(
-                        clippy::indexing_slicing,
-                        reason = "windows(2) guarantees exactly 2 elements"
-                    )]
-                    let has_valid_comment_separator = chars_vec
-                        .windows(2)
-                        .any(|w| (w[0] == ' ' || w[0] == '\t') && w[1] == '#');
+                    let has_valid_comment_separator =
+                        chars_vec.windows(2).any(|w| matches!(w, [' ' | '\t', '#']));
                     let has_invalid_comment =
                         after_yaml.contains('#') && !has_valid_comment_separator;
 
@@ -309,7 +304,7 @@ pub fn parse_stream(input: &str) -> (Vec<RawDocument<'_>>, Vec<ParseError>) {
             if found_doc_start {
                 errors.push(ParseError::new(
                     ErrorKind::TrailingContent,
-                    Span::new(pos..line_end),
+                    Span::from_usize_range(pos..line_end),
                 ));
             }
         }
@@ -355,7 +350,7 @@ pub fn parse_stream(input: &str) -> (Vec<RawDocument<'_>>, Vec<ParseError>) {
         if !current_directives.is_empty() && content_start.is_none() {
             let span = current_directives
                 .first()
-                .map_or(Span::new(0..0), |(_, span)| *span);
+                .map_or(Span::from_usize_range(0..0), |(_, span)| *span);
             errors.push(ParseError::new(ErrorKind::TrailingContent, span));
         }
 
@@ -364,7 +359,7 @@ pub fn parse_stream(input: &str) -> (Vec<RawDocument<'_>>, Vec<ParseError>) {
         documents.push(RawDocument {
             directives: current_directives,
             content: &input[start..content_end],
-            content_span: Span::new(start..content_end),
+            content_span: Span::from_usize_range(start..content_end),
         });
     }
 
