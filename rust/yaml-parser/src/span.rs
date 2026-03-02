@@ -47,23 +47,34 @@ pub const fn usize_to_pos(val: usize) -> BytePosition {
 /// - Column positions from `column_of_position()` and `current_token_column()`
 /// - Token payloads like `LineStart(n)` and `Indent(n)`
 ///
-/// Currently `usize` for compatibility with string indexing. This can be
-/// changed to a smaller type if memory optimization is needed.
-pub type IndentLevel = usize;
+/// Uses `u16` for memory efficiency. Maximum indentation level is 65,535.
+pub type IndentLevel = u16;
 
-/// Convert an `IndentLevel` to `u16` for compact error storage.
-///
-/// This may truncate for indentation levels > 65,535.
-/// Such deep indentation is unrealistic in practice.
+/// Convert an `IndentLevel` to `usize` for array indexing and comparisons.
+#[must_use]
+#[inline]
+#[allow(
+    clippy::as_conversions,
+    reason = "safe widening conversion from u16 to usize"
+)]
+pub const fn indent_to_usize(level: IndentLevel) -> usize {
+    level as usize
+}
+
+/// Convert a `usize` to `IndentLevel`, saturating at `IndentLevel::MAX`.
 #[must_use]
 #[inline]
 #[allow(
     clippy::as_conversions,
     clippy::cast_possible_truncation,
-    reason = "intentional truncation for very deep indentation"
+    reason = "saturating conversion for indentation levels"
 )]
-pub const fn indent_to_u16(level: IndentLevel) -> u16 {
-    level as u16
+pub const fn usize_to_indent(n: usize) -> IndentLevel {
+    if n > IndentLevel::MAX as usize {
+        IndentLevel::MAX
+    } else {
+        n as IndentLevel
+    }
 }
 
 /// A span representing a range in the data.
@@ -81,44 +92,50 @@ pub struct Span {
 }
 
 impl Span {
-    /// Create a new span from a range.
-    ///
-    /// # Note
-    /// Values exceeding `BytePosition::MAX` (4GB) will be truncated.
+    /// Create a new span from a range of `BytePosition`.
     #[must_use]
     #[inline]
-    pub const fn new(range: Range<usize>) -> Self {
+    pub const fn new(range: Range<BytePosition>) -> Self {
+        Self {
+            start: range.start,
+            end: range.end,
+        }
+    }
+
+    /// Create a new span from a `Range<usize>`.
+    ///
+    /// # Note
+    /// Values exceeding `BytePosition::MAX` (4GB) will be saturated.
+    #[must_use]
+    #[inline]
+    pub const fn from_usize_range(range: Range<usize>) -> Self {
         Self {
             start: usize_to_pos(range.start),
             end: usize_to_pos(range.end),
         }
     }
 
-    /// Create a new span from `BytePosition` values directly.
+    /// Create a zero-width span at a `BytePosition`.
     #[must_use]
     #[inline]
-    pub const fn from_positions(start: BytePosition, end: BytePosition) -> Self {
-        Self { start, end }
+    pub const fn at(pos: BytePosition) -> Self {
+        Self {
+            start: pos,
+            end: pos,
+        }
     }
 
-    /// Create a zero-width span at a single position.
+    /// Create a zero-width span at a `usize` position.
+    ///
+    /// # Note
+    /// Values exceeding `BytePosition::MAX` (4GB) will be saturated.
     #[must_use]
     #[inline]
-    pub const fn at(pos: usize) -> Self {
+    pub const fn at_usize(pos: usize) -> Self {
         let byte_pos = usize_to_pos(pos);
         Self {
             start: byte_pos,
             end: byte_pos,
-        }
-    }
-
-    /// Create a zero-width span at a `BytePosition`.
-    #[must_use]
-    #[inline]
-    pub const fn at_pos(pos: BytePosition) -> Self {
-        Self {
-            start: pos,
-            end: pos,
         }
     }
 
@@ -172,6 +189,13 @@ impl Span {
 impl From<Range<usize>> for Span {
     #[inline]
     fn from(range: Range<usize>) -> Self {
+        Self::from_usize_range(range)
+    }
+}
+
+impl From<Range<BytePosition>> for Span {
+    #[inline]
+    fn from(range: Range<BytePosition>) -> Self {
         Self::new(range)
     }
 }

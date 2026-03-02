@@ -21,7 +21,7 @@ use std::collections::HashMap;
 
 use crate::error::{ErrorKind, ParseError};
 use crate::rich_token::RichToken;
-use crate::span::{IndentLevel, Span, Spanned};
+use crate::span::{IndentLevel, Span, Spanned, usize_to_indent};
 use crate::token::Token;
 use crate::value::{Node, Properties, Value};
 
@@ -56,12 +56,12 @@ impl<'input> NodeProperties<'input> {
         if let Some((_, anchor_span)) = &self.anchor
             && anchor_span.start < node.span.start
         {
-            node.span = Span::from_positions(anchor_span.start, node.span.end);
+            node.span = Span::new(anchor_span.start..node.span.end);
         }
         if let Some((_, tag_span)) = &self.tag
             && tag_span.start < node.span.start
         {
-            node.span = Span::from_positions(tag_span.start, node.span.end);
+            node.span = Span::new(tag_span.start..node.span.end);
         }
 
         // Only allocate a box if there are actual properties
@@ -135,10 +135,8 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
 
     /// Consume the current token and return it.
     /// Returns the token and its span for easy destructuring.
-    #[allow(clippy::indexing_slicing, reason = "Bounds checked by the condition")]
     pub fn advance(&mut self) -> Option<(&Token<'input>, Span)> {
-        (self.pos < self.tokens.len()).then(|| {
-            let rt = &self.tokens[self.pos];
+        self.tokens.get(self.pos).map(|rt| {
             self.pos += 1;
             (&rt.token, rt.span)
         })
@@ -166,10 +164,6 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
     /// between content tokens (e.g., from comment-only indented lines).
     /// In flow context, validates that continuation lines at column 0 are only allowed
     /// when the flow collection itself started at column 0.
-    #[allow(
-        clippy::indexing_slicing,
-        reason = "Index 0 is safe when flow_context_columns is not empty"
-    )]
     pub fn skip_ws_and_newlines(&mut self) {
         while let Some((tok, span)) = self.peek() {
             match tok {
@@ -179,43 +173,41 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
 
                     // In flow context, check for invalid column 0 continuations
                     // Column 0 is only allowed if the outermost flow context started at column 0
-                    if !self.flow_context_columns.is_empty() && indent == 0 {
-                        // Get the outermost (first) flow context column
-                        let outermost_flow_col = self.flow_context_columns[0];
-                        if outermost_flow_col > 0 {
-                            // Check if there's actual content after this LineStart
-                            // Skip past Whitespace tokens (tabs used as indentation)
-                            // and check the actual column of the content token
-                            let mut peek_offset = 0;
-                            while let Some(rt) = self.tokens.get(self.pos + peek_offset) {
-                                if matches!(rt.token, Token::Whitespace | Token::WhitespaceWithTabs)
-                                {
-                                    peek_offset += 1;
-                                } else {
-                                    break;
-                                }
+                    if let Some(&outermost_flow_col) = self.flow_context_columns.first()
+                        && indent == 0
+                        && outermost_flow_col > 0
+                    {
+                        // Check if there's actual content after this LineStart
+                        // Skip past Whitespace tokens (tabs used as indentation)
+                        // and check the actual column of the content token
+                        let mut peek_offset = 0;
+                        while let Some(rt) = self.tokens.get(self.pos + peek_offset) {
+                            if matches!(rt.token, Token::Whitespace | Token::WhitespaceWithTabs) {
+                                peek_offset += 1;
+                            } else {
+                                break;
                             }
+                        }
 
-                            if let Some(rt) = self.tokens.get(self.pos + peek_offset) {
-                                let is_content = !matches!(
-                                    rt.token,
-                                    Token::LineStart(_)
-                                        | Token::FlowSeqEnd
-                                        | Token::FlowMapEnd
-                                        | Token::Dedent
-                                        | Token::DocEnd
-                                );
-                                // Check actual column of content token
-                                let content_col = self.column_of_position(rt.span.start_usize());
-                                if is_content && content_col == 0 {
-                                    self.errors.push(crate::error::ParseError::new(
-                                        ErrorKind::InvalidIndentationContext {
-                                            expected: 1,
-                                            found: 0,
-                                        },
-                                        span,
-                                    ));
-                                }
+                        if let Some(rt) = self.tokens.get(self.pos + peek_offset) {
+                            let is_content = !matches!(
+                                rt.token,
+                                Token::LineStart(_)
+                                    | Token::FlowSeqEnd
+                                    | Token::FlowMapEnd
+                                    | Token::Dedent
+                                    | Token::DocEnd
+                            );
+                            // Check actual column of content token
+                            let content_col = self.column_of_position(rt.span.start_usize());
+                            if is_content && content_col == 0 {
+                                self.errors.push(crate::error::ParseError::new(
+                                    ErrorKind::InvalidIndentationContext {
+                                        expected: 1,
+                                        found: 0,
+                                    },
+                                    span,
+                                ));
                             }
                         }
                     }
@@ -258,11 +250,12 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
     )]
     pub fn column_of_position(&self, pos: usize) -> IndentLevel {
         let before = &self.input[..pos];
-        if let Some(newline_pos) = before.rfind('\n') {
+        let col = if let Some(newline_pos) = before.rfind('\n') {
             pos - newline_pos - 1
         } else {
             pos // No newline, column is the byte position from start of input
-        }
+        };
+        usize_to_indent(col)
     }
 
     /// Apply node properties to a node and register the anchor if present.
@@ -338,19 +331,13 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
     /// Even inside flow collections, if a line starts with tabs before content,
     /// that's considered invalid indentation (test Y79Y-003).
     pub fn check_tabs_as_indentation(&mut self) {
-        if self.pos == 0 {
-            return;
-        }
-
         // Check: is the previous token LineStart?
         // If so, check if the current token is WhitespaceWithTabs
         // (which would indicate tabs used for indentation)
-        #[allow(
-            clippy::indexing_slicing,
-            reason = "pos - 1 is valid because we check pos == 0 above"
-        )]
-        let prev_tok = &self.tokens[self.pos - 1].token;
-        if !matches!(prev_tok, Token::LineStart(_)) {
+        let Some(prev_rt) = self.pos.checked_sub(1).and_then(|i| self.tokens.get(i)) else {
+            return;
+        };
+        if !matches!(prev_rt.token, Token::LineStart(_)) {
             return;
         }
 
@@ -517,7 +504,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
     /// Check for trailing content at column 0 after a closed structure.
     /// This is used for flow collections and block sequences at the root level.
     /// For these structures, content at the same indentation level after them is invalid.
-    pub fn check_trailing_content_at_root(&mut self, root_indent: usize) {
+    pub fn check_trailing_content_at_root(&mut self, root_indent: IndentLevel) {
         // Save current position to look ahead without advancing
         let saved_pos = self.pos;
 
@@ -678,30 +665,29 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
     }
 
     /// Get the current indentation level from the most recent `LineStart`.
-    #[allow(
-        clippy::indexing_slicing,
-        reason = "Loop index i is guaranteed to be < self.pos which is <= tokens.len()"
-    )]
     pub fn current_indent(&self) -> IndentLevel {
-        for i in (0..self.pos).rev() {
-            if let Token::LineStart(n) = self.tokens[i].token {
-                return n;
-            }
-        }
-        0
+        self.tokens
+            .get(..self.pos)
+            .into_iter()
+            .flatten()
+            .rev()
+            .find_map(|rt| {
+                if let Token::LineStart(n) = rt.token {
+                    Some(n)
+                } else {
+                    None
+                }
+            })
+            .unwrap_or(0)
     }
 
     /// Get the span of the current position.
     pub fn current_span(&self) -> Span {
         self.peek()
-            .map_or_else(|| Span::new(0..0), |(_, span)| span)
+            .map_or_else(|| Span::from_usize_range(0..0), |(_, span)| span)
     }
 
     /// Check if current position is a mapping key pattern (scalar followed by colon).
-    #[allow(
-        clippy::indexing_slicing,
-        reason = "Token positions are validated by bounds checks"
-    )]
     pub fn is_mapping_key_pattern(&self) -> bool {
         let mut i = self.pos;
         match self.tokens.get(i) {
@@ -711,8 +697,8 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
             Some(rt) if matches!(rt.token, Token::StringStart(_)) => {
                 // Skip the entire quoted string (StringStart, StringContent*, LineStart*, StringEnd)
                 i += 1;
-                while i < self.tokens.len() {
-                    match &self.tokens[i].token {
+                while let Some(inner) = self.tokens.get(i) {
+                    match &inner.token {
                         Token::StringEnd(_) => {
                             i += 1;
                             break;
@@ -762,15 +748,14 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
 
     /// Parse a %TAG directive value like "!prefix! tag:example.com,2011:"
     /// into (handle, prefix) tuple.
-    #[allow(
-        clippy::indexing_slicing,
-        reason = "Bounds checked by parts.len() == 2 condition"
-    )]
     fn parse_tag_directive_value(value: &str) -> Option<(String, String)> {
         // value is like "!prefix! tag:example.com,2011:"
         // or "! !" for primary handle
-        let parts: Vec<&str> = value.splitn(2, ' ').collect();
-        (parts.len() == 2).then(|| (parts[0].to_owned(), parts[1].to_owned()))
+        let mut parts = value.splitn(2, ' ');
+        match (parts.next(), parts.next()) {
+            (Some(handle), Some(prefix)) => Some((handle.to_owned(), prefix.to_owned())),
+            _ => None,
+        }
     }
 
     /// Validate that a tag handle is declared in the current document.
@@ -846,7 +831,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
             if self.is_eof() || matches!(self.peek(), Some((Token::DocStart | Token::DocEnd, _))) {
                 if explicit_doc_start.is_some() || !documents.is_empty() || self.pos > start_pos {
                     let span = explicit_doc_start
-                        .map_or_else(|| self.current_span(), |span| Span::at_pos(span.end));
+                        .map_or_else(|| self.current_span(), |span| Span::at(span.end));
                     documents.push(Node::null(span));
                 }
             } else if let Some(node) = self.parse_value(0) {
@@ -1271,7 +1256,7 @@ pub fn parse_single_document<'tokens: 'input, 'input>(
     let doc = if parser.is_eof() || matches!(parser.peek(), Some((Token::DocEnd, _))) {
         // If we had an explicit document start (---), we should return a null node
         // rather than None. An explicit document with no content is a null value.
-        has_doc_start.then(|| Node::null(Span::new(0..0)))
+        has_doc_start.then(|| Node::null(Span::from_usize_range(0..0)))
     } else {
         parser.parse_value(0)
     };

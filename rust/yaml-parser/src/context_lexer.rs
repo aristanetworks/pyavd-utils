@@ -117,7 +117,7 @@ impl<'input> ContextLexer<'input> {
     }
 
     fn current_span(&self, start: usize) -> Span {
-        Span::new(start..self.byte_pos)
+        Span::from_usize_range(start..self.byte_pos)
     }
 
     /// Skip inline whitespace and return whether any tabs were found.
@@ -163,7 +163,10 @@ impl<'input> ContextLexer<'input> {
         let mut tokens = Vec::new();
 
         // Start with LineStart(0) for initial indentation
-        tokens.push(RichToken::new(Token::LineStart(0), Span::new(0..0)));
+        tokens.push(RichToken::new(
+            Token::LineStart(0),
+            Span::from_usize_range(0..0),
+        ));
 
         while !self.is_eof() || !self.pending_tokens.is_empty() {
             // Check pending tokens first (from multi-token constructs like quoted strings)
@@ -245,7 +248,7 @@ impl<'input> ContextLexer<'input> {
 
         // At end of input, emit Dedent for remaining stack levels (except base 0)
         if self.flow_depth == 0 {
-            let end_span = Span::new(self.byte_pos..self.byte_pos);
+            let end_span = Span::from_usize_range(self.byte_pos..self.byte_pos);
             while self.indent_stack.len() > 1 {
                 self.indent_stack.pop();
                 tokens.push(RichToken::new(Token::Dedent, end_span));
@@ -831,7 +834,7 @@ impl<'input> ContextLexer<'input> {
         }
 
         if has_invalid_content {
-            let span = Span::new(error_start..self.byte_pos);
+            let span = Span::from_usize_range(error_start..self.byte_pos);
             self.add_error(ErrorKind::ContentOnSameLine, span);
         }
 
@@ -846,7 +849,7 @@ impl<'input> ContextLexer<'input> {
     fn handle_quoted_newline(&mut self, content: &mut String, content_start: usize) -> usize {
         // Emit current content before newline
         if !content.is_empty() {
-            let content_span = Span::new(content_start..self.byte_pos);
+            let content_span = Span::from_usize_range(content_start..self.byte_pos);
             // Quoted strings always use Cow::Owned (escape processing)
             self.pending_tokens.push_back((
                 Token::StringContent(Cow::Owned(std::mem::take(content))),
@@ -869,7 +872,7 @@ impl<'input> ContextLexer<'input> {
         }
 
         // Emit LineStart token
-        let line_span = Span::new(newline_start..self.byte_pos);
+        let line_span = Span::from_usize_range(newline_start..self.byte_pos);
         self.pending_tokens
             .push_back((Token::LineStart(indent), line_span));
 
@@ -890,14 +893,14 @@ impl<'input> ContextLexer<'input> {
     ) {
         // Emit final content segment if any
         if !content.is_empty() {
-            let content_span = Span::new(content_start..self.byte_pos);
+            let content_span = Span::from_usize_range(content_start..self.byte_pos);
             // Quoted strings always use Cow::Owned (escape processing)
             self.pending_tokens
                 .push_back((Token::StringContent(Cow::Owned(content)), content_span));
         }
 
         // Emit StringEnd
-        let end_span = Span::new(self.byte_pos.saturating_sub(1)..self.byte_pos);
+        let end_span = Span::from_usize_range(self.byte_pos.saturating_sub(1)..self.byte_pos);
         if !terminated {
             let full_span = self.current_span(start);
             self.add_error(ErrorKind::UnterminatedString, full_span);
@@ -909,7 +912,7 @@ impl<'input> ContextLexer<'input> {
     /// Consume a single-quoted string, emitting `StringStart`, `StringContent`, `LineStart` and `StringEnd` tokens.
     /// Pushes tokens to `pending_tokens` and returns the first token.
     fn consume_single_quoted(&mut self, start: usize) -> Spanned<Token<'input>> {
-        let start_span = Span::new(start..start + 1);
+        let start_span = Span::from_usize_range(start..start + 1);
         self.advance(); // consume opening '
 
         let mut content = String::new();
@@ -955,7 +958,7 @@ impl<'input> ContextLexer<'input> {
     /// Consume a double-quoted string, emitting `StringStart`, `StringContent`, `LineStart` and `StringEnd` tokens.
     /// Pushes tokens to `pending_tokens` and returns the first token.
     fn consume_double_quoted(&mut self, start: usize) -> Spanned<Token<'input>> {
-        let start_span = Span::new(start..start + 1);
+        let start_span = Span::from_usize_range(start..start + 1);
         self.advance(); // consume opening "
 
         let mut content = String::new();
@@ -1031,7 +1034,7 @@ impl<'input> ContextLexer<'input> {
             }
             _ => {
                 // Invalid escape sequence - report error
-                let span = Span::new(start_byte_pos..self.byte_pos);
+                let span = Span::from_usize_range(start_byte_pos..self.byte_pos);
                 self.add_error(ErrorKind::InvalidEscape(ch), span);
                 // Still return the escaped char for error recovery
                 ch.to_string()

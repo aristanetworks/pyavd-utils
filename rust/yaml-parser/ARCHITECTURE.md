@@ -114,16 +114,18 @@ The parser uses a **three-layer architecture**:
 
 #### `span.rs` (~275 lines) - Source Location Tracking
 
-- **Type Aliases** (for consistency and future optimization):
+- **Type Aliases** (for consistency and memory optimization):
   - **`BytePosition`**: Type alias for `u32`, used for all byte offsets in source text
     - `pos_to_usize(pos)`: Convert `BytePosition` to `usize` for string indexing
     - `usize_to_pos(n)`: Convert `usize` to `BytePosition` (saturating at `u32::MAX`)
-  - **`IndentLevel`**: Type alias for `usize`, used for indentation levels and column positions
-    - `indent_to_u16(level)`: Convert to `u16` for compact storage in error contexts
+  - **`IndentLevel`**: Type alias for `u16`, used for indentation levels and column positions
+    - `indent_to_usize(level)`: Convert to `usize` for array indexing and comparisons
+    - `usize_to_indent(n)`: Convert `usize` to `IndentLevel` (saturating at `u16::MAX`)
 - **`Span`**: Custom struct with `start: BytePosition` and `end: BytePosition` (byte offsets, max 4GB)
-  - `new(range)`: Create from a `Range<usize>`
-  - `at_pos(pos)`: Create a zero-width span at a `BytePosition`
-  - `from_positions(start, end)`: Create from two `BytePosition` values
+  - `new(range)`: Create from a `Range<BytePosition>`
+  - `from_usize_range(range)`: Create from a `Range<usize>` (saturating conversion)
+  - `at(pos)`: Create a zero-width span at a `BytePosition`
+  - `at_usize(pos)`: Create a zero-width span at a `usize` position (saturating conversion)
   - `start_usize()`, `end_usize()`: Get offsets as `usize` for string indexing
   - `len()`: Get span length in bytes
   - `union(other)`: Create span encompassing both spans
@@ -855,8 +857,8 @@ The parser uses optimized type sizes to reduce memory footprint. This introduces
 
 | Type | Optimization | Limitation |
 | ---- | ------------ | ---------- |
-| `Span` | Uses `u32` for `start` and `end` | **Maximum file size: 4GB** (2³² bytes). Files larger than 4GB will have truncated span offsets. |
-| `ErrorKind` | `InvalidIndentationContext` uses `u16` for `expected` and `found` | **Maximum indentation level: 65,535**. Indentation values above 65,535 will be truncated. |
+| `Span` | Uses `BytePosition` (`u32`) for `start` and `end` | **Maximum file size: 4GB** (2³² bytes). Files larger than 4GB will have truncated span offsets. |
+| `IndentLevel` | Uses `u16` for all indentation values | **Maximum indentation level: 65,535**. Indentation values above 65,535 will saturate. |
 | `Node` | Anchors and tags stored in `Option<Box<Properties>>` | **Heap allocation for anchors/tags**: Nodes with anchors or tags incur one additional heap allocation. This is a trade-off for reducing base `Node` size from 96 to 48 bytes. |
 
 **Size reductions achieved:**

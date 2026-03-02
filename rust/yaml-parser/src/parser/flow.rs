@@ -77,10 +77,6 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
     }
 
     /// Parse a flow mapping: { key: value, ... }
-    #[allow(
-        clippy::indexing_slicing,
-        reason = "Token positions are validated by parser logic before access"
-    )]
     pub fn parse_flow_mapping(&mut self) -> Option<Node<'input>> {
         let start = self.enter_flow_collection()?;
         let mut pairs: Vec<(Node<'input>, Node<'input>)> = Vec::new();
@@ -96,7 +92,10 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                 let end = end_span.end_usize();
                 self.advance();
                 self.exit_flow_collection();
-                return Some(Node::new(Value::Mapping(pairs), Span::new(start..end)));
+                return Some(Node::new(
+                    Value::Mapping(pairs),
+                    Span::from_usize_range(start..end),
+                ));
             }
 
             // Check for consecutive commas (e.g., `{ a: 1, , b: 2 }`)
@@ -196,7 +195,10 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
         self.error(ErrorKind::UnexpectedEof, self.current_span());
         self.exit_flow_collection();
         let end = self.tokens.last().map_or(start, |rt| rt.span.end_usize());
-        Some(Node::new(Value::Mapping(pairs), Span::new(start..end)))
+        Some(Node::new(
+            Value::Mapping(pairs),
+            Span::from_usize_range(start..end),
+        ))
     }
 
     /// Parse a flow sequence: [ item, ... ]
@@ -215,7 +217,10 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                 let end = end_span.end_usize();
                 self.advance();
                 self.exit_flow_collection();
-                return Some(Node::new(Value::Sequence(items), Span::new(start..end)));
+                return Some(Node::new(
+                    Value::Sequence(items),
+                    Span::from_usize_range(start..end),
+                ));
             }
 
             // Check for consecutive commas
@@ -243,7 +248,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                     let map_end = value.span.end_usize();
                     let mapping_node = Node::new(
                         Value::Mapping(vec![(item, value)]),
-                        Span::new(map_start..map_end),
+                        Span::from_usize_range(map_start..map_end),
                     );
                     items.push(mapping_node);
                 } else {
@@ -267,7 +272,10 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
         self.error(ErrorKind::UnexpectedEof, self.current_span());
         self.exit_flow_collection();
         let end = self.tokens.last().map_or(start, |rt| rt.span.end_usize());
-        Some(Node::new(Value::Sequence(items), Span::new(start..end)))
+        Some(Node::new(
+            Value::Sequence(items),
+            Span::from_usize_range(start..end),
+        ))
     }
 
     /// Parse a value in flow context (no block structures).
@@ -321,22 +329,15 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                         break;
                     };
 
-                    let next_pos = self.pos + 1;
-                    if next_pos >= self.tokens.len() {
+                    let Some(next_rt) = self.tokens.get(self.pos + 1) else {
                         break;
-                    }
+                    };
 
-                    #[allow(clippy::indexing_slicing, reason = "next_pos bounds checked above")]
-                    match &self.tokens[next_pos].token {
+                    match &next_rt.token {
                         Token::Plain(continuation) => {
                             combined.push(' ');
                             combined.push_str(continuation);
-                            #[allow(
-                                clippy::indexing_slicing,
-                                reason = "next_pos bounds checked above"
-                            )]
-                            let continuation_span = self.tokens[next_pos].span;
-                            end_span = continuation_span;
+                            end_span = next_rt.span;
                             self.advance(); // consume LineStart
                             self.advance(); // consume Plain
                         }
@@ -347,7 +348,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                 let value = Self::scalar_to_value(combined);
                 let node = Node::new(
                     value,
-                    Span::new(start_span.start_usize()..end_span.end_usize()),
+                    Span::from_usize_range(start_span.start_usize()..end_span.end_usize()),
                 );
                 Some(self.apply_properties_and_register(props, node))
             }
