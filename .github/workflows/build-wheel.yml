@@ -71,7 +71,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - name: Download ${{ inputs.runner }} wheel(s)
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: pyavd-utils-wheels-${{ inputs.runner }}
           path: dist
@@ -115,7 +115,7 @@ jobs:
           ln -s /usr/bin/node /opt/bin/node
       - uses: actions/checkout@v6
       - name: Download ${{ inputs.runner }} wheel(s)
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: pyavd-utils-wheels-${{ inputs.runner }}
           path: dist
