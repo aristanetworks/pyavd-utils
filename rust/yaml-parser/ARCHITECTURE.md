@@ -345,7 +345,7 @@ The parser uses a **three-layer architecture**:
   - Anchor/alias resolution (`DuplicateAnchor`, `UndefinedAlias`)
   - Tag handle validation (`UndefinedTagHandle`)
 
-#### `parser/scalar.rs` (~1,014 lines)
+#### `parser/scalar.rs` (~1,035 lines)
 
 - **Purpose**: Parse all scalar types
 - **Functions**:
