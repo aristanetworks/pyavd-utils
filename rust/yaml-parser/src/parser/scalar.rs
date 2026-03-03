@@ -597,14 +597,6 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
     }
 
     /// Helper to parse remaining mapping entries at the same indentation level.
-    #[allow(
-        clippy::too_many_lines,
-        reason = "Complex mapping parsing logic, will be refactored later"
-    )]
-    #[allow(
-        clippy::indexing_slicing,
-        reason = "Token positions are validated by parser logic before access"
-    )]
     fn parse_remaining_mapping_entries(
         &mut self,
         pairs: &mut Vec<(Node<'input>, Node<'input>)>,
@@ -618,134 +610,15 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                 self.advance();
             }
 
-            // Check for next line at same indent
-            let at_same_indent = loop {
-                if let Some((Token::LineStart(n), _)) = self.peek() {
-                    if *n < map_indent {
-                        break false;
-                    }
-                    if *n == map_indent {
-                        self.advance();
-                        while let Some((Token::Dedent, _)) = self.peek() {
-                            self.advance();
-                        }
-                        // Check for tabs used as indentation after LineStart
-                        self.check_tabs_as_indentation();
-                        break true;
-                    }
-                    self.advance();
-                } else if let Some((Token::Dedent, _)) = self.peek() {
-                    self.advance();
-                } else {
-                    break false;
-                }
-            };
-
-            if !at_same_indent {
+            // Advance to next line at same indent, or break if we can't
+            if !self.advance_to_same_indent(map_indent) {
                 break;
             }
 
-            self.skip_ws();
-
-            // Skip any additional LineStart tokens (e.g., from blank lines)
-            while let Some((Token::LineStart(n), _)) = self.peek() {
-                if *n != map_indent {
-                    break;
-                }
-                self.advance();
-            }
-
-            self.skip_ws();
-
-            // Collect any anchor/tag properties before the key
-            let mut key_props = NodeProperties::default();
-            loop {
-                match self.peek() {
-                    Some((Token::Anchor(name), anchor_span)) => {
-                        let anchor_name = name.clone();
-                        self.advance();
-                        self.skip_ws();
-                        if key_props.anchor.is_some() {
-                            self.error(ErrorKind::DuplicateAnchor, anchor_span);
-                        }
-                        key_props.anchor = Some((anchor_name, anchor_span));
-                    }
-                    Some((Token::Tag(name), tag_span)) => {
-                        let tag = name.clone();
-                        self.advance();
-                        self.skip_ws();
-                        if key_props.tag.is_some() {
-                            self.error(ErrorKind::DuplicateTag, tag_span);
-                        }
-                        key_props.tag = Some((tag, tag_span));
-                    }
-                    Some((Token::Whitespace | Token::WhitespaceWithTabs, _)) => {
-                        self.advance();
-                    }
-                    _ => break,
-                }
-            }
-
-            // Try to parse another key (can be scalar or alias)
-            let key = if let Some((Token::Alias(name), span)) = self.peek() {
-                // Check if the key is an alias with properties (invalid)
-                let alias_name = name.clone();
-                if !key_props.is_empty() {
-                    self.error(ErrorKind::PropertiesOnAlias, span);
-                }
-                self.advance();
-                if !self.anchors.contains_key(alias_name.as_ref()) {
-                    self.error(ErrorKind::UndefinedAlias, span);
-                }
-                Node::new(Value::Alias(alias_name), span)
-            } else if let Some(key) = self.parse_scalar() {
-                if key_props.is_empty() {
-                    key
-                } else {
-                    self.apply_properties_and_register(key_props, key)
-                }
-            } else {
-                // If we collected properties (anchor/tag) but couldn't parse a scalar key,
-                // report an error for the orphaned properties (e.g., &anchor at column 0
-                // followed by a block sequence indicator on the next line)
-                if let Some((_, anchor_span)) = key_props.anchor {
-                    self.error(ErrorKind::OrphanedProperties, anchor_span);
-                } else if let Some((_, tag_span)) = key_props.tag {
-                    self.error(ErrorKind::OrphanedProperties, tag_span);
-                }
+            // Try to parse a key-value pair
+            let Some((key, value_node)) = self.parse_implicit_mapping_entry(map_indent) else {
                 break;
             };
-
-            self.skip_ws();
-
-            if let Some((Token::Colon, _)) = self.peek() {
-                self.check_multiline_implicit_key(key.span.start_usize(), key.span.end_usize());
-                self.advance();
-            } else {
-                self.error(ErrorKind::MissingColon, key.span);
-                break;
-            }
-
-            self.skip_ws();
-
-            // Check for block sequence indicator on same line as key - invalid
-            if let Some((Token::BlockSeqIndicator, span)) = self.peek() {
-                self.error(ErrorKind::ContentOnSameLine, span);
-            }
-
-            let value_on_same_line = !matches!(self.peek(), Some((Token::LineStart(_), _)));
-            let value = if let Some((Token::LineStart(_), _)) = self.peek() {
-                self.advance();
-                self.parse_value(map_indent + 1)
-            } else {
-                self.parse_value(map_indent + 1)
-            };
-
-            let value_node = value.unwrap_or_else(|| Node::null(self.current_span()));
-
-            if value_on_same_line && let Value::String(_) = &value_node.value {
-                self.check_trailing_content_after_scalar();
-            }
 
             pairs.push((key, value_node));
 
@@ -753,6 +626,120 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
             if self.pos == loop_start_pos && !self.is_eof() {
                 break;
             }
+        }
+    }
+
+    /// Advance to the next line at the specified indent level.
+    /// Returns true if we're now at a line with the target indent, false otherwise.
+    fn advance_to_same_indent(&mut self, target_indent: IndentLevel) -> bool {
+        loop {
+            match self.peek() {
+                Some((Token::LineStart(n), _)) => {
+                    if *n < target_indent {
+                        return false;
+                    }
+                    if *n == target_indent {
+                        self.advance();
+                        while let Some((Token::Dedent, _)) = self.peek() {
+                            self.advance();
+                        }
+                        self.check_tabs_as_indentation();
+
+                        self.skip_ws();
+
+                        // Skip any additional LineStart tokens (e.g., from blank lines)
+                        while let Some((Token::LineStart(next_indent), _)) = self.peek() {
+                            if *next_indent != target_indent {
+                                break;
+                            }
+                            self.advance();
+                        }
+
+                        self.skip_ws();
+                        return true;
+                    }
+                    self.advance();
+                }
+                Some((Token::Dedent, _)) => {
+                    self.advance();
+                }
+                _ => return false,
+            }
+        }
+    }
+
+    /// Parse a single implicit mapping entry (key: value).
+    /// Returns None if no valid entry could be parsed.
+    fn parse_implicit_mapping_entry(
+        &mut self,
+        map_indent: IndentLevel,
+    ) -> Option<(Node<'input>, Node<'input>)> {
+        // Collect any anchor/tag properties before the key
+        let key_props = self.collect_node_properties(NodeProperties::default());
+
+        // Parse the key (scalar or alias)
+        let key = self.parse_mapping_key_or_alias(key_props)?;
+
+        self.skip_ws();
+
+        // Expect colon after key
+        if let Some((Token::Colon, _)) = self.peek() {
+            self.check_multiline_implicit_key(key.span.start_usize(), key.span.end_usize());
+            self.advance();
+        } else {
+            self.error(ErrorKind::MissingColon, key.span);
+            return None;
+        }
+
+        self.skip_ws();
+
+        // Check for block sequence indicator on same line as key - invalid
+        if let Some((Token::BlockSeqIndicator, span)) = self.peek() {
+            self.error(ErrorKind::ContentOnSameLine, span);
+        }
+
+        let value_on_same_line = !matches!(self.peek(), Some((Token::LineStart(_), _)));
+        let value_node = self.parse_mapping_value(map_indent);
+
+        if value_on_same_line && let Value::String(_) = &value_node.value {
+            self.check_trailing_content_after_scalar();
+        }
+
+        Some((key, value_node))
+    }
+
+    /// Parse a mapping key that can be a scalar or alias, with optional properties.
+    /// Returns None if no valid key could be parsed.
+    fn parse_mapping_key_or_alias(
+        &mut self,
+        key_props: NodeProperties<'input>,
+    ) -> Option<Node<'input>> {
+        if let Some((Token::Alias(name), span)) = self.peek() {
+            // Alias key - properties on aliases are invalid
+            let alias_name = name.clone();
+            if !key_props.is_empty() {
+                self.error(ErrorKind::PropertiesOnAlias, span);
+            }
+            self.advance();
+            if !self.anchors.contains_key(alias_name.as_ref()) {
+                self.error(ErrorKind::UndefinedAlias, span);
+            }
+            Some(Node::new(Value::Alias(alias_name), span))
+        } else if let Some(key) = self.parse_scalar() {
+            // Scalar key - apply properties if present
+            if key_props.is_empty() {
+                Some(key)
+            } else {
+                Some(self.apply_properties_and_register(key_props, key))
+            }
+        } else {
+            // Couldn't parse a key - report orphaned properties error
+            if let Some((_, anchor_span)) = key_props.anchor {
+                self.error(ErrorKind::OrphanedProperties, anchor_span);
+            } else if let Some((_, tag_span)) = key_props.tag {
+                self.error(ErrorKind::OrphanedProperties, tag_span);
+            }
+            None
         }
     }
 

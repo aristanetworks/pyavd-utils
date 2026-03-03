@@ -187,25 +187,6 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
         false
     }
 
-    /// Parse the value after a colon in a mapping.
-    fn parse_mapping_value(&mut self, map_indent: IndentLevel) -> Node<'input> {
-        let value = match self.peek() {
-            Some((Token::LineStart(_), _)) => {
-                self.advance();
-                while let Some((Token::Indent(_) | Token::Dedent, _)) = self.peek() {
-                    self.advance();
-                }
-                self.parse_value(map_indent + 1)
-            }
-            Some((Token::Indent(_), _)) => {
-                self.advance();
-                self.parse_value(map_indent + 1)
-            }
-            _ => self.parse_value(map_indent + 1),
-        };
-        value.unwrap_or_else(|| Node::null(self.current_span()))
-    }
-
     /// Skip tokens until next mapping entry or end of mapping.
     /// Returns Some(node) if the mapping should end, None to continue.
     fn skip_to_next_mapping_entry(

@@ -312,6 +312,28 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
         props
     }
 
+    /// Parse the value after a colon in a mapping.
+    ///
+    /// Handles LineStart/Indent tokens before the value and returns a null node
+    /// if no value is present.
+    pub fn parse_mapping_value(&mut self, map_indent: IndentLevel) -> Node<'input> {
+        let value = match self.peek() {
+            Some((Token::LineStart(_), _)) => {
+                self.advance();
+                while let Some((Token::Indent(_) | Token::Dedent, _)) = self.peek() {
+                    self.advance();
+                }
+                self.parse_value(map_indent + 1)
+            }
+            Some((Token::Indent(_), _)) => {
+                self.advance();
+                self.parse_value(map_indent + 1)
+            }
+            _ => self.parse_value(map_indent + 1),
+        };
+        value.unwrap_or_else(|| Node::null(self.current_span()))
+    }
+
     /// Push an indentation level onto the stack when entering a block structure.
     pub fn push_indent(&mut self, indent: IndentLevel) {
         self.indent_stack.push(indent);
