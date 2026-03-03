@@ -225,176 +225,52 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
         ))
     }
 
-    /// Collect block scalar content, respecting indentation.
-    #[allow(
-        clippy::too_many_lines,
-        reason = "Complex block scalar parsing logic, will be refactored later"
-    )]
-    #[allow(
-        clippy::indexing_slicing,
-        reason = "Token positions are validated by parser logic before access"
-    )]
-    pub fn collect_block_scalar_content(
-        &mut self,
-        header: &BlockScalarHeader,
-        literal: bool,
-    ) -> (String, usize) {
-        let mut lines: Vec<String> = Vec::new();
-        let mut content_indent: Option<usize> = header.indent.map(usize::from);
-        let mut end_pos = self.current_span().end_usize();
-
-        // Track whitespace-only lines before the first content line.
-        // These must have at most as many spaces as the first content line's indentation.
-        // Store (indentation_level, span) for each empty line before content.
-        let mut empty_lines_before_content: Vec<(usize, Span)> = Vec::new();
-
-        loop {
-            while let Some((Token::Dedent | Token::Indent(_), _)) = self.peek() {
-                self.advance();
+    /// Check if the line starting at the given position is empty.
+    /// An empty line contains only `Dedent`/`Indent` tokens followed by another `LineStart` or EOF.
+    fn is_line_empty_at(&self, start_pos: usize) -> bool {
+        let mut check_pos = start_pos;
+        while let Some(rt) = self.tokens.get(check_pos) {
+            match &rt.token {
+                Token::Dedent | Token::Indent(_) => check_pos += 1,
+                _ => break,
             }
-
-            let Some((Token::LineStart(indent_level), span)) = self.peek() else {
-                break;
-            };
-            // Convert to usize for internal arithmetic/comparisons
-            let n = indent_to_usize(*indent_level);
-
-            let is_empty_line = {
-                let mut check_pos = self.pos + 1;
-                while check_pos < self.tokens.len() {
-                    match &self.tokens[check_pos].token {
-                        Token::Dedent | Token::Indent(_) => check_pos += 1,
-                        _ => break,
-                    }
-                }
-                if check_pos >= self.tokens.len() {
-                    true
-                } else {
-                    matches!(self.tokens[check_pos].token, Token::LineStart(_))
-                }
-            };
-
-            if content_indent.is_none() && !is_empty_line {
-                content_indent = Some(n);
-                // Validate that all preceding empty lines have at most n spaces
-                for (empty_indent, empty_span) in &empty_lines_before_content {
-                    if *empty_indent > n {
-                        self.error(ErrorKind::InvalidIndentation, *empty_span);
-                    }
-                }
-            }
-
-            let min_indent = content_indent.unwrap_or(1);
-
-            if !is_empty_line && n < min_indent {
-                break;
-            }
-
-            self.advance(); // consume LineStart
-            end_pos = span.end_usize();
-
-            if let Some((Token::Indent(_), _)) = self.peek() {
-                self.advance();
-            }
-
-            // Check for tabs used as indentation in block scalar content.
-            // Tabs are invalid for indentation at the start of a line (after LineStart).
-            // However, tabs are allowed AFTER space-based indentation (as content).
-            // Only report error if LineStart showed 0 indentation (no spaces before tab).
-            if n == 0
-                && let Some((Token::WhitespaceWithTabs, tab_span)) = self.peek()
-            {
-                self.error(ErrorKind::InvalidIndentation, tab_span);
-            }
-
-            if is_empty_line {
-                // Track this empty line's indentation if we haven't found content yet
-                if content_indent.is_none() {
-                    empty_lines_before_content.push((n, span));
-                }
-                lines.push(String::new());
-                continue;
-            }
-
-            let mut line_content = String::new();
-            let extra_indent = n.saturating_sub(min_indent);
-
-            for _ in 0..extra_indent {
-                line_content.push(' ');
-            }
-
-            while let Some((tok, tok_span)) = self.peek() {
-                match tok {
-                    Token::Dedent | Token::Indent(_) => {
-                        self.advance();
-                    }
-                    Token::Plain(string) | Token::StringContent(string) => {
-                        line_content.push_str(string);
-                        end_pos = tok_span.end_usize();
-                        self.advance();
-                    }
-                    Token::StringStart(style) => {
-                        // In block scalar content, quote characters are literal content
-                        let quote_char = match style {
-                            QuoteStyle::Single => '\'',
-                            QuoteStyle::Double => '"',
-                        };
-                        line_content.push(quote_char);
-                        end_pos = tok_span.end_usize();
-                        self.advance();
-                    }
-                    Token::StringEnd(style) => {
-                        let quote_char = match style {
-                            QuoteStyle::Single => '\'',
-                            QuoteStyle::Double => '"',
-                        };
-                        line_content.push(quote_char);
-                        end_pos = tok_span.end_usize();
-                        self.advance();
-                    }
-                    Token::Whitespace | Token::WhitespaceWithTabs => {
-                        line_content.push(' ');
-                        end_pos = tok_span.end_usize();
-                        self.advance();
-                    }
-                    Token::Comment(comment) => {
-                        line_content.push('#');
-                        line_content.push_str(comment);
-                        end_pos = tok_span.end_usize();
-                        self.advance();
-                    }
-                    Token::LineStart(_) | Token::DocStart | Token::DocEnd => break,
-                    _ => {
-                        end_pos = tok_span.end_usize();
-                        self.advance();
-                    }
-                }
-            }
-
-            lines.push(line_content);
         }
+        self.tokens
+            .get(check_pos)
+            .is_none_or(|rt| matches!(rt.token, Token::LineStart(_)))
+    }
 
-        let mut content = if literal {
-            lines.join("\n")
-        } else {
-            let mut result = String::new();
-            let mut prev_empty = false;
-            for line in &lines {
-                if line.is_empty() {
-                    result.push('\n');
-                    prev_empty = true;
-                } else {
-                    if !result.is_empty() && !prev_empty {
-                        result.push(' ');
-                    }
-                    result.push_str(line);
-                    prev_empty = false;
+    /// Join lines for literal block scalar (`|`). Preserves newlines between lines.
+    fn join_literal_lines(lines: &[String]) -> String {
+        lines.join("\n")
+    }
+
+    /// Join lines for folded block scalar (`>`). Folds single newlines to spaces,
+    /// but preserves multiple consecutive newlines.
+    fn join_folded_lines(lines: &[String]) -> String {
+        let mut result = String::new();
+        let mut prev_empty = false;
+        for line in lines {
+            if line.is_empty() {
+                result.push('\n');
+                prev_empty = true;
+            } else {
+                if !result.is_empty() && !prev_empty {
+                    result.push(' ');
                 }
+                result.push_str(line);
+                prev_empty = false;
             }
-            result
-        };
+        }
+        result
+    }
 
-        match header.chomping {
+    /// Apply chomping rules to the final block scalar content.
+    /// - `Strip`: Remove all trailing newlines.
+    /// - `Clip`: Keep exactly one trailing newline.
+    /// - `Keep`: Preserve all trailing newlines.
+    fn apply_chomping(content: &mut String, chomping: Chomping) {
+        match chomping {
             Chomping::Strip => {
                 while content.ends_with('\n') {
                     content.pop();
@@ -414,6 +290,155 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                 }
             }
         }
+    }
+
+    /// Collect content tokens from a single line of a block scalar.
+    /// Returns the line content and the end position of the last token consumed.
+    fn collect_block_line_content(
+        &mut self,
+        extra_indent: usize,
+        initial_end_pos: usize,
+    ) -> (String, usize) {
+        let mut line_content = String::new();
+        let mut end_pos = initial_end_pos;
+
+        // Add extra indentation as spaces
+        for _ in 0..extra_indent {
+            line_content.push(' ');
+        }
+
+        while let Some((tok, tok_span)) = self.peek() {
+            match tok {
+                Token::Dedent | Token::Indent(_) => {
+                    self.advance();
+                }
+                Token::Plain(string) | Token::StringContent(string) => {
+                    line_content.push_str(string);
+                    end_pos = tok_span.end_usize();
+                    self.advance();
+                }
+                Token::StringStart(style) => {
+                    // In block scalar content, quote characters are literal content
+                    let quote_char = match style {
+                        QuoteStyle::Single => '\'',
+                        QuoteStyle::Double => '"',
+                    };
+                    line_content.push(quote_char);
+                    end_pos = tok_span.end_usize();
+                    self.advance();
+                }
+                Token::StringEnd(style) => {
+                    let quote_char = match style {
+                        QuoteStyle::Single => '\'',
+                        QuoteStyle::Double => '"',
+                    };
+                    line_content.push(quote_char);
+                    end_pos = tok_span.end_usize();
+                    self.advance();
+                }
+                Token::Whitespace | Token::WhitespaceWithTabs => {
+                    line_content.push(' ');
+                    end_pos = tok_span.end_usize();
+                    self.advance();
+                }
+                Token::Comment(comment) => {
+                    line_content.push('#');
+                    line_content.push_str(comment);
+                    end_pos = tok_span.end_usize();
+                    self.advance();
+                }
+                Token::LineStart(_) | Token::DocStart | Token::DocEnd => break,
+                _ => {
+                    end_pos = tok_span.end_usize();
+                    self.advance();
+                }
+            }
+        }
+
+        (line_content, end_pos)
+    }
+
+    /// Collect block scalar content, respecting indentation.
+    pub fn collect_block_scalar_content(
+        &mut self,
+        header: &BlockScalarHeader,
+        literal: bool,
+    ) -> (String, usize) {
+        let mut lines: Vec<String> = Vec::new();
+        let mut content_indent: Option<usize> = header.indent.map(usize::from);
+        let mut end_pos = self.current_span().end_usize();
+
+        // Track whitespace-only lines before the first content line.
+        // These must have at most as many spaces as the first content line's indentation.
+        let mut empty_lines_before_content: Vec<(usize, Span)> = Vec::new();
+
+        loop {
+            // Skip any Dedent/Indent tokens
+            while let Some((Token::Dedent | Token::Indent(_), _)) = self.peek() {
+                self.advance();
+            }
+
+            let Some((Token::LineStart(indent_level), span)) = self.peek() else {
+                break;
+            };
+            let n = indent_to_usize(*indent_level);
+            let is_empty_line = self.is_line_empty_at(self.pos + 1);
+
+            // Discover content indentation from first non-empty line
+            if content_indent.is_none() && !is_empty_line {
+                content_indent = Some(n);
+                // Validate that all preceding empty lines have at most n spaces
+                for (empty_indent, empty_span) in &empty_lines_before_content {
+                    if *empty_indent > n {
+                        self.error(ErrorKind::InvalidIndentation, *empty_span);
+                    }
+                }
+            }
+
+            let min_indent = content_indent.unwrap_or(1);
+
+            // Content line with insufficient indentation ends the block scalar
+            if !is_empty_line && n < min_indent {
+                break;
+            }
+
+            self.advance(); // consume LineStart
+            end_pos = span.end_usize();
+
+            // Skip optional Indent token after LineStart
+            if let Some((Token::Indent(_), _)) = self.peek() {
+                self.advance();
+            }
+
+            // Check for tabs used as indentation (only when no space-based indent)
+            if n == 0
+                && let Some((Token::WhitespaceWithTabs, tab_span)) = self.peek()
+            {
+                self.error(ErrorKind::InvalidIndentation, tab_span);
+            }
+
+            if is_empty_line {
+                if content_indent.is_none() {
+                    empty_lines_before_content.push((n, span));
+                }
+                lines.push(String::new());
+                continue;
+            }
+
+            // Collect content from this line
+            let extra_indent = n.saturating_sub(min_indent);
+            let (line_content, line_end) = self.collect_block_line_content(extra_indent, end_pos);
+            end_pos = line_end;
+            lines.push(line_content);
+        }
+
+        // Join lines and apply chomping
+        let mut content = if literal {
+            Self::join_literal_lines(&lines)
+        } else {
+            Self::join_folded_lines(&lines)
+        };
+        Self::apply_chomping(&mut content, header.chomping);
 
         (content, end_pos)
     }
