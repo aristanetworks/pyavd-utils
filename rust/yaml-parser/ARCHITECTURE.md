@@ -372,19 +372,22 @@ The parser uses a **three-layer architecture**:
   - Handles nested flow collections
   - Validates continuation line indentation
 
-#### `parser/block.rs` (~860 lines)
+#### `parser/block.rs` (~850 lines)
 
 - **Purpose**: Parse block structures
 - **Functions**:
   - `parse_block_sequence()`: Block sequences with `-`
   - `parse_block_mapping()`: Block mappings with `key: value`
-- **Helper Methods** (for `parse_block_mapping`):
+  - `parse_block_mapping_with_tagged_null_key()`: Mapping where first key is null with properties
+- **Shared Helper Methods**:
   - `build_mapping_node()`: Create the final mapping node
   - `parse_mapping_key()`: Parse explicit or implicit key
   - `find_colon_after_explicit_key()`: Lookahead for `:` after explicit key
   - `parse_mapping_value()`: Parse value after `:`
   - `skip_to_next_mapping_entry()`: Skip tokens until next entry
   - `is_mapping_entry_token()`: Check if token can start a new entry
+  - `parse_tagged_null_mapping_entry()`: Parse entry in tagged-null-key mapping
+  - `parse_propertied_key_entry()`: Parse entry where key has properties
 - **Key Feature**: Uses INDENT/DEDENT tokens to determine structure boundaries
 - **Error Handling**: Emits `TrailingContent`, `MultilineImplicitKey` for specific errors
 - **Complexity**: Handles complex indentation rules

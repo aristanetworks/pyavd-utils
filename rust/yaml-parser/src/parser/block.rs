@@ -554,10 +554,6 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
     }
 
     /// Parse a block mapping where the first key is a null with properties.
-    #[allow(
-        clippy::too_many_lines,
-        reason = "Complex block mapping parsing logic, will be refactored later"
-    )]
     pub fn parse_block_mapping_with_tagged_null_key(
         &mut self,
         _min_indent: IndentLevel,
@@ -567,6 +563,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
         let map_indent = self.current_indent();
         let mut pairs: Vec<(Node<'input>, Node<'input>)> = Vec::new();
 
+        // First key is a null with properties (tag/anchor)
         let first_key =
             self.apply_properties_and_register(key_props, Node::null(self.current_span()));
 
@@ -576,19 +573,14 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
         self.advance();
         self.skip_ws();
 
-        let first_value = if let Some((Token::LineStart(_), _)) = self.peek() {
-            self.advance();
-            self.parse_value(map_indent + 1)
-        } else {
-            self.parse_value(map_indent + 1)
-        };
-        let first_value_node = first_value.unwrap_or_else(|| Node::null(self.current_span()));
+        let first_value = self.parse_mapping_value(map_indent);
+        pairs.push((first_key, first_value));
 
-        pairs.push((first_key, first_value_node));
-
+        // Parse remaining entries
         loop {
             self.skip_ws();
 
+            // Check for line continuation at same indent
             let Some((Token::LineStart(n), _)) = self.peek() else {
                 break;
             };
@@ -603,106 +595,104 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
             }
             self.advance();
 
+            // Skip indent/dedent tokens
             while let Some((Token::Indent(_) | Token::Dedent, _)) = self.peek() {
                 self.advance();
             }
 
-            match self.peek() {
-                Some((Token::Plain(_) | Token::StringStart(_), _)) => {
-                    let key = self.parse_scalar()?;
-                    self.skip_ws();
-
-                    if !matches!(self.peek(), Some((Token::Colon, _))) {
-                        break;
-                    }
-                    self.advance();
-                    self.skip_ws();
-
-                    let value = if let Some((Token::LineStart(_), _)) = self.peek() {
-                        self.advance();
-                        self.parse_value(map_indent + 1)
-                    } else {
-                        self.parse_value(map_indent + 1)
-                    };
-                    let value_node = value.unwrap_or_else(|| Node::null(self.current_span()));
-
-                    pairs.push((key, value_node));
-                }
-                Some((Token::Tag(_) | Token::Anchor(_), _)) => {
-                    let inner_props = self.collect_node_properties(NodeProperties::default());
-
-                    match self.peek() {
-                        Some((Token::Plain(_) | Token::StringStart(_), _)) => {
-                            let key = self.parse_scalar()?;
-                            let key_node = self.apply_properties_and_register(inner_props, key);
-                            self.skip_ws();
-
-                            if !matches!(self.peek(), Some((Token::Colon, _))) {
-                                break;
-                            }
-                            self.advance();
-                            self.skip_ws();
-
-                            let value = if let Some((Token::LineStart(_), _)) = self.peek() {
-                                self.advance();
-                                self.parse_value(map_indent + 1)
-                            } else {
-                                self.parse_value(map_indent + 1)
-                            };
-                            let value_node =
-                                value.unwrap_or_else(|| Node::null(self.current_span()));
-
-                            pairs.push((key_node, value_node));
-                        }
-                        Some((Token::Colon, _)) => {
-                            let key = self.apply_properties_and_register(
-                                inner_props,
-                                Node::null(self.current_span()),
-                            );
-                            self.advance();
-                            self.skip_ws();
-
-                            let value = if let Some((Token::LineStart(_), _)) = self.peek() {
-                                self.advance();
-                                self.parse_value(map_indent + 1)
-                            } else {
-                                self.parse_value(map_indent + 1)
-                            };
-                            let value_node =
-                                value.unwrap_or_else(|| Node::null(self.current_span()));
-
-                            pairs.push((key, value_node));
-                        }
-                        _ => break,
-                    }
-                }
-                Some((Token::Colon, _)) => {
-                    let key = Node::null(self.current_span());
-                    self.advance();
-                    self.check_tabs_after_block_indicator();
-                    self.skip_ws();
-
-                    let value = if let Some((Token::LineStart(_), _)) = self.peek() {
-                        self.advance();
-                        self.parse_value(map_indent + 1)
-                    } else {
-                        self.parse_value(map_indent + 1)
-                    };
-                    let value_node = value.unwrap_or_else(|| Node::null(self.current_span()));
-
-                    pairs.push((key, value_node));
-                }
-                _ => break,
+            // Try to parse the next entry
+            if !self.parse_tagged_null_mapping_entry(&mut pairs, map_indent) {
+                break;
             }
         }
 
-        let end = pairs
-            .last()
-            .map_or(start, |(_, node)| node.span.end_usize());
-        Some(Node::new(
-            Value::Mapping(pairs),
-            Span::from_usize_range(start..end),
-        ))
+        Some(Self::build_mapping_node(pairs, start))
+    }
+
+    /// Parse a single entry in a tagged-null-key mapping.
+    /// Returns true if an entry was parsed, false to end the mapping.
+    fn parse_tagged_null_mapping_entry(
+        &mut self,
+        pairs: &mut Vec<(Node<'input>, Node<'input>)>,
+        map_indent: IndentLevel,
+    ) -> bool {
+        match self.peek() {
+            // Plain scalar or quoted string key
+            Some((Token::Plain(_) | Token::StringStart(_), _)) => {
+                let Some(key) = self.parse_scalar() else {
+                    return false;
+                };
+                self.skip_ws();
+
+                if !matches!(self.peek(), Some((Token::Colon, _))) {
+                    return false;
+                }
+                self.advance();
+                self.skip_ws();
+
+                let value = self.parse_mapping_value(map_indent);
+                pairs.push((key, value));
+                true
+            }
+            // Key with tag or anchor
+            Some((Token::Tag(_) | Token::Anchor(_), _)) => {
+                let inner_props = self.collect_node_properties(NodeProperties::default());
+                self.parse_propertied_key_entry(pairs, map_indent, inner_props)
+            }
+            // Empty key (colon at line start)
+            Some((Token::Colon, _)) => {
+                let key = Node::null(self.current_span());
+                self.advance();
+                self.check_tabs_after_block_indicator();
+                self.skip_ws();
+
+                let value = self.parse_mapping_value(map_indent);
+                pairs.push((key, value));
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Parse a mapping entry where the key has properties (tag/anchor).
+    fn parse_propertied_key_entry(
+        &mut self,
+        pairs: &mut Vec<(Node<'input>, Node<'input>)>,
+        map_indent: IndentLevel,
+        props: NodeProperties<'input>,
+    ) -> bool {
+        match self.peek() {
+            // Scalar key with properties
+            Some((Token::Plain(_) | Token::StringStart(_), _)) => {
+                let Some(key) = self.parse_scalar() else {
+                    return false;
+                };
+                let key_node = self.apply_properties_and_register(props, key);
+                self.skip_ws();
+
+                if !matches!(self.peek(), Some((Token::Colon, _))) {
+                    return false;
+                }
+                self.advance();
+                self.skip_ws();
+
+                let value = self.parse_mapping_value(map_indent);
+                pairs.push((key_node, value));
+                true
+            }
+            // Null key with properties (tag/anchor followed by colon)
+            Some((Token::Colon, _)) => {
+                let key =
+                    self.apply_properties_and_register(props, Node::null(self.current_span()));
+                self.advance();
+                self.skip_ws();
+
+                let value = self.parse_mapping_value(map_indent);
+                pairs.push((key, value));
+                true
+            }
+            _ => false,
+        }
     }
 
     /// Parse a block mapping starting with an empty key (colon at line start).
