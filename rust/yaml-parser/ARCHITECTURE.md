@@ -310,7 +310,7 @@ The parser uses a **three-layer architecture**:
 
 ### Layer 3: Parser
 
-#### `parser/mod.rs` (~1,419 lines)
+#### `parser/mod.rs` (~1,450 lines)
 
 - **Purpose**: Main parser orchestration
 - **Key Types**:
@@ -326,6 +326,8 @@ The parser uses a **three-layer architecture**:
   - `flow_depth`: Current flow nesting
   - `flow_context_columns`: Stack of flow collection start columns
   - `indent_stack`: Stack of indentation levels
+- **Shared Helper Methods**:
+  - `parse_mapping_value()`: Parse value after `:` in any mapping context
   - `tag_handles`: Map of tag prefixes (from %TAG directives)
 - **Main Functions**:
   - `parse_tokens()`: Entry point
@@ -345,7 +347,7 @@ The parser uses a **three-layer architecture**:
   - Anchor/alias resolution (`DuplicateAnchor`, `UndefinedAlias`)
   - Tag handle validation (`UndefinedTagHandle`)
 
-#### `parser/scalar.rs` (~1,035 lines)
+#### `parser/scalar.rs` (~1,030 lines)
 
 - **Purpose**: Parse all scalar types
 - **Functions**:
@@ -353,6 +355,10 @@ The parser uses a **three-layer architecture**:
   - `parse_quoted_string()`: Single and double quoted
   - `parse_block_scalar()`: Literal (`|`) and folded (`>`)
   - `parse_plain_multiline()`: Multiline plain scalars
+- **Helper Methods** (for implicit mappings starting from scalar):
+  - `advance_to_same_indent()`: Skip to next line at target indent level
+  - `parse_implicit_mapping_entry()`: Parse a single key: value entry
+  - `parse_mapping_key_or_alias()`: Parse key that can be scalar or alias
 - **Error Handling**: Emits `ContentOnSameLine`, `UnexpectedColon` for specific errors
 - **Complexity**: Multiline string handling with indentation validation
 
@@ -372,7 +378,7 @@ The parser uses a **three-layer architecture**:
   - Handles nested flow collections
   - Validates continuation line indentation
 
-#### `parser/block.rs` (~850 lines)
+#### `parser/block.rs` (~830 lines)
 
 - **Purpose**: Parse block structures
 - **Functions**:
