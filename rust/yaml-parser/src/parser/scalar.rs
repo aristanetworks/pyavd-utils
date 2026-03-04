@@ -757,6 +757,32 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
         }
     }
 
+    /// Check if a Plain token at `pos` is followed by a Colon (indicating a mapping key).
+    ///
+    /// This lookahead is used to stop plain scalar continuation when the next line
+    /// looks like a mapping key (`key: value`).
+    #[allow(
+        clippy::indexing_slicing,
+        reason = "pos is validated by caller before access"
+    )]
+    fn is_mapping_key_at_position(&self, pos: usize) -> bool {
+        if pos >= self.tokens.len() {
+            return false;
+        }
+        if !matches!(&self.tokens[pos].token, Token::Plain(_)) {
+            return false;
+        }
+        let mut lookahead = pos + 1;
+        while lookahead < self.tokens.len() {
+            match &self.tokens[lookahead].token {
+                Token::Whitespace | Token::WhitespaceWithTabs => lookahead += 1,
+                Token::Colon => return true,
+                _ => return false,
+            }
+        }
+        false
+    }
+
     /// Consume multiline continuation lines for a plain scalar.
     ///
     /// Called after the first line of a plain scalar has been parsed.
@@ -829,27 +855,13 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                             if after_ws < self.tokens.len() {
                                 // Check if this is a mapping key (Plain followed by Colon)
                                 // If so, it's NOT a scalar continuation - return early
-                                if let Token::Plain(_) = &self.tokens[after_ws].token {
-                                    let mut lookahead = after_ws + 1;
-                                    while lookahead < self.tokens.len() {
-                                        match &self.tokens[lookahead].token {
-                                            Token::Whitespace | Token::WhitespaceWithTabs => {
-                                                lookahead += 1;
-                                            }
-                                            Token::Colon => {
-                                                // This is a mapping key, not a scalar continuation
-                                                // Don't emit tab error here - let the mapping
-                                                // parser handle it via check_tabs_as_indentation
-                                                return Self::finalize_multiline_scalar(
-                                                    content,
-                                                    had_continuations,
-                                                    start,
-                                                    end,
-                                                );
-                                            }
-                                            _ => break,
-                                        }
-                                    }
+                                if self.is_mapping_key_at_position(after_ws) {
+                                    return Self::finalize_multiline_scalar(
+                                        content,
+                                        had_continuations,
+                                        start,
+                                        end,
+                                    );
                                 }
 
                                 match &self.tokens[after_ws].token {
@@ -943,24 +955,8 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                     }
                 }
 
-                if content_pos < self.tokens.len()
-                    && let Token::Plain(_) = &self.tokens[content_pos].token
-                {
-                    let mut lookahead = content_pos + 1;
-                    while lookahead < self.tokens.len() {
-                        match &self.tokens[lookahead].token {
-                            Token::Whitespace | Token::WhitespaceWithTabs => lookahead += 1,
-                            Token::Colon => {
-                                return Self::finalize_multiline_scalar(
-                                    content,
-                                    had_continuations,
-                                    start,
-                                    end,
-                                );
-                            }
-                            _ => break,
-                        }
-                    }
+                if self.is_mapping_key_at_position(content_pos) {
+                    return Self::finalize_multiline_scalar(content, had_continuations, start, end);
                 }
             }
 
