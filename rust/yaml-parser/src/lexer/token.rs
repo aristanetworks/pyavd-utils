@@ -169,26 +169,3 @@ pub enum Token<'input> {
     #[display("<invalid>")]
     Invalid,
 }
-
-impl Token<'_> {
-    /// Returns `true` if this is a scalar token.
-    /// Note: StringStart/StringEnd/StringContent are components of a quoted scalar,
-    /// not complete scalars themselves.
-    #[must_use]
-    pub const fn is_scalar(&self) -> bool {
-        matches!(self, Self::Plain(_))
-    }
-
-    /// Returns `true` if this is a flow indicator.
-    #[must_use]
-    pub const fn is_flow_indicator(&self) -> bool {
-        matches!(
-            self,
-            Self::FlowMapStart
-                | Self::FlowMapEnd
-                | Self::FlowSeqStart
-                | Self::FlowSeqEnd
-                | Self::Comma
-        )
-    }
-}
