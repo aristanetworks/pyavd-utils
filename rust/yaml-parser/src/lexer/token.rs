@@ -35,15 +35,27 @@ pub struct BlockScalarHeader {
     pub chomping: Chomping,
 }
 
+impl std::fmt::Display for BlockScalarHeader {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Some(indent) = self.indent {
+            write!(f, "{indent}")?;
+        }
+        write!(f, "{}", self.chomping)
+    }
+}
+
 /// Block scalar chomping indicator.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, derive_more::Display)]
 pub enum Chomping {
     /// `-` strip all trailing newlines
+    #[display("-")]
     Strip,
     /// (default) clip to single trailing newline
     #[default]
+    #[display("")]
     Clip,
     /// `+` keep all trailing newlines
+    #[display("+")]
     Keep,
 }
 
@@ -101,10 +113,10 @@ pub enum Token<'input> {
     #[display("string content '{_0}'")]
     StringContent(Cow<'input, str>),
     /// A literal block scalar (`|`) - header info only, content parsed separately
-    #[display("'|'")]
+    #[display("'|{_0}'")]
     LiteralBlockHeader(BlockScalarHeader),
     /// A folded block scalar (`>`) - header info only, content parsed separately
-    #[display("'>'")]
+    #[display("'>{_0}'")]
     FoldedBlockHeader(BlockScalarHeader),
 
     // Anchors and aliases
