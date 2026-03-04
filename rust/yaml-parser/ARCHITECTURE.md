@@ -75,7 +75,7 @@ The parser uses a **three-layer architecture**:
                            │
                            ▼
 ┌─────────────────────────────────────────────────────────────┐
-│  Layer 2: Context Lexer (lexer/context.rs)                  │
+│  Layer 2: Document Lexer (lexer/document.rs)                │
 │  - Tokenizes document content                               │
 │  - Tracks flow depth (nested {}/[])                         │
 │  - Emits INDENT/DEDENT tokens                               │
@@ -122,7 +122,7 @@ The parser uses a **three-layer architecture**:
   src/lexer/
   ├── mod.rs           # Module root, re-exports public API
   ├── stream.rs        # Stream-level lexer (document boundaries)
-  ├── context.rs       # Context-aware document tokenizer
+  ├── document.rs      # Document lexer (context-aware tokenizer)
   ├── token.rs         # Token type definitions
   └── rich_token.rs    # Token wrapper with span
   ```
@@ -270,13 +270,13 @@ The parser uses a **three-layer architecture**:
   - Preserve raw content (zero-copy) for next layer
 - **Error Handling**: Emits `TrailingContent` errors for invalid content after directives
 
-### Layer 2: Context Lexer
+### Layer 2: Document Lexer
 
-#### `lexer/context.rs` (~1,447 lines)
+#### `lexer/document.rs` (~1,465 lines)
 
-- **Purpose**: Context-aware tokenization
+- **Purpose**: Tokenizes a single document with context-aware handling
 - **Key Types**:
-  - `ContextLexer<'input>`: Main lexer state machine with zero-copy tokenization
+  - `DocumentLexer<'input>`: Main lexer state machine with zero-copy tokenization
   - `LexMode`: `Block` or `Flow` context
 - **State Tracking**:
   - `flow_depth`: Nesting level of `{}`/`[]`
@@ -449,7 +449,7 @@ RawDocument {
 }
 ```
 
-**Layer 2 (Context Lexer) Output:**
+**Layer 2 (Document Lexer) Output:**
 
 ```rust
 [
@@ -495,7 +495,7 @@ Node {
 items: [apple, banana, {color: red}]
 ```
 
-**Context Lexer Behavior:**
+**Document Lexer Behavior:**
 
 - Outside `[...]`: Block context
   - `items` is a plain scalar
@@ -682,7 +682,7 @@ pub enum Value<'input> {
 
 - **Separation of Concerns**: Each layer has a single responsibility
   - Stream lexer: Document boundaries
-  - Context lexer: Tokenization with context awareness
+  - Document lexer: Context-aware tokenization
   - Parser: Structure validation and AST building
 - **Testability**: Each layer can be tested independently
 - **Maintainability**: Changes to one layer don't affect others
@@ -704,7 +704,7 @@ pub enum Value<'input> {
 
 **How it works:**
 
-1. Context lexer maintains an `indent_stack`
+1. Document lexer maintains an `indent_stack`
 2. After each `LineStart(n)` token in block context:
    - If `n > current_indent`: Emit `Indent(n)`, push to stack
    - If `n < current_indent`: Emit `Dedent` for each popped level
@@ -865,7 +865,7 @@ The test runner (`run_test_suite()`) parses these events and compares them to th
 Each module has unit tests for specific functionality:
 
 - Stream lexer tests: Document splitting, directive extraction
-- Context lexer tests: Tokenization, flow depth tracking, INDENT/DEDENT
+- Document lexer tests: Tokenization, flow depth tracking, INDENT/DEDENT
 - Parser tests: AST building, error recovery, anchor resolution
 
 ### Test Organization
@@ -1024,7 +1024,7 @@ See `LEXER_IMPROVEMENTS.md` and `PARSER_IMPROVEMENTS.md` for detailed progress t
 This YAML parser achieves **100% YAML 1.2 compliance** (402/402 tests) through a carefully designed three-layer architecture with **zero external dependencies**:
 
 1. **Stream Lexer**: Handles document boundaries and directives
-2. **Context Lexer**: Provides context-aware tokenization with INDENT/DEDENT
+2. **Document Lexer**: Tokenizes single documents with context-aware handling
 3. **Parser**: Builds AST with error recovery
 
 **Key achievements:**
