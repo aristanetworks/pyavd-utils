@@ -36,13 +36,18 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
             self.check_tabs_after_seq_indicator();
             self.skip_ws();
 
-            let item = if let Some((Token::LineStart(_), _)) = self.peek() {
-                self.advance();
-                if let Some((Token::Indent(_), _)) = self.peek() {
+            let item = if let Some((Token::LineStart(n), _)) = self.peek() {
+                let line_indent = *n;
+                // If the next line is at or below sequence indent, this entry is empty
+                if line_indent <= seq_indent {
+                    None
+                } else {
                     self.advance();
+                    if let Some((Token::Indent(_), _)) = self.peek() {
+                        self.advance();
+                    }
+                    self.parse_value(line_indent)
                 }
-                let content_col = self.current_token_column();
-                self.parse_value(content_col)
             } else {
                 self.parse_value(seq_indent + 1)
             };
@@ -116,13 +121,46 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
     ) -> Option<Node<'input>> {
         let key = if explicit_key {
             match self.peek() {
-                Some((Token::MappingKey | Token::Colon, _)) => None,
+                Some((Token::MappingKey, _)) => None,
+                // Colon after ? - this could be an empty key mapping (like ? : x)
+                // or the value indicator (like ?:). Check if there's content after colon.
+                Some((Token::Colon, _)) => {
+                    // Peek ahead to see if there's content after colon (making it a mapping key)
+                    let saved_pos = self.pos;
+                    self.advance(); // consume :
+                    self.skip_ws();
+                    let has_content = matches!(
+                        self.peek(),
+                        Some((
+                            Token::Plain(_)
+                                | Token::StringStart(_)
+                                | Token::Anchor(_)
+                                | Token::Tag(_),
+                            _
+                        ))
+                    );
+                    self.pos = saved_pos; // restore position
+
+                    if has_content {
+                        // : followed by content = nested mapping as key
+                        self.parse_value(map_indent + 1)
+                    } else {
+                        // : with no content = empty key, treat as value indicator
+                        None
+                    }
+                }
                 Some((Token::LineStart(_), _)) => {
                     self.advance();
                     if let Some((Token::Indent(_), _)) = self.peek() {
                         self.advance();
                     }
-                    self.parse_value(map_indent + 1)
+                    // If the next token is Colon, that's the value indicator.
+                    // The key is null (possibly with properties collected earlier).
+                    if matches!(self.peek(), Some((Token::Colon, _))) {
+                        None
+                    } else {
+                        self.parse_value(map_indent + 1)
+                    }
                 }
                 Some((Token::Indent(_), _)) => {
                     self.advance();
@@ -158,44 +196,58 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                     Some(node)
                 }
             }
-            None if explicit_key || empty_key => Some(Node::null(self.current_span())),
+            None if explicit_key || empty_key => {
+                // For explicit keys with properties (e.g., "? &d"), apply properties to null
+                let null_node = Node::null(self.current_span());
+                if key_props.is_empty() {
+                    Some(null_node)
+                } else {
+                    Some(self.apply_properties_and_register(key_props, null_node))
+                }
+            }
             None => None,
         }
     }
 
     /// Look ahead after explicit key to find colon on next line.
     /// Returns true if a colon was found, restores position if not.
+    /// Skips over comment-only lines between the key and the value indicator.
     fn find_colon_after_explicit_key(&mut self, map_indent: IndentLevel) -> bool {
-        if let Some((Token::LineStart(n), _)) = self.peek()
-            && *n >= map_indent
-        {
-            let saved_pos = self.pos;
-            self.advance();
+        let saved_pos = self.pos;
 
-            while let Some((Token::Indent(_), _)) = self.peek() {
-                self.advance();
+        loop {
+            match self.peek() {
+                Some((Token::LineStart(n), _)) if *n >= map_indent => {
+                    self.advance();
+                }
+                Some((Token::Indent(_) | Token::Dedent, _)) => {
+                    self.advance();
+                }
+                Some((Token::Comment(_), _)) => {
+                    // Skip comment and continue looking
+                    self.advance();
+                }
+                Some((Token::Colon, _)) => {
+                    return true;
+                }
+                _ => {
+                    // Not a colon - restore position
+                    self.pos = saved_pos;
+                    return false;
+                }
             }
-            while let Some((Token::Dedent, _)) = self.peek() {
-                self.advance();
-            }
-
-            if matches!(self.peek(), Some((Token::Colon, _))) {
-                return true;
-            }
-            self.pos = saved_pos;
         }
-        false
     }
 
     /// Skip tokens until next mapping entry or end of mapping.
-    /// Returns Some(node) if the mapping should end, None to continue.
+    /// Returns `Ok(())` to continue parsing, `Err(node)` if the mapping should end.
     fn skip_to_next_mapping_entry(
         &mut self,
         pairs: Vec<(Node<'input>, Node<'input>)>,
         start: usize,
         map_indent: IndentLevel,
     ) -> Result<(), Node<'input>> {
-        // Handle immediate Dedent
+        // Handle immediate Dedent at mapping level
         if let Some((Token::Dedent, _)) = self.peek() {
             self.advance();
             self.pop_indent();
@@ -212,25 +264,46 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                     }
                     if n == map_indent {
                         self.advance();
+                        // Skip Dedent tokens that follow (from nested content)
                         while let Some((Token::Dedent, _)) = self.peek() {
                             self.advance();
                         }
-                        return Ok(());
+                        // Check if there's a mapping entry token now.
+                        // If not, continue the loop to handle blank lines.
+                        if self.is_mapping_entry_token() {
+                            return Ok(());
+                        }
+                        // Otherwise continue - might be a blank line
+                    } else {
+                        // n > map_indent: this is an indented comment or blank line
+                        // Skip the entire line (LineStart, Dedent, Comment, etc.) until next LineStart
+                        self.advance();
+                        self.skip_tokens_until_linestart();
                     }
-                    self.advance();
                 }
                 Token::Indent(_) => {
                     self.advance();
                 }
                 Token::Dedent => {
+                    // Only end mapping if we're at or below map level
+                    // Otherwise, this Dedent is from nested content
                     self.advance();
-                    self.pop_indent();
-                    return Err(Self::build_mapping_node(pairs, start));
+                    // Continue looking for the next LineStart
                 }
                 _ => return Ok(()),
             }
         }
         Ok(())
+    }
+
+    /// Skip tokens until the next `LineStart` token (or EOF).
+    fn skip_tokens_until_linestart(&mut self) {
+        while let Some((tok, _)) = self.peek() {
+            if matches!(tok, Token::LineStart(_)) {
+                break;
+            }
+            self.advance();
+        }
     }
 
     /// Check if current token can start a mapping entry.
@@ -339,6 +412,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
     }
 
     /// Parse a block mapping where the first key already has properties (anchor/tag).
+    #[allow(clippy::too_many_lines, reason = "Complex mapping logic")]
     pub fn parse_block_mapping_with_props(
         &mut self,
         _min_indent: IndentLevel,
@@ -393,6 +467,11 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
             self.advance();
         }
 
+        // Skip any Dedent tokens that might appear after descending from nested values
+        while let Some((Token::Dedent, _)) = self.peek() {
+            self.advance();
+        }
+
         while let Some((Token::LineStart(n), _)) = self.peek() {
             if *n < map_indent {
                 break;
@@ -400,7 +479,98 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
             if *n == map_indent {
                 self.advance();
 
-                if let Some(key) = self.parse_scalar() {
+                // Skip any Dedent tokens that appear after LineStart
+                while let Some((Token::Dedent, _)) = self.peek() {
+                    self.advance();
+                }
+
+                // Handle explicit key indicator (?) - this is a different flow
+                if let Some((Token::MappingKey, _)) = self.peek() {
+                    self.advance();
+                    self.skip_ws();
+                    // Parse the key after ?
+                    let key = self.parse_value(map_indent + 1);
+                    let key_node = key.unwrap_or_else(|| Node::null(self.current_span()));
+                    // Skip to colon (may be on next line)
+                    self.skip_ws();
+                    while let Some((Token::LineStart(line_n), _)) = self.peek() {
+                        if *line_n < map_indent {
+                            break;
+                        }
+                        self.advance();
+                        while let Some((Token::Dedent, _)) = self.peek() {
+                            self.advance();
+                        }
+                    }
+                    // Expect colon
+                    if let Some((Token::Colon, _)) = self.peek() {
+                        self.advance();
+                        self.skip_ws();
+                        let value = if let Some((Token::LineStart(_), _)) = self.peek() {
+                            self.advance();
+                            self.parse_value(map_indent + 1)
+                        } else {
+                            self.parse_value(map_indent + 1)
+                        };
+                        let value_node = value.unwrap_or_else(|| Node::null(self.current_span()));
+                        pairs.push((key_node, value_node));
+                    }
+                    continue;
+                }
+
+                // Parse key: scalar, alias, or anchored/tagged value
+                let key = match self.peek() {
+                    Some((Token::Plain(_) | Token::StringStart(_), _)) => self.parse_scalar(),
+                    Some((Token::Alias(name), span)) => {
+                        let alias_name = *name;
+                        let alias_span = span;
+                        if !self.anchors.contains_key(alias_name) {
+                            self.error(ErrorKind::UndefinedAlias, alias_span);
+                        }
+                        self.advance();
+                        Some(Node::new(
+                            Value::Alias(Cow::Borrowed(alias_name)),
+                            alias_span,
+                        ))
+                    }
+                    Some((Token::Anchor(name), span)) => {
+                        let anchor_name = *name;
+                        let anchor_span = span;
+                        self.advance();
+                        self.skip_ws();
+                        if let Some(scalar) = self.parse_scalar() {
+                            let props = NodeProperties {
+                                anchor: Some((anchor_name, anchor_span)),
+                                tag: None,
+                                crossed_line_boundary: false,
+                            };
+                            Some(self.apply_properties_and_register(props, scalar))
+                        } else {
+                            None
+                        }
+                    }
+                    Some((Token::Tag(tag), span)) => {
+                        let tag_name = tag.clone();
+                        let tag_span = span;
+                        self.advance();
+                        self.skip_ws();
+                        let expanded = self.expand_tag(&tag_name, tag_span);
+                        if let Some(scalar) = self.parse_scalar() {
+                            let props = NodeProperties {
+                                anchor: None,
+                                tag: Some((Cow::Owned(expanded), tag_span)),
+                                crossed_line_boundary: false,
+                            };
+                            Some(self.apply_properties_and_register(props, scalar))
+                        } else {
+                            None
+                        }
+                    }
+                    _ => None,
+                };
+
+                #[allow(clippy::shadow_reuse, reason = "Standard unwrap pattern")]
+                if let Some(key) = key {
                     self.skip_ws();
                     if matches!(self.peek(), Some((Token::Colon, _))) {
                         self.advance();

@@ -228,6 +228,43 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                 continue;
             }
 
+            // Handle explicit key marker (?) - creates a single-pair mapping entry
+            let explicit_key = matches!(self.peek(), Some((Token::MappingKey, _)));
+            if explicit_key {
+                self.advance();
+                self.skip_ws_and_newlines();
+            }
+
+            // Check for empty key (: at start without key) - creates single-pair mapping
+            if let Some((Token::Colon, colon_span)) = self.peek() {
+                let key_span = colon_span;
+                let key = Node::null(key_span);
+                just_saw_comma = false;
+
+                self.advance(); // consume ':'
+                self.skip_ws_and_newlines();
+
+                let value = if matches!(self.peek(), Some((Token::Comma | Token::FlowSeqEnd, _))) {
+                    Node::null(self.current_span())
+                } else {
+                    self.parse_flow_value()
+                        .unwrap_or_else(|| Node::null(self.current_span()))
+                };
+
+                let map_start = key_span.start_usize();
+                let map_end = value.span.end_usize();
+                let mapping_node = Node::new(
+                    Value::Mapping(vec![(key, value)]),
+                    Span::from_usize_range(map_start..map_end),
+                );
+                items.push(mapping_node);
+                self.skip_ws_and_newlines();
+                self.handle_flow_entry_end(&mut just_saw_comma, |tok| {
+                    matches!(tok, Token::FlowSeqEnd)
+                });
+                continue;
+            }
+
             if let Some(item) = self.parse_flow_value() {
                 just_saw_comma = false;
                 self.skip_ws();

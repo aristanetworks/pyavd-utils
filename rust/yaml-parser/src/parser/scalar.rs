@@ -23,6 +23,18 @@ enum LowIndentResult {
     Break,
 }
 
+/// Line type for folded block scalar processing.
+/// Used to differentiate between normal lines (which fold) and "more indented" lines (which don't).
+#[derive(Clone, Copy, PartialEq)]
+enum FoldedLineType {
+    /// Normal content line - folds with adjacent lines (newline becomes space)
+    Normal,
+    /// More-indented line - preserves leading whitespace and surrounding newlines
+    MoreIndented,
+    /// Empty line - always preserved as newline
+    Empty,
+}
+
 impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
     /// Parse a simple scalar token.
     /// For mapping keys (typically single-line), uses `min_indent=0`.
@@ -50,9 +62,11 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
     /// Returns the assembled string as a Node, or None if not at a `StringStart` token.
     /// Validates that continuation lines have proper indentation (>= `min_indent`).
     ///
-    /// `min_indent` is the minimum indentation required for continuation lines.
-    /// For root-level strings (`min_indent=0`), continuation at column 0 is valid.
-    /// For strings that are values in mappings, continuation must be >= `min_indent`.
+    /// Implements YAML 1.2 flow folding rules:
+    /// - Trailing whitespace before line breaks is trimmed
+    /// - Single line break followed by content becomes a space
+    /// - Multiple consecutive line breaks preserve (n-1) newlines
+    /// - Leading whitespace on continuation lines is trimmed (handled by lexer)
     pub fn parse_quoted_string(&mut self, min_indent: IndentLevel) -> Option<Node<'input>> {
         let (first_token, start_span) = self.peek()?;
 
@@ -64,7 +78,8 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
 
         let mut content = String::new();
         let mut end_span = start_span;
-        let mut first_content = true;
+        // Track consecutive newlines for flow folding
+        let mut pending_newlines: usize = 0;
 
         loop {
             let Some((tok, span)) = self.peek() else {
@@ -84,32 +99,60 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
 
             match tok {
                 Token::StringContent(string) => {
-                    if !first_content && !content.is_empty() {
-                        // Multi-line string: previous content ended, new content starts
-                        // YAML spec: folded newlines become spaces (for flow scalars)
-                        content.push(' ');
+                    // Determine the actual content to add
+                    // If this is a continuation line, the lexer has already stripped the
+                    // "flow line prefix" (leading spaces and tabs). However, we still need
+                    // to handle any residual spaces the lexer may not have stripped.
+                    // Note: tabs are NOT stripped here because:
+                    // 1. The lexer strips leading whitespace including tabs
+                    // 2. Any tabs remaining are content (e.g., from \t escape sequences)
+                    let string_to_add = if pending_newlines > 0 {
+                        string.trim_start_matches(' ')
+                    } else {
+                        string.as_ref()
+                    };
+
+                    // Apply pending newlines before this content
+                    // YAML 1.2: A single line break folds to a space. Multiple line breaks
+                    // are preserved as (n-1) newlines.
+                    if pending_newlines > 0 {
+                        if pending_newlines == 1 {
+                            // Single newline always folds to space, even at string start/end
+                            content.push(' ');
+                        } else {
+                            // Multiple newlines: preserve (n-1) newlines
+                            // First newline folds to nothing, rest become actual newlines
+                            for _ in 1..pending_newlines {
+                                content.push('\n');
+                            }
+                        }
+                        pending_newlines = 0;
                     }
-                    content.push_str(string);
-                    first_content = false;
+                    // Append content (trimming will happen when we see LineStart)
+                    content.push_str(string_to_add);
                     end_span = span;
                     self.advance();
                 }
                 Token::LineStart(indent) => {
-                    // Validate continuation indentation
-                    // In YAML, quoted string continuation lines must be indented
-                    // at least at the same level as the parent block structure.
-                    // For root-level strings (min_indent=0), continuation at column 0 is valid.
-                    // For strings in mappings/sequences, continuation must be >= min_indent.
-                    //
-                    // IMPORTANT: Empty lines (where the next token is LineStart or StringEnd)
-                    // are allowed regardless of indentation. Only lines with actual content
-                    // (StringContent) need to respect the indentation requirement.
                     let indent = *indent;
                     self.advance();
 
-                    // Check if this is an empty line by peeking at the next token
-                    let is_content_line = matches!(self.peek(), Some((Token::StringContent(_), _)));
+                    // Trim trailing spaces from content before this line break.
+                    // We only trim spaces, not tabs, because:
+                    // 1. YAML uses spaces for indentation, so trailing spaces before
+                    //    line breaks are likely formatting whitespace
+                    // 2. Trailing tabs might come from \t escape sequences which are
+                    //    content. After escape processing we can't distinguish escaped
+                    //    vs natural tabs.
+                    // 3. Natural trailing tabs before line breaks are uncommon
+                    let trimmed_len = content.trim_end_matches(' ').len();
+                    content.truncate(trimmed_len);
 
+                    // Track this newline
+                    pending_newlines += 1;
+
+                    // Validate indentation for content lines
+                    let is_content_line = matches!(self.peek(), Some((Token::StringContent(_), _)));
                     if is_content_line && indent < min_indent {
                         self.errors.push(crate::error::ParseError::new(
                             ErrorKind::InvalidIndentationContext {
@@ -122,18 +165,26 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                 }
                 Token::StringEnd(end_style) => {
                     if *end_style != style {
-                        // Mismatched quotes (shouldn't happen with proper lexing)
                         self.errors.push(crate::error::ParseError::new(
                             ErrorKind::MismatchedQuotes,
                             span,
                         ));
+                    }
+                    // Apply any pending newlines at end of string
+                    // Single newline before closing quote → trailing space
+                    // Multiple newlines → (n-1) trailing newlines
+                    if pending_newlines == 1 {
+                        content.push(' ');
+                    } else if pending_newlines > 1 {
+                        for _ in 1..pending_newlines {
+                            content.push('\n');
+                        }
                     }
                     end_span = span;
                     self.advance();
                     break;
                 }
                 _ => {
-                    // Unexpected token inside string - treat as unterminated
                     self.errors.push(crate::error::ParseError::new(
                         ErrorKind::UnterminatedString,
                         span,
@@ -148,29 +199,24 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
     }
 
     /// Convert a plain scalar string to an appropriate Value.
+    ///
+    /// Per YAML 1.2 Core Schema, we only recognize:
+    /// - null: null, Null, NULL, ~, empty
+    /// - bool: true, True, TRUE, false, False, FALSE
+    /// - int: decimal integers (no 0x hex or 0o octal - those are YAML 1.1)
+    /// - float: decimal floats, .inf, -.inf, .nan
+    /// - everything else is a string
     pub fn scalar_to_value(scalar: String) -> Value<'static> {
         match scalar.as_str() {
             "null" | "Null" | "NULL" | "~" | "" => Value::Null,
             "true" | "True" | "TRUE" => Value::Bool(true),
             "false" | "False" | "FALSE" => Value::Bool(false),
             _ => {
+                // YAML 1.2 Core Schema: only decimal integers
                 if let Ok(integer) = scalar.parse::<i64>() {
                     return Value::Int(integer);
                 }
-                if let Some(hex) = scalar
-                    .strip_prefix("0x")
-                    .or_else(|| scalar.strip_prefix("0X"))
-                    && let Ok(integer) = i64::from_str_radix(hex, 16)
-                {
-                    return Value::Int(integer);
-                }
-                if let Some(oct) = scalar
-                    .strip_prefix("0o")
-                    .or_else(|| scalar.strip_prefix("0O"))
-                    && let Ok(integer) = i64::from_str_radix(oct, 8)
-                {
-                    return Value::Int(integer);
-                }
+                // YAML 1.2 Core Schema: decimal floats and special values
                 if let Ok(float) = scalar.parse::<f64>() {
                     return Value::Float(float);
                 }
@@ -202,7 +248,11 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
     }
 
     /// Parse a literal block scalar: |
-    pub fn parse_literal_block_scalar(&mut self, _min_indent: IndentLevel) -> Option<Node<'input>> {
+    ///
+    /// The `min_indent` parameter is the minimum indentation for block content
+    /// (typically the parent block's indent + 1). For explicit indentation indicators,
+    /// the content indent is calculated relative to `min_indent - 1` (the parent's indent).
+    pub fn parse_literal_block_scalar(&mut self, min_indent: IndentLevel) -> Option<Node<'input>> {
         let (tok, span) = self.advance()?;
         let start = span.start_usize();
 
@@ -212,7 +262,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
             return None;
         };
 
-        let (content, end) = self.collect_block_scalar_content(&header, true);
+        let (content, end) = self.collect_block_scalar_content(&header, true, min_indent);
         Some(Node::new(
             Value::String(content.into()),
             Span::from_usize_range(start..end),
@@ -220,7 +270,11 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
     }
 
     /// Parse a folded block scalar: >
-    pub fn parse_folded_block_scalar(&mut self, _min_indent: IndentLevel) -> Option<Node<'input>> {
+    ///
+    /// The `min_indent` parameter is the minimum indentation for block content
+    /// (typically the parent block's indent + 1). For explicit indentation indicators,
+    /// the content indent is calculated relative to `min_indent - 1` (the parent's indent).
+    pub fn parse_folded_block_scalar(&mut self, min_indent: IndentLevel) -> Option<Node<'input>> {
         let (tok, span) = self.advance()?;
         let start = span.start_usize();
 
@@ -230,7 +284,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
             return None;
         };
 
-        let (content, end) = self.collect_block_scalar_content(&header, false);
+        let (content, end) = self.collect_block_scalar_content(&header, false, min_indent);
         Some(Node::new(
             Value::String(content.into()),
             Span::from_usize_range(start..end),
@@ -239,21 +293,24 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
 
     /// Consume content tokens from a block line.
     ///
-    /// Returns `(content_end, has_content)`:
+    /// Returns `(content_end, has_content, starts_with_whitespace)`:
     /// - `content_end`: byte position after the last content token (or `initial_end_pos` if none)
     /// - `has_content`: true if any actual content (not just structural tokens) was consumed
+    /// - `starts_with_whitespace`: true if the first content token is whitespace (tab/space),
+    ///   which makes this a "more-indented" line per YAML spec section 8.1.3
     ///
     /// This combines token consumption and empty-line detection in a single pass,
     /// eliminating the need for lookahead.
     ///
     /// Optimized to iterate directly over the token slice, avoiding per-iteration bounds checks.
-    fn consume_block_line_with_detection(&mut self, initial_end_pos: usize) -> (usize, bool) {
+    fn consume_block_line_with_detection(&mut self, initial_end_pos: usize) -> (usize, bool, bool) {
         let Some(remaining) = self.tokens.get(self.pos..) else {
-            return (initial_end_pos, false);
+            return (initial_end_pos, false, false);
         };
 
         let mut end_pos = initial_end_pos;
         let mut has_content = false;
+        let mut starts_with_whitespace = false;
         let mut consumed = 0;
 
         for rt in remaining {
@@ -264,6 +321,15 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                 }
                 // Line-ending tokens terminate the line
                 Token::LineStart(_) | Token::DocStart | Token::DocEnd => break,
+                // Whitespace tokens: content, but also mark as "starts with whitespace" if first
+                Token::Whitespace | Token::WhitespaceWithTabs => {
+                    if !has_content {
+                        starts_with_whitespace = true;
+                    }
+                    end_pos = rt.span.end_usize();
+                    has_content = true;
+                    consumed += 1;
+                }
                 // All other tokens are content
                 _ => {
                     end_pos = rt.span.end_usize();
@@ -274,21 +340,25 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
         }
 
         self.pos += consumed;
-        (end_pos, has_content)
+        (end_pos, has_content, starts_with_whitespace)
     }
 
     /// Check if a line starting at `pos` is empty (no content tokens before next `LineStart`).
     /// Used for lookahead when checking if an under-indented line should break the block scalar.
-    fn is_line_empty_at(&self, pos: usize) -> bool {
+    ///
+    /// Returns `(is_empty, is_eof)`:
+    /// - `is_empty`: true if no content tokens before next `LineStart` or EOF
+    /// - `is_eof`: true if this empty line leads directly to EOF (no more content follows)
+    fn is_line_empty_at(&self, pos: usize) -> (bool, bool) {
         let mut check_pos = pos;
         loop {
             match self.tokens.get(check_pos) {
                 Some(rt) => match &rt.token {
                     Token::Dedent | Token::Indent(_) => check_pos += 1,
-                    Token::LineStart(_) => return true,
-                    _ => return false,
+                    Token::LineStart(_) => return (true, false), // Empty but more content follows
+                    _ => return (false, false),
                 },
-                None => return true, // EOF counts as empty
+                None => return (true, true), // Empty and at EOF
             }
         }
     }
@@ -303,31 +373,39 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
             return String::new();
         };
 
-        // Calculate total capacity needed: content + newlines between lines
+        // Calculate total capacity needed: content + newlines (one per line)
         let content_len: usize = spans.iter().map(Span::len).sum();
-        let newlines_len = rest.len();
+        let newlines_len = spans.len(); // One newline per line
 
         let mut result = String::with_capacity(content_len + newlines_len);
 
-        // Process first span without leading newline
+        // Process first span
         result.push_str(&self.input[first.start_usize()..first.end_usize()]);
+        result.push('\n');
 
-        // Process remaining spans with leading newlines
+        // Process remaining spans with newline after each
         for span in rest {
-            result.push('\n');
             result.push_str(&self.input[span.start_usize()..span.end_usize()]);
+            result.push('\n');
         }
 
         result
     }
 
-    /// Join line spans for folded block scalar (`>`). Folds single newlines to spaces,
-    /// but preserves multiple consecutive newlines.
+    /// Join line spans for folded block scalar (`>`).
+    ///
+    /// Folding rules per YAML 1.2 spec:
+    /// - Normal lines: fold (single newline becomes space)
+    /// - Empty lines: preserve as newlines
+    /// - "More indented" lines: preserve with newlines, don't fold with surrounding content
+    ///
+    /// Key insight: More-indented blocks don't participate in folding. The line break
+    /// before and after a more-indented block is preserved (not folded to space).
     #[allow(
         clippy::string_slice,
         reason = "spans from lexer are guaranteed to be valid UTF-8 boundaries"
     )]
-    fn join_folded_spans(&self, spans: &[Span]) -> String {
+    fn join_folded_spans(&self, spans: &[Span], line_types: &[FoldedLineType]) -> String {
         if spans.is_empty() {
             return String::new();
         }
@@ -336,20 +414,76 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
         let content_len: usize = spans.iter().map(Span::len).sum();
 
         let mut result = String::with_capacity(content_len + spans.len());
-        let mut prev_empty = false;
+        let mut prev_type = FoldedLineType::Empty; // Treat start as if preceded by empty
 
-        for span in spans {
-            let is_empty = span.start == span.end;
-            if is_empty {
-                result.push('\n');
-                prev_empty = true;
-            } else {
-                if !result.is_empty() && !prev_empty {
-                    result.push(' ');
+        // YAML 1.2 folding rules (section 8.1.3):
+        // - Line breaks are folded to a space UNLESS:
+        //   1. They are followed by an empty line, OR
+        //   2. They are followed by a more-indented line
+        // - Line breaks after empty/more-indented lines are NOT folded
+        //
+        // Track last non-empty line type to handle Empty sequences correctly.
+        // Start with None to indicate no content has been seen yet.
+        let mut last_content_type: Option<FoldedLineType> = None;
+
+        for (span, &line_type) in spans.iter().zip(line_types.iter()) {
+            match line_type {
+                FoldedLineType::Empty => {
+                    // Empty lines contribute one newline.
+                    // Additionally, if previous was MoreIndented, the line break between
+                    // MoreIndented and Empty is NOT folded, so we need an extra \n.
+                    if prev_type == FoldedLineType::MoreIndented {
+                        result.push('\n');
+                    }
+                    result.push('\n');
                 }
-                result.push_str(&self.input[span.start_usize()..span.end_usize()]);
-                prev_empty = false;
+                FoldedLineType::MoreIndented => {
+                    if !result.is_empty() {
+                        match prev_type {
+                            FoldedLineType::Normal | FoldedLineType::MoreIndented => {
+                                // Line break before more-indented is NOT folded
+                                result.push('\n');
+                            }
+                            FoldedLineType::Empty => {
+                                // If coming from Normal context through Empty, we need
+                                // the preserved line break into the more-indented block.
+                                // If coming from MoreIndented context (or no prior content),
+                                // Empty already added its \n.
+                                if last_content_type == Some(FoldedLineType::Normal) {
+                                    result.push('\n');
+                                }
+                            }
+                        }
+                    }
+                    result.push_str(&self.input[span.start_usize()..span.end_usize()]);
+                    last_content_type = Some(FoldedLineType::MoreIndented);
+                }
+                FoldedLineType::Normal => {
+                    if !result.is_empty() {
+                        match prev_type {
+                            FoldedLineType::Normal => {
+                                // Normal→Normal: line break IS folded to space
+                                result.push(' ');
+                            }
+                            FoldedLineType::MoreIndented => {
+                                // Line break AFTER MoreIndented: NOT folded
+                                result.push('\n');
+                            }
+                            FoldedLineType::Empty => {
+                                // Empty line already added its \n, no additional separator needed
+                            }
+                        }
+                    }
+                    result.push_str(&self.input[span.start_usize()..span.end_usize()]);
+                    last_content_type = Some(FoldedLineType::Normal);
+                }
             }
+            prev_type = line_type;
+        }
+
+        // Add trailing newline for the final line (chomping will adjust as needed)
+        if !result.is_empty() {
+            result.push('\n');
         }
 
         result
@@ -391,14 +525,29 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
     ///
     /// Optimized to avoid lookahead: we consume tokens first, then determine if the line
     /// was empty based on whether content was found.
+    ///
+    /// Per YAML 1.2 spec section 8.1.1.1: If a block scalar has an indentation indicator,
+    /// then the content indentation level equals the indentation level of the block scalar
+    /// plus the integer value of the indentation indicator.
+    ///
+    /// The `min_indent` parameter is the minimum indent for content (typically parent + 1).
+    /// For explicit indicators, we use `min_indent - 1` as the block scalar's indentation,
+    /// since the indicator is relative to the parent block's indentation level.
     pub fn collect_block_scalar_content(
         &mut self,
         header: &BlockScalarHeader,
         literal: bool,
+        min_indent: IndentLevel,
     ) -> (String, usize) {
         // Pre-allocate for typical block scalar sizes (4-8 lines common)
+        // For folded scalars, we also track line type to handle "more indented" lines
         let mut line_spans: Vec<Span> = Vec::with_capacity(8);
-        let mut content_indent: Option<usize> = header.indent.map(usize::from);
+        let mut line_types: Vec<FoldedLineType> = Vec::with_capacity(8);
+        // Per YAML spec 8.1.1.1: content_indent = block_scalar_indent + explicit_indicator
+        // The block_scalar_indent is min_indent - 1 (the parent block's indentation)
+        let mut content_indent: Option<usize> = header
+            .indent
+            .map(|i| usize::from(min_indent.saturating_sub(1)) + usize::from(i));
         let mut end_pos = self.current_span().end_usize();
 
         // Track whitespace-only lines before the first content line.
@@ -417,27 +566,52 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
             };
             let (n, line_start_span) = (indent_to_usize(*indent_level), ls_span);
 
-            // For non-empty lines with insufficient indent, break before consuming.
-            // Empty lines don't break the block scalar regardless of indent.
-            if let Some(min_indent) = content_indent
-                && n < min_indent
-                && !self.is_line_empty_at(self.pos + 1)
+            // Check if this line should terminate the block scalar.
+            let (is_empty, is_eof) = self.is_line_empty_at(self.pos + 1);
+
+            // An empty line at indent 0 leading to EOF is the structural terminator, not content.
+            // But indented empty lines before EOF are still content (they represent a trailing
+            // line break that should be preserved with keep chomping).
+            if is_empty && is_eof && n == 0 {
+                break;
+            }
+
+            // For under-indented lines with established content, break on non-empty lines
+            if let Some(required_indent) = content_indent
+                && n < required_indent
+                && !is_empty
             {
+                break;
+            }
+
+            // Check for tabs used as indentation BEFORE breaking.
+            // This ensures we still emit errors for invalid tab indentation even when
+            // the block scalar terminates early.
+            // Look at the token following the LineStart to check for tabs.
+            if n == 0
+                && let Some(rt) = self.tokens.get(self.pos + 1)
+                && matches!(rt.token, Token::WhitespaceWithTabs)
+            {
+                self.error(ErrorKind::InvalidIndentation, rt.span);
+            }
+
+            // For block scalars with no content yet: a non-empty line at or below the parent
+            // indent level (min_indent - 1) cannot be block scalar content - it must be
+            // the next sibling node. For example, empty block scalars like:
+            //   strip: >-
+            //
+            //   clip: >
+            // The "clip:" is at the same indent as "strip:", so it's not block scalar content.
+            if content_indent.is_none() && !is_empty && n < usize::from(min_indent) {
                 break;
             }
 
             self.advance(); // consume LineStart
             end_pos = line_start_span.end_usize();
 
-            // Check for tabs used as indentation (only when no space-based indent)
-            if n == 0
-                && let Some((Token::WhitespaceWithTabs, tab_span)) = self.peek()
-            {
-                self.error(ErrorKind::InvalidIndentation, tab_span);
-            }
-
             // Consume content tokens and detect if line has content
-            let (content_end, has_content) = self.consume_block_line_with_detection(end_pos);
+            let (content_end, has_content, starts_with_ws) =
+                self.consume_block_line_with_detection(end_pos);
             end_pos = content_end;
 
             if has_content {
@@ -453,17 +627,39 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                 }
 
                 // Calculate content start including extra indent
-                let min_indent = content_indent.unwrap_or(1);
-                let extra_indent = n.saturating_sub(min_indent);
+                let base_indent = content_indent.unwrap_or(1);
+                let extra_indent = n.saturating_sub(base_indent);
                 let content_start = line_start_span.end_usize() - extra_indent;
 
                 line_spans.push(Span::from_usize_range(content_start..content_end));
+                // Line is "more indented" if it has extra whitespace beyond base,
+                // OR if the content starts with whitespace (tab or space per YAML spec)
+                let line_type = if extra_indent > 0 || starts_with_ws {
+                    FoldedLineType::MoreIndented
+                } else {
+                    FoldedLineType::Normal
+                };
+                line_types.push(line_type);
             } else {
-                // Empty line
-                if content_indent.is_none() {
-                    empty_lines_before_content.push((n, line_start_span));
+                // Empty line (no content tokens)
+                // Check for "more indented" whitespace-only lines - these preserve extra spaces
+                let base_indent = content_indent.unwrap_or(0);
+                if n > base_indent && content_indent.is_some() {
+                    // More-indented blank line: the extra spaces are content
+                    let extra_indent = n - base_indent;
+                    let content_start = line_start_span.end_usize() - extra_indent;
+                    line_spans.push(Span::from_usize_range(
+                        content_start..line_start_span.end_usize(),
+                    ));
+                    line_types.push(FoldedLineType::MoreIndented);
+                } else {
+                    // Truly empty line
+                    if content_indent.is_none() {
+                        empty_lines_before_content.push((n, line_start_span));
+                    }
+                    line_spans.push(Span::from_usize_range(end_pos..end_pos));
+                    line_types.push(FoldedLineType::Empty);
                 }
-                line_spans.push(Span::from_usize_range(end_pos..end_pos));
             }
         }
 
@@ -471,7 +667,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
         let mut content = if literal {
             self.join_literal_spans(&line_spans)
         } else {
-            self.join_folded_spans(&line_spans)
+            self.join_folded_spans(&line_spans, &line_types)
         };
         Self::apply_chomping(&mut content, header.chomping);
 
@@ -593,7 +789,13 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
             let value = if let Some((Token::LineStart(_), _)) = self.peek() {
                 self.advance();
                 self.check_tabs_as_indentation();
-                self.parse_value(map_indent + 1)
+                // We crossed a line boundary - pass this info so anchors/tags
+                // can bridge indentation gaps (e.g., SKE5 test case)
+                let props = NodeProperties {
+                    crossed_line_boundary: true,
+                    ..Default::default()
+                };
+                self.parse_value_with_properties(map_indent + 1, props)
             } else {
                 self.parse_value(map_indent + 1)
             };
@@ -645,12 +847,70 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                 self.advance();
             }
 
+            // Check if we're already at a token that can start a mapping entry at the correct indent
+            // (this can happen after parse_explicit_mapping_entry which leaves us at the next entry)
+            let already_at_entry = {
+                let is_entry_token = matches!(
+                    self.peek(),
+                    Some((
+                        Token::Plain(_)
+                            | Token::StringStart(_)
+                            | Token::MappingKey
+                            | Token::Colon
+                            | Token::Anchor(_)
+                            | Token::Tag(_),
+                        _
+                    ))
+                );
+                // Only consider it a valid entry if it's at the correct column
+                is_entry_token && self.current_token_column() == map_indent
+            };
+
             // Advance to next line at same indent, or break if we can't
-            if !self.advance_to_same_indent(map_indent) {
+            if !already_at_entry && !self.advance_to_same_indent(map_indent) {
                 break;
             }
 
-            // Try to parse a key-value pair
+            // Handle explicit key indicator (?)
+            if let Some((Token::MappingKey, _)) = self.peek() {
+                if let Some((key, value)) = self.parse_explicit_mapping_entry(map_indent) {
+                    pairs.push((key, value));
+                    continue;
+                }
+                break;
+            }
+
+            // Handle empty key (: at start of line)
+            if let Some((Token::Colon, colon_span)) = self.peek() {
+                let key_node = Node::null(colon_span);
+                self.advance();
+
+                // Skip whitespace only (not comments) - check for Whitespace/WhitespaceWithTabs
+                while let Some((Token::Whitespace | Token::WhitespaceWithTabs, _)) = self.peek() {
+                    self.advance();
+                }
+
+                // If there's a comment, the value is null (comment terminates)
+                if let Some((Token::Comment(_), _)) = self.peek() {
+                    self.advance();
+                    pairs.push((key_node, Node::null(self.current_span())));
+                    continue;
+                }
+
+                // If we hit LineStart immediately, value is null
+                if let Some((Token::LineStart(_), _)) = self.peek() {
+                    pairs.push((key_node, Node::null(self.current_span())));
+                    continue;
+                }
+
+                // Otherwise, parse the value
+                let value = self.parse_value(map_indent + 1);
+                let value_node = value.unwrap_or_else(|| Node::null(self.current_span()));
+                pairs.push((key_node, value_node));
+                continue;
+            }
+
+            // Try to parse an implicit key-value pair
             let Some((key, value_node)) = self.parse_implicit_mapping_entry(map_indent) else {
                 break;
             };
@@ -662,6 +922,65 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                 break;
             }
         }
+    }
+
+    /// Parse an explicit mapping entry (? key : value).
+    #[allow(
+        clippy::unnecessary_wraps,
+        reason = "Consistent API with other mapping entry parsers"
+    )]
+    fn parse_explicit_mapping_entry(
+        &mut self,
+        map_indent: IndentLevel,
+    ) -> Option<(Node<'input>, Node<'input>)> {
+        // Consume the ?
+        self.advance();
+        self.skip_ws();
+
+        // Parse the key (may be on same line or next line)
+        let key = if let Some((Token::LineStart(_), _)) = self.peek() {
+            self.advance();
+            while let Some((Token::Dedent, _)) = self.peek() {
+                self.advance();
+            }
+            self.parse_value(map_indent + 1)
+        } else {
+            self.parse_value(map_indent + 1)
+        };
+        let key_node = key.unwrap_or_else(|| Node::null(self.current_span()));
+
+        // Skip to colon (may be on next line)
+        self.skip_ws();
+        while let Some((Token::LineStart(line_n), _)) = self.peek() {
+            if *line_n < map_indent {
+                break;
+            }
+            self.advance();
+            while let Some((Token::Dedent, _)) = self.peek() {
+                self.advance();
+            }
+        }
+
+        // Expect colon
+        if !matches!(self.peek(), Some((Token::Colon, _))) {
+            return Some((key_node, Node::null(self.current_span())));
+        }
+        self.advance();
+        self.skip_ws();
+
+        // Parse the value
+        let value = if let Some((Token::LineStart(_), _)) = self.peek() {
+            self.advance();
+            while let Some((Token::Dedent, _)) = self.peek() {
+                self.advance();
+            }
+            self.parse_value(map_indent + 1)
+        } else {
+            self.parse_value(map_indent + 1)
+        };
+        let value_node = value.unwrap_or_else(|| Node::null(self.current_span()));
+
+        Some((key_node, value_node))
     }
 
     /// Advance to the next line at the specified indent level.
@@ -693,9 +1012,12 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                         self.skip_ws();
                         return true;
                     }
+                    // n > target_indent: skip this indented line (could be blank or comment)
                     self.advance();
                 }
-                Some((Token::Dedent, _)) => {
+                // Skip Dedent, Comment, and Indent tokens - they don't affect our search
+                // for a LineStart at the target indent level
+                Some((Token::Dedent | Token::Comment(_) | Token::Indent(_), _)) => {
                     self.advance();
                 }
                 _ => return false,
@@ -922,13 +1244,15 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
     /// Extract the string content from a scalar node for multiline continuation.
     ///
     /// Returns `None` if the node is not a scalar type (e.g., Mapping or Sequence).
+    /// For typed scalars like `null`, `true`, `false`, returns the original text representation
+    /// so that multiline continuations produce correct results (e.g., `null\n  d` → `null d`).
     fn extract_scalar_content(node: &Node<'input>) -> Option<String> {
         match &node.value {
             Value::String(string) => Some(string.clone().into_owned()),
             Value::Bool(boolean) => Some(boolean.to_string()),
             Value::Int(integer) => Some(integer.to_string()),
             Value::Float(float) => Some(float.to_string()),
-            Value::Null => Some(String::new()),
+            Value::Null => Some("null".to_owned()),
             _ => None,
         }
     }
@@ -997,10 +1321,12 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
         let start = initial.span.start_usize();
         let mut end = initial.span.end_usize();
 
-        // For plain scalar continuations, the minimum indent for continuation lines is:
-        // - At least 1 (continuation must be indented)
-        // - Greater than or equal to block_min_indent (must be in valid block context)
-        let min_indent = block_min_indent.max(1);
+        // For plain scalar continuations, the minimum indent depends on context:
+        // - At top level (block_min_indent == 0): continuations can be at column 0
+        // - Inside a block: continuations must be at least at block_min_indent
+        // Per YAML 1.2 spec section 7.3.1, plain scalars can span multiple lines
+        // at the top level with continuations at the same indentation.
+        let min_indent = block_min_indent;
 
         // Extract the initial content
         let Some(mut content) = Self::extract_scalar_content(&initial) else {
@@ -1045,8 +1371,12 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
             // Valid continuation, consume the LineStart
             self.advance();
 
-            while let Some((Token::Indent(_) | Token::Whitespace | Token::WhitespaceWithTabs, _)) =
-                self.peek()
+            // Skip indentation tokens - including Dedent which can appear when
+            // we're returning to base indentation level (e.g., line 3 indented, line 4 not)
+            while let Some((
+                Token::Indent(_) | Token::Dedent | Token::Whitespace | Token::WhitespaceWithTabs,
+                _,
+            )) = self.peek()
             {
                 self.advance();
             }

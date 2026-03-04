@@ -8,7 +8,7 @@
 
 **Version:** 0.0.2
 **Date:** 2026-03-04
-**Status:** 100% YAML 1.2 Test Suite Compliance (842/842 tests passing)
+**Status:** 98.2% YAML 1.2 Test Suite Compliance (827/842 tests passing with structural event comparison)
 **Dependencies:** Zero external dependencies
 
 ---
@@ -34,7 +34,7 @@ This is a YAML 1.2 parser written in Rust with the following key features:
 
 - **Error Recovery**: Continues parsing after errors, collecting multiple errors in a single pass
 - **Span Tracking**: Every parsed value includes its source location (byte range)
-- **100% YAML 1.2 Compliance**: Passes all 842 tests from the official YAML test suite
+- **98.2% YAML 1.2 Compliance**: Passes 827/842 tests with structural event comparison (see below for gaps)
 - **Zero Dependencies**: Self-contained with custom span/error handling
 - **Zero-Copy Design**: Uses `Cow<'input, str>` throughout to minimize allocations
 - **Layered Architecture**: Separates stream-level parsing from document-level parsing
@@ -842,7 +842,7 @@ Output:
 The parser is tested against the official YAML 1.2 test suite:
 
 - **842 tests** covering all YAML 1.2 features (402 positive + 440 error tests)
-- **842 passing (100%)** - Full compliance achieved
+- **827 passing (98.2%)** - See Parser Gaps section below for remaining 15 failures
 - Tests are in `tests/test_suite.rs`
 - Error analysis test (`analyze_error_kinds`) tracks error distribution across 440+ error test cases
 
@@ -940,61 +940,44 @@ The parser uses optimized type sizes to reduce memory footprint. This introduces
 
 ## Future Improvements
 
-### Recently Completed (2026-02-27)
+### Short-Term (Performance & Testing)
 
-**Dependency Removal:**
+1. **Plain Scalar Zero-Copy Optimization**
+   - Currently `scalar_to_value()` always allocates via `string.to_string()`
+   - For strings that don't need type coercion (most cases), could return `Cow::Borrowed(string)` directly
+   - Location: `parser/scalar.rs` in `parse_scalar_with_indent()` (Token::Plain branch)
+   - Potential impact: Reduced allocations for string-heavy documents
 
-1. ✅ **Chumsky Removal** - Completely removed the `chumsky` parser combinator library
-   - Implemented custom `Span` struct (was `chumsky::span::SimpleSpan`)
-   - `Span::new(range)` creates from `Range<usize>`
-   - `Span::at(pos)` for zero-width spans, `Span::union()` for merging
-   - **Zero external dependencies** - entire crate is now self-contained
+2. ~~**Full Test Suite Event Comparison**~~ ✅ DONE
+   - Implemented structural event comparison in `tests/test_suite.rs`
+   - Compares AST against YAML Test Suite `.event` files
+   - Current pass rate: 827/842 (98.2%) - see parser gaps below
 
-**Error Improvements:**
+### Parser Gaps (15 failing tests)
 
-1. ✅ **Specific Error Kinds** - Eliminated all generic `UnexpectedToken` errors
-   - **Before:** 535 `UnexpectedToken` occurrences across 120 test cases
-   - **After:** 0 `UnexpectedToken` occurrences (100% specific errors)
-   - New error kinds with actionable suggestions:
-     - `TrailingContent` (346 occurrences) - "Remove extra content after value"
-     - `ContentOnSameLine` (62) - "Move content to new indented line"
-     - `MissingSeparator` (32) - "Add comma between items"
-     - `MultilineImplicitKey` (17) - "Use explicit key syntax"
-     - `UnexpectedColon` (9) - "Use quoted string for colons in values"
-     - `UnmatchedBracket` - "Check for extra closing brackets"
-     - `InvalidComment` - "Add whitespace before `#` for comments"
-     - `MissingColon` - "Add `:` after mapping key"
-     - `BlockIndicatorInFlow` - "Block indicators not allowed in flow"
-     - `DocumentMarkerInFlow` - "Document markers not allowed in flow"
-     - `OrphanedProperties` - "Ensure anchor/tag is followed by a value"
+The following parser limitations were identified through structural event comparison:
 
-**Lexer Improvements:**
+1. **Tag Expansion and Comparison** (9 tests)
+   - Tags need proper expansion for test suite comparison
+   - Named handles (`!e!`) need `%TAG` directive lookup
+   - Tests: 2AUY, 74H7, 9KAX, C4HZ, F2C7, J7PZ, L94M, S4JQ, 33X3
 
-1. ✅ **Token Module Extraction** - Token types moved to dedicated `token.rs`
-2. ✅ **Zero-Allocation Character Iteration** - Direct string slicing (no `Vec<char>`)
-3. ✅ **SourceMap Utility** - Line/column position tracking for IDE integration
-4. ✅ **State Machine Extraction** - `next_token()` refactored from ~230 to ~45 lines
-5. ✅ **Unified Quoted String Handling** - Shared helpers reduce duplication
-6. ✅ **Zero-Copy Tokenization** - `Token<'input>` uses `Cow<'input, str>`
-   - Borrows directly from input for comments, anchor names
-   - Allocates only when content is transformed (escapes, trimming)
+2. **Block Collection Nodes** (1 test)
+   - Complex block structure with properties
+   - Tests: 57H4 (Spec Example 8.22)
 
-**Parser Infrastructure Improvements:**
+3. **Multi-Document Stream Handling** (2 tests)
+   - Document boundaries with directives
+   - Tests: 6ZKB, 9DXL (Spec Example 9.6)
 
-1. ✅ **Property Collection Helper** - `collect_node_properties()` method
-   - Reduces code duplication for anchor/tag collection loops
-2. ✅ **Method Extraction** - Token-specific helpers in mod.rs
-    - `handle_flow_collection_as_value()` - Flow mapping/sequence handling
-    - `handle_anchor_in_value()` / `handle_tag_in_value()` - Property handling
-    - Reduced `parse_value_with_properties` from ~300 to ~127 lines
-3. ✅ **Flow Collection Unification** - Common flow utilities in flow.rs
-    - `enter_flow_collection()` / `exit_flow_collection()` - Depth tracking
-    - `handle_flow_comma()` / `handle_flow_entry_end()` - Entry handling
-4. ✅ **Zero-Copy Scalar Parsing** - Reduced allocations
-    - `Node<'input>` and `Value<'input>` use lifetimed `Cow<'input, str>`
-    - `into_owned()` methods convert to `'static` lifetime when needed
+4. **Plain Scalar Edge Cases** (2 tests)
+   - Complex plain scalar parsing in specific contexts
+   - Tests: DBG4 (Spec Example 7.10), RZT7 (Spec Example 2.28)
 
-See `LEXER_IMPROVEMENTS.md` and `PARSER_IMPROVEMENTS.md` for detailed progress tracking.
+5. **Folded Block Scalar Line Folding** (1 test)
+   - Trailing whitespace preservation before line folds
+   - MJS9: Expected `"foo \n..."` but got `"foo\n..."` (missing trailing space)
+   - Tests: MJS9 (Spec Example 6.7)
 
 ### Short-Term (Feature Additions)
 

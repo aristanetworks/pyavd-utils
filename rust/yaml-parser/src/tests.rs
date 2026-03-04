@@ -430,3 +430,110 @@ fn test_zero_copy_parsing() {
     let owned_node: Node<'static> = node.into_owned();
     assert!(matches!(&owned_node.value, Value::Mapping(_)));
 }
+
+#[test]
+fn test_debug_p2ad() {
+    // P2AD: Spec Example 8.1 - Block Scalar Header
+    // Tests block scalars with various combinations of indentation and chomping indicators
+    // Uses Unicode arrows (↓, U+2193) in comments
+    let input = "- | # Empty header\u{2193}\n literal\n- >1 # Indentation indicator\u{2193}\n  folded\n- |+ # Chomping indicator\u{2193}\n keep\n\n- >1- # Both indicators\u{2193}\n  strip\n";
+
+    // Verify the stream lexer correctly handles multi-byte UTF-8 characters
+    let (docs, errors) = crate::lexer::tokenize_stream(input);
+    assert!(errors.is_empty(), "Stream lexer should not produce errors");
+    assert_eq!(docs.len(), 1, "Should have exactly one document");
+
+    let doc = docs.first().unwrap();
+    // The document content should include all 4 entries including the last one
+    assert_eq!(
+        doc.content.len(),
+        input.len(),
+        "Document content should span the entire input"
+    );
+    assert!(
+        doc.content.ends_with("strip\n"),
+        "Document content should end with 'strip\\n'"
+    );
+}
+
+#[test]
+#[allow(
+    clippy::indexing_slicing,
+    clippy::unreachable,
+    reason = "Test code with assertions"
+)]
+fn test_block_scalar_chomping() {
+    use crate::value::Value;
+
+    // Helper to extract the scalar value from a sequence
+    fn get_seq_scalar(input: &str) -> String {
+        let (nodes, errors) = crate::parse(input);
+        assert!(errors.is_empty(), "Unexpected errors: {errors:?}");
+        assert_eq!(nodes.len(), 1);
+        if let Value::Sequence(seq) = &nodes[0].value
+            && let Value::String(str_val) = &seq[0].value
+        {
+            return str_val.to_string();
+        }
+        unreachable!("Expected sequence with string")
+    }
+
+    // JEF9-00: Empty lines with keep chomping
+    assert_eq!(get_seq_scalar("- |+\n\n\n"), "\n\n");
+
+    // JEF9-01: Single empty line with keep chomping
+    assert_eq!(get_seq_scalar("- |+\n\n"), "\n");
+
+    // JEF9-02: Trailing whitespace (no trailing newline)
+    assert_eq!(get_seq_scalar("- |+\n   "), "\n");
+
+    // A6F9: Basic chomping tests
+    // strip: no trailing newlines
+    // clip: exactly one trailing newline
+    // keep: preserve all trailing newlines
+    let (nodes, errors) = crate::parse("keep: |+\n  text\n");
+    assert!(errors.is_empty());
+    if let Value::Mapping(map) = &nodes[0].value
+        && let Value::String(str_val) = &map[0].1.value
+    {
+        assert_eq!(
+            str_val.as_ref(),
+            "text\n",
+            "keep chomping should have one newline"
+        );
+    }
+}
+
+#[test]
+#[allow(clippy::print_stderr, clippy::use_debug, reason = "Debug test")]
+fn test_debug_m5dy() {
+    // Test: SYW4 - mapping scalars with comments
+    let input = "hr:  65    # Home runs\navg: 0.278 # Batting average\n";
+
+    eprintln!("Input: {input:?}");
+
+    let (tokens, _) = crate::lexer::tokenize_document(input);
+    eprintln!("Tokens ({}):", tokens.len());
+    for (idx, tok) in tokens.iter().enumerate() {
+        eprintln!("  {idx}: {tok:?}");
+    }
+
+    let (nodes, errors) = crate::parse(input);
+    eprintln!("Errors ({}):", errors.len());
+    for err in &errors {
+        eprintln!("  {:?}", err);
+    }
+    eprintln!("Nodes ({}):", nodes.len());
+    for (idx, node) in nodes.iter().enumerate() {
+        eprintln!(
+            "Node {idx}: props={:?} value={:?}",
+            node.properties, node.value
+        );
+        if let crate::value::Value::Mapping(pairs) = &node.value {
+            eprintln!("  Mapping has {} entries", pairs.len());
+            for (entry_idx, (key, val)) in pairs.iter().enumerate() {
+                eprintln!("    [{entry_idx}] key={key:?} val={val:?}");
+            }
+        }
+    }
+}

@@ -702,6 +702,9 @@ impl<'input> DocumentLexer<'input> {
             Some('<') => {
                 self.advance();
                 // Verbatim tag !<uri>
+                // Mark with a leading '\0' so the parser knows not to expand it.
+                // This internal marker is stripped by expand_tag().
+                tag.push('\0');
                 while let Some(peek_ch) = self.peek() {
                     if peek_ch == '>' {
                         self.advance();
@@ -863,11 +866,79 @@ impl<'input> DocumentLexer<'input> {
             self.advance();
         }
 
-        // Count indentation
+        // Count indentation (spaces only per YAML spec s-indent)
         let mut indent = 0;
         while self.peek() == Some(' ') {
             self.advance();
             indent += 1;
+        }
+
+        // In flow folding, skip the entire "s-separate-in-line" prefix.
+        // This is "s-white+" which includes BOTH spaces and tabs (interleaved).
+        // Note: escaped tabs (\t) are processed before newline handling, so they
+        // end up in the previous StringContent, not here.
+        while matches!(self.peek(), Some(' ' | '\t')) {
+            self.advance();
+        }
+
+        // Emit LineStart token
+        let line_span = Span::from_usize_range(newline_start..self.byte_pos);
+        self.pending_tokens
+            .push_back((Token::LineStart(indent), line_span));
+
+        self.byte_pos
+    }
+
+    /// Handle newline in double-quoted strings, trimming trailing whitespace while preserving escaped content.
+    ///
+    /// `protected_len` is the content length that should not be trimmed (includes escaped characters).
+    /// Trailing whitespace beyond this length will be trimmed.
+    fn handle_quoted_newline_trimmed(
+        &mut self,
+        content: &mut String,
+        content_start: usize,
+        protected_len: usize,
+    ) -> usize {
+        // Trim trailing whitespace, but only beyond the protected length.
+        // The protected_len is always at a character boundary (set after push_str).
+        #[allow(
+            clippy::string_slice,
+            reason = "protected_len is always at char boundary"
+        )]
+        if content.len() > protected_len {
+            let trimmable = &content[protected_len..];
+            let trimmed = trimmable.trim_end_matches([' ', '\t']);
+            let new_len = protected_len + trimmed.len();
+            content.truncate(new_len);
+        }
+
+        // Emit current content before newline
+        if !content.is_empty() {
+            let content_span = Span::from_usize_range(content_start..self.byte_pos);
+            self.pending_tokens.push_back((
+                Token::StringContent(Cow::Owned(std::mem::take(content))),
+                content_span,
+            ));
+        }
+
+        // Consume newline
+        let newline_start = self.byte_pos;
+        let ch = self.advance().unwrap();
+        if ch == '\r' && self.peek() == Some('\n') {
+            self.advance();
+        }
+
+        // Count indentation (spaces only per YAML spec s-indent)
+        let mut indent = 0;
+        while self.peek() == Some(' ') {
+            self.advance();
+            indent += 1;
+        }
+
+        // In flow folding, skip the entire "s-separate-in-line" prefix.
+        // This is "s-white+" which includes BOTH spaces and tabs (interleaved).
+        while matches!(self.peek(), Some(' ' | '\t')) {
+            self.advance();
         }
 
         // Emit LineStart token
@@ -963,6 +1034,10 @@ impl<'input> DocumentLexer<'input> {
         let mut content = String::new();
         let mut content_start = self.byte_pos;
         let mut terminated = false;
+        // Track the content length after the last non-escape character.
+        // When we see a newline, we trim trailing whitespace but only up to this position.
+        // This preserves escaped whitespace like \t while trimming literal trailing whitespace.
+        let mut escape_protected_len = 0usize;
 
         loop {
             match self.peek() {
@@ -977,13 +1052,25 @@ impl<'input> DocumentLexer<'input> {
                     self.advance();
                     if let Some(escaped) = self.consume_escape_sequence(escape_start) {
                         content.push_str(&escaped);
+                        // The entire content including this escape is protected
+                        escape_protected_len = content.len();
                     }
                 }
                 Some('\n' | '\r') => {
-                    content_start = self.handle_quoted_newline(&mut content, content_start);
+                    content_start = self.handle_quoted_newline_trimmed(
+                        &mut content,
+                        content_start,
+                        escape_protected_len,
+                    );
+                    escape_protected_len = 0;
                 }
                 Some(ch) => {
                     content.push(ch);
+                    // Track protection: non-whitespace chars protect all content before them
+                    if !ch.is_ascii_whitespace() {
+                        escape_protected_len = content.len();
+                    }
+                    // Whitespace doesn't update protection - can be trimmed if at end
                     self.advance();
                 }
             }
@@ -1169,9 +1256,11 @@ impl<'input> DocumentLexer<'input> {
             .input
             .get(content_start..content_end_non_ws)
             .unwrap_or("");
+        // Use content_end_non_ws for span end to match the trimmed content
+        // (don't include trailing whitespace that was consumed but not part of the value)
         (
             Token::Plain(Cow::Borrowed(content)),
-            self.current_span(start),
+            Span::from_usize_range(start..content_end_non_ws),
         )
     }
 }

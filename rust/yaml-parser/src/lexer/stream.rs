@@ -58,7 +58,7 @@ pub struct RawDocument<'input> {
 /// The lifetime `'input` refers to the input string being parsed.
 pub struct StreamLexer<'input> {
     input: &'input str,
-    chars: Vec<char>,
+    /// Current byte position in the input string.
     pos: usize,
     documents: Vec<RawDocument<'input>>,
     errors: Vec<ParseError>,
@@ -75,7 +75,6 @@ impl<'input> StreamLexer<'input> {
     pub fn new(input: &'input str) -> Self {
         Self {
             input,
-            chars: input.chars().collect(),
             pos: 0,
             documents: Vec::new(),
             errors: Vec::new(),
@@ -165,7 +164,11 @@ impl<'input> StreamLexer<'input> {
         }
 
         let marker_end = self.pos + 3;
-        let next_char = self.chars.get(marker_end);
+        // Get the character at byte position `marker_end` from the input string
+        let next_char = self
+            .input
+            .get(marker_end..)
+            .and_then(|rest| rest.chars().next());
         if next_char.is_some() && !matches!(next_char, Some(' ' | '\t' | '\n' | '\r')) {
             return false;
         }
@@ -205,7 +208,11 @@ impl<'input> StreamLexer<'input> {
         }
 
         let marker_end = self.pos + 3;
-        let next_char = self.chars.get(marker_end);
+        // Get the character at byte position `marker_end` from the input string
+        let next_char = self
+            .input
+            .get(marker_end..)
+            .and_then(|rest| rest.chars().next());
         if next_char.is_some() && !matches!(next_char, Some(' ' | '\t' | '\n' | '\r')) {
             return false;
         }
@@ -222,22 +229,32 @@ impl<'input> StreamLexer<'input> {
                 .push(ParseError::new(ErrorKind::TrailingContent, span));
         }
 
-        // Include `...` in content
-        if self.content_start.is_none() {
-            self.content_start = Some(self.pos);
-        }
-        let line_end = self.find_eol();
-        (self.pos, self.content_end) = self.advance_past_newline(line_end);
+        // Track if there was content before the `...` marker
+        let had_content = self.content_start.is_some();
 
-        // Finalize the current document
-        if self.content_start.is_some() || !self.current_directives.is_empty() {
-            let start = self.content_start.unwrap_or(self.pos);
+        // Advance past the `...` line
+        let line_end = self.find_eol();
+        let doc_end_pos = self.pos; // Position of `...`
+        (self.pos, _) = self.advance_past_newline(line_end);
+
+        // Only include `...` in content_end if there was preceding content
+        if had_content {
+            self.content_end = self.pos;
+        }
+
+        // Finalize the current document only if there was actual content
+        // (directives alone without content/doc-start don't create a document)
+        if had_content {
+            let start = self.content_start.unwrap_or(doc_end_pos);
             self.documents.push(RawDocument {
                 directives: std::mem::take(&mut self.current_directives),
                 content: &self.input[start..self.content_end],
                 content_span: Span::from_usize_range(start..self.pos),
             });
             self.content_start = None;
+        } else {
+            // Clear directives - they had no document to attach to
+            self.current_directives.clear();
         }
 
         // After `...`, we're back in directive prologue for the NEXT document
@@ -292,7 +309,9 @@ impl<'input> StreamLexer<'input> {
         reason = "All positions are calculated from byte-level scanning and guaranteed to be on UTF-8 boundaries"
     )]
     pub fn tokenize(mut self) -> (Vec<RawDocument<'input>>, Vec<ParseError>) {
-        while self.pos < self.chars.len() {
+        // Use input.len() (byte count), not chars.len() (character count)
+        // since self.pos is a byte position, not a character index
+        while self.pos < self.input.len() {
             // Check for `---` document start marker
             if self.handle_document_start() {
                 continue;

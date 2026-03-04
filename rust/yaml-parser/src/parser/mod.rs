@@ -47,6 +47,13 @@ impl<'input> NodeProperties<'input> {
         self.anchor.is_none() && self.tag.is_none()
     }
 
+    /// Returns true if there are no actual properties (anchor/tag), ignoring flags.
+    /// This is useful for checking if we have collected any real node properties
+    /// regardless of the `crossed_line_boundary` flag.
+    pub fn is_empty_excluding_flag(&self) -> bool {
+        self.anchor.is_none() && self.tag.is_none()
+    }
+
     /// Apply these properties to a node, updating its span to include properties.
     pub fn apply_to(self, mut node: Node<'input>) -> Node<'input> {
         let anchor_val = self.anchor.map(|(anchor, _)| Cow::Borrowed(anchor));
@@ -306,7 +313,10 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                     if props.tag.is_some() {
                         self.error(ErrorKind::DuplicateTag, tag_span);
                     }
-                    props.tag = Some((tag_name, tag_span));
+                    // Expand tag to full URI form
+                    let expanded_tag: Cow<'input, str> =
+                        Cow::Owned(self.expand_tag(&tag_name, tag_span));
+                    props.tag = Some((expanded_tag, tag_span));
                 }
                 Some((Token::Whitespace | Token::WhitespaceWithTabs, _)) => {
                     self.advance();
@@ -323,7 +333,12 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
     /// if no value is present.
     pub fn parse_mapping_value(&mut self, map_indent: IndentLevel) -> Node<'input> {
         let value = match self.peek() {
-            Some((Token::LineStart(_), _)) => {
+            Some((Token::LineStart(n), _)) => {
+                // If the next line is at strictly lower indentation, value is implicitly null.
+                // Don't advance past LineStart - let the caller handle dedent.
+                if *n < map_indent {
+                    return Node::null(self.current_span());
+                }
                 self.advance();
                 while let Some((Token::Indent(_) | Token::Dedent, _)) = self.peek() {
                     self.advance();
@@ -715,7 +730,8 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
     }
 
     /// Check if current position is a mapping key pattern (scalar followed by colon).
-    pub fn is_mapping_key_pattern(&self) -> bool {
+    /// This is used to determine if properties (anchor/tag) apply to a key or mapping.
+    fn is_mapping_key_pattern(&self) -> bool {
         let mut i = self.pos;
         match self.tokens.get(i) {
             Some(rt) if matches!(rt.token, Token::Plain(_)) => {
@@ -785,57 +801,90 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
         }
     }
 
-    /// Validate that a tag handle is declared in the current document.
+    /// Expand a tag to its full URI form and validate handle declaration.
     ///
-    /// Tags that don't require declaration:
-    /// - `!<uri>` - verbatim tag (explicit URI)
-    /// - `!!type` - secondary handle (built-in, maps to tag:yaml.org,2002:)
-    /// - `!type` - primary handle (local tag, no second `!`)
+    /// Tag formats from lexer (leading `!` stripped):
+    /// - `!type` → secondary handle `!!type` → expands to `tag:yaml.org,2002:type`
+    /// - `prefix!suffix` → named handle `!prefix!suffix` → lookup and expand
+    /// - `type` → primary/local tag `!type` → stored as `!type`
+    /// - empty → non-specific tag `!` → stored as `!`
+    /// - URI with `:` → verbatim tag → stored as-is
     ///
-    /// Tags that require declaration:
-    /// - `!name!suffix` - named handle (must have `%TAG !name! prefix`)
+    /// Returns the expanded tag as an owned string.
     #[allow(
         clippy::string_slice,
         reason = "bang_pos is from find('!') so slicing up to it is safe"
     )]
-    pub fn validate_tag_handle(&mut self, tag: &str, span: Span) {
-        // Note: The lexer strips the leading `!` from tags.
-        // So:
-        // - `!!type` becomes `!type` in the token
-        // - `!prefix!suffix` becomes `prefix!suffix` in the token
-        // - `!type` becomes `type` or empty string in the token
-        // - `!<uri>` becomes the uri content (without !< and >)
-
-        // Verbatim tag: the original was !<uri> - always valid
-        // After lexer: tag contains the URI without !< and >
-        // Note: Verbatim tags in the lexer are stored without !< and >.
-        // We don't see them here since the token doesn't start with special char.
-        // If it was verbatim, the lexer consumed !<...> and stored just the URI.
-
-        // Secondary handle: original !!type, stored as !type - always valid (built-in)
-        if tag.starts_with('!') {
-            // This is a secondary tag like !!str -> stored as !str
-            return;
+    pub fn expand_tag(&mut self, tag: &str, span: Span) -> String {
+        /// Decode percent-encoded characters in a tag suffix.
+        /// E.g., `tag%21` → `tag!` (since %21 is '!')
+        fn percent_decode(input: &str) -> String {
+            let mut result = String::with_capacity(input.len());
+            let mut chars = input.chars().peekable();
+            while let Some(ch) = chars.next() {
+                if ch == '%' {
+                    // Try to read two hex digits
+                    let hex: String = chars.by_ref().take(2).collect();
+                    if hex.len() == 2
+                        && let Ok(byte) = u8::from_str_radix(&hex, 16)
+                    {
+                        result.push(char::from(byte));
+                        continue;
+                    }
+                    // Failed to decode, keep as-is
+                    result.push('%');
+                    result.push_str(&hex);
+                } else {
+                    result.push(ch);
+                }
+            }
+            result
         }
 
-        // Empty tag (just `!`) is stored as empty string - always valid (non-specific tag)
+        // Verbatim tag: marked with leading '\0' by lexer - return as-is (without marker)
+        // The lexer strips !< and > so we just get the URI content
+        if let Some(verbatim) = tag.strip_prefix('\0') {
+            return verbatim.to_owned();
+        }
+
+        // Secondary handle: original !!type, stored as !type
+        // Check if !! has been redefined via %TAG, otherwise use default
+        if let Some(suffix) = tag.strip_prefix('!') {
+            let decoded_suffix = percent_decode(suffix);
+            if let Some(prefix) = self.tag_handles.get("!!") {
+                return format!("{prefix}{decoded_suffix}");
+            }
+            // Default secondary handle expands to tag:yaml.org,2002:
+            return format!("tag:yaml.org,2002:{decoded_suffix}");
+        }
+
+        // Empty tag (just `!`) - non-specific tag
         if tag.is_empty() {
-            return;
+            return "!".to_owned();
         }
 
         // Check for named handle: original !name!suffix, stored as name!suffix
-        // Look for '!' in the tag value (would be the second '!' from original)
         if let Some(bang_pos) = tag.find('!') {
-            // Named handle like !prefix!suffix is stored as prefix!suffix
-            // The handle is !prefix! which is "!" + tag[0..bang_pos+1]
             let handle = format!("!{}!", &tag[0..bang_pos]);
-            if !self.tag_handles.contains_key(&handle) {
-                self.error(ErrorKind::UndefinedTagHandle, span);
+            let suffix = &tag[bang_pos + 1..];
+            if let Some(prefix) = self.tag_handles.get(&handle) {
+                let decoded_suffix = percent_decode(suffix);
+                return format!("{prefix}{decoded_suffix}");
             }
+            // Handle not declared - emit error and return unexpanded
+            self.error(ErrorKind::UndefinedTagHandle, span);
+            return format!("!{tag}");
         }
 
-        // Primary handle: original !type, stored as type (no '!') - always valid (local tag)
-        // No validation needed
+        // Primary handle: original !type, stored as type (no '!' in the value)
+        // Check if primary handle `!` has been redefined via %TAG ! prefix
+        if let Some(prefix) = self.tag_handles.get("!") {
+            let decoded_tag = percent_decode(tag);
+            return format!("{prefix}{decoded_tag}");
+        }
+
+        // No redefinition - use as local tag with leading !
+        format!("!{tag}")
     }
 
     /// Parse a complete YAML stream (multiple documents).
@@ -940,34 +989,42 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
             self.error(ErrorKind::DuplicateAnchor, anchor_span);
         }
 
-        if props.crossed_line_boundary && props.anchor.is_some() {
+        // When we crossed a line boundary AND have existing properties (tag/anchor),
+        // this anchor starts a NEW node (e.g., a mapping key), not a continuation.
+        // For example: `!!map\n&a8 !!str key8: value7`
+        //   - !!map on line 1 → tag for the mapping
+        //   - &a8 !!str on line 2 → properties for the key
+        // We try to parse this as a block mapping with the anchor on the key.
+        if props.crossed_line_boundary && !props.is_empty_excluding_flag() {
             let inner_props = NodeProperties {
                 anchor: Some((anchor_name, anchor_span)),
                 tag: None,
                 crossed_line_boundary: false,
             };
             if let Some(mapping) = self.parse_block_mapping_with_props(min_indent, inner_props) {
-                Some(self.apply_properties_and_register(props, mapping))
-            } else if props.anchor.is_some() {
-                self.error(ErrorKind::DuplicateAnchor, anchor_span);
-                props.anchor = Some((anchor_name, anchor_span));
-                self.parse_value_with_properties(min_indent, props)
-            } else {
-                props.anchor = Some((anchor_name, anchor_span));
-                self.parse_value_with_properties(min_indent, props)
+                return Some(self.apply_properties_and_register(props, mapping));
             }
-        } else {
-            props.anchor = Some((anchor_name, anchor_span));
-            self.parse_value_with_properties(min_indent, props)
+            // If not a mapping, fall through to add anchor to props
+            // This handles the case where we have !!tag\n&anchor value (single scalar)
+            if props.anchor.is_some() {
+                self.error(ErrorKind::DuplicateAnchor, anchor_span);
+            }
         }
+
+        props.anchor = Some((anchor_name, anchor_span));
+        self.parse_value_with_properties(min_indent, props)
     }
 
     /// Handle a tag token in value parsing.
     ///
-    /// Validates tag handles, checks for missing separators, handles duplicates,
+    /// Expands tag handles to full URIs, checks for missing separators, handles duplicates,
     /// and either:
     /// - Tries to parse as a block mapping key (if crossed line boundary with existing tag)
     /// - Accumulates the tag as a property and continues parsing
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "Cow is cloned from token anyway; takes ownership for potential future optimization"
+    )]
     fn handle_tag_in_value(
         &mut self,
         tag_name: Cow<'input, str>,
@@ -977,8 +1034,8 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
     ) -> Option<Node<'input>> {
         self.advance();
 
-        // Validate that named tag handles are declared in this document
-        self.validate_tag_handle(&tag_name, tag_span);
+        // Expand tag to full URI form (validates handles and reports errors)
+        let expanded_tag: Cow<'input, str> = Cow::Owned(self.expand_tag(&tag_name, tag_span));
 
         let tag_looks_legitimate = !tag_name.contains('"') && !tag_name.contains('`');
         let tag_end = tag_span.end;
@@ -1005,21 +1062,21 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
         if props.crossed_line_boundary && props.tag.is_some() {
             let inner_props = NodeProperties {
                 anchor: None,
-                tag: Some((tag_name.clone(), tag_span)),
+                tag: Some((expanded_tag.clone(), tag_span)),
                 crossed_line_boundary: false,
             };
             if let Some(mapping) = self.parse_block_mapping_with_props(min_indent, inner_props) {
                 Some(self.apply_properties_and_register(props, mapping))
             } else if props.tag.is_some() {
                 self.error(ErrorKind::DuplicateTag, tag_span);
-                props.tag = Some((tag_name, tag_span));
+                props.tag = Some((expanded_tag, tag_span));
                 self.parse_value_with_properties(min_indent, props)
             } else {
-                props.tag = Some((tag_name, tag_span));
+                props.tag = Some((expanded_tag, tag_span));
                 self.parse_value_with_properties(min_indent, props)
             }
         } else {
-            props.tag = Some((tag_name, tag_span));
+            props.tag = Some((expanded_tag, tag_span));
             self.parse_value_with_properties(min_indent, props)
         }
     }
@@ -1039,7 +1096,9 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
             }
         }
         if let Some(n) = self.parse_block_sequence(min_indent) {
-            if min_indent == 0 {
+            // Only check trailing content at true root level - not when we bridged
+            // indentation for properties (crossed_line_boundary indicates bridging)
+            if min_indent == 0 && !props.crossed_line_boundary {
                 self.check_trailing_content_at_root(0);
             }
             Some(self.apply_properties_and_register(props, n))
@@ -1094,6 +1153,34 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
             new_props.crossed_line_boundary = true;
             self.parse_value_with_properties(min_indent, new_props)
         } else if !props.is_empty() {
+            // Check if we can bridge indentation: properties were collected AFTER crossing
+            // a line boundary, AND the dedented content is a block collection.
+            // This handles cases like SKE5:
+            //   seq:
+            //    &anchor     <- anchor at indent 1, after crossing line boundary
+            //   - a          <- sequence at indent 0 receives the anchor
+            //
+            // Note: we only bridge when crossed_line_boundary is true. This avoids
+            // incorrectly bridging cases like FH7J where the tag is on the same line
+            // as a sequence entry and the next line is a sibling entry.
+            if props.crossed_line_boundary {
+                // Peek ahead to see if there's a block collection at the dedented level
+                let saved_pos = self.pos;
+                self.advance(); // past LineStart
+                while let Some((Token::Dedent, _)) = self.peek() {
+                    self.advance();
+                }
+
+                if let Some((Token::BlockSeqIndicator | Token::Colon, _)) = self.peek() {
+                    // There's a block collection - parse it and apply our properties
+                    let mut new_props = props;
+                    new_props.crossed_line_boundary = true;
+                    return self.parse_value_with_properties(indent, new_props);
+                }
+
+                // No block collection - restore position and return null with properties
+                self.pos = saved_pos;
+            }
             Some(self.apply_properties_and_register(props, Node::null(span)))
         } else {
             None
@@ -1159,9 +1246,32 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                 .map(|n| self.apply_properties_and_register(props, n)),
             // Scalars
             Token::Plain(_) | Token::StringStart(_) => {
-                if !props.is_empty() && self.is_mapping_key_pattern() {
+                // Check if scalar is at sufficient indentation level.
+                // After crossing a line boundary, the scalar must be at min_indent or more.
+                let token_col = self.current_token_column();
+                if token_col < min_indent {
+                    // Scalar is at lower indentation - return null with any properties
+                    return if props.is_empty() {
+                        None
+                    } else {
+                        Some(self.apply_properties_and_register(props, Node::null(span)))
+                    };
+                }
+
+                // If we have properties (anchor/tag) and see a mapping key pattern,
+                // there are two cases:
+                // 1. Props are on a SEPARATE LINE before the mapping (crossed_line_boundary=true)
+                //    → Props apply to the mapping itself
+                // 2. Props are on the SAME LINE as the first key (crossed_line_boundary=false)
+                //    → Props apply to the first key
+                if !props.is_empty()
+                    && !props.crossed_line_boundary
+                    && self.is_mapping_key_pattern()
+                {
+                    // Props on same line as content, and it's a mapping - props apply to first key
                     self.parse_block_mapping_with_props(min_indent, props)
                 } else {
+                    // Props on separate line, or no props, or not a mapping - apply to resulting node
                     self.parse_scalar_or_mapping(min_indent)
                         .map(|n| self.apply_properties_and_register(props, n))
                 }
