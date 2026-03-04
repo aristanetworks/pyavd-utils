@@ -894,6 +894,38 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
         LowIndentResult::Break
     }
 
+    /// Extract the string content from a scalar node for multiline continuation.
+    ///
+    /// Returns `None` if the node is not a scalar type (e.g., Mapping or Sequence).
+    fn extract_scalar_content(node: &Node<'input>) -> Option<String> {
+        match &node.value {
+            Value::String(string) => Some(string.clone().into_owned()),
+            Value::Bool(boolean) => Some(boolean.to_string()),
+            Value::Int(integer) => Some(integer.to_string()),
+            Value::Float(float) => Some(float.to_string()),
+            Value::Null => Some(String::new()),
+            _ => None,
+        }
+    }
+
+    /// Skip whitespace tokens starting at `start_pos` and return the position of the first
+    /// non-whitespace content token.
+    ///
+    /// Used to find the actual content position after `LineStart` when checking for mapping keys.
+    #[allow(clippy::indexing_slicing, reason = "start_pos is validated by caller")]
+    fn skip_to_content_position(&self, start_pos: usize) -> usize {
+        let mut pos = start_pos;
+        while pos < self.tokens.len() {
+            match &self.tokens[pos].token {
+                Token::Whitespace | Token::WhitespaceWithTabs | Token::Indent(_) => {
+                    pos += 1;
+                }
+                _ => break,
+            }
+        }
+        pos
+    }
+
     /// Check if a Plain token at `pos` is followed by a Colon (indicating a mapping key).
     ///
     /// This lookahead is used to stop plain scalar continuation when the next line
@@ -925,10 +957,6 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
     /// Called after the first line of a plain scalar has been parsed.
     /// Continuation lines must be more indented than the scalar's starting column.
     #[allow(
-        clippy::too_many_lines,
-        reason = "Complex plain scalar continuation logic, will be refactored later"
-    )]
-    #[allow(
         clippy::string_slice,
         reason = "Positions are from lexer tokens and guaranteed to be on UTF-8 boundaries"
     )]
@@ -950,13 +978,8 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
         let min_indent = block_min_indent.max(1);
 
         // Extract the initial content
-        let mut content = match &initial.value {
-            Value::String(string) => string.clone().into_owned(),
-            Value::Bool(boolean) => boolean.to_string(),
-            Value::Int(integer) => integer.to_string(),
-            Value::Float(float) => float.to_string(),
-            Value::Null => String::new(),
-            _ => return initial, // Not a scalar type, return as-is
+        let Some(mut content) = Self::extract_scalar_content(&initial) else {
+            return initial; // Not a scalar type, return as-is
         };
 
         // Track consecutive empty lines for folding
@@ -989,21 +1012,9 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
             }
 
             // Check if the following content is a mapping key
-            let next_pos = self.pos + 1;
-            if next_pos < self.tokens.len() {
-                let mut content_pos = next_pos;
-                while content_pos < self.tokens.len() {
-                    match &self.tokens[content_pos].token {
-                        Token::Whitespace | Token::WhitespaceWithTabs | Token::Indent(_) => {
-                            content_pos += 1;
-                        }
-                        _ => break,
-                    }
-                }
-
-                if self.is_mapping_key_at_position(content_pos) {
-                    return Self::finalize_multiline_scalar(content, had_continuations, start, end);
-                }
+            let content_pos = self.skip_to_content_position(self.pos + 1);
+            if self.is_mapping_key_at_position(content_pos) {
+                return Self::finalize_multiline_scalar(content, had_continuations, start, end);
             }
 
             // Valid continuation, consume the LineStart
