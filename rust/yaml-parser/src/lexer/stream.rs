@@ -246,7 +246,7 @@ impl<'input> StreamLexerState<'input> {
 /// - Splits stream at document boundaries
 ///
 /// The raw content can then be passed to the document-level lexer for
-/// context-aware tokenization.
+/// tokenization.
 ///
 /// Returns a tuple of (documents, errors).
 #[allow(
