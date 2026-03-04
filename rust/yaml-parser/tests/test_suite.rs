@@ -491,28 +491,69 @@ fn yaml_test_suite() {
         return;
     }
 
-    let (passed, failed, failures) = run_test_suite(&test_dir);
+    // Run positive tests (event comparison)
+    let (positive_passed, positive_failed, positive_failures) = run_test_suite(&test_dir);
 
-    eprintln!("\n=== YAML Test Suite Results (Current Lexer) ===");
-    eprintln!("Passed: {passed}");
-    eprintln!("Failed: {failed}");
-    eprintln!("Total: {}", passed + failed);
-    let pass_rate = (passed as f64 / (passed + failed) as f64) * 100.0;
+    eprintln!("\n=== Positive Tests (Event Comparison) ===");
+    eprintln!("Passed: {positive_passed}");
+    eprintln!("Failed: {positive_failed}");
+
+    // Run error tests (must produce errors)
+    let error_cases = collect_error_test_cases(&test_dir);
+    let mut error_passed = 0;
+    let mut error_failed = 0;
+    let mut error_failures = Vec::new();
+
+    for (test_id, name, input) in &error_cases {
+        let (_, errors) = parse(input);
+        if errors.is_empty() {
+            error_failed += 1;
+            error_failures.push(format!("{test_id}: {name}"));
+        } else {
+            error_passed += 1;
+        }
+    }
+
+    eprintln!("\n=== Error Tests (Must Produce Errors) ===");
+    eprintln!("Passed: {error_passed}");
+    eprintln!("Failed: {error_failed}");
+
+    // Combined totals
+    let total_passed = positive_passed + error_passed;
+    let total_failed = positive_failed + error_failed;
+    let total = total_passed + total_failed;
+
+    eprintln!("\n=== YAML Test Suite Combined Results ===");
+    eprintln!(
+        "Positive tests: {positive_passed}/{}",
+        positive_passed + positive_failed
+    );
+    eprintln!(
+        "Error tests: {error_passed}/{}",
+        error_passed + error_failed
+    );
+    eprintln!("Total: {total_passed}/{total}");
+    let pass_rate = (total_passed as f64 / total as f64) * 100.0;
     eprintln!("Pass rate: {pass_rate:.1}%");
 
-    if !failures.is_empty() {
-        eprintln!("\n=== All {} Failures ===", failures.len());
-        for failure in &failures {
+    if !positive_failures.is_empty() {
+        eprintln!("\n=== Positive Test Failures ===");
+        for failure in &positive_failures {
+            eprintln!("  {failure}");
+        }
+    }
+
+    if !error_failures.is_empty() {
+        eprintln!("\n=== Error Test Failures (no errors produced) ===");
+        for failure in &error_failures {
             eprintln!("  {failure}");
         }
     }
 
     // Fail the test if any tests failed
     assert_eq!(
-        failed,
-        0,
-        "{failed} tests failed out of {}",
-        passed + failed
+        total_failed, 0,
+        "{total_failed} tests failed out of {total}"
     );
 }
 
