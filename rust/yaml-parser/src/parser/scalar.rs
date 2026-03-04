@@ -11,6 +11,16 @@ use crate::value::{Node, Value};
 
 use super::{NodeProperties, Parser};
 
+/// Result of checking a low-indent line for scalar continuation.
+enum LowIndentResult {
+    /// Found a continuation - keep looping
+    Continue,
+    /// Should return early with current content
+    Return,
+    /// Should break out of main loop
+    Break,
+}
+
 impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
     /// Parse a simple scalar token.
     /// For mapping keys (typically single-line), uses `min_indent=0`.
@@ -782,6 +792,108 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
         (line_text.trim_end(), line_end)
     }
 
+    /// Handle a low-indent line during plain scalar continuation.
+    ///
+    /// When we see a `LineStart` with indent less than `min_indent`, it could be:
+    /// - An empty/blank line (should continue collecting)
+    /// - A mapping key on the next line (should stop)
+    /// - End of the scalar (should stop)
+    ///
+    /// This function performs the lookahead and may consume tokens if it finds
+    /// a valid continuation.
+    #[allow(
+        clippy::indexing_slicing,
+        reason = "Token positions are validated by parser logic before access"
+    )]
+    fn handle_low_indent_continuation(
+        &mut self,
+        min_indent: IndentLevel,
+        content: &mut String,
+        end: &mut usize,
+        consecutive_newlines: &mut usize,
+        had_continuations: &mut bool,
+    ) -> LowIndentResult {
+        let mut next_pos = self.pos + 1;
+        while next_pos < self.tokens.len() {
+            match &self.tokens[next_pos].token {
+                Token::Dedent | Token::Indent(_) => {
+                    next_pos += 1;
+                }
+                Token::LineStart(next_indent) if *next_indent >= min_indent => {
+                    // Found a valid continuation after empty line(s)
+                    *consecutive_newlines += 1;
+                    *had_continuations = true;
+                    self.advance();
+                    while matches!(self.peek(), Some((Token::Dedent, _))) {
+                        self.advance();
+                    }
+                    return LowIndentResult::Continue;
+                }
+                Token::Whitespace | Token::WhitespaceWithTabs => {
+                    // Tab/whitespace at start of line followed by content
+                    let after_ws = next_pos + 1;
+                    if after_ws < self.tokens.len() {
+                        // Check if this is a mapping key - if so, stop
+                        if self.is_mapping_key_at_position(after_ws) {
+                            return LowIndentResult::Return;
+                        }
+
+                        match &self.tokens[after_ws].token {
+                            Token::Plain(_)
+                            | Token::Anchor(_)
+                            | Token::Tag(_)
+                            | Token::Alias(_)
+                            | Token::BlockSeqIndicator => {
+                                Self::append_folded_separator(content, *consecutive_newlines);
+
+                                self.advance(); // consume LineStart
+                                while matches!(self.peek(), Some((Token::Dedent, _))) {
+                                    self.advance();
+                                }
+                                self.advance(); // consume Whitespace (tab)
+
+                                match self.peek() {
+                                    Some((Token::Plain(string), plain_span)) => {
+                                        let continuation = string.clone();
+                                        *end = plain_span.end_usize();
+                                        content.push_str(&continuation);
+                                        self.advance();
+                                    }
+                                    Some((
+                                        Token::Anchor(_)
+                                        | Token::Tag(_)
+                                        | Token::Alias(_)
+                                        | Token::BlockSeqIndicator,
+                                        span,
+                                    )) => {
+                                        let (line_text, line_end) = self.consume_line_as_text(
+                                            span.start_usize(),
+                                            span.end_usize(),
+                                        );
+                                        content.push_str(line_text);
+                                        *end = line_end;
+                                    }
+                                    _ => {}
+                                }
+
+                                *had_continuations = true;
+                                *consecutive_newlines = 0;
+                                return LowIndentResult::Continue;
+                            }
+                            _ => {}
+                        }
+                    }
+                    return LowIndentResult::Return;
+                }
+                _ => {
+                    return LowIndentResult::Return;
+                }
+            }
+        }
+        // Reached end of tokens without finding continuation
+        LowIndentResult::Break
+    }
+
     /// Check if a Plain token at `pos` is followed by a Colon (indicating a mapping key).
     ///
     /// This lookahead is used to stop plain scalar continuation when the next line
@@ -856,108 +968,23 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
 
             // Check if this might be an empty line (LineStart(0) followed by LineStart)
             if indent < min_indent {
-                // Could be an empty line - check if later content continues
-                let mut next_pos = self.pos + 1;
-                let mut found_continuation = false;
-                while next_pos < self.tokens.len() {
-                    match &self.tokens[next_pos].token {
-                        Token::Dedent | Token::Indent(_) => {
-                            next_pos += 1;
-                        }
-                        Token::LineStart(next_indent) if *next_indent >= min_indent => {
-                            consecutive_newlines += 1;
-                            had_continuations = true;
-                            self.advance();
-                            while matches!(self.peek(), Some((Token::Dedent, _))) {
-                                self.advance();
-                            }
-                            found_continuation = true;
-                            break;
-                        }
-                        Token::Whitespace | Token::WhitespaceWithTabs => {
-                            // Tab/whitespace at start of line followed by content
-                            let after_ws = next_pos + 1;
-                            if after_ws < self.tokens.len() {
-                                // Check if this is a mapping key (Plain followed by Colon)
-                                // If so, it's NOT a scalar continuation - return early
-                                if self.is_mapping_key_at_position(after_ws) {
-                                    return Self::finalize_multiline_scalar(
-                                        content,
-                                        had_continuations,
-                                        start,
-                                        end,
-                                    );
-                                }
-
-                                match &self.tokens[after_ws].token {
-                                    Token::Plain(_)
-                                    | Token::Anchor(_)
-                                    | Token::Tag(_)
-                                    | Token::Alias(_)
-                                    | Token::BlockSeqIndicator => {
-                                        Self::append_folded_separator(
-                                            &mut content,
-                                            consecutive_newlines,
-                                        );
-
-                                        self.advance(); // consume LineStart
-                                        while matches!(self.peek(), Some((Token::Dedent, _))) {
-                                            self.advance();
-                                        }
-                                        self.advance(); // consume Whitespace (tab)
-
-                                        match self.peek() {
-                                            Some((Token::Plain(string), plain_span)) => {
-                                                let continuation = string.clone();
-                                                end = plain_span.end_usize();
-                                                content.push_str(&continuation);
-                                                self.advance();
-                                            }
-                                            Some((
-                                                Token::Anchor(_)
-                                                | Token::Tag(_)
-                                                | Token::Alias(_)
-                                                | Token::BlockSeqIndicator,
-                                                span,
-                                            )) => {
-                                                let (line_text, line_end) = self
-                                                    .consume_line_as_text(
-                                                        span.start_usize(),
-                                                        span.end_usize(),
-                                                    );
-                                                content.push_str(line_text);
-                                                end = line_end;
-                                            }
-                                            _ => {}
-                                        }
-
-                                        had_continuations = true;
-                                        consecutive_newlines = 0;
-                                        found_continuation = true;
-                                        break;
-                                    }
-                                    _ => {}
-                                }
-                            }
-                            return Self::finalize_multiline_scalar(
-                                content,
-                                had_continuations,
-                                start,
-                                end,
-                            );
-                        }
-                        _ => {
-                            return Self::finalize_multiline_scalar(
-                                content,
-                                had_continuations,
-                                start,
-                                end,
-                            );
-                        }
+                match self.handle_low_indent_continuation(
+                    min_indent,
+                    &mut content,
+                    &mut end,
+                    &mut consecutive_newlines,
+                    &mut had_continuations,
+                ) {
+                    LowIndentResult::Continue => continue,
+                    LowIndentResult::Return => {
+                        return Self::finalize_multiline_scalar(
+                            content,
+                            had_continuations,
+                            start,
+                            end,
+                        );
                     }
-                }
-                if !found_continuation && next_pos >= self.tokens.len() {
-                    break;
+                    LowIndentResult::Break => break,
                 }
             }
 
