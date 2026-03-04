@@ -2,14 +2,14 @@
 // Use of this source code is governed by the Apache License 2.0
 // that can be found in the LICENSE file.
 
-//! Context-aware document lexer for YAML.
+//! Document lexer for YAML.
 //!
-//! This lexer tracks flow depth to properly tokenize characters that have
-//! different meanings in block vs flow context:
+//! This lexer tokenizes a single YAML document. It is context-aware, tracking
+//! flow depth to properly tokenize characters that have different meanings:
 //! - In **block context** (`flow_depth` = 0): `,[]{}` are valid in plain scalars
 //! - In **flow context** (`flow_depth` > 0): `,[]{}` are delimiters
 //!
-//! This is Step 2 of the parser architecture.
+//! This is Step 2 of the two-layer lexer architecture (after stream lexer).
 //!
 //! Uses `Cow<'input, str>` for zero-copy tokenization where possible.
 
@@ -38,10 +38,10 @@ pub enum LexMode {
     Flow,
 }
 
-/// Context-aware lexer state.
+/// Document lexer state.
 ///
 /// The lifetime `'input` refers to the input string being tokenized.
-pub struct ContextLexer<'input> {
+pub struct DocumentLexer<'input> {
     input: &'input str,
     /// Byte offset of current position in the input string.
     /// This replaces the previous `chars: Vec<char>` approach for zero-allocation iteration.
@@ -67,7 +67,7 @@ pub struct ContextLexer<'input> {
     in_quoted_string: bool,
 }
 
-impl<'input> ContextLexer<'input> {
+impl<'input> DocumentLexer<'input> {
     pub fn new(input: &'input str) -> Self {
         Self {
             input,
@@ -1171,7 +1171,7 @@ impl<'input> ContextLexer<'input> {
 /// The `RichToken` wrapper supports future IDE features but currently has empty
 /// leading/trailing trivia vectors.
 pub fn tokenize_document(input: &str) -> (Vec<RichToken<'_>>, Vec<ParseError>) {
-    ContextLexer::new(input).tokenize()
+    DocumentLexer::new(input).tokenize()
 }
 
 #[cfg(test)]
