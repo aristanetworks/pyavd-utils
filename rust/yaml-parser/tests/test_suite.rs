@@ -507,9 +507,13 @@ fn yaml_test_suite() {
         }
     }
 
-    // For now, don't fail the test - just report results
-    // We'll tighten this as we improve the parser
-    // assert_eq!(failed, 0, "Some tests failed");
+    // Fail the test if any tests failed
+    assert_eq!(
+        failed,
+        0,
+        "{failed} tests failed out of {}",
+        passed + failed
+    );
 }
 
 /// Collect all error test cases from the YAML test suite.
