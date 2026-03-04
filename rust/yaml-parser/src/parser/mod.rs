@@ -1019,11 +1019,80 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
         }
     }
 
+    /// Handle a block sequence indicator as a value.
+    fn handle_block_seq_indicator(
+        &mut self,
+        min_indent: IndentLevel,
+        props: NodeProperties<'input>,
+    ) -> Option<Node<'input>> {
+        if !props.is_empty() && !props.crossed_line_boundary {
+            if let Some((_, anchor_span)) = &props.anchor {
+                self.error(ErrorKind::ContentOnSameLine, *anchor_span);
+            }
+            if let Some((_, tag_span)) = &props.tag {
+                self.error(ErrorKind::ContentOnSameLine, *tag_span);
+            }
+        }
+        if let Some(n) = self.parse_block_sequence(min_indent) {
+            if min_indent == 0 {
+                self.check_trailing_content_at_root(0);
+            }
+            Some(self.apply_properties_and_register(props, n))
+        } else {
+            None
+        }
+    }
+
+    /// Handle an alias token as a value.
+    fn handle_alias_in_value(
+        &mut self,
+        alias_name: Cow<'input, str>,
+        alias_span: Span,
+        props: NodeProperties<'input>,
+    ) -> Option<Node<'input>> {
+        if !props.is_empty() && !props.crossed_line_boundary {
+            self.error(ErrorKind::PropertiesOnAlias, alias_span);
+            return self.parse_alias();
+        }
+
+        self.advance();
+        self.skip_ws();
+
+        if matches!(self.peek(), Some((Token::Colon, _))) {
+            Some(self.parse_alias_as_mapping_key(alias_name, alias_span, props))
+        } else {
+            if !self.anchors.contains_key(alias_name.as_ref()) {
+                self.error(ErrorKind::UndefinedAlias, alias_span);
+            }
+            Some(Node::new(Value::Alias(alias_name), alias_span))
+        }
+    }
+
+    /// Handle a line start token as a value.
+    fn handle_line_start_in_value(
+        &mut self,
+        indent: IndentLevel,
+        span: Span,
+        min_indent: IndentLevel,
+        props: NodeProperties<'input>,
+    ) -> Option<Node<'input>> {
+        if indent >= min_indent {
+            self.advance();
+            while let Some((Token::Indent(_) | Token::Dedent, _)) = self.peek() {
+                self.advance();
+            }
+            self.check_tabs_as_indentation();
+            let mut new_props = props;
+            new_props.crossed_line_boundary = true;
+            self.parse_value_with_properties(min_indent, new_props)
+        } else if !props.is_empty() {
+            Some(self.apply_properties_and_register(props, Node::null(span)))
+        } else {
+            None
+        }
+    }
+
     /// Parse a value with already-collected node properties.
-    #[allow(
-        clippy::too_many_lines,
-        reason = "Match arms for token dispatch are minimal; further extraction would reduce clarity"
-    )]
     pub fn parse_value_with_properties(
         &mut self,
         min_indent: IndentLevel,
@@ -1057,25 +1126,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                 })
             }
             // Block sequence
-            Token::BlockSeqIndicator => {
-                if !props.is_empty() && !props.crossed_line_boundary {
-                    if let Some((_, anchor_span)) = &props.anchor {
-                        self.error(ErrorKind::ContentOnSameLine, *anchor_span);
-                    }
-                    if let Some((_, tag_span)) = &props.tag {
-                        self.error(ErrorKind::ContentOnSameLine, *tag_span);
-                    }
-                }
-                if let Some(n) = self.parse_block_sequence(min_indent) {
-                    // Block sequence is a closed structure - check for trailing content
-                    if min_indent == 0 {
-                        self.check_trailing_content_at_root(0);
-                    }
-                    Some(self.apply_properties_and_register(props, n))
-                } else {
-                    None
-                }
-            }
+            Token::BlockSeqIndicator => self.handle_block_seq_indicator(min_indent, props),
             // Anchor - collect as property and continue parsing
             Token::Anchor(name) => {
                 let anchor_name = name.clone();
@@ -1083,24 +1134,8 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
             }
             // Alias
             Token::Alias(name) => {
-                if !props.is_empty() && !props.crossed_line_boundary {
-                    self.error(ErrorKind::PropertiesOnAlias, span);
-                    self.parse_alias()
-                } else {
-                    let alias_name = name.clone();
-                    let alias_span = span;
-                    self.advance();
-                    self.skip_ws();
-
-                    if matches!(self.peek(), Some((Token::Colon, _))) {
-                        Some(self.parse_alias_as_mapping_key(alias_name, alias_span, props))
-                    } else {
-                        if !self.anchors.contains_key(alias_name.as_ref()) {
-                            self.error(ErrorKind::UndefinedAlias, alias_span);
-                        }
-                        Some(Node::new(Value::Alias(alias_name), alias_span))
-                    }
-                }
+                let alias_name = name.clone();
+                self.handle_alias_in_value(alias_name, span, props)
             }
             // Tag - collect as property and continue parsing
             Token::Tag(tag) => {
@@ -1126,22 +1161,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
             // Document markers
             Token::DocStart | Token::DocEnd => None,
             // Line start
-            Token::LineStart(n) => {
-                if *n >= min_indent {
-                    self.advance();
-                    while let Some((Token::Indent(_) | Token::Dedent, _)) = self.peek() {
-                        self.advance();
-                    }
-                    self.check_tabs_as_indentation();
-                    let mut new_props = props;
-                    new_props.crossed_line_boundary = true;
-                    self.parse_value_with_properties(min_indent, new_props)
-                } else if !props.is_empty() {
-                    Some(self.apply_properties_and_register(props, Node::null(span)))
-                } else {
-                    None
-                }
-            }
+            Token::LineStart(n) => self.handle_line_start_in_value(*n, span, min_indent, props),
             // Skip comments
             Token::Comment(_) | Token::Indent(_) => {
                 self.advance();
