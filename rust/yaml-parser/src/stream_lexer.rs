@@ -43,11 +43,196 @@ pub struct RawDocument<'input> {
     /// This is a slice of the original input (zero-copy).
     pub content: &'input str,
     /// The span of the content in the original input.
-    #[allow(
-        dead_code,
-        reason = "Public API field for consumers to access document boundaries"
-    )]
     pub content_span: Span,
+}
+
+/// Internal state for stream parsing.
+struct StreamParser<'input> {
+    chars: Vec<char>,
+    pos: usize,
+    documents: Vec<RawDocument<'input>>,
+    errors: Vec<ParseError>,
+    current_directives: Vec<Spanned<Directive>>,
+    content_start: Option<usize>,
+    content_end: usize,
+    in_directive_prologue: bool,
+    has_yaml_directive: bool,
+    flow_depth: usize,
+}
+
+impl<'input> StreamParser<'input> {
+    fn new(input: &'input str) -> Self {
+        Self {
+            chars: input.chars().collect(),
+            pos: 0,
+            documents: Vec::new(),
+            errors: Vec::new(),
+            current_directives: Vec::new(),
+            content_start: None,
+            content_end: 0,
+            in_directive_prologue: true,
+            has_yaml_directive: false,
+            flow_depth: 0,
+        }
+    }
+
+    /// Parse a directive line and return the new position, or `None` if not a directive.
+    #[allow(
+        clippy::string_slice,
+        reason = "All positions are calculated from byte-level scanning and guaranteed to be on UTF-8 boundaries"
+    )]
+    fn parse_directive(&mut self, input: &str, line: &str, line_end: usize) -> usize {
+        let directive_start = self.pos;
+        let directive_span = Span::from_usize_range(directive_start..line_end);
+
+        let directive = if let Some(stripped) = line.strip_prefix("%YAML") {
+            // %YAML must be followed by whitespace, not more characters
+            let first_char = stripped.chars().next();
+            if matches!(first_char, Some(' ' | '\t') | None) {
+                if self.has_yaml_directive {
+                    self.errors.push(ParseError::new(
+                        ErrorKind::DuplicateDirective,
+                        directive_span,
+                    ));
+                }
+                self.has_yaml_directive = true;
+
+                let after_yaml = stripped.trim();
+                let chars_vec: Vec<char> = after_yaml.chars().collect();
+                let has_valid_comment_separator =
+                    chars_vec.windows(2).any(|w| matches!(w, [' ' | '\t', '#']));
+                let has_invalid_comment = after_yaml.contains('#') && !has_valid_comment_separator;
+
+                let version_part = if let Some(hash_pos) = after_yaml.find('#') {
+                    &after_yaml[..hash_pos]
+                } else {
+                    after_yaml
+                };
+                let version = version_part.trim();
+
+                let is_valid_version = !version.is_empty()
+                    && !version.contains(' ')
+                    && !version.contains('\t')
+                    && version.chars().all(|ch| ch.is_ascii_digit() || ch == '.');
+
+                if !is_valid_version || has_invalid_comment {
+                    self.errors
+                        .push(ParseError::new(ErrorKind::InvalidDirective, directive_span));
+                }
+                Some(Directive::Yaml(version.to_owned()))
+            } else {
+                Some(Directive::Reserved(line[1..].trim().to_owned()))
+            }
+        } else if let Some(stripped) = line.strip_prefix("%TAG") {
+            let first_char = stripped.chars().next();
+            if matches!(first_char, Some(' ' | '\t') | None) {
+                Some(Directive::Tag(stripped.trim().to_owned()))
+            } else {
+                Some(Directive::Reserved(line[1..].trim().to_owned()))
+            }
+        } else {
+            Some(Directive::Reserved(line[1..].trim().to_owned()))
+        };
+
+        if let Some(di) = directive {
+            self.current_directives.push((di, directive_span));
+        }
+
+        skip_to_eol(input, line_end)
+    }
+
+    /// Handle `---` document start marker. Returns `true` if marker was handled.
+    #[allow(
+        clippy::string_slice,
+        reason = "All positions are calculated from byte-level scanning and guaranteed to be on UTF-8 boundaries"
+    )]
+    fn handle_document_start(&mut self, input: &'input str) -> bool {
+        let remaining = &input[self.pos..];
+        if self.flow_depth != 0 || !remaining.starts_with("---") {
+            return false;
+        }
+
+        let marker_end = self.pos + 3;
+        let next_char = self.chars.get(marker_end);
+        if next_char.is_some() && !matches!(next_char, Some(' ' | '\t' | '\n' | '\r')) {
+            return false;
+        }
+
+        // Finalize current document if we have content
+        if let Some(start) = self.content_start {
+            self.documents.push(RawDocument {
+                directives: std::mem::take(&mut self.current_directives),
+                content: &input[start..self.content_end],
+                content_span: Span::from_usize_range(start..self.pos),
+            });
+            self.has_yaml_directive = false;
+            self.content_start = None;
+        }
+
+        // No longer in directive prologue after seeing ---
+        self.in_directive_prologue = false;
+
+        // Include the `---` marker in the content
+        if self.content_start.is_none() {
+            self.content_start = Some(self.pos);
+        }
+        let line_end = find_eol(input, self.pos);
+        (self.pos, self.content_end) = advance_past_newline(input, line_end);
+        true
+    }
+
+    /// Handle `...` document end marker. Returns `true` if marker was handled.
+    #[allow(
+        clippy::string_slice,
+        reason = "All positions are calculated from byte-level scanning and guaranteed to be on UTF-8 boundaries"
+    )]
+    fn handle_document_end(&mut self, input: &'input str) -> bool {
+        let remaining = &input[self.pos..];
+        if self.flow_depth != 0 || !remaining.starts_with("...") {
+            return false;
+        }
+
+        let marker_end = self.pos + 3;
+        let next_char = self.chars.get(marker_end);
+        if next_char.is_some() && !matches!(next_char, Some(' ' | '\t' | '\n' | '\r')) {
+            return false;
+        }
+
+        // Check for directives without a document start before ...
+        if !self.current_directives.is_empty() && self.content_start.is_none() {
+            let span = self
+                .current_directives
+                .first()
+                .map_or(Span::from_usize_range(self.pos..marker_end), |(_, span)| {
+                    *span
+                });
+            self.errors
+                .push(ParseError::new(ErrorKind::TrailingContent, span));
+        }
+
+        // Include `...` in content
+        if self.content_start.is_none() {
+            self.content_start = Some(self.pos);
+        }
+        let line_end = find_eol(input, self.pos);
+        (self.pos, self.content_end) = advance_past_newline(input, line_end);
+
+        // Finalize the current document
+        if self.content_start.is_some() || !self.current_directives.is_empty() {
+            let start = self.content_start.unwrap_or(self.pos);
+            self.documents.push(RawDocument {
+                directives: std::mem::take(&mut self.current_directives),
+                content: &input[start..self.content_end],
+                content_span: Span::from_usize_range(start..self.pos),
+            });
+            self.content_start = None;
+        }
+
+        // After `...`, we're back in directive prologue for the NEXT document
+        self.in_directive_prologue = true;
+        self.has_yaml_directive = false;
+        true
+    }
 }
 
 /// Parse the YAML stream into raw documents.
@@ -62,219 +247,53 @@ pub struct RawDocument<'input> {
 ///
 /// Returns a tuple of (documents, errors).
 #[allow(
-    clippy::too_many_lines,
-    reason = "Complex stream parsing logic, will be refactored later"
-)]
-#[allow(
     clippy::string_slice,
     reason = "All positions are calculated from byte-level scanning and guaranteed to be on UTF-8 boundaries"
 )]
 pub fn parse_stream(input: &str) -> (Vec<RawDocument<'_>>, Vec<ParseError>) {
-    let mut documents = Vec::new();
-    let mut errors = Vec::new();
-    let mut current_directives: Vec<Spanned<Directive>> = Vec::new();
-    let mut content_start: Option<usize> = None; // Start of content (None = no content yet)
-    let mut content_end: usize = 0; // End of content
-    let mut in_directive_prologue = true; // At start, we can have directives
-    let mut has_yaml_directive = false; // Track if we've seen a %YAML directive
-    let mut flow_depth: usize = 0; // Track flow collection nesting to avoid splitting inside flow
+    let mut state = StreamParser::new(input);
 
-    let mut pos: usize = 0;
-    let chars: Vec<char> = input.chars().collect();
-
-    while pos < chars.len() {
-        // Check for document markers or directives at line start
-        let remaining = &input[pos..];
-
-        // Check for `---` document start marker (only outside flow collections)
-        if flow_depth == 0 && remaining.starts_with("---") {
-            let marker_end = pos + 3;
-            let next_char = chars.get(marker_end);
-            if next_char.is_none() || matches!(next_char, Some(' ' | '\t' | '\n' | '\r')) {
-                // This is a document start marker
-                // If we have content, start a new document
-                // Note: After `...`, if we only have directives (no content), those directives
-                // belong to this new document, so don't finalize in that case.
-                if let Some(start) = content_start {
-                    // Finalize current document
-                    documents.push(RawDocument {
-                        directives: std::mem::take(&mut current_directives),
-                        content: &input[start..content_end],
-                        content_span: Span::from_usize_range(start..pos),
-                    });
-                    has_yaml_directive = false;
-                    content_start = None;
-                }
-
-                // No longer in directive prologue after seeing ---
-                in_directive_prologue = false;
-
-                // Include the `---` marker in the content (parser will see it)
-                if content_start.is_none() {
-                    content_start = Some(pos);
-                }
-                // Track the end of this line
-                let line_end = find_eol(input, pos);
-
-                // Include the newline
-                pos = line_end;
-                if pos < input.len() {
-                    let newline_end = skip_newline(input, pos);
-                    content_end = newline_end;
-                    pos = newline_end;
-                } else {
-                    content_end = line_end;
-                }
-                continue;
-            }
+    while state.pos < state.chars.len() {
+        // Check for `---` document start marker
+        if state.handle_document_start(input) {
+            continue;
         }
 
-        // Check for `...` document end marker (only outside flow collections)
-        if flow_depth == 0 && remaining.starts_with("...") {
-            let marker_end = pos + 3;
-            let next_char = chars.get(marker_end);
-            if next_char.is_none() || matches!(next_char, Some(' ' | '\t' | '\n' | '\r')) {
-                // This is a document end marker
-                // Check for directives without a document start before ...
-                if !current_directives.is_empty() && content_start.is_none() {
-                    let span = current_directives
-                        .first()
-                        .map_or(Span::from_usize_range(pos..marker_end), |(_, span)| *span);
-                    errors.push(ParseError::new(ErrorKind::TrailingContent, span));
-                }
-
-                // Include `...` in content (parser will see it)
-                if content_start.is_none() {
-                    content_start = Some(pos);
-                }
-                let line_end = find_eol(input, pos);
-
-                // Include the newline
-                pos = line_end;
-                if pos < input.len() {
-                    let newline_end = skip_newline(input, pos);
-                    content_end = newline_end;
-                    pos = newline_end;
-                } else {
-                    content_end = line_end;
-                }
-
-                // Finalize the current document BEFORE starting the directive prologue for the next
-                // This ensures directives after `...` go to the next document, not the current one.
-                if content_start.is_some() || !current_directives.is_empty() {
-                    let start = content_start.unwrap_or(pos);
-                    documents.push(RawDocument {
-                        directives: std::mem::take(&mut current_directives),
-                        content: &input[start..content_end],
-                        content_span: Span::from_usize_range(start..pos),
-                    });
-                    content_start = None;
-                }
-
-                // After `...`, we're back in directive prologue for the NEXT document
-                in_directive_prologue = true;
-                has_yaml_directive = false;
-                continue;
-            }
+        // Check for `...` document end marker
+        if state.handle_document_end(input) {
+            continue;
         }
 
         // Check for directives (only in directive prologue)
-        if in_directive_prologue && remaining.starts_with('%') {
-            let directive_start = pos;
-            let line_end = find_eol(input, pos);
-            let line = &input[pos..line_end];
-            let directive_span = Span::from_usize_range(directive_start..line_end);
-
-            let directive = if let Some(stripped) = line.strip_prefix("%YAML") {
-                // %YAML must be followed by whitespace, not more characters
-                // e.g., %YAMLL is a reserved directive, not an invalid YAML directive
-                let first_char = stripped.chars().next();
-                if matches!(first_char, Some(' ' | '\t') | None) {
-                    // Valid %YAML directive prefix
-                    // Check for duplicate %YAML directive
-                    if has_yaml_directive {
-                        errors.push(ParseError::new(
-                            ErrorKind::DuplicateDirective,
-                            directive_span,
-                        ));
-                    }
-                    has_yaml_directive = true;
-
-                    // Validate %YAML directive format
-                    // A comment (#) must be preceded by whitespace per YAML spec
-                    let after_yaml = stripped.trim();
-
-                    // Check if there's a # without preceding whitespace
-                    // Valid: "1.2 # comment" or "1.2" or "1.2\t#comment"
-                    // Invalid: "1.1#..." (no space before #)
-                    let chars_vec: Vec<char> = after_yaml.chars().collect();
-                    let has_valid_comment_separator =
-                        chars_vec.windows(2).any(|w| matches!(w, [' ' | '\t', '#']));
-                    let has_invalid_comment =
-                        after_yaml.contains('#') && !has_valid_comment_separator;
-
-                    // Extract version (everything before # or end of string)
-                    let version_part = if let Some(hash_pos) = after_yaml.find('#') {
-                        &after_yaml[..hash_pos]
-                    } else {
-                        after_yaml
-                    };
-                    let version = version_part.trim();
-
-                    let is_valid_version = !version.is_empty()
-                        && !version.contains(' ')
-                        && !version.contains('\t')
-                        && version.chars().all(|ch| ch.is_ascii_digit() || ch == '.');
-
-                    if !is_valid_version || has_invalid_comment {
-                        errors.push(ParseError::new(ErrorKind::InvalidDirective, directive_span));
-                    }
-                    Some(Directive::Yaml(version.to_owned()))
-                } else {
-                    // Not a valid %YAML directive - treat as reserved
-                    Some(Directive::Reserved(line[1..].trim().to_owned()))
-                }
-            } else if let Some(stripped) = line.strip_prefix("%TAG") {
-                // %TAG must also be followed by whitespace
-                let first_char = stripped.chars().next();
-                if matches!(first_char, Some(' ' | '\t') | None) {
-                    Some(Directive::Tag(stripped.trim().to_owned()))
-                } else {
-                    Some(Directive::Reserved(line[1..].trim().to_owned()))
-                }
-            } else {
-                Some(Directive::Reserved(line[1..].trim().to_owned()))
-            };
-
-            if let Some(di) = directive {
-                current_directives.push((di, directive_span));
-            }
-
-            pos = skip_to_eol(input, line_end);
+        let remaining = &input[state.pos..];
+        if state.in_directive_prologue && remaining.starts_with('%') {
+            let line_end = find_eol(input, state.pos);
+            let line = &input[state.pos..line_end];
+            state.pos = state.parse_directive(input, line, line_end);
             continue;
         }
 
         // Skip comment-only or empty lines in directive prologue
         let trimmed_remaining = remaining.trim_start();
-        if in_directive_prologue
+        if state.in_directive_prologue
             && (remaining.starts_with('#')
                 || trimmed_remaining.starts_with('#')
                 || trimmed_remaining.is_empty())
         {
-            let line_end = find_eol(input, pos);
-            pos = line_end;
-            if pos < input.len() {
-                pos = skip_newline(input, pos);
+            let line_end = find_eol(input, state.pos);
+            state.pos = line_end;
+            if state.pos < input.len() {
+                state.pos = skip_newline(input, state.pos);
             }
             continue;
         }
 
         // Check for directive-like content outside the directive prologue
-        if !in_directive_prologue
+        if !state.in_directive_prologue
             && remaining.starts_with('%')
             && (remaining.starts_with("%YAML") || remaining.starts_with("%TAG"))
         {
-            let line_end = find_eol(input, pos);
+            let line_end = find_eol(input, state.pos);
             // Look ahead to see if there's a --- on a subsequent line
             let mut lookahead_pos = line_end;
             if lookahead_pos < input.len() {
@@ -302,29 +321,29 @@ pub fn parse_stream(input: &str) -> (Vec<RawDocument<'_>>, Vec<ParseError>) {
                 break;
             }
             if found_doc_start {
-                errors.push(ParseError::new(
+                state.errors.push(ParseError::new(
                     ErrorKind::TrailingContent,
-                    Span::from_usize_range(pos..line_end),
+                    Span::from_usize_range(state.pos..line_end),
                 ));
             }
         }
 
         // Regular content line - we're no longer in directive prologue
-        in_directive_prologue = false;
+        state.in_directive_prologue = false;
 
         // Add the line to current content
-        let line_end = find_eol(input, pos);
-        if content_start.is_none() {
-            content_start = Some(pos);
+        let line_end = find_eol(input, state.pos);
+        if state.content_start.is_none() {
+            state.content_start = Some(state.pos);
         }
 
         // Track flow depth by scanning for flow indicators in this line
         // This is needed to avoid treating --- or ... inside flow collections as document markers
-        for i in pos..line_end {
-            if let Some(&byte) = input.as_bytes().get(i) {
+        for byte_idx in state.pos..line_end {
+            if let Some(&byte) = input.as_bytes().get(byte_idx) {
                 match byte {
-                    b'[' | b'{' => flow_depth += 1,
-                    b']' | b'}' => flow_depth = flow_depth.saturating_sub(1),
+                    b'[' | b'{' => state.flow_depth += 1,
+                    b']' | b'}' => state.flow_depth = state.flow_depth.saturating_sub(1),
                     // Note: We don't handle quoted strings here, which could contain
                     // unmatched brackets. This is a simplified heuristic that works
                     // for valid YAML and for detecting flow context in error cases.
@@ -333,37 +352,42 @@ pub fn parse_stream(input: &str) -> (Vec<RawDocument<'_>>, Vec<ParseError>) {
             }
         }
 
-        // Include the newline
-        pos = line_end;
-        if pos < input.len() {
-            let newline_end = skip_newline(input, pos);
-            content_end = newline_end;
-            pos = newline_end;
-        } else {
-            content_end = line_end;
-        }
+        (state.pos, state.content_end) = advance_past_newline(input, line_end);
     }
 
     // Finalize any remaining document
-    if content_start.is_some() || !current_directives.is_empty() {
+    if state.content_start.is_some() || !state.current_directives.is_empty() {
         // Check for directives without a following document
-        if !current_directives.is_empty() && content_start.is_none() {
-            let span = current_directives
+        if !state.current_directives.is_empty() && state.content_start.is_none() {
+            let span = state
+                .current_directives
                 .first()
                 .map_or(Span::from_usize_range(0..0), |(_, span)| *span);
-            errors.push(ParseError::new(ErrorKind::TrailingContent, span));
+            state
+                .errors
+                .push(ParseError::new(ErrorKind::TrailingContent, span));
         }
 
         // If no content was found, use content_end for both start and end to get an empty slice
-        let start = content_start.unwrap_or(content_end);
-        documents.push(RawDocument {
-            directives: current_directives,
-            content: &input[start..content_end],
-            content_span: Span::from_usize_range(start..content_end),
+        let start = state.content_start.unwrap_or(state.content_end);
+        state.documents.push(RawDocument {
+            directives: state.current_directives,
+            content: &input[start..state.content_end],
+            content_span: Span::from_usize_range(start..state.content_end),
         });
     }
 
-    (documents, errors)
+    (state.documents, state.errors)
+}
+
+/// Advance past a newline (if present) and return the new position and `content_end`.
+fn advance_past_newline(input: &str, line_end: usize) -> (usize, usize) {
+    if line_end < input.len() {
+        let newline_end = skip_newline(input, line_end);
+        (newline_end, newline_end)
+    } else {
+        (line_end, line_end)
+    }
 }
 
 /// Find the end of the current line (position of newline or EOF).
