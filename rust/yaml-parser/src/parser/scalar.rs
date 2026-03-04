@@ -743,6 +743,20 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
         }
     }
 
+    /// Append the appropriate separator for folded content.
+    ///
+    /// In plain scalars, single newlines fold to spaces, but multiple consecutive
+    /// newlines are preserved (minus one, which becomes the space).
+    fn append_folded_separator(content: &mut String, consecutive_newlines: usize) {
+        if consecutive_newlines == 0 {
+            content.push(' ');
+        } else {
+            for _ in 0..consecutive_newlines {
+                content.push('\n');
+            }
+        }
+    }
+
     /// Consume multiline continuation lines for a plain scalar.
     ///
     /// Called after the first line of a plain scalar has been parsed.
@@ -844,13 +858,10 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                                     | Token::Tag(_)
                                     | Token::Alias(_)
                                     | Token::BlockSeqIndicator => {
-                                        if consecutive_newlines == 0 {
-                                            content.push(' ');
-                                        } else {
-                                            for _ in 0..consecutive_newlines {
-                                                content.push('\n');
-                                            }
-                                        }
+                                        Self::append_folded_separator(
+                                            &mut content,
+                                            consecutive_newlines,
+                                        );
 
                                         self.advance(); // consume LineStart
                                         while matches!(self.peek(), Some((Token::Dedent, _))) {
@@ -968,13 +979,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                     end = plain_span.end_usize();
                     had_continuations = true;
 
-                    if consecutive_newlines == 0 {
-                        content.push(' ');
-                    } else {
-                        for _ in 0..consecutive_newlines {
-                            content.push('\n');
-                        }
-                    }
+                    Self::append_folded_separator(&mut content, consecutive_newlines);
                     content.push_str(&continuation);
                     consecutive_newlines = 0;
 
@@ -1005,13 +1010,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                     if !continuation.is_empty() {
                         had_continuations = true;
 
-                        if consecutive_newlines == 0 {
-                            content.push(' ');
-                        } else {
-                            for _ in 0..consecutive_newlines {
-                                content.push('\n');
-                            }
-                        }
+                        Self::append_folded_separator(&mut content, consecutive_newlines);
                         content.push_str(continuation);
                         consecutive_newlines = 0;
                         end = line_end;
