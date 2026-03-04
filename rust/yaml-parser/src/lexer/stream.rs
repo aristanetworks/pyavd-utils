@@ -17,14 +17,17 @@ use crate::error::{ErrorKind, ParseError};
 use crate::span::{Span, Spanned};
 
 /// A directive found in the YAML stream.
+///
+/// The lifetime `'input` refers to the input string being parsed.
+/// Directive content is borrowed from the original input for zero-copy parsing.
 #[derive(Debug, Clone, PartialEq)]
-pub enum Directive {
-    /// %YAML version
-    Yaml(String),
-    /// %TAG handle prefix
-    Tag(String),
+pub enum Directive<'input> {
+    /// %YAML version (e.g., "1.2")
+    Yaml(&'input str),
+    /// %TAG handle prefix (e.g., "!e! tag:example.com,2000:")
+    Tag(&'input str),
     /// Reserved directive (%NAME content)
-    Reserved(String),
+    Reserved(&'input str),
 }
 
 /// A raw document extracted from the stream.
@@ -37,7 +40,7 @@ pub enum Directive {
 #[derive(Debug, Clone)]
 pub struct RawDocument<'input> {
     /// Directives before this document (in the directive prologue).
-    pub directives: Vec<Spanned<Directive>>,
+    pub directives: Vec<Spanned<Directive<'input>>>,
     /// The raw content of the document, including `---` and `...` markers.
     /// The parser is responsible for interpreting these tokens.
     /// This is a slice of the original input (zero-copy).
@@ -52,7 +55,7 @@ struct StreamLexerState<'input> {
     pos: usize,
     documents: Vec<RawDocument<'input>>,
     errors: Vec<ParseError>,
-    current_directives: Vec<Spanned<Directive>>,
+    current_directives: Vec<Spanned<Directive<'input>>>,
     content_start: Option<usize>,
     content_end: usize,
     in_directive_prologue: bool,
@@ -81,7 +84,7 @@ impl<'input> StreamLexerState<'input> {
         clippy::string_slice,
         reason = "All positions are calculated from byte-level scanning and guaranteed to be on UTF-8 boundaries"
     )]
-    fn parse_directive(&mut self, input: &str, line: &str, line_end: usize) -> usize {
+    fn parse_directive(&mut self, input: &'input str, line: &'input str, line_end: usize) -> usize {
         let directive_start = self.pos;
         let directive_span = Span::from_usize_range(directive_start..line_end);
 
@@ -119,19 +122,19 @@ impl<'input> StreamLexerState<'input> {
                     self.errors
                         .push(ParseError::new(ErrorKind::InvalidDirective, directive_span));
                 }
-                Some(Directive::Yaml(version.to_owned()))
+                Some(Directive::Yaml(version))
             } else {
-                Some(Directive::Reserved(line[1..].trim().to_owned()))
+                Some(Directive::Reserved(line[1..].trim()))
             }
         } else if let Some(stripped) = line.strip_prefix("%TAG") {
             let first_char = stripped.chars().next();
             if matches!(first_char, Some(' ' | '\t') | None) {
-                Some(Directive::Tag(stripped.trim().to_owned()))
+                Some(Directive::Tag(stripped.trim()))
             } else {
-                Some(Directive::Reserved(line[1..].trim().to_owned()))
+                Some(Directive::Reserved(line[1..].trim()))
             }
         } else {
-            Some(Directive::Reserved(line[1..].trim().to_owned()))
+            Some(Directive::Reserved(line[1..].trim()))
         };
 
         if let Some(di) = directive {
@@ -493,7 +496,9 @@ mod tests {
         assert_eq!(docs.len(), 1);
         let doc = docs.first().unwrap();
         assert_eq!(doc.directives.len(), 2);
-        assert!(matches!(&doc.directives.first().unwrap().0, Directive::Yaml(ver) if ver == "1.2"));
+        assert!(
+            matches!(&doc.directives.first().unwrap().0, Directive::Yaml(ver) if *ver == "1.2")
+        );
         assert!(matches!(
             &doc.directives.last().unwrap().0,
             Directive::Tag(_)
