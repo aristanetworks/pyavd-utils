@@ -17,9 +17,10 @@ use std::borrow::Cow;
 use std::collections::VecDeque;
 
 use crate::error::{ErrorKind, ParseError};
-use crate::rich_token::RichToken;
 use crate::span::{IndentLevel, Span, Spanned};
-use crate::token::{BlockScalarHeader, Chomping, QuoteStyle, Token};
+
+use super::rich_token::RichToken;
+use super::token::{BlockScalarHeader, Chomping, QuoteStyle, Token};
 
 /// Check if a character is valid in an anchor/alias name.
 /// Per YAML 1.2 spec, ns-anchor-char is any non-whitespace char

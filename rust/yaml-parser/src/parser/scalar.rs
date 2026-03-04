@@ -5,8 +5,8 @@
 //! Scalar parsing (plain, quoted, and block scalars).
 
 use crate::error::ErrorKind;
+use crate::lexer::{BlockScalarHeader, Chomping, QuoteStyle, Token};
 use crate::span::{IndentLevel, Span, indent_to_usize};
-use crate::token::{BlockScalarHeader, Chomping, QuoteStyle, Token};
 use crate::value::{Node, Value};
 
 use super::{NodeProperties, Parser};

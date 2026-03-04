@@ -7,8 +7,8 @@
 use std::borrow::Cow;
 
 use crate::error::ErrorKind;
+use crate::lexer::Token;
 use crate::span::{IndentLevel, Span};
-use crate::token::Token;
 use crate::value::{Node, Value};
 
 use super::{NodeProperties, Parser};

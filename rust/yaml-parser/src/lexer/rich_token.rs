@@ -7,7 +7,8 @@
 //! This module provides [`RichToken`] which wraps tokens with span information.
 
 use crate::span::Span;
-use crate::token::Token;
+
+use super::token::Token;
 
 /// A token with its associated Span.
 ///

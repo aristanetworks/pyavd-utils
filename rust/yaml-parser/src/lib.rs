@@ -35,24 +35,19 @@
 //! }
 //! ```
 
-mod context_lexer;
 mod error;
+mod lexer;
 mod parser;
-mod rich_token;
 mod span;
-mod stream_lexer;
-mod token;
 mod value;
 
-pub use context_lexer::tokenize_document;
 pub use error::{ErrorKind, ParseError};
+pub use lexer::{RichToken, Token, tokenize_document};
 pub use parser::{Stream, parse_single_document, parse_tokens};
-pub use rich_token::RichToken;
 pub use span::{
     BytePosition, IndentLevel, Position, SourceMap, Span, Spanned, indent_to_usize, pos_to_usize,
     usize_to_indent, usize_to_pos,
 };
-pub use token::Token;
 pub use value::{Node, Properties, Value};
 
 /// Parse YAML input and return the parsed documents and any errors encountered.
@@ -93,13 +88,13 @@ pub fn parse(input: &str) -> (Stream<'static>, Vec<ParseError>) {
     let mut all_docs: Stream<'static> = Vec::new();
     let mut all_errors = Vec::new();
 
-    // Step 1: Parse stream into raw documents
-    let (raw_docs, stream_errors) = stream_lexer::parse_stream(input);
+    // Step 1: Tokenize stream into raw documents
+    let (raw_docs, stream_errors) = lexer::tokenize_stream(input);
     all_errors.extend(stream_errors);
 
     for raw_doc in raw_docs {
         // Step 2: Tokenize document content with context awareness
-        let (tokens, lexer_errors) = context_lexer::tokenize_document(raw_doc.content);
+        let (tokens, lexer_errors) = lexer::tokenize_document(raw_doc.content);
 
         // Set span_offset for converting local spans to global coordinates
         let doc_offset = raw_doc.content_span.start_usize();
