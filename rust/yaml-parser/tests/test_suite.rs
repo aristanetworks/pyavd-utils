@@ -688,6 +688,61 @@ fn run_combined_error_test(error_cases: &[(String, String, String)], order_name:
     eprintln!("✓ All error spans are valid");
 }
 
+/// Test that each error test case produces at least one error.
+/// This ensures we don't silently accept malformed YAML.
+#[test]
+#[allow(
+    clippy::print_stderr,
+    clippy::tests_outside_test_module,
+    reason = "Integration test with test output"
+)]
+fn error_test_cases_produce_errors() {
+    let manifest_dir = env!("CARGO_MANIFEST_DIR");
+    let test_dir = Path::new(manifest_dir).join("tests/yaml-test-suite");
+
+    if !test_dir.exists() {
+        eprintln!(
+            "Test suite not found at {}. Skipping test.",
+            test_dir.display()
+        );
+        return;
+    }
+
+    let error_cases = collect_error_test_cases(&test_dir);
+    eprintln!("Testing {} error test cases...", error_cases.len());
+
+    let mut passed = 0;
+    let mut failed = 0;
+    let mut failures = Vec::new();
+
+    for (test_id, name, input) in &error_cases {
+        let (_, errors) = parse(input);
+        if errors.is_empty() {
+            failed += 1;
+            failures.push(format!("{test_id}: {name}"));
+        } else {
+            passed += 1;
+        }
+    }
+
+    eprintln!("\n=== Error Test Cases Results ===");
+    eprintln!("Passed (produced errors): {passed}");
+    eprintln!("Failed (no errors): {failed}");
+    eprintln!("Total: {}", passed + failed);
+
+    if !failures.is_empty() {
+        eprintln!("\n=== Tests that should error but didn't ===");
+        for failure in &failures {
+            eprintln!("  {failure}");
+        }
+    }
+
+    assert_eq!(
+        failed, 0,
+        "{failed} error test cases did not produce any errors"
+    );
+}
+
 /// Analyze error kind distribution across all error test cases.
 /// This helps identify which errors use generic types vs specific ones.
 #[test]
