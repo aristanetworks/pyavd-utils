@@ -415,14 +415,14 @@ fn test_zero_copy_parsing() {
     assert!(matches!(&node.value, Value::Mapping(pairs) if pairs.len() == 1));
 
     // Extract and verify key/value using pattern matching
-    if let Value::Mapping(pairs) = &node.value {
-        if let Some((key, val)) = pairs.first() {
-            if let Value::String(key_str) = &key.value {
-                assert_eq!(key_str, "key");
-            }
-            if let Value::String(val_str) = &val.value {
-                assert_eq!(val_str, "value");
-            }
+    if let Value::Mapping(pairs) = &node.value
+        && let Some((key, val)) = pairs.first()
+    {
+        if let Value::String(key_str) = &key.value {
+            assert_eq!(key_str, "key");
+        }
+        if let Value::String(val_str) = &val.value {
+            assert_eq!(val_str, "value");
         }
     }
 
