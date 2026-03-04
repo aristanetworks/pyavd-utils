@@ -7,7 +7,7 @@
 use std::borrow::Cow;
 
 use crate::error::ErrorKind;
-use crate::lexer::{BlockScalarHeader, Chomping, QuoteStyle, Token};
+use crate::lexer::{BlockScalarHeader, Chomping, Token};
 use crate::span::{IndentLevel, Span, indent_to_usize};
 use crate::value::{Node, Value};
 
@@ -237,43 +237,121 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
         ))
     }
 
-    /// Check if the line starting at the given position is empty.
-    /// An empty line contains only `Dedent`/`Indent` tokens followed by another `LineStart` or EOF.
-    fn is_line_empty_at(&self, start_pos: usize) -> bool {
-        let mut check_pos = start_pos;
-        while let Some(rt) = self.tokens.get(check_pos) {
+    /// Consume content tokens from a block line.
+    ///
+    /// Returns `(content_end, has_content)`:
+    /// - `content_end`: byte position after the last content token (or `initial_end_pos` if none)
+    /// - `has_content`: true if any actual content (not just structural tokens) was consumed
+    ///
+    /// This combines token consumption and empty-line detection in a single pass,
+    /// eliminating the need for lookahead.
+    ///
+    /// Optimized to iterate directly over the token slice, avoiding per-iteration bounds checks.
+    fn consume_block_line_with_detection(&mut self, initial_end_pos: usize) -> (usize, bool) {
+        let Some(remaining) = self.tokens.get(self.pos..) else {
+            return (initial_end_pos, false);
+        };
+
+        let mut end_pos = initial_end_pos;
+        let mut has_content = false;
+        let mut consumed = 0;
+
+        for rt in remaining {
             match &rt.token {
-                Token::Dedent | Token::Indent(_) => check_pos += 1,
-                _ => break,
+                // Skip structural tokens without updating end position or content flag
+                Token::Dedent | Token::Indent(_) => {
+                    consumed += 1;
+                }
+                // Line-ending tokens terminate the line
+                Token::LineStart(_) | Token::DocStart | Token::DocEnd => break,
+                // All other tokens are content
+                _ => {
+                    end_pos = rt.span.end_usize();
+                    has_content = true;
+                    consumed += 1;
+                }
             }
         }
-        self.tokens
-            .get(check_pos)
-            .is_none_or(|rt| matches!(rt.token, Token::LineStart(_)))
+
+        self.pos += consumed;
+        (end_pos, has_content)
     }
 
-    /// Join lines for literal block scalar (`|`). Preserves newlines between lines.
-    fn join_literal_lines(lines: &[String]) -> String {
-        lines.join("\n")
+    /// Check if a line starting at `pos` is empty (no content tokens before next `LineStart`).
+    /// Used for lookahead when checking if an under-indented line should break the block scalar.
+    /// Optimized to use a single loop with early exit.
+    #[inline]
+    fn is_line_empty_at(&self, pos: usize) -> bool {
+        let mut check_pos = pos;
+        loop {
+            match self.tokens.get(check_pos) {
+                Some(rt) => match &rt.token {
+                    Token::Dedent | Token::Indent(_) => check_pos += 1,
+                    Token::LineStart(_) => return true,
+                    _ => return false,
+                },
+                None => return true, // EOF counts as empty
+            }
+        }
     }
 
-    /// Join lines for folded block scalar (`>`). Folds single newlines to spaces,
+    /// Join line spans for literal block scalar (`|`). Preserves newlines between lines.
+    #[allow(
+        clippy::string_slice,
+        reason = "spans from lexer are guaranteed to be valid UTF-8 boundaries"
+    )]
+    fn join_literal_spans(&self, spans: &[Span]) -> String {
+        if spans.is_empty() {
+            return String::new();
+        }
+
+        // Calculate total capacity needed: content + newlines between lines
+        let content_len: usize = spans.iter().map(Span::len).sum();
+        let newlines_len = spans.len() - 1;
+
+        let mut result = String::with_capacity(content_len + newlines_len);
+
+        for (i, span) in spans.iter().enumerate() {
+            if i > 0 {
+                result.push('\n');
+            }
+            result.push_str(&self.input[span.start_usize()..span.end_usize()]);
+        }
+
+        result
+    }
+
+    /// Join line spans for folded block scalar (`>`). Folds single newlines to spaces,
     /// but preserves multiple consecutive newlines.
-    fn join_folded_lines(lines: &[String]) -> String {
-        let mut result = String::new();
+    #[allow(
+        clippy::string_slice,
+        reason = "spans from lexer are guaranteed to be valid UTF-8 boundaries"
+    )]
+    fn join_folded_spans(&self, spans: &[Span]) -> String {
+        if spans.is_empty() {
+            return String::new();
+        }
+
+        // Calculate total capacity (estimate: content + separators)
+        let content_len: usize = spans.iter().map(Span::len).sum();
+
+        let mut result = String::with_capacity(content_len + spans.len());
         let mut prev_empty = false;
-        for line in lines {
-            if line.is_empty() {
+
+        for span in spans {
+            let is_empty = span.start == span.end;
+            if is_empty {
                 result.push('\n');
                 prev_empty = true;
             } else {
                 if !result.is_empty() && !prev_empty {
                     result.push(' ');
                 }
-                result.push_str(line);
+                result.push_str(&self.input[span.start_usize()..span.end_usize()]);
                 prev_empty = false;
             }
         }
+
         result
     }
 
@@ -304,79 +382,18 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
         }
     }
 
-    /// Collect content tokens from a single line of a block scalar.
-    /// Returns the line content and the end position of the last token consumed.
-    fn collect_block_line_content(
-        &mut self,
-        extra_indent: usize,
-        initial_end_pos: usize,
-    ) -> (String, usize) {
-        let mut line_content = String::new();
-        let mut end_pos = initial_end_pos;
-
-        // Add extra indentation as spaces
-        for _ in 0..extra_indent {
-            line_content.push(' ');
-        }
-
-        while let Some((tok, tok_span)) = self.peek() {
-            match tok {
-                Token::Dedent | Token::Indent(_) => {
-                    self.advance();
-                }
-                Token::Plain(string) | Token::StringContent(string) => {
-                    line_content.push_str(string);
-                    end_pos = tok_span.end_usize();
-                    self.advance();
-                }
-                Token::StringStart(style) => {
-                    // In block scalar content, quote characters are literal content
-                    let quote_char = match style {
-                        QuoteStyle::Single => '\'',
-                        QuoteStyle::Double => '"',
-                    };
-                    line_content.push(quote_char);
-                    end_pos = tok_span.end_usize();
-                    self.advance();
-                }
-                Token::StringEnd(style) => {
-                    let quote_char = match style {
-                        QuoteStyle::Single => '\'',
-                        QuoteStyle::Double => '"',
-                    };
-                    line_content.push(quote_char);
-                    end_pos = tok_span.end_usize();
-                    self.advance();
-                }
-                Token::Whitespace | Token::WhitespaceWithTabs => {
-                    line_content.push(' ');
-                    end_pos = tok_span.end_usize();
-                    self.advance();
-                }
-                Token::Comment(comment) => {
-                    line_content.push('#');
-                    line_content.push_str(comment);
-                    end_pos = tok_span.end_usize();
-                    self.advance();
-                }
-                Token::LineStart(_) | Token::DocStart | Token::DocEnd => break,
-                _ => {
-                    end_pos = tok_span.end_usize();
-                    self.advance();
-                }
-            }
-        }
-
-        (line_content, end_pos)
-    }
-
     /// Collect block scalar content, respecting indentation.
+    /// Uses span-based collection for efficiency: instead of building strings per line,
+    /// we collect spans pointing to the original input and build the final string at the end.
+    ///
+    /// Optimized to avoid lookahead: we consume tokens first, then determine if the line
+    /// was empty based on whether content was found.
     pub fn collect_block_scalar_content(
         &mut self,
         header: &BlockScalarHeader,
         literal: bool,
     ) -> (String, usize) {
-        let mut lines: Vec<String> = Vec::new();
+        let mut line_spans: Vec<Span> = Vec::new();
         let mut content_indent: Option<usize> = header.indent.map(usize::from);
         let mut end_pos = self.current_span().end_usize();
 
@@ -385,42 +402,27 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
         let mut empty_lines_before_content: Vec<(usize, Span)> = Vec::new();
 
         loop {
-            // Skip any Dedent/Indent tokens
+            // Skip any Dedent/Indent tokens before LineStart
             while let Some((Token::Dedent | Token::Indent(_), _)) = self.peek() {
                 self.advance();
             }
 
-            let Some((Token::LineStart(indent_level), span)) = self.peek() else {
+            let Some((Token::LineStart(indent_level), ls_span)) = self.peek() else {
                 break;
             };
-            let n = indent_to_usize(*indent_level);
-            let is_empty_line = self.is_line_empty_at(self.pos + 1);
+            let (n, line_start_span) = (indent_to_usize(*indent_level), ls_span);
 
-            // Discover content indentation from first non-empty line
-            if content_indent.is_none() && !is_empty_line {
-                content_indent = Some(n);
-                // Validate that all preceding empty lines have at most n spaces
-                for (empty_indent, empty_span) in &empty_lines_before_content {
-                    if *empty_indent > n {
-                        self.error(ErrorKind::InvalidIndentation, *empty_span);
-                    }
-                }
-            }
-
-            let min_indent = content_indent.unwrap_or(1);
-
-            // Content line with insufficient indentation ends the block scalar
-            if !is_empty_line && n < min_indent {
+            // For non-empty lines with insufficient indent, break before consuming.
+            // Empty lines don't break the block scalar regardless of indent.
+            if let Some(min_indent) = content_indent
+                && n < min_indent
+                && !self.is_line_empty_at(self.pos + 1)
+            {
                 break;
             }
 
             self.advance(); // consume LineStart
-            end_pos = span.end_usize();
-
-            // Skip optional Indent token after LineStart
-            if let Some((Token::Indent(_), _)) = self.peek() {
-                self.advance();
-            }
+            end_pos = line_start_span.end_usize();
 
             // Check for tabs used as indentation (only when no space-based indent)
             if n == 0
@@ -429,26 +431,42 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                 self.error(ErrorKind::InvalidIndentation, tab_span);
             }
 
-            if is_empty_line {
-                if content_indent.is_none() {
-                    empty_lines_before_content.push((n, span));
-                }
-                lines.push(String::new());
-                continue;
-            }
+            // Consume content tokens and detect if line has content
+            let (content_end, has_content) = self.consume_block_line_with_detection(end_pos);
+            end_pos = content_end;
 
-            // Collect content from this line
-            let extra_indent = n.saturating_sub(min_indent);
-            let (line_content, line_end) = self.collect_block_line_content(extra_indent, end_pos);
-            end_pos = line_end;
-            lines.push(line_content);
+            if has_content {
+                // Content line - discover indentation from first content line
+                if content_indent.is_none() {
+                    content_indent = Some(n);
+                    // Validate preceding empty lines
+                    for (empty_indent, empty_span) in &empty_lines_before_content {
+                        if *empty_indent > n {
+                            self.error(ErrorKind::InvalidIndentation, *empty_span);
+                        }
+                    }
+                }
+
+                // Calculate content start including extra indent
+                let min_indent = content_indent.unwrap_or(1);
+                let extra_indent = n.saturating_sub(min_indent);
+                let content_start = line_start_span.end_usize() - extra_indent;
+
+                line_spans.push(Span::from_usize_range(content_start..content_end));
+            } else {
+                // Empty line
+                if content_indent.is_none() {
+                    empty_lines_before_content.push((n, line_start_span));
+                }
+                line_spans.push(Span::from_usize_range(end_pos..end_pos));
+            }
         }
 
-        // Join lines and apply chomping
+        // Join line spans and apply chomping
         let mut content = if literal {
-            Self::join_literal_lines(&lines)
+            self.join_literal_spans(&line_spans)
         } else {
-            Self::join_folded_lines(&lines)
+            self.join_folded_spans(&line_spans)
         };
         Self::apply_chomping(&mut content, header.chomping);
 

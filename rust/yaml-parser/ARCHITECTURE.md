@@ -7,8 +7,8 @@
 # YAML Parser Architecture Documentation
 
 **Version:** 0.0.2
-**Date:** 2026-02-27
-**Status:** 100% YAML 1.2 Test Suite Compliance (402/402 tests passing)
+**Date:** 2026-03-04
+**Status:** 100% YAML 1.2 Test Suite Compliance (842/842 tests passing)
 **Dependencies:** Zero external dependencies
 
 ---
@@ -34,11 +34,12 @@ This is a YAML 1.2 parser written in Rust with the following key features:
 
 - **Error Recovery**: Continues parsing after errors, collecting multiple errors in a single pass
 - **Span Tracking**: Every parsed value includes its source location (byte range)
-- **100% YAML 1.2 Compliance**: Passes all 402 tests from the official YAML test suite
+- **100% YAML 1.2 Compliance**: Passes all 842 tests from the official YAML test suite
 - **Zero Dependencies**: Self-contained with custom span/error handling
 - **Zero-Copy Design**: Uses `Cow<'input, str>` throughout to minimize allocations
 - **Layered Architecture**: Separates stream-level parsing from document-level parsing
 - **Context-Aware Lexing**: Tracks flow depth and quote state to correctly tokenize context-dependent characters
+- **High Performance**: Competitive with or faster than saphyr in most benchmarks (see `BENCHMARKS.md`)
 
 ### Key Capabilities
 
@@ -840,8 +841,8 @@ Output:
 
 The parser is tested against the official YAML 1.2 test suite:
 
-- **402 tests** covering all YAML 1.2 features (including subtests)
-- **402 passing (100%)** - Full compliance achieved
+- **842 tests** covering all YAML 1.2 features (including subtests)
+- **842 passing (100%)** - Full compliance achieved
 - Tests are in `tests/test_suite.rs`
 - Error analysis test (`analyze_error_kinds`) tracks error distribution across 440+ error test cases
 
@@ -884,9 +885,15 @@ See `TECHNICAL_DEBT.md` for comprehensive documentation. Key limitations:
 
 ### 1. Performance
 
-- Not optimized for speed (focus has been on correctness)
-- Three-layer architecture has some overhead
-- Block scalars still require allocation for processing (chomping, folding)
+The parser is competitive with or faster than `saphyr` (a mature Rust YAML parser) in most benchmarks:
+
+- **Mappings**: 34-49% faster
+- **Sequences**: 14% faster
+- **Flow collections**: 269% faster
+- **Latency**: 16-40% faster for small/medium/large documents
+- **Block scalars**: ~6% slower (due to token-based architecture overhead)
+
+See `BENCHMARKS.md` for detailed performance data and instructions.
 
 ### 2. Memory Usage
 
@@ -1021,7 +1028,7 @@ See `LEXER_IMPROVEMENTS.md` and `PARSER_IMPROVEMENTS.md` for detailed progress t
 
 ## Conclusion
 
-This YAML parser achieves **100% YAML 1.2 compliance** (402/402 tests) through a carefully designed three-layer architecture with **zero external dependencies**:
+This YAML parser achieves **100% YAML 1.2 compliance** (842/842 tests) through a carefully designed three-layer architecture with **zero external dependencies**:
 
 1. **Stream Lexer**: Handles document boundaries and directives
 2. **Document Lexer**: Tokenizes single documents with context-aware handling
@@ -1032,8 +1039,9 @@ This YAML parser achieves **100% YAML 1.2 compliance** (402/402 tests) through a
 - **Zero dependencies**: Self-contained crate with custom `Span` implementation
 - **Zero-copy parsing**: `Cow<'input, str>` throughout for minimal allocations
 - **Actionable errors**: 27 error kinds with specific suggestions (100% specific, no generic fallback errors)
+- **High performance**: Faster than saphyr in most benchmarks while always providing spans
 - **~7,200 lines**: Readable, hand-written recursive descent parser
 
-The architecture prioritizes **correctness** and **error recovery** over performance, making it suitable for IDE integration and user-facing tools where helpful error messages are crucial.
+The architecture achieves both **correctness** and **performance**, making it suitable for IDE integration and user-facing tools where helpful error messages are crucial, as well as for high-throughput parsing scenarios.
 
 The codebase is clean of clippy warnings and ready for production use.
