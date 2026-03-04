@@ -5,7 +5,7 @@
 //! Token types for the YAML lexer.
 //!
 //! This module defines all token types produced by the context-aware lexer
-//! (`context_lexer.rs`).
+//! (`context.rs`).
 //!
 //! Token content uses `Cow<'input, str>` for zero-copy tokenization:
 //! - `Borrowed`: Token content is a slice of the input (no allocation)

@@ -46,8 +46,8 @@ pub struct RawDocument<'input> {
     pub content_span: Span,
 }
 
-/// Internal state for stream parsing.
-struct StreamParser<'input> {
+/// Internal state for stream lexing.
+struct StreamLexerState<'input> {
     chars: Vec<char>,
     pos: usize,
     documents: Vec<RawDocument<'input>>,
@@ -60,7 +60,7 @@ struct StreamParser<'input> {
     flow_depth: usize,
 }
 
-impl<'input> StreamParser<'input> {
+impl<'input> StreamLexerState<'input> {
     fn new(input: &'input str) -> Self {
         Self {
             chars: input.chars().collect(),
@@ -250,8 +250,8 @@ impl<'input> StreamParser<'input> {
     clippy::string_slice,
     reason = "All positions are calculated from byte-level scanning and guaranteed to be on UTF-8 boundaries"
 )]
-pub fn parse_stream(input: &str) -> (Vec<RawDocument<'_>>, Vec<ParseError>) {
-    let mut state = StreamParser::new(input);
+pub fn tokenize_stream(input: &str) -> (Vec<RawDocument<'_>>, Vec<ParseError>) {
+    let mut state = StreamLexerState::new(input);
 
     while state.pos < state.chars.len() {
         // Check for `---` document start marker
@@ -443,7 +443,7 @@ mod tests {
     #[test]
     fn test_single_document_no_markers() {
         let input = "key: value\n";
-        let (docs, _errors) = parse_stream(input);
+        let (docs, _errors) = tokenize_stream(input);
         assert_eq!(docs.len(), 1);
         // No markers in content
         let content = docs.first().unwrap().content;
@@ -455,7 +455,7 @@ mod tests {
     #[test]
     fn test_explicit_document_start() {
         let input = "---\nkey: value\n";
-        let (docs, _errors) = parse_stream(input);
+        let (docs, _errors) = tokenize_stream(input);
         assert_eq!(docs.len(), 1);
         // Content now includes the --- marker
         assert!(docs.first().unwrap().content.starts_with("---"));
@@ -465,7 +465,7 @@ mod tests {
     #[test]
     fn test_multiple_documents() {
         let input = "---\ndoc1\n---\ndoc2\n";
-        let (docs, _errors) = parse_stream(input);
+        let (docs, _errors) = tokenize_stream(input);
         assert_eq!(docs.len(), 2);
         // Each document starts with ---
         assert!(docs.first().unwrap().content.starts_with("---"));
@@ -477,7 +477,7 @@ mod tests {
     #[test]
     fn test_document_end_marker() {
         let input = "doc1\n...\n%YAML 1.2\n---\ndoc2\n";
-        let (docs, _errors) = parse_stream(input);
+        let (docs, _errors) = tokenize_stream(input);
         assert_eq!(docs.len(), 2);
         // First doc includes ...
         assert!(docs.first().unwrap().content.contains("..."));
@@ -489,7 +489,7 @@ mod tests {
     #[test]
     fn test_directives_at_start() {
         let input = "%YAML 1.2\n%TAG !e! tag:example.com,2000:\n---\nkey: value\n";
-        let (docs, _errors) = parse_stream(input);
+        let (docs, _errors) = tokenize_stream(input);
         assert_eq!(docs.len(), 1);
         let doc = docs.first().unwrap();
         assert_eq!(doc.directives.len(), 2);
@@ -504,7 +504,7 @@ mod tests {
     fn test_percent_inside_document() {
         // % inside document content should NOT be treated as directive
         let input = "{ matches\n% : 20 }\n";
-        let (docs, _errors) = parse_stream(input);
+        let (docs, _errors) = tokenize_stream(input);
         assert_eq!(docs.len(), 1);
         assert!(docs.first().unwrap().directives.is_empty());
         // The % line should be part of content, not a directive
@@ -514,7 +514,7 @@ mod tests {
     #[test]
     fn test_empty_documents() {
         let input = "---\n---\n";
-        let (docs, _errors) = parse_stream(input);
+        let (docs, _errors) = tokenize_stream(input);
         // Each document includes its --- marker
         assert_eq!(docs.len(), 2);
         // First doc: "---\n" (only the marker)
@@ -526,7 +526,7 @@ mod tests {
     #[test]
     fn test_duplicate_yaml_directive() {
         let input = "%YAML 1.2\n%YAML 1.2\n---\nvalue\n";
-        let (docs, errors) = parse_stream(input);
+        let (docs, errors) = tokenize_stream(input);
         assert_eq!(docs.len(), 1);
         // Should have exactly one error for duplicate directive
         assert_eq!(errors.len(), 1);

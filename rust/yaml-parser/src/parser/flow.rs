@@ -5,8 +5,8 @@
 //! Flow collection parsing (sequences and mappings in `[]` and `{}`).
 
 use crate::error::ErrorKind;
+use crate::lexer::Token;
 use crate::span::Span;
-use crate::token::Token;
 use crate::value::{Node, Value};
 
 use super::{NodeProperties, Parser};

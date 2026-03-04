@@ -20,9 +20,8 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 
 use crate::error::{ErrorKind, ParseError};
-use crate::rich_token::RichToken;
+use crate::lexer::{RichToken, Token};
 use crate::span::{IndentLevel, Span, Spanned, usize_to_indent};
-use crate::token::Token;
 use crate::value::{Node, Properties, Value};
 
 /// A stream of YAML documents.
@@ -754,12 +753,12 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
     /// This is the primary method for setting up tag handle validation.
     pub fn populate_tag_handles_from_directives(
         &mut self,
-        directives: &[Spanned<crate::stream_lexer::Directive>],
+        directives: &[Spanned<crate::lexer::Directive>],
     ) {
         self.tag_handles.clear();
 
         for (directive, _span) in directives {
-            if let crate::stream_lexer::Directive::Tag(value) = directive {
+            if let crate::lexer::Directive::Tag(value) = directive {
                 // Parse "!prefix! tag:example.com,2011:" into handle + prefix
                 if let Some((handle, prefix)) = Self::parse_tag_directive_value(value) {
                     self.tag_handles.insert(handle, prefix);
@@ -1246,7 +1245,7 @@ pub fn parse_tokens<'input>(
 pub fn parse_single_document<'tokens: 'input, 'input>(
     tokens: &'tokens [RichToken<'input>],
     input: &'input str,
-    directives: &[Spanned<crate::stream_lexer::Directive>],
+    directives: &[Spanned<crate::lexer::Directive>],
 ) -> (Option<Node<'input>>, Vec<ParseError>) {
     let mut parser = Parser::new(tokens, input);
 
@@ -1347,7 +1346,7 @@ pub fn parse_single_document<'tokens: 'input, 'input>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::context_lexer::tokenize_document;
+    use crate::lexer::tokenize_document;
 
     fn parse(input: &str) -> (Stream<'static>, Vec<ParseError>) {
         let (tokens, _) = tokenize_document(input);
