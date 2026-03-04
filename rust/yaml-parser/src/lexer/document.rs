@@ -1063,9 +1063,15 @@ impl<'input> DocumentLexer<'input> {
     }
 
     /// Consume a plain scalar, respecting the current mode.
+    ///
+    /// Optimized for zero-copy: borrows directly from the input string and
+    /// trims trailing whitespace by adjusting the end position rather than
+    /// allocating a new string.
     fn consume_plain_scalar(&mut self, start: usize) -> Spanned<Token<'input>> {
-        let mut content = String::new();
+        let content_start = self.byte_pos;
         let mut at_start = true;
+        // Track the end of non-whitespace content for trailing whitespace trimming
+        let mut content_end_non_ws = content_start;
 
         while let Some(ch) = self.peek() {
             // Always stop at newlines
@@ -1148,15 +1154,23 @@ impl<'input> DocumentLexer<'input> {
             }
             // In block mode, flow indicators are part of plain scalar
 
-            content.push(ch);
             self.advance();
             at_start = false;
+
+            // Track end of non-whitespace for trailing whitespace trimming
+            if !ch.is_whitespace() {
+                content_end_non_ws = self.byte_pos;
+            }
         }
 
-        // Plain scalars need Cow::Owned because we trim trailing whitespace
-        let trimmed = content.trim_end();
+        // Zero-copy: borrow directly from input, trimmed at content_end_non_ws
+        // byte_pos is always at UTF-8 boundaries (maintained by advance())
+        let content = self
+            .input
+            .get(content_start..content_end_non_ws)
+            .unwrap_or("");
         (
-            Token::Plain(Cow::Owned(trimmed.to_owned())),
+            Token::Plain(Cow::Borrowed(content)),
             self.current_span(start),
         )
     }
