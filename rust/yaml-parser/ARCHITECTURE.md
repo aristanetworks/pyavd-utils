@@ -347,7 +347,7 @@ The parser uses a **three-layer architecture**:
   - Anchor/alias resolution (`DuplicateAnchor`, `UndefinedAlias`)
   - Tag handle validation (`UndefinedTagHandle`)
 
-#### `parser/scalar.rs` (~1,030 lines)
+#### `parser/scalar.rs` (~1,070 lines)
 
 - **Purpose**: Parse all scalar types
 - **Functions**:
@@ -355,10 +355,19 @@ The parser uses a **three-layer architecture**:
   - `parse_quoted_string()`: Single and double quoted
   - `parse_block_scalar()`: Literal (`|`) and folded (`>`)
   - `parse_plain_multiline()`: Multiline plain scalars
+  - `consume_plain_scalar_continuations()`: Handle multiline plain scalar folding
 - **Helper Methods** (for implicit mappings starting from scalar):
   - `advance_to_same_indent()`: Skip to next line at target indent level
   - `parse_implicit_mapping_entry()`: Parse a single key: value entry
   - `parse_mapping_key_or_alias()`: Parse key that can be scalar or alias
+- **Helper Methods** (for plain scalar continuation logic):
+  - `extract_scalar_content()`: Convert Node value to String
+  - `skip_to_content_position()`: Skip whitespace tokens to find content
+  - `is_mapping_key_at_position()`: Lookahead for mapping key pattern
+  - `handle_low_indent_continuation()`: Handle empty lines and tab-indented content
+  - `consume_line_as_text()`: Consume tokens until LineStart
+  - `append_folded_separator()`: Handle space/newline folding
+  - `finalize_multiline_scalar()`: Build final multiline node
 - **Error Handling**: Emits `ContentOnSameLine`, `UnexpectedColon` for specific errors
 - **Complexity**: Multiline string handling with indentation validation
 
