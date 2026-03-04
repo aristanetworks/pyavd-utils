@@ -66,7 +66,7 @@ The parser uses a **three-layer architecture**:
                            │
                            ▼
 ┌─────────────────────────────────────────────────────────────┐
-│  Layer 1: Stream Lexer (stream_lexer.rs)                    │
+│  Layer 1: Stream Lexer (lexer/stream.rs)                    │
 │  - Splits input into raw documents                          │
 │  - Extracts directives (%YAML, %TAG)                        │
 │  - Identifies document boundaries (---, ...)                │
@@ -75,7 +75,7 @@ The parser uses a **three-layer architecture**:
                            │
                            ▼
 ┌─────────────────────────────────────────────────────────────┐
-│  Layer 2: Context Lexer (context_lexer.rs)                  │
+│  Layer 2: Context Lexer (lexer/context.rs)                  │
 │  - Tokenizes document content                               │
 │  - Tracks flow depth (nested {}/[])                         │
 │  - Emits INDENT/DEDENT tokens                               │
@@ -111,6 +111,23 @@ The parser uses a **three-layer architecture**:
 
 - **Main entry point**: `parse(input: &str) -> (Stream, Vec<ParseError>)`
 - **Exports**: All public types and functions
+- **Module declarations**: `lexer`, `parser`, `error`, `span`, `value`
+
+#### `lexer/mod.rs` - Lexer Module Root
+
+- **Purpose**: Organize all lexing-related components
+- **Structure**:
+
+  ```txt
+  src/lexer/
+  ├── mod.rs           # Module root, re-exports public API
+  ├── stream.rs        # Stream-level lexer (document boundaries)
+  ├── context.rs       # Context-aware document tokenizer
+  ├── token.rs         # Token type definitions
+  └── rich_token.rs    # Token wrapper with span
+  ```
+
+- **Re-exports**: `tokenize_document`, `tokenize_stream`, `RichToken`, `Token`, `Directive`, etc.
 
 #### `span.rs` (~275 lines) - Source Location Tracking
 
@@ -179,7 +196,7 @@ The parser uses a **three-layer architecture**:
 
 - **Error suggestions**: `ErrorKind::suggestion()` returns fix hints for 20+ error types
 
-#### `rich_token.rs` - Wrapper for tokens
+#### `lexer/rich_token.rs` - Wrapper for tokens
 
 - **`RichToken`**: Token wrapper (trivia not currently attached)
 
@@ -238,13 +255,14 @@ The parser uses a **three-layer architecture**:
 
 ### Layer 1: Stream Lexer
 
-#### `stream_lexer.rs` (~468 lines)
+#### `lexer/stream.rs` (~468 lines)
 
 - **Purpose**: Split YAML stream into raw documents
 - **Key Types**:
   - `RawDocument<'input>`: Contains directives, content (slice of input), and content span
   - `Directive`: Enum for `%YAML`, `%TAG`, and reserved directives
-- **Main Function**: `parse_stream(input) -> (Vec<RawDocument>, Vec<ParseError>)`
+  - `StreamLexerState<'input>`: Internal state machine for stream parsing
+- **Main Function**: `tokenize_stream(input) -> (Vec<RawDocument>, Vec<ParseError>)`
 - **Responsibilities**:
   - Detect document boundaries (`---`, `...`)
   - Extract directives from document headers
@@ -254,7 +272,7 @@ The parser uses a **three-layer architecture**:
 
 ### Layer 2: Context Lexer
 
-#### `context_lexer.rs` (~1,447 lines)
+#### `lexer/context.rs` (~1,447 lines)
 
 - **Purpose**: Context-aware tokenization
 - **Key Types**:
@@ -289,7 +307,7 @@ The parser uses a **three-layer architecture**:
   - `handle_quoted_newline()` - Shared newline handling for both quote styles
   - `finalize_quoted_string()` - Shared end-of-string handling
 
-#### `token.rs` (~188 lines)
+#### `lexer/token.rs` (~188 lines)
 
 - **Purpose**: Token type definitions with zero-copy support
 - **Key Types**:
@@ -302,7 +320,7 @@ The parser uses a **three-layer architecture**:
   - `is_flow_indicator()`: Check if token is a flow indicator
 - **Display Implementation**: Human-readable token formatting for errors
 
-#### `rich_token.rs` (~36 lines)
+#### `lexer/rich_token.rs` (~36 lines)
 
 - **Purpose**: Token wrapper with span information
 - **Key Type**: `RichToken<'input>` - combines `Token<'input>` with `Span`
