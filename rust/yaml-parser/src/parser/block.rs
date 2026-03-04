@@ -135,15 +135,15 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
         } else {
             // Check if the key is an alias with properties (invalid)
             if let Some((Token::Alias(name), span)) = self.peek() {
-                let alias_name = name.clone();
+                let alias_name = *name;
                 if !key_props.is_empty() {
                     self.error(ErrorKind::PropertiesOnAlias, span);
                 }
                 self.advance();
-                if !self.anchors.contains_key(alias_name.as_ref()) {
+                if !self.anchors.contains_key(alias_name) {
                     self.error(ErrorKind::UndefinedAlias, span);
                 }
-                Some(Node::new(Value::Alias(alias_name), span))
+                Some(Node::new(Value::Alias(Cow::Borrowed(alias_name)), span))
             } else {
                 self.parse_scalar()
             }
@@ -729,15 +729,15 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
     /// Parse a block mapping where the key is an alias.
     pub fn parse_alias_as_mapping_key(
         &mut self,
-        alias_name: Cow<'input, str>,
+        alias_name: &'input str,
         alias_span: Span,
         props: NodeProperties<'input>,
     ) -> Node<'input> {
-        if !self.anchors.contains_key(alias_name.as_ref()) {
+        if !self.anchors.contains_key(alias_name) {
             self.error(ErrorKind::UndefinedAlias, alias_span);
         }
 
-        let alias_node = Node::new(Value::Alias(alias_name), alias_span);
+        let alias_node = Node::new(Value::Alias(Cow::Borrowed(alias_name)), alias_span);
 
         self.advance(); // ':'
         self.skip_ws();
@@ -784,12 +784,12 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
             let key = match self.peek() {
                 Some((Token::Plain(_) | Token::StringStart(_), _)) => self.parse_scalar(),
                 Some((Token::Alias(name), span)) => {
-                    let new_alias_name = name.clone();
+                    let new_alias_name = *name;
                     self.advance();
-                    if !self.anchors.contains_key(new_alias_name.as_ref()) {
+                    if !self.anchors.contains_key(new_alias_name) {
                         self.error(ErrorKind::UndefinedAlias, span);
                     }
-                    Some(Node::new(Value::Alias(new_alias_name), span))
+                    Some(Node::new(Value::Alias(Cow::Borrowed(new_alias_name)), span))
                 }
                 _ => None,
             };

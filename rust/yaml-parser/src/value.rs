@@ -28,11 +28,14 @@ use crate::span::Span;
 /// This is boxed within `Node` to reduce memory footprint since most nodes
 /// don't have anchors or tags. The box adds 8 bytes per node (Option<Box<_>>)
 /// but saves ~40 bytes compared to inlining two `Option<Cow<str>>` fields.
+///
+/// Anchors use `Cow<'input, str>` (usually borrowed) since they are rarely transformed.
+/// Tags use `Cow` because they may need expansion (e.g., `!!str` → full URI).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Properties<'input> {
-    /// Optional anchor name (from `&name`)
+    /// Optional anchor name (from `&name`) - usually borrowed from input
     pub anchor: Option<Cow<'input, str>>,
-    /// Optional tag (from `!tag`)
+    /// Optional tag (from `!tag`) - may need transformation
     pub tag: Option<Cow<'input, str>>,
 }
 
@@ -100,10 +103,12 @@ impl<'input> Node<'input> {
 
     /// Create a new node with an anchor.
     #[must_use]
-    pub fn with_anchor(mut self, anchor: Cow<'input, str>) -> Self {
+    pub fn with_anchor(mut self, anchor: &'input str) -> Self {
         match &mut self.properties {
-            Some(props) => props.anchor = Some(anchor),
-            None => self.properties = Some(Box::new(Properties::with_anchor(anchor))),
+            Some(props) => props.anchor = Some(Cow::Borrowed(anchor)),
+            None => {
+                self.properties = Some(Box::new(Properties::with_anchor(Cow::Borrowed(anchor))));
+            }
         }
         self
     }
@@ -132,10 +137,10 @@ impl<'input> Node<'input> {
 
     /// Returns the anchor if present.
     #[must_use]
-    pub fn anchor(&self) -> Option<&Cow<'input, str>> {
+    pub fn anchor(&self) -> Option<&str> {
         self.properties
             .as_ref()
-            .and_then(|props| props.anchor.as_ref())
+            .and_then(|props| props.anchor.as_deref())
     }
 
     /// Returns the tag if present.
@@ -211,6 +216,7 @@ pub enum Value<'input> {
     /// An alias reference (`*name`)
     ///
     /// Note: Aliases don't have their own anchor/tag properties in YAML.
+    /// Uses `Cow` (usually borrowed) for zero-copy while supporting `into_owned()`.
     Alias(Cow<'input, str>),
 
     /// An invalid node (placeholder for error recovery)
@@ -302,11 +308,10 @@ mod tests {
         assert!(!node1.has_anchor());
         assert!(!node1.has_tag());
 
-        // Node with anchor
-        let node2 = Node::new(Value::String(Cow::Borrowed("test")), span)
-            .with_anchor(Cow::Borrowed("myanchor"));
+        // Node with anchor (now takes &str directly)
+        let node2 = Node::new(Value::String(Cow::Borrowed("test")), span).with_anchor("myanchor");
         assert!(node2.has_anchor());
-        assert_eq!(node2.anchor(), Some(&Cow::Borrowed("myanchor")));
+        assert_eq!(node2.anchor(), Some("myanchor"));
 
         // Node with tag
         let node3 =
@@ -332,12 +337,18 @@ mod tests {
         let owned: Value<'static> = borrowed.into_owned();
         assert!(matches!(owned, Value::String(Cow::Owned(str)) if str == "test"));
 
-        // Test Node::into_owned
+        // Test Value::Alias into_owned
+        let alias: Value<'_> = Value::Alias(Cow::Borrowed("myalias"));
+        let owned_alias: Value<'static> = alias.into_owned();
+        assert!(matches!(owned_alias, Value::Alias(Cow::Owned(str)) if str == "myalias"));
+
+        // Test Node::into_owned - anchors and tags are converted to owned
         let node = Node::new(Value::String(Cow::Borrowed("test")), span)
-            .with_anchor(Cow::Borrowed("anchor"))
+            .with_anchor("anchor")
             .with_tag(Cow::Borrowed("tag"));
         let owned_node: Node<'static> = node.into_owned();
-        assert!(matches!(owned_node.anchor(), Some(Cow::Owned(str)) if str == "anchor"));
+        // Anchor is preserved after into_owned
+        assert_eq!(owned_node.anchor(), Some("anchor"));
         assert!(matches!(owned_node.tag(), Some(Cow::Owned(str)) if str == "tag"));
         assert!(matches!(owned_node.value, Value::String(Cow::Owned(str)) if str == "test"));
     }

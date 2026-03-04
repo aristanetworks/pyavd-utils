@@ -4,6 +4,8 @@
 
 //! Scalar parsing (plain, quoted, and block scalars).
 
+use std::borrow::Cow;
+
 use crate::error::ErrorKind;
 use crate::lexer::{BlockScalarHeader, Chomping, QuoteStyle, Token};
 use crate::span::{IndentLevel, Span, indent_to_usize};
@@ -188,15 +190,15 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
         let (tok, span) = self.advance()?;
 
         let name = if let Token::Alias(name) = tok {
-            name.clone()
+            *name
         } else {
             return None;
         };
 
-        if !self.anchors.contains_key(name.as_ref()) {
+        if !self.anchors.contains_key(name) {
             self.error(ErrorKind::UndefinedAlias, span);
         }
-        Some(Node::new(Value::Alias(name), span))
+        Some(Node::new(Value::Alias(Cow::Borrowed(name)), span))
     }
 
     /// Parse a literal block scalar: |
@@ -726,15 +728,15 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
     ) -> Option<Node<'input>> {
         if let Some((Token::Alias(name), span)) = self.peek() {
             // Alias key - properties on aliases are invalid
-            let alias_name = name.clone();
+            let alias_name = *name;
             if !key_props.is_empty() {
                 self.error(ErrorKind::PropertiesOnAlias, span);
             }
             self.advance();
-            if !self.anchors.contains_key(alias_name.as_ref()) {
+            if !self.anchors.contains_key(alias_name) {
                 self.error(ErrorKind::UndefinedAlias, span);
             }
-            Some(Node::new(Value::Alias(alias_name), span))
+            Some(Node::new(Value::Alias(Cow::Borrowed(alias_name)), span))
         } else if let Some(key) = self.parse_scalar() {
             // Scalar key - apply properties if present
             if key_props.is_empty() {

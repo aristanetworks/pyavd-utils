@@ -30,9 +30,10 @@ pub type Stream<'input> = Vec<Node<'input>>;
 /// Pending node properties (anchor, tag) collected before parsing the value.
 ///
 /// The lifetime `'input` refers to the input string being parsed.
+/// Anchors use `&'input str` (zero-copy), tags use `Cow` (may need transformation).
 #[derive(Debug, Clone, Default)]
 pub(crate) struct NodeProperties<'input> {
-    pub anchor: Option<(Cow<'input, str>, Span)>,
+    pub anchor: Option<(&'input str, Span)>,
     pub tag: Option<(Cow<'input, str>, Span)>,
     /// Whether we've crossed a line boundary while accumulating these properties.
     /// This is important for distinguishing between:
@@ -48,7 +49,7 @@ impl<'input> NodeProperties<'input> {
 
     /// Apply these properties to a node, updating its span to include properties.
     pub fn apply_to(self, mut node: Node<'input>) -> Node<'input> {
-        let anchor_val = self.anchor.as_ref().map(|(anchor, _)| anchor.clone());
+        let anchor_val = self.anchor.map(|(anchor, _)| Cow::Borrowed(anchor));
         let tag_val = self.tag.as_ref().map(|(tag, _)| tag.clone());
 
         // Update span to include properties
@@ -63,7 +64,8 @@ impl<'input> NodeProperties<'input> {
             node.span = Span::new(tag_span.start..node.span.end);
         }
 
-        // Only allocate a box if there are actual properties
+        // Only allocate a box if there are actual properties to add.
+        // Important: Don't overwrite existing properties if we have nothing to add!
         if anchor_val.is_some() || tag_val.is_some() {
             node.properties = Some(Box::new(Properties {
                 anchor: anchor_val,
@@ -81,16 +83,19 @@ impl<'input> NodeProperties<'input> {
 /// - `'tokens` is the lifetime of the token slice
 /// - `'input` is the lifetime of the input string (tokens borrow from input via `Cow`)
 ///
-/// The bound `'tokens: 'input` ensures that tokens outlive the returned Node.
-/// This allows the returned `Node<'input>` to borrow data from the tokens.
+/// The bound `'tokens: 'input` is required due to Rust's variance rules. When the parser
+/// is used behind `&mut self`, the compiler requires lifetime invariance. Without this
+/// bound, recursive methods that pass `&mut self` fail to compile because the compiler
+/// cannot prove that the lifetimes are compatible.
 #[derive(Debug)]
 pub(crate) struct Parser<'tokens: 'input, 'input> {
     pub tokens: &'tokens [RichToken<'input>],
     pub input: &'input str,
     pub pos: usize,
     pub errors: Vec<ParseError>,
-    /// Map of anchor names to their nodes (for alias resolution)
-    pub anchors: HashMap<Cow<'input, str>, Node<'input>>,
+    /// Map of anchor names to their nodes (for alias resolution).
+    /// Uses `&'input str` keys for zero-copy.
+    pub anchors: HashMap<&'input str, Node<'input>>,
     /// Flow depth tracking (0 = block context, > 0 = inside flow collections)
     pub flow_depth: usize,
     /// Stack of columns where each flow context started.
@@ -263,11 +268,12 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
         props: NodeProperties<'input>,
         node: Node<'input>,
     ) -> Node<'input> {
+        // Extract anchor name before applying (to get the 'input lifetime)
+        let anchor_name = props.anchor.as_ref().map(|(name, _)| *name);
         let node_with_props = props.apply_to(node);
         // If the node has an anchor, register it in the anchors map
-        if let Some(anchor_name) = node_with_props.anchor() {
-            self.anchors
-                .insert(anchor_name.clone(), node_with_props.clone());
+        if let Some(name) = anchor_name {
+            self.anchors.insert(name, node_with_props.clone());
         }
         node_with_props
     }
@@ -285,7 +291,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
         loop {
             match self.peek() {
                 Some((Token::Anchor(name), anchor_span)) => {
-                    let anchor_name = name.clone();
+                    let anchor_name = *name;
                     self.advance();
                     self.skip_ws();
                     if props.anchor.is_some() {
@@ -915,7 +921,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
     /// - Accumulates the anchor as a property and continues parsing
     fn handle_anchor_in_value(
         &mut self,
-        anchor_name: Cow<'input, str>,
+        anchor_name: &'input str,
         anchor_span: Span,
         min_indent: IndentLevel,
         mut props: NodeProperties<'input>,
@@ -936,7 +942,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
 
         if props.crossed_line_boundary && props.anchor.is_some() {
             let inner_props = NodeProperties {
-                anchor: Some((anchor_name.clone(), anchor_span)),
+                anchor: Some((anchor_name, anchor_span)),
                 tag: None,
                 crossed_line_boundary: false,
             };
@@ -1045,7 +1051,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
     /// Handle an alias token as a value.
     fn handle_alias_in_value(
         &mut self,
-        alias_name: Cow<'input, str>,
+        alias_name: &'input str,
         alias_span: Span,
         props: NodeProperties<'input>,
     ) -> Option<Node<'input>> {
@@ -1060,10 +1066,13 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
         if matches!(self.peek(), Some((Token::Colon, _))) {
             Some(self.parse_alias_as_mapping_key(alias_name, alias_span, props))
         } else {
-            if !self.anchors.contains_key(alias_name.as_ref()) {
+            if !self.anchors.contains_key(alias_name) {
                 self.error(ErrorKind::UndefinedAlias, alias_span);
             }
-            Some(Node::new(Value::Alias(alias_name), alias_span))
+            Some(Node::new(
+                Value::Alias(Cow::Borrowed(alias_name)),
+                alias_span,
+            ))
         }
     }
 
@@ -1128,12 +1137,12 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
             Token::BlockSeqIndicator => self.handle_block_seq_indicator(min_indent, props),
             // Anchor - collect as property and continue parsing
             Token::Anchor(name) => {
-                let anchor_name = name.clone();
+                let anchor_name = *name;
                 self.handle_anchor_in_value(anchor_name, span, min_indent, props)
             }
             // Alias
             Token::Alias(name) => {
-                let alias_name = name.clone();
+                let alias_name = *name;
                 self.handle_alias_in_value(alias_name, span, props)
             }
             // Tag - collect as property and continue parsing
@@ -1450,14 +1459,23 @@ mod tests {
     #[test]
     fn test_parse_anchor_alias() {
         let (docs, errors) = parse("a: &anchor 1\nb: *anchor");
-        assert!(errors.is_empty());
+        assert!(errors.is_empty(), "errors: {errors:?}");
         assert_eq!(docs.len(), 1);
         let value = &docs.first().unwrap().value;
         assert!(matches!(&docs.first().unwrap().value, Value::Mapping(_)));
         if let Value::Mapping(pairs) = value {
-            assert_eq!(pairs.len(), 2);
+            assert_eq!(pairs.len(), 2, "expected 2 pairs but got {pairs:?}");
+            // Check first pair's value has anchor
+            let first_value = &pairs.first().unwrap().1;
+            assert_eq!(
+                first_value.anchor(),
+                Some("anchor"),
+                "First value should have anchor 'anchor'"
+            );
+            let alias_value = &pairs.last().unwrap().1.value;
             assert!(
-                matches!(&pairs.last().unwrap().1.value, Value::Alias(name) if name == "anchor")
+                matches!(alias_value, Value::Alias(name) if name.as_ref() == "anchor"),
+                "Expected Alias(\"anchor\"), got {alias_value:?}"
             );
         }
     }
