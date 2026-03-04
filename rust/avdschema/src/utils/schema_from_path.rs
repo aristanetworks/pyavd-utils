@@ -248,8 +248,7 @@ mod tests {
         let value = json!(
             {"dynamic": [ {"key": "one"}, {"key": "two"}, {"key": "three"}]});
         let store = get_test_store();
-        let result =
-            get_schema_from_path(Schema::EOSConfig, &store, &["key2".into()], &value);
+        let result = get_schema_from_path(Schema::EOSConfig, &store, &["key2".into()], &value);
         assert!(result.is_ok());
         let opt = result.unwrap();
         assert!(opt.is_some());

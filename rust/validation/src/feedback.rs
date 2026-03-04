@@ -334,9 +334,7 @@ impl Removed {
     }
 }
 #[derive(Clone, Debug, PartialEq, Serialize, derive_more::Display)]
-#[display(
-    "Ignoring key from the EOS Config schema when validating with the AVD Design schema."
-)]
+#[display("Ignoring key from the EOS Config schema when validating with the AVD Design schema.")]
 pub struct IgnoredEosConfigKey {}
 
 #[cfg(test)]
