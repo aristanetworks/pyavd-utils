@@ -1167,9 +1167,6 @@ impl<'input> DocumentLexer<'input> {
 /// Returns `RichToken`s wrapping each token. All tokens (including `Whitespace`,
 /// `WhitespaceWithTabs`, `Comment`) are kept as real tokens in the stream because
 /// comments have semantic meaning in YAML (they terminate plain scalars).
-///
-/// The `RichToken` wrapper supports future IDE features but currently has empty
-/// leading/trailing trivia vectors.
 pub fn tokenize_document(input: &str) -> (Vec<RichToken<'_>>, Vec<ParseError>) {
     DocumentLexer::new(input).tokenize()
 }

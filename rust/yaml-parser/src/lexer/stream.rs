@@ -49,8 +49,15 @@ pub struct RawDocument<'input> {
     pub content_span: Span,
 }
 
-/// Internal state for stream lexing.
-struct StreamLexerState<'input> {
+/// Stream lexer for YAML.
+///
+/// This is Layer 1 of the layered lexer architecture. It splits a YAML stream
+/// into raw documents based on document markers (`---`, `...`) and extracts
+/// directives from the directive prologue.
+///
+/// The lifetime `'input` refers to the input string being parsed.
+pub struct StreamLexer<'input> {
+    input: &'input str,
     chars: Vec<char>,
     pos: usize,
     documents: Vec<RawDocument<'input>>,
@@ -63,9 +70,11 @@ struct StreamLexerState<'input> {
     flow_depth: usize,
 }
 
-impl<'input> StreamLexerState<'input> {
-    fn new(input: &'input str) -> Self {
+impl<'input> StreamLexer<'input> {
+    /// Create a new stream lexer for the given input.
+    pub fn new(input: &'input str) -> Self {
         Self {
+            input,
             chars: input.chars().collect(),
             pos: 0,
             documents: Vec::new(),
@@ -79,12 +88,12 @@ impl<'input> StreamLexerState<'input> {
         }
     }
 
-    /// Parse a directive line and return the new position, or `None` if not a directive.
+    /// Parse a directive line and return the new position.
     #[allow(
         clippy::string_slice,
         reason = "All positions are calculated from byte-level scanning and guaranteed to be on UTF-8 boundaries"
     )]
-    fn parse_directive(&mut self, input: &'input str, line: &'input str, line_end: usize) -> usize {
+    fn parse_directive(&mut self, line: &'input str, line_end: usize) -> usize {
         let directive_start = self.pos;
         let directive_span = Span::from_usize_range(directive_start..line_end);
 
@@ -141,7 +150,7 @@ impl<'input> StreamLexerState<'input> {
             self.current_directives.push((di, directive_span));
         }
 
-        skip_to_eol(input, line_end)
+        self.skip_to_eol(line_end)
     }
 
     /// Handle `---` document start marker. Returns `true` if marker was handled.
@@ -149,8 +158,8 @@ impl<'input> StreamLexerState<'input> {
         clippy::string_slice,
         reason = "All positions are calculated from byte-level scanning and guaranteed to be on UTF-8 boundaries"
     )]
-    fn handle_document_start(&mut self, input: &'input str) -> bool {
-        let remaining = &input[self.pos..];
+    fn handle_document_start(&mut self) -> bool {
+        let remaining = &self.input[self.pos..];
         if self.flow_depth != 0 || !remaining.starts_with("---") {
             return false;
         }
@@ -165,7 +174,7 @@ impl<'input> StreamLexerState<'input> {
         if let Some(start) = self.content_start {
             self.documents.push(RawDocument {
                 directives: std::mem::take(&mut self.current_directives),
-                content: &input[start..self.content_end],
+                content: &self.input[start..self.content_end],
                 content_span: Span::from_usize_range(start..self.pos),
             });
             self.has_yaml_directive = false;
@@ -179,8 +188,8 @@ impl<'input> StreamLexerState<'input> {
         if self.content_start.is_none() {
             self.content_start = Some(self.pos);
         }
-        let line_end = find_eol(input, self.pos);
-        (self.pos, self.content_end) = advance_past_newline(input, line_end);
+        let line_end = self.find_eol();
+        (self.pos, self.content_end) = self.advance_past_newline(line_end);
         true
     }
 
@@ -189,8 +198,8 @@ impl<'input> StreamLexerState<'input> {
         clippy::string_slice,
         reason = "All positions are calculated from byte-level scanning and guaranteed to be on UTF-8 boundaries"
     )]
-    fn handle_document_end(&mut self, input: &'input str) -> bool {
-        let remaining = &input[self.pos..];
+    fn handle_document_end(&mut self) -> bool {
+        let remaining = &self.input[self.pos..];
         if self.flow_depth != 0 || !remaining.starts_with("...") {
             return false;
         }
@@ -217,15 +226,15 @@ impl<'input> StreamLexerState<'input> {
         if self.content_start.is_none() {
             self.content_start = Some(self.pos);
         }
-        let line_end = find_eol(input, self.pos);
-        (self.pos, self.content_end) = advance_past_newline(input, line_end);
+        let line_end = self.find_eol();
+        (self.pos, self.content_end) = self.advance_past_newline(line_end);
 
         // Finalize the current document
         if self.content_start.is_some() || !self.current_directives.is_empty() {
             let start = self.content_start.unwrap_or(self.pos);
             self.documents.push(RawDocument {
                 directives: std::mem::take(&mut self.current_directives),
-                content: &input[start..self.content_end],
+                content: &self.input[start..self.content_end],
                 content_span: Span::from_usize_range(start..self.pos),
             });
             self.content_start = None;
@@ -236,161 +245,190 @@ impl<'input> StreamLexerState<'input> {
         self.has_yaml_directive = false;
         true
     }
+
+    /// Find the end of the current line (position of newline or EOF).
+    #[allow(
+        clippy::indexing_slicing,
+        reason = "Index is validated by bounds check in loop condition"
+    )]
+    fn find_eol(&self) -> usize {
+        let bytes = self.input.as_bytes();
+        let mut idx = self.pos;
+        while idx < bytes.len() {
+            match bytes[idx] {
+                b'\n' | b'\r' => return idx,
+                _ => idx += 1,
+            }
+        }
+        idx
+    }
+
+    /// Skip to the position after the current line (after newline).
+    fn skip_to_eol(&self, pos: usize) -> usize {
+        let eol = find_eol_at(self.input, pos);
+        skip_newline(self.input, eol)
+    }
+
+    /// Advance past a newline (if present) and return the new position and `content_end`.
+    fn advance_past_newline(&self, line_end: usize) -> (usize, usize) {
+        if line_end < self.input.len() {
+            let newline_end = skip_newline(self.input, line_end);
+            (newline_end, newline_end)
+        } else {
+            (line_end, line_end)
+        }
+    }
+
+    /// Tokenize the stream into raw documents.
+    ///
+    /// This is the main entry point for stream lexing. It:
+    /// - Extracts directives from the directive prologue (they don't go to parser)
+    /// - Includes document markers (`---`, `...`) in content (parser sees them)
+    /// - Splits stream at document boundaries
+    ///
+    /// Returns a tuple of (documents, errors).
+    #[allow(
+        clippy::string_slice,
+        reason = "All positions are calculated from byte-level scanning and guaranteed to be on UTF-8 boundaries"
+    )]
+    pub fn tokenize(mut self) -> (Vec<RawDocument<'input>>, Vec<ParseError>) {
+        while self.pos < self.chars.len() {
+            // Check for `---` document start marker
+            if self.handle_document_start() {
+                continue;
+            }
+
+            // Check for `...` document end marker
+            if self.handle_document_end() {
+                continue;
+            }
+
+            // Check for directives (only in directive prologue)
+            let remaining = &self.input[self.pos..];
+            if self.in_directive_prologue && remaining.starts_with('%') {
+                let line_end = find_eol_at(self.input, self.pos);
+                let line = &self.input[self.pos..line_end];
+                self.pos = self.parse_directive(line, line_end);
+                continue;
+            }
+
+            // Skip comment-only or empty lines in directive prologue
+            let trimmed_remaining = remaining.trim_start();
+            if self.in_directive_prologue
+                && (remaining.starts_with('#')
+                    || trimmed_remaining.starts_with('#')
+                    || trimmed_remaining.is_empty())
+            {
+                let line_end = find_eol_at(self.input, self.pos);
+                self.pos = line_end;
+                if self.pos < self.input.len() {
+                    self.pos = skip_newline(self.input, self.pos);
+                }
+                continue;
+            }
+
+            // Check for directive-like content outside the directive prologue
+            if !self.in_directive_prologue
+                && remaining.starts_with('%')
+                && (remaining.starts_with("%YAML") || remaining.starts_with("%TAG"))
+            {
+                let line_end = find_eol_at(self.input, self.pos);
+                // Look ahead to see if there's a --- on a subsequent line
+                let mut lookahead_pos = line_end;
+                if lookahead_pos < self.input.len() {
+                    lookahead_pos = skip_newline(self.input, lookahead_pos);
+                }
+                let mut found_doc_start = false;
+                while lookahead_pos < self.input.len() {
+                    let lookahead_remaining = &self.input[lookahead_pos..];
+                    let first_char = lookahead_remaining.chars().next();
+                    if first_char == Some('#') || lookahead_remaining.trim_start().is_empty() {
+                        let la_line_end = find_eol_at(self.input, lookahead_pos);
+                        lookahead_pos = la_line_end;
+                        if lookahead_pos < self.input.len() {
+                            lookahead_pos = skip_newline(self.input, lookahead_pos);
+                        }
+                        continue;
+                    }
+                    if lookahead_remaining.starts_with("---") {
+                        let marker_end = lookahead_pos + 3;
+                        let next_char = self.input[marker_end..].chars().next();
+                        if next_char.is_none()
+                            || matches!(next_char, Some(' ' | '\t' | '\n' | '\r'))
+                        {
+                            found_doc_start = true;
+                        }
+                    }
+                    break;
+                }
+                if found_doc_start {
+                    self.errors.push(ParseError::new(
+                        ErrorKind::TrailingContent,
+                        Span::from_usize_range(self.pos..line_end),
+                    ));
+                }
+            }
+
+            // Regular content line - we're no longer in directive prologue
+            self.in_directive_prologue = false;
+
+            // Add the line to current content
+            let line_end = find_eol_at(self.input, self.pos);
+            if self.content_start.is_none() {
+                self.content_start = Some(self.pos);
+            }
+
+            // Track flow depth by scanning for flow indicators in this line
+            // This is needed to avoid treating --- or ... inside flow collections as document markers
+            for byte_idx in self.pos..line_end {
+                if let Some(&byte) = self.input.as_bytes().get(byte_idx) {
+                    match byte {
+                        b'[' | b'{' => self.flow_depth += 1,
+                        b']' | b'}' => self.flow_depth = self.flow_depth.saturating_sub(1),
+                        // Note: We don't handle quoted strings here, which could contain
+                        // unmatched brackets. This is a simplified heuristic that works
+                        // for valid YAML and for detecting flow context in error cases.
+                        _ => {}
+                    }
+                }
+            }
+
+            (self.pos, self.content_end) = self.advance_past_newline(line_end);
+        }
+
+        // Finalize any remaining document
+        if self.content_start.is_some() || !self.current_directives.is_empty() {
+            // Check for directives without a following document
+            if !self.current_directives.is_empty() && self.content_start.is_none() {
+                let span = self
+                    .current_directives
+                    .first()
+                    .map_or(Span::from_usize_range(0..0), |(_, span)| *span);
+                self.errors
+                    .push(ParseError::new(ErrorKind::TrailingContent, span));
+            }
+
+            // If no content was found, use content_end for both start and end to get an empty slice
+            let start = self.content_start.unwrap_or(self.content_end);
+            self.documents.push(RawDocument {
+                directives: self.current_directives,
+                content: &self.input[start..self.content_end],
+                content_span: Span::from_usize_range(start..self.content_end),
+            });
+        }
+
+        (self.documents, self.errors)
+    }
 }
 
 /// Parse the YAML stream into raw documents.
 ///
-/// This is Layer 1 of the layered parser architecture. It:
-/// - Extracts directives from the directive prologue (they don't go to parser)
-/// - Includes document markers (`---`, `...`) in content (parser sees them)
-/// - Splits stream at document boundaries
-///
-/// The raw content can then be passed to the document-level lexer for
-/// tokenization.
+/// This is a convenience function that creates a `StreamLexer` and calls `tokenize()`.
+/// For more control, use `StreamLexer::new(input).tokenize()` directly.
 ///
 /// Returns a tuple of (documents, errors).
-#[allow(
-    clippy::string_slice,
-    reason = "All positions are calculated from byte-level scanning and guaranteed to be on UTF-8 boundaries"
-)]
 pub fn tokenize_stream(input: &str) -> (Vec<RawDocument<'_>>, Vec<ParseError>) {
-    let mut state = StreamLexerState::new(input);
-
-    while state.pos < state.chars.len() {
-        // Check for `---` document start marker
-        if state.handle_document_start(input) {
-            continue;
-        }
-
-        // Check for `...` document end marker
-        if state.handle_document_end(input) {
-            continue;
-        }
-
-        // Check for directives (only in directive prologue)
-        let remaining = &input[state.pos..];
-        if state.in_directive_prologue && remaining.starts_with('%') {
-            let line_end = find_eol(input, state.pos);
-            let line = &input[state.pos..line_end];
-            state.pos = state.parse_directive(input, line, line_end);
-            continue;
-        }
-
-        // Skip comment-only or empty lines in directive prologue
-        let trimmed_remaining = remaining.trim_start();
-        if state.in_directive_prologue
-            && (remaining.starts_with('#')
-                || trimmed_remaining.starts_with('#')
-                || trimmed_remaining.is_empty())
-        {
-            let line_end = find_eol(input, state.pos);
-            state.pos = line_end;
-            if state.pos < input.len() {
-                state.pos = skip_newline(input, state.pos);
-            }
-            continue;
-        }
-
-        // Check for directive-like content outside the directive prologue
-        if !state.in_directive_prologue
-            && remaining.starts_with('%')
-            && (remaining.starts_with("%YAML") || remaining.starts_with("%TAG"))
-        {
-            let line_end = find_eol(input, state.pos);
-            // Look ahead to see if there's a --- on a subsequent line
-            let mut lookahead_pos = line_end;
-            if lookahead_pos < input.len() {
-                lookahead_pos = skip_newline(input, lookahead_pos);
-            }
-            let mut found_doc_start = false;
-            while lookahead_pos < input.len() {
-                let lookahead_remaining = &input[lookahead_pos..];
-                let first_char = lookahead_remaining.chars().next();
-                if first_char == Some('#') || lookahead_remaining.trim_start().is_empty() {
-                    let la_line_end = find_eol(input, lookahead_pos);
-                    lookahead_pos = la_line_end;
-                    if lookahead_pos < input.len() {
-                        lookahead_pos = skip_newline(input, lookahead_pos);
-                    }
-                    continue;
-                }
-                if lookahead_remaining.starts_with("---") {
-                    let marker_end = lookahead_pos + 3;
-                    let next_char = input[marker_end..].chars().next();
-                    if next_char.is_none() || matches!(next_char, Some(' ' | '\t' | '\n' | '\r')) {
-                        found_doc_start = true;
-                    }
-                }
-                break;
-            }
-            if found_doc_start {
-                state.errors.push(ParseError::new(
-                    ErrorKind::TrailingContent,
-                    Span::from_usize_range(state.pos..line_end),
-                ));
-            }
-        }
-
-        // Regular content line - we're no longer in directive prologue
-        state.in_directive_prologue = false;
-
-        // Add the line to current content
-        let line_end = find_eol(input, state.pos);
-        if state.content_start.is_none() {
-            state.content_start = Some(state.pos);
-        }
-
-        // Track flow depth by scanning for flow indicators in this line
-        // This is needed to avoid treating --- or ... inside flow collections as document markers
-        for byte_idx in state.pos..line_end {
-            if let Some(&byte) = input.as_bytes().get(byte_idx) {
-                match byte {
-                    b'[' | b'{' => state.flow_depth += 1,
-                    b']' | b'}' => state.flow_depth = state.flow_depth.saturating_sub(1),
-                    // Note: We don't handle quoted strings here, which could contain
-                    // unmatched brackets. This is a simplified heuristic that works
-                    // for valid YAML and for detecting flow context in error cases.
-                    _ => {}
-                }
-            }
-        }
-
-        (state.pos, state.content_end) = advance_past_newline(input, line_end);
-    }
-
-    // Finalize any remaining document
-    if state.content_start.is_some() || !state.current_directives.is_empty() {
-        // Check for directives without a following document
-        if !state.current_directives.is_empty() && state.content_start.is_none() {
-            let span = state
-                .current_directives
-                .first()
-                .map_or(Span::from_usize_range(0..0), |(_, span)| *span);
-            state
-                .errors
-                .push(ParseError::new(ErrorKind::TrailingContent, span));
-        }
-
-        // If no content was found, use content_end for both start and end to get an empty slice
-        let start = state.content_start.unwrap_or(state.content_end);
-        state.documents.push(RawDocument {
-            directives: state.current_directives,
-            content: &input[start..state.content_end],
-            content_span: Span::from_usize_range(start..state.content_end),
-        });
-    }
-
-    (state.documents, state.errors)
-}
-
-/// Advance past a newline (if present) and return the new position and `content_end`.
-fn advance_past_newline(input: &str, line_end: usize) -> (usize, usize) {
-    if line_end < input.len() {
-        let newline_end = skip_newline(input, line_end);
-        (newline_end, newline_end)
-    } else {
-        (line_end, line_end)
-    }
+    StreamLexer::new(input).tokenize()
 }
 
 /// Find the end of the current line (position of newline or EOF).
@@ -398,7 +436,7 @@ fn advance_past_newline(input: &str, line_end: usize) -> (usize, usize) {
     clippy::indexing_slicing,
     reason = "Index is validated by bounds check in loop condition"
 )]
-fn find_eol(input: &str, pos: usize) -> usize {
+fn find_eol_at(input: &str, pos: usize) -> usize {
     let bytes = input.as_bytes();
     let mut idx = pos;
     while idx < bytes.len() {
@@ -408,12 +446,6 @@ fn find_eol(input: &str, pos: usize) -> usize {
         }
     }
     idx
-}
-
-/// Skip to the position after the current line (after newline).
-fn skip_to_eol(input: &str, pos: usize) -> usize {
-    let eol = find_eol(input, pos);
-    skip_newline(input, eol)
 }
 
 /// Skip a newline character (handles \r\n, \r, \n).
