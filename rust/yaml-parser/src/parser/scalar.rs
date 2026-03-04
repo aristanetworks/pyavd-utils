@@ -757,6 +757,31 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
         }
     }
 
+    /// Consume tokens until `LineStart` and return the text content with its end position.
+    ///
+    /// Used to collect a line of content when the token structure is complex
+    /// (e.g., anchor/tag/alias tokens mixed with content).
+    #[allow(
+        clippy::string_slice,
+        reason = "Positions are from lexer tokens and guaranteed to be on UTF-8 boundaries"
+    )]
+    fn consume_line_as_text(
+        &mut self,
+        start_pos: usize,
+        initial_end: usize,
+    ) -> (&'input str, usize) {
+        let mut line_end = initial_end;
+        while let Some((tok, tok_span)) = self.peek() {
+            if let Token::LineStart(_) = tok {
+                break;
+            }
+            line_end = tok_span.end_usize();
+            self.advance();
+        }
+        let line_text = &self.input[start_pos..line_end];
+        (line_text.trim_end(), line_end)
+    }
+
     /// Check if a Plain token at `pos` is followed by a Colon (indicating a mapping key).
     ///
     /// This lookahead is used to stop plain scalar continuation when the next line
@@ -895,18 +920,12 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                                                 | Token::BlockSeqIndicator,
                                                 span,
                                             )) => {
-                                                let line_start_pos = span.start_usize();
-                                                let mut line_end = span.end_usize();
-                                                while let Some((tok, tok_span)) = self.peek() {
-                                                    if let Token::LineStart(_) = tok {
-                                                        break;
-                                                    }
-                                                    line_end = tok_span.end_usize();
-                                                    self.advance();
-                                                }
-                                                let line_text =
-                                                    &self.input[line_start_pos..line_end];
-                                                content.push_str(line_text.trim_end());
+                                                let (line_text, line_end) = self
+                                                    .consume_line_as_text(
+                                                        span.start_usize(),
+                                                        span.end_usize(),
+                                                    );
+                                                content.push_str(line_text);
                                                 end = line_end;
                                             }
                                             _ => {}
@@ -989,19 +1008,8 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                     Token::Anchor(_) | Token::Tag(_) | Token::Alias(_) | Token::BlockSeqIndicator,
                     span,
                 )) => {
-                    let line_start_pos = span.start_usize();
-                    let mut line_end = span.end_usize();
-
-                    while let Some((tok, tok_span)) = self.peek() {
-                        if let Token::LineStart(_) = tok {
-                            break;
-                        }
-                        line_end = tok_span.end_usize();
-                        self.advance();
-                    }
-
-                    let line_text = &self.input[line_start_pos..line_end];
-                    let continuation = line_text.trim_end();
+                    let (continuation, line_end) =
+                        self.consume_line_as_text(span.start_usize(), span.end_usize());
 
                     if !continuation.is_empty() {
                         had_continuations = true;
