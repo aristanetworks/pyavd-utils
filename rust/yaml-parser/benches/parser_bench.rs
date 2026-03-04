@@ -9,10 +9,11 @@
 //! This benchmark suite measures parsing throughput (MB/s) and latency
 //! for various YAML document types.
 //!
-//! We compare three configurations:
+//! We compare two configurations:
 //! - `yaml_parser`: Our parser (always includes spans)
-//! - `saphyr`: Saphyr without span tracking (`Yaml` type)
 //! - `saphyr_marked`: Saphyr with span tracking (`MarkedYaml` type)
+//!
+//! Both parsers include span tracking, making this a fair comparison.
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use saphyr::LoadableYamlNode as _;
@@ -23,6 +24,8 @@ const NESTED_MAPPING: &str = include_str!("data/nested_mapping.yml");
 const LARGE_SEQUENCE: &str = include_str!("data/large_sequence.yml");
 const BLOCK_SCALARS: &str = include_str!("data/block_scalars.yml");
 const FLOW_COLLECTIONS: &str = include_str!("data/flow_collections.yml");
+const ANCHORS_ALIASES: &str = include_str!("data/anchors_aliases.yml");
+const TAGS: &str = include_str!("data/tags.yml");
 
 /// Benchmark parsing throughput for different document types.
 fn bench_parse_throughput(criterion: &mut Criterion) {
@@ -32,6 +35,8 @@ fn bench_parse_throughput(criterion: &mut Criterion) {
         ("large_sequence", LARGE_SEQUENCE),
         ("block_scalars", BLOCK_SCALARS),
         ("flow_collections", FLOW_COLLECTIONS),
+        ("anchors_aliases", ANCHORS_ALIASES),
+        ("tags", TAGS),
     ];
 
     let mut group = criterion.benchmark_group("parse_throughput");
@@ -48,12 +53,7 @@ fn bench_parse_throughput(criterion: &mut Criterion) {
             },
         );
 
-        // Benchmark saphyr without span tracking
-        group.bench_with_input(BenchmarkId::new("saphyr", name), input, |bench, data| {
-            bench.iter(|| saphyr::Yaml::load_from_str(data));
-        });
-
-        // Benchmark saphyr with span tracking (fairer comparison since yaml_parser always has spans)
+        // Benchmark saphyr with span tracking (fair comparison since yaml_parser always has spans)
         group.bench_with_input(
             BenchmarkId::new("saphyr_marked", name),
             input,
@@ -75,9 +75,6 @@ fn bench_parse_latency(criterion: &mut Criterion) {
     group.bench_function("yaml_parser/small", |bench| {
         bench.iter(|| yaml_parser::parse(small));
     });
-    group.bench_function("saphyr/small", |bench| {
-        bench.iter(|| saphyr::Yaml::load_from_str(small));
-    });
     group.bench_function("saphyr_marked/small", |bench| {
         bench.iter(|| saphyr::MarkedYaml::load_from_str(small));
     });
@@ -87,9 +84,6 @@ fn bench_parse_latency(criterion: &mut Criterion) {
     group.bench_function("yaml_parser/medium", |bench| {
         bench.iter(|| yaml_parser::parse(medium));
     });
-    group.bench_function("saphyr/medium", |bench| {
-        bench.iter(|| saphyr::Yaml::load_from_str(medium));
-    });
     group.bench_function("saphyr_marked/medium", |bench| {
         bench.iter(|| saphyr::MarkedYaml::load_from_str(medium));
     });
@@ -98,9 +92,6 @@ fn bench_parse_latency(criterion: &mut Criterion) {
     let large = format!("{LARGE_MAPPING}\n---\n{LARGE_SEQUENCE}\n---\n{BLOCK_SCALARS}");
     group.bench_function("yaml_parser/large", |bench| {
         bench.iter(|| yaml_parser::parse(&large));
-    });
-    group.bench_function("saphyr/large", |bench| {
-        bench.iter(|| saphyr::Yaml::load_from_str(&large));
     });
     group.bench_function("saphyr_marked/large", |bench| {
         bench.iter(|| saphyr::MarkedYaml::load_from_str(&large));
@@ -118,9 +109,6 @@ fn bench_scalar_types(criterion: &mut Criterion) {
     group.bench_function("yaml_parser/plain", |bench| {
         bench.iter(|| yaml_parser::parse(plain));
     });
-    group.bench_function("saphyr/plain", |bench| {
-        bench.iter(|| saphyr::Yaml::load_from_str(plain));
-    });
     group.bench_function("saphyr_marked/plain", |bench| {
         bench.iter(|| saphyr::MarkedYaml::load_from_str(plain));
     });
@@ -133,9 +121,6 @@ key3: "tab\there"
     group.bench_function("yaml_parser/double_quoted", |bench| {
         bench.iter(|| yaml_parser::parse(double_quoted));
     });
-    group.bench_function("saphyr/double_quoted", |bench| {
-        bench.iter(|| saphyr::Yaml::load_from_str(double_quoted));
-    });
     group.bench_function("saphyr_marked/double_quoted", |bench| {
         bench.iter(|| saphyr::MarkedYaml::load_from_str(double_quoted));
     });
@@ -143,9 +128,6 @@ key3: "tab\there"
     // Block scalars
     group.bench_function("yaml_parser/block_scalars", |bench| {
         bench.iter(|| yaml_parser::parse(BLOCK_SCALARS));
-    });
-    group.bench_function("saphyr/block_scalars", |bench| {
-        bench.iter(|| saphyr::Yaml::load_from_str(BLOCK_SCALARS));
     });
     group.bench_function("saphyr_marked/block_scalars", |bench| {
         bench.iter(|| saphyr::MarkedYaml::load_from_str(BLOCK_SCALARS));
