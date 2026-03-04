@@ -47,7 +47,7 @@ cargo bench -- scalar_types
 | large_mapping | **26.8** | 19.7 | 20.0 | **+34% faster** ✓ |
 | nested_mapping | **23.9** | 16.2 | 16.0 | **+49% faster** ✓ |
 | large_sequence | **27.6** | 25.9 | 24.3 | **+14% faster** ✓ |
-| block_scalars | 64.0 | 64.2 | **67.9** | −6% slower |
+| block_scalars | **70.0** | 64.2 | 69.7 | ~parity ✓ |
 | flow_collections | **57.5** | 16.3 | 15.6 | **+269% faster** ✓ |
 
 ### Latency (µs, lower is better)
@@ -64,7 +64,7 @@ cargo bench -- scalar_types
 | --------- | ----------- | ------ | ------------- | ---------------- |
 | plain | **2.46** | 3.18 | 3.27 | **25% faster** ✓ |
 | double_quoted | **2.91** | 3.50 | 3.67 | **21% faster** ✓ |
-| block_scalars | 23.5 | 22.3 | **22.1** | 6% slower |
+| block_scalars | **21.5** | 22.3 | 21.6 | ~parity ✓ |
 
 ## Analysis
 
@@ -82,17 +82,14 @@ cargo bench -- scalar_types
 4. **Plain/Double-Quoted Scalars**: 21-25% faster due to zero-copy lexer
    design that borrows directly from input.
 
-### Where We're Slightly Behind
+### Block Scalars
 
-**Block Scalars**: ~6% slower than `saphyr_marked`. This is due to our
-token-based architecture:
+Block scalars now achieve **parity** with `saphyr_marked` (~70 MiB/s) after
+optimizations:
 
-- We create discrete tokens (`LineStart`, `Plain`, `Whitespace`) for each line
-- We collect spans in a `Vec<Span>` and join them at the end
-- Saphyr likely accumulates directly into a string buffer during scanning
-
-This small gap is an acceptable trade-off for the benefits of our architecture:
-span tracking, error recovery, and code clarity.
+- `join_literal_spans`: Uses `split_first()` to eliminate branch in loop
+- `apply_chomping`: Uses `trim_end_matches` + `truncate` instead of while/pop
+- Pre-allocation with `Vec::with_capacity(8)` for typical block sizes
 
 ## Key Optimizations
 
