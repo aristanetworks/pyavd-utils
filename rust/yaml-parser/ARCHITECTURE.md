@@ -841,7 +841,7 @@ Output:
 
 The parser is tested against the official YAML 1.2 test suite:
 
-- **842 tests** covering all YAML 1.2 features (including subtests)
+- **842 tests** covering all YAML 1.2 features (402 positive + 440 error tests)
 - **842 passing (100%)** - Full compliance achieved
 - Tests are in `tests/test_suite.rs`
 - Error analysis test (`analyze_error_kinds`) tracks error distribution across 440+ error test cases

@@ -279,8 +279,6 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
 
     /// Check if a line starting at `pos` is empty (no content tokens before next `LineStart`).
     /// Used for lookahead when checking if an under-indented line should break the block scalar.
-    /// Optimized to use a single loop with early exit.
-    #[inline]
     fn is_line_empty_at(&self, pos: usize) -> bool {
         let mut check_pos = pos;
         loop {
@@ -301,20 +299,22 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
         reason = "spans from lexer are guaranteed to be valid UTF-8 boundaries"
     )]
     fn join_literal_spans(&self, spans: &[Span]) -> String {
-        if spans.is_empty() {
+        let Some((first, rest)) = spans.split_first() else {
             return String::new();
-        }
+        };
 
         // Calculate total capacity needed: content + newlines between lines
         let content_len: usize = spans.iter().map(Span::len).sum();
-        let newlines_len = spans.len() - 1;
+        let newlines_len = rest.len();
 
         let mut result = String::with_capacity(content_len + newlines_len);
 
-        for (i, span) in spans.iter().enumerate() {
-            if i > 0 {
-                result.push('\n');
-            }
+        // Process first span without leading newline
+        result.push_str(&self.input[first.start_usize()..first.end_usize()]);
+
+        // Process remaining spans with leading newlines
+        for span in rest {
+            result.push('\n');
             result.push_str(&self.input[span.start_usize()..span.end_usize()]);
         }
 
@@ -359,22 +359,25 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
     /// - `Strip`: Remove all trailing newlines.
     /// - `Clip`: Keep exactly one trailing newline.
     /// - `Keep`: Preserve all trailing newlines.
+    ///
+    /// Optimized to find the trim point once via `trim_end_matches`, avoiding
+    /// repeated `ends_with`/`pop` loops.
     fn apply_chomping(content: &mut String, chomping: Chomping) {
         match chomping {
             Chomping::Strip => {
-                while content.ends_with('\n') {
-                    content.pop();
-                }
+                let trimmed_len = content.trim_end_matches('\n').len();
+                content.truncate(trimmed_len);
             }
             Chomping::Clip => {
-                while content.ends_with("\n\n") {
-                    content.pop();
-                }
-                if !content.is_empty() && !content.ends_with('\n') {
+                // Keep exactly one trailing newline
+                let trimmed_len = content.trim_end_matches('\n').len();
+                content.truncate(trimmed_len);
+                if !content.is_empty() {
                     content.push('\n');
                 }
             }
             Chomping::Keep => {
+                // Ensure at least one trailing newline
                 if !content.is_empty() && !content.ends_with('\n') {
                     content.push('\n');
                 }
@@ -393,12 +396,14 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
         header: &BlockScalarHeader,
         literal: bool,
     ) -> (String, usize) {
-        let mut line_spans: Vec<Span> = Vec::new();
+        // Pre-allocate for typical block scalar sizes (4-8 lines common)
+        let mut line_spans: Vec<Span> = Vec::with_capacity(8);
         let mut content_indent: Option<usize> = header.indent.map(usize::from);
         let mut end_pos = self.current_span().end_usize();
 
         // Track whitespace-only lines before the first content line.
         // These must have at most as many spaces as the first content line's indentation.
+        // Typically 0-2 empty lines before content, so small capacity is fine.
         let mut empty_lines_before_content: Vec<(usize, Span)> = Vec::new();
 
         loop {
