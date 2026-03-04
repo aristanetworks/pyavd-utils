@@ -662,7 +662,7 @@ impl<'input> ContextLexer<'input> {
     }
 
     /// Consume an anchor name, borrowing directly from input (zero-copy).
-    fn consume_anchor_name(&mut self) -> Cow<'input, str> {
+    fn consume_anchor_name(&mut self) -> &'input str {
         // According to YAML 1.2 spec, anchor names (ns-anchor-char+) can contain:
         // - Any non-whitespace character except c-flow-indicator ([]{},)
         // This includes colons and other special characters!
@@ -676,11 +676,9 @@ impl<'input> ContextLexer<'input> {
         }
         // Borrow directly from input (zero-copy)
         // Byte positions are always at UTF-8 boundaries (maintained by advance())
-        Cow::Borrowed(
-            self.input
-                .get(name_start..self.byte_pos)
-                .unwrap_or_default(),
-        )
+        self.input
+            .get(name_start..self.byte_pos)
+            .unwrap_or_default()
     }
 
     fn consume_tag(&mut self, start: usize) -> Spanned<Token<'input>> {

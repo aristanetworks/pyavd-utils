@@ -90,10 +90,10 @@ pub enum Token<'input> {
     FoldedBlockHeader(BlockScalarHeader),
 
     // Anchors and aliases
-    /// Anchor definition (`&name`)
-    Anchor(Cow<'input, str>),
-    /// Alias reference (`*name`)
-    Alias(Cow<'input, str>),
+    /// Anchor definition (`&name`) - always a slice of input
+    Anchor(&'input str),
+    /// Alias reference (`*name`) - always a slice of input
+    Alias(&'input str),
 
     // Tags
     /// Tag (`!tag` or `!!type` or `!<uri>`)
