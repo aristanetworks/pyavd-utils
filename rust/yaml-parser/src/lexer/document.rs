@@ -38,13 +38,42 @@ pub enum LexMode {
     Flow,
 }
 
+/// Iterator phase for the lexer state machine.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum IteratorPhase {
+    /// Haven't emitted the initial LineStart(0) yet
+    Initial,
+    /// Normal tokenization
+    Running,
+    /// Emitting final Dedent tokens at EOF
+    FinalDedents,
+    /// Iterator exhausted
+    Done,
+}
+
+/// Lexer phase for multi-document stream handling.
+///
+/// Tracks where we are in the YAML stream structure to determine
+/// what tokens are valid (e.g., directives only in prologue).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LexerPhase {
+    /// Before any document content - directives are valid here.
+    /// This is either at the start of the stream or after `...` (document end).
+    DirectivePrologue,
+    /// Inside a document - directives are NOT valid here.
+    /// `%` at column 0 is plain scalar content.
+    InDocument,
+}
+
 /// Document lexer state.
 ///
 /// The lifetime `'input` refers to the input string being tokenized.
+///
+/// Implements `Iterator<Item = RichToken<'input>>` for streaming tokenization.
+/// Errors are attached to individual tokens via [`RichToken::error`].
 pub struct DocumentLexer<'input> {
     input: &'input str,
     /// Byte offset of current position in the input string.
-    /// This replaces the previous `chars: Vec<char>` approach for zero-allocation iteration.
     byte_pos: usize,
     /// Current flow depth (number of unclosed `{` or `[`)
     flow_depth: usize,
@@ -58,13 +87,26 @@ pub struct DocumentLexer<'input> {
     /// Indentation stack for INDENT/DEDENT tokens (like Python).
     /// Starts with [0] representing the base indentation level.
     indent_stack: Vec<IndentLevel>,
-    /// Collected errors during lexing
-    errors: Vec<ParseError>,
-    /// Pending tokens to be returned (used for multi-token constructs like quoted strings)
-    pending_tokens: VecDeque<Spanned<Token<'input>>>,
+    /// Pending tokens to be returned (used for multi-token constructs like quoted strings,
+    /// and for INDENT/DEDENT tokens after `LineStart`)
+    pending_tokens: VecDeque<RichToken<'input>>,
     /// Whether we're currently inside a quoted string (between `StringStart` and `StringEnd`).
     /// When true, we suppress INDENT/DEDENT emission for `LineStart` tokens.
     in_quoted_string: bool,
+    /// Current phase of the iterator state machine
+    phase: IteratorPhase,
+    /// Error for the next token to be produced (set during lexing, consumed when yielding)
+    pending_error: Option<ErrorKind>,
+    /// Current phase for multi-document stream handling.
+    /// Determines whether directives are valid (in prologue) or not (in document).
+    lexer_phase: LexerPhase,
+    /// Whether we've seen a %YAML directive in the current document's prologue.
+    /// Reset to false when entering a new document (on DocEnd or DocStart after content).
+    has_yaml_directive: bool,
+    /// Whether we've seen any directive in the current prologue (for "directive without document" error).
+    has_directive_in_prologue: bool,
+    /// Span of the first directive in the current prologue (for error reporting).
+    first_directive_span: Option<Span>,
 }
 
 impl<'input> DocumentLexer<'input> {
@@ -76,15 +118,30 @@ impl<'input> DocumentLexer<'input> {
             prev_was_json_like: false,
             prev_was_separator: true, // At start, we're at "line start"
             indent_stack: vec![0],    // Base indentation level
-            errors: Vec::new(),
             pending_tokens: VecDeque::new(),
             in_quoted_string: false,
+            phase: IteratorPhase::Initial,
+            pending_error: None,
+            lexer_phase: LexerPhase::DirectivePrologue, // Start in directive prologue
+            has_yaml_directive: false,
+            has_directive_in_prologue: false,
+            first_directive_span: None,
         }
     }
 
-    /// Add an error at the given span
-    fn add_error(&mut self, kind: ErrorKind, span: Span) {
-        self.errors.push(ParseError::new(kind, span));
+    /// Record an error to be attached to the next token produced.
+    /// This replaces the old `errors.push()` approach - errors are now
+    /// attached inline to tokens for streaming.
+    fn add_error(&mut self, kind: ErrorKind, _span: Span) {
+        // Only keep the first error if multiple occur during one token
+        if self.pending_error.is_none() {
+            self.pending_error = Some(kind);
+        }
+    }
+
+    /// Take the pending error (if any) and attach it to a token.
+    fn take_pending_error(&mut self) -> Option<ErrorKind> {
+        self.pending_error.take()
     }
 
     fn mode(&self) -> LexMode {
@@ -93,11 +150,6 @@ impl<'input> DocumentLexer<'input> {
         } else {
             LexMode::Block
         }
-    }
-
-    /// Returns true if we've reached the end of input.
-    fn is_eof(&self) -> bool {
-        self.byte_pos >= self.input.len()
     }
 
     /// Peek the current character without advancing.
@@ -147,136 +199,127 @@ impl<'input> DocumentLexer<'input> {
         matches!(ch, ',' | '[' | ']' | '{' | '}')
     }
 
-    /// Tokenize the document and return `RichToken`s directly.
+    /// Process a token after it's been produced: update lexer state.
     ///
-    /// All tokens (including `Whitespace`, `WhitespaceWithTabs`, `Comment`) are
-    /// kept as real tokens in the stream because:
-    /// - Comments have semantic meaning (they terminate plain scalars)
-    /// - Whitespace carries indentation information for block structure
-    /// - Tab detection requires seeing `WhitespaceWithTabs` tokens
-    pub fn tokenize(mut self) -> (Vec<RichToken<'input>>, Vec<ParseError>) {
-        let tokens = self.collect_tokens();
-        (tokens, self.errors)
-    }
+    /// This handles flow depth tracking, quoted string context, and JSON-like detection.
+    fn process_token(&mut self, token: &Token<'input>) {
+        // Track flow depth
+        match token {
+            Token::FlowMapStart | Token::FlowSeqStart => {
+                self.flow_depth += 1;
+            }
+            Token::FlowMapEnd | Token::FlowSeqEnd => {
+                self.flow_depth = self.flow_depth.saturating_sub(1);
+            }
+            _ => {}
+        }
 
-    /// Collect all tokens as `RichToken`s directly (no intermediate allocation).
-    fn collect_tokens(&mut self) -> Vec<RichToken<'input>> {
-        let mut tokens = Vec::new();
+        // Track quoted string context (between StringStart and StringEnd).
+        // Inside quoted strings, we don't emit INDENT/DEDENT tokens.
+        match token {
+            Token::StringStart(_) => {
+                self.in_quoted_string = true;
+            }
+            Token::StringEnd(_) => {
+                self.in_quoted_string = false;
+            }
+            _ => {}
+        }
 
-        // Start with LineStart(0) for initial indentation
-        tokens.push(RichToken::new(
-            Token::LineStart(0),
-            Span::from_usize_range(0..0),
-        ));
+        // Track if this token is "JSON-like" for colon indicator detection.
+        // Whitespace, LineStart, and Comment tokens don't reset the flag -
+        // they act as separators that preserve the "just saw JSON value" state.
+        match token {
+            Token::Whitespace
+            | Token::WhitespaceWithTabs
+            | Token::LineStart(_)
+            | Token::Comment(_)
+            | Token::StringStart(_)
+            | Token::StringContent(_)
+            | Token::Indent(_)
+            | Token::Dedent
+            | Token::YamlDirective(_)
+            | Token::TagDirective(_)
+            | Token::ReservedDirective(_) => {
+                // Don't change prev_was_json_like
+                // These are separators/structure tokens that allow comments to follow
+                self.prev_was_separator = true;
+            }
+            Token::StringEnd(_) | Token::Alias(_) | Token::FlowMapEnd | Token::FlowSeqEnd => {
+                self.prev_was_json_like = true;
+                self.prev_was_separator = false;
+            }
+            _ => {
+                self.prev_was_json_like = false;
+                self.prev_was_separator = false;
+            }
+        }
 
-        while !self.is_eof() || !self.pending_tokens.is_empty() {
-            // Check pending tokens first (from multi-token constructs like quoted strings)
-            let maybe_token = if let Some(pending) = self.pending_tokens.pop_front() {
-                Some(pending)
-            } else {
-                self.next_token()
-            };
-
-            if let Some((token, span)) = maybe_token {
-                // Track flow depth
-                match &token {
-                    Token::FlowMapStart | Token::FlowSeqStart => {
-                        self.flow_depth += 1;
+        // Track lexer phase for multi-document streams.
+        // Phase transitions:
+        // - DirectivePrologue -> InDocument: when we see `---` or content
+        // - InDocument -> DirectivePrologue: when we see `...` (document end)
+        match self.lexer_phase {
+            LexerPhase::DirectivePrologue => {
+                match token {
+                    Token::DocStart => {
+                        // `---` starts a document - reset directive tracking for this doc
+                        self.lexer_phase = LexerPhase::InDocument;
+                        self.has_yaml_directive = false;
+                        self.has_directive_in_prologue = false;
+                        self.first_directive_span = None;
                     }
-                    Token::FlowMapEnd | Token::FlowSeqEnd => {
-                        self.flow_depth = self.flow_depth.saturating_sub(1);
-                    }
-                    _ => {}
-                }
-
-                // Track quoted string context (between StringStart and StringEnd).
-                // Inside quoted strings, we don't emit INDENT/DEDENT tokens.
-                match &token {
-                    Token::StringStart(_) => {
-                        self.in_quoted_string = true;
-                    }
-                    Token::StringEnd(_) => {
-                        self.in_quoted_string = false;
-                    }
-                    _ => {}
-                }
-
-                // Track if this token is "JSON-like" for colon indicator detection.
-                // Whitespace, LineStart, and Comment tokens don't reset the flag -
-                // they act as separators that preserve the "just saw JSON value" state.
-                // This allows for multiline flow mappings like:
-                //   { "foo"
-                //     :bar }
-                match &token {
-                    Token::Whitespace
+                    Token::YamlDirective(_)
+                    | Token::TagDirective(_)
+                    | Token::ReservedDirective(_)
+                    | Token::Comment(_)
+                    | Token::Whitespace
                     | Token::WhitespaceWithTabs
                     | Token::LineStart(_)
-                    | Token::Comment(_)
-                    | Token::StringStart(_)
-                    | Token::StringContent(_) => {
-                        // Don't change prev_was_json_like
-                        // These are separators that allow comments to follow
-                        // StringStart/StringContent are part of a string - wait for StringEnd
-                        self.prev_was_separator = true;
-                    }
-                    Token::StringEnd(_)
-                    | Token::Alias(_)
-                    | Token::FlowMapEnd
-                    | Token::FlowSeqEnd => {
-                        self.prev_was_json_like = true;
-                        self.prev_was_separator = false;
+                    | Token::Indent(_)
+                    | Token::Dedent => {
+                        // These don't end the prologue
                     }
                     _ => {
-                        self.prev_was_json_like = false;
-                        self.prev_was_separator = false;
+                        // Any other content token starts an implicit document
+                        // Reset directive tracking for this doc
+                        self.lexer_phase = LexerPhase::InDocument;
+                        self.has_yaml_directive = false;
+                        self.has_directive_in_prologue = false;
+                        self.first_directive_span = None;
                     }
                 }
-
-                // Emit INDENT/DEDENT tokens after LineStart in block context
-                // but NOT inside quoted strings
-                if let Token::LineStart(n) = &token {
-                    tokens.push(RichToken::new(token.clone(), span));
-
-                    // Only emit INDENT/DEDENT in block context (not inside flow collections or strings)
-                    if self.flow_depth == 0 && !self.in_quoted_string {
-                        self.emit_indent_dedent_tokens(*n, span, &mut tokens);
-                    }
-                } else {
-                    tokens.push(RichToken::new(token, span));
+            }
+            LexerPhase::InDocument => {
+                if matches!(token, Token::DocEnd) {
+                    // `...` ends the document, back to directive prologue
+                    // Reset for the next document's prologue
+                    self.lexer_phase = LexerPhase::DirectivePrologue;
+                    self.has_yaml_directive = false;
+                    self.has_directive_in_prologue = false;
+                    self.first_directive_span = None;
                 }
             }
         }
-
-        // At end of input, emit Dedent for remaining stack levels (except base 0)
-        if self.flow_depth == 0 {
-            let end_span = Span::from_usize_range(self.byte_pos..self.byte_pos);
-            while self.indent_stack.len() > 1 {
-                self.indent_stack.pop();
-                tokens.push(RichToken::new(Token::Dedent, end_span));
-            }
-        }
-
-        tokens
     }
 
-    /// Emit INDENT/DEDENT tokens based on indentation change.
+    /// Queue INDENT/DEDENT tokens based on indentation change.
     /// Called after a LineStart(n) token is produced.
+    /// Tokens are added to `pending_tokens` for subsequent iteration.
     ///
-    /// Note: We don't emit indentation errors here because:
-    /// 1. Block scalar content has irregular indentation that's context-dependent
-    /// 2. The parser has better context to determine if indentation is valid
-    fn emit_indent_dedent_tokens(
-        &mut self,
-        new_indent: IndentLevel,
-        span: Span,
-        tokens: &mut Vec<RichToken<'input>>,
-    ) {
+    /// Note: When `new_indent` doesn't match any level in the stack after dedenting,
+    /// we push it as a new level without emitting an error. This is intentional because:
+    /// - Block scalar content may have irregular indentation
+    /// - Implicit block mappings inside sequences may not be tracked in the stack
+    /// The parser is responsible for detecting semantically invalid indentation.
+    fn queue_indent_dedent_tokens(&mut self, new_indent: IndentLevel, span: Span) {
         let current_indent = *self.indent_stack.last().unwrap_or(&0);
 
         if new_indent > current_indent {
             // Indent increased - push new level
             self.indent_stack.push(new_indent);
-            tokens.push(RichToken::new(Token::Indent(new_indent), span));
+            self.pending_tokens
+                .push_back(RichToken::new(Token::Indent(new_indent), span));
         } else if new_indent < current_indent {
             // Indent decreased - pop levels and emit Dedent for each
             while let Some(&top) = self.indent_stack.last() {
@@ -284,19 +327,30 @@ impl<'input> DocumentLexer<'input> {
                     break;
                 }
                 self.indent_stack.pop();
-                tokens.push(RichToken::new(Token::Dedent, span));
+                self.pending_tokens
+                    .push_back(RichToken::new(Token::Dedent, span));
             }
 
-            // If new_indent doesn't match any level, push it as a new level
-            // This handles cases like block scalar content returning to parent level
+            // If new_indent doesn't match any level, push it as a new level.
+            // This handles cases like block scalar content returning to parent level.
             let final_indent = *self.indent_stack.last().unwrap_or(&0);
             if new_indent != final_indent && new_indent > 0 {
-                // Push this as a new level (allows irregular indentation like in block scalars)
                 self.indent_stack.push(new_indent);
-                // Don't emit Indent here - this is just stack management
             }
         }
         // If new_indent == current_indent, no INDENT/DEDENT needed
+    }
+
+    /// Produce the next raw token (without INDENT/DEDENT processing).
+    /// Returns the token with any pending error attached.
+    fn produce_next_token(&mut self) -> Option<RichToken<'input>> {
+        let (token, span) = self.next_token()?;
+        let error = self.take_pending_error();
+        if let Some(err) = error {
+            Some(RichToken::with_error(token, span, err))
+        } else {
+            Some(RichToken::new(token, span))
+        }
     }
 
     /// Check if we're at column 0 (start of input or right after a newline).
@@ -368,6 +422,100 @@ impl<'input> DocumentLexer<'input> {
         }
 
         None
+    }
+
+    /// Try to lex a directive (`%YAML`, `%TAG`, or reserved).
+    ///
+    /// Directives start with `%` at column 0 and continue to end of line.
+    /// Returns the appropriate directive token.
+    #[allow(
+        clippy::string_slice,
+        reason = "All positions are from byte-level scanning at UTF-8 boundaries"
+    )]
+    fn try_lex_directive(&mut self, start: usize, ch: char) -> Option<Spanned<Token<'input>>> {
+        // Directives start with `%` at column 0, only in directive prologue
+        if ch != '%'
+            || !self.is_at_column_zero()
+            || self.lexer_phase != LexerPhase::DirectivePrologue
+        {
+            return None;
+        }
+
+        // In flow context, `%` is not a directive starter
+        if self.flow_depth > 0 {
+            return None;
+        }
+
+        // Consume the `%`
+        self.advance();
+
+        // Read the directive name
+        let name_start = self.byte_pos;
+        while let Some(peek_ch) = self.peek() {
+            if peek_ch.is_whitespace() {
+                break;
+            }
+            self.advance();
+        }
+        let name = &self.input[name_start..self.byte_pos];
+
+        // Skip whitespace after directive name
+        while matches!(self.peek(), Some(' ' | '\t')) {
+            self.advance();
+        }
+
+        // Read the directive value (rest of line, excluding comments)
+        let value_start = self.byte_pos;
+        while let Some(peek_ch) = self.peek() {
+            if Self::is_newline(peek_ch) {
+                break;
+            }
+            // Stop at comment (but only if preceded by whitespace)
+            if peek_ch == '#' && self.byte_pos > value_start {
+                let prev_byte = self.input.as_bytes().get(self.byte_pos - 1);
+                if matches!(prev_byte, Some(b' ' | b'\t')) {
+                    break;
+                }
+            }
+            self.advance();
+        }
+        let value = self.input[value_start..self.byte_pos].trim();
+        let span = self.current_span(start);
+
+        // Track that we have a directive in this prologue (for "directive without document" check)
+        if self.first_directive_span.is_none() {
+            self.first_directive_span = Some(span);
+        }
+        self.has_directive_in_prologue = true;
+
+        // Determine directive type
+        let token = match name {
+            "YAML" => {
+                // Check for duplicate YAML directive in same document
+                if self.has_yaml_directive {
+                    self.add_error(ErrorKind::DuplicateDirective, span);
+                }
+                self.has_yaml_directive = true;
+
+                // Validate YAML version format
+                let is_valid = !value.is_empty()
+                    && !value.contains(' ')
+                    && !value.contains('\t')
+                    && value.chars().all(|vc| vc.is_ascii_digit() || vc == '.');
+                if !is_valid {
+                    self.add_error(ErrorKind::InvalidDirective, span);
+                }
+                Token::YamlDirective(Cow::Borrowed(value))
+            }
+            "TAG" => Token::TagDirective(Cow::Borrowed(value)),
+            _ => {
+                // Reserved directive: include the name in the value
+                let full_content = &self.input[name_start..self.byte_pos].trim_end();
+                Token::ReservedDirective(Cow::Borrowed(full_content))
+            }
+        };
+
+        Some((token, span))
     }
 
     /// Try to lex a newline and subsequent indentation.
@@ -623,6 +771,9 @@ impl<'input> DocumentLexer<'input> {
         if let Some(token) = self.try_lex_document_marker(start, ch) {
             return Some(token);
         }
+        if let Some(token) = self.try_lex_directive(start, ch) {
+            return Some(token);
+        }
         if let Some(token) = self.try_lex_newline(start, ch) {
             return Some(token);
         }
@@ -655,6 +806,24 @@ impl<'input> DocumentLexer<'input> {
         }
         if let Some(token) = self.try_lex_quoted_scalar(start, ch) {
             return Some(token);
+        }
+
+        // In directive prologue, content (other than directives/doc markers) is only valid at column 0.
+        // Content NOT at column 0 is invalid trailing content after `...` on the same line.
+        if self.lexer_phase == LexerPhase::DirectivePrologue && !self.is_at_column_zero() {
+            // This is invalid trailing content after document end marker (e.g., "... invalid")
+            // Consume to end of line and emit error
+            while let Some(peek_ch) = self.peek() {
+                if Self::is_newline(peek_ch) {
+                    break;
+                }
+                self.advance();
+            }
+            let span = self.current_span(start);
+            self.add_error(ErrorKind::TrailingContent, span);
+            // Return a plain scalar token (with error attached) so parsing can continue
+            let content = &self.input[start..self.byte_pos];
+            return Some((Token::Plain(Cow::Borrowed(content)), span));
         }
 
         // Default: plain scalar
@@ -843,6 +1012,44 @@ impl<'input> DocumentLexer<'input> {
         BlockScalarHeader { indent, chomping }
     }
 
+    /// Check if the current position has a forbidden document marker (`---` or `...`)
+    /// at column 0 followed by whitespace/newline/EOF (YAML spec production c-forbidden [206]).
+    /// Returns true if a forbidden marker was detected, and reports an error.
+    fn check_forbidden_marker_in_quoted(&mut self) -> bool {
+        // Only check at column 0 (indent 0, no leading spaces consumed yet)
+        // The caller should check that we're at column 0 before calling this.
+
+        // Check for `---` or `...` followed by whitespace/newline/EOF
+        let ch0 = self.peek();
+        let ch1 = self.peek_n(1);
+        let ch2 = self.peek_n(2);
+        let ch3 = self.peek_n(3);
+
+        let is_marker = matches!(
+            (ch0, ch1, ch2),
+            (Some('-'), Some('-'), Some('-')) | (Some('.'), Some('.'), Some('.'))
+        );
+
+        if !is_marker {
+            return false;
+        }
+
+        // Check that the marker is followed by whitespace, newline, or EOF
+        let followed_by_break = ch3.is_none()
+            || ch3 == Some(' ')
+            || ch3 == Some('\t')
+            || Self::is_newline(ch3.unwrap_or('\0'));
+
+        if followed_by_break {
+            // Report the error - this is a forbidden marker inside a quoted string
+            let span = Span::from_usize_range(self.byte_pos..self.byte_pos + 3);
+            self.add_error(ErrorKind::DocumentMarkerInScalar, span);
+            return true;
+        }
+
+        false
+    }
+
     /// Handle a newline within a quoted string.
     ///
     /// Emits the current content as a `StringContent` token (if non-empty),
@@ -853,7 +1060,7 @@ impl<'input> DocumentLexer<'input> {
         if !content.is_empty() {
             let content_span = Span::from_usize_range(content_start..self.byte_pos);
             // Quoted strings always use Cow::Owned (escape processing)
-            self.pending_tokens.push_back((
+            self.pending_tokens.push_back(RichToken::new(
                 Token::StringContent(Cow::Owned(std::mem::take(content))),
                 content_span,
             ));
@@ -881,10 +1088,15 @@ impl<'input> DocumentLexer<'input> {
             self.advance();
         }
 
+        // Check for forbidden document markers at column 0 (c-forbidden [206])
+        if indent == 0 {
+            self.check_forbidden_marker_in_quoted();
+        }
+
         // Emit LineStart token
         let line_span = Span::from_usize_range(newline_start..self.byte_pos);
         self.pending_tokens
-            .push_back((Token::LineStart(indent), line_span));
+            .push_back(RichToken::new(Token::LineStart(indent), line_span));
 
         self.byte_pos
     }
@@ -915,7 +1127,7 @@ impl<'input> DocumentLexer<'input> {
         // Emit current content before newline
         if !content.is_empty() {
             let content_span = Span::from_usize_range(content_start..self.byte_pos);
-            self.pending_tokens.push_back((
+            self.pending_tokens.push_back(RichToken::new(
                 Token::StringContent(Cow::Owned(std::mem::take(content))),
                 content_span,
             ));
@@ -941,10 +1153,15 @@ impl<'input> DocumentLexer<'input> {
             self.advance();
         }
 
+        // Check for forbidden document markers at column 0 (c-forbidden [206])
+        if indent == 0 {
+            self.check_forbidden_marker_in_quoted();
+        }
+
         // Emit LineStart token
         let line_span = Span::from_usize_range(newline_start..self.byte_pos);
         self.pending_tokens
-            .push_back((Token::LineStart(indent), line_span));
+            .push_back(RichToken::new(Token::LineStart(indent), line_span));
 
         self.byte_pos
     }
@@ -965,8 +1182,10 @@ impl<'input> DocumentLexer<'input> {
         if !content.is_empty() {
             let content_span = Span::from_usize_range(content_start..self.byte_pos);
             // Quoted strings always use Cow::Owned (escape processing)
-            self.pending_tokens
-                .push_back((Token::StringContent(Cow::Owned(content)), content_span));
+            self.pending_tokens.push_back(RichToken::new(
+                Token::StringContent(Cow::Owned(content)),
+                content_span,
+            ));
         }
 
         // Emit StringEnd
@@ -976,7 +1195,7 @@ impl<'input> DocumentLexer<'input> {
             self.add_error(ErrorKind::UnterminatedString, full_span);
         }
         self.pending_tokens
-            .push_back((Token::StringEnd(style), end_span));
+            .push_back(RichToken::new(Token::StringEnd(style), end_span));
     }
 
     /// Consume a single-quoted string, emitting `StringStart`, `StringContent`, `LineStart` and `StringEnd` tokens.
@@ -1265,13 +1484,101 @@ impl<'input> DocumentLexer<'input> {
     }
 }
 
+/// Iterator implementation for streaming tokenization.
+///
+/// The lexer yields tokens one at a time, with errors attached to individual tokens
+/// via [`RichToken::error`]. This enables streaming processing without buffering
+/// all tokens in memory.
+impl<'input> Iterator for DocumentLexer<'input> {
+    type Item = RichToken<'input>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            match self.phase {
+                IteratorPhase::Initial => {
+                    // Emit initial LineStart(0)
+                    self.phase = IteratorPhase::Running;
+                    return Some(RichToken::new(
+                        Token::LineStart(0),
+                        Span::from_usize_range(0..0),
+                    ));
+                }
+
+                IteratorPhase::Running => {
+                    // Check pending tokens first (INDENT/DEDENT, string parts)
+                    if let Some(pending) = self.pending_tokens.pop_front() {
+                        // Process state for pending tokens too (e.g., StringEnd sets prev_was_json_like)
+                        self.process_token(&pending.token);
+                        return Some(pending);
+                    }
+
+                    // Try to produce a new token
+                    if let Some(rich_token) = self.produce_next_token() {
+                        // Update state based on token
+                        self.process_token(&rich_token.token);
+
+                        // If this is a LineStart in block context, queue INDENT/DEDENT tokens
+                        if let Token::LineStart(indent) = &rich_token.token
+                            && self.flow_depth == 0
+                            && !self.in_quoted_string
+                        {
+                            self.queue_indent_dedent_tokens(*indent, rich_token.span);
+                        }
+
+                        return Some(rich_token);
+                    }
+
+                    // No more tokens from input, move to final dedents
+                    self.phase = IteratorPhase::FinalDedents;
+                }
+
+                IteratorPhase::FinalDedents => {
+                    // Emit final Dedent tokens for remaining indent stack
+                    if self.flow_depth == 0 && self.indent_stack.len() > 1 {
+                        self.indent_stack.pop();
+                        let end_span = Span::from_usize_range(self.byte_pos..self.byte_pos);
+                        return Some(RichToken::new(Token::Dedent, end_span));
+                    }
+
+                    // All done
+                    self.phase = IteratorPhase::Done;
+                }
+
+                IteratorPhase::Done => {
+                    return None;
+                }
+            }
+        }
+    }
+}
+
 /// Tokenize document content with context awareness.
 ///
 /// Returns `RichToken`s wrapping each token. All tokens (including `Whitespace`,
-/// `WhitespaceWithTabs`, `Comment`) are kept as real tokens in the stream because
-/// comments have semantic meaning in YAML (they terminate plain scalars).
+/// `WhitespaceWithTabs`, `Comment`) are kept as real tokens in the stream.
+///
+/// Errors are attached to individual tokens via [`RichToken::error`]. To collect
+/// errors separately, use:
+/// ```ignore
+/// let (tokens, errors): (Vec<_>, Vec<_>) = lexer
+///     .map(|t| (t.clone(), t.error.map(|e| ParseError::new(e, t.span))))
+///     .unzip();
+/// ```
+///
+/// For streaming usage, iterate directly over `DocumentLexer::new(input)`.
 pub fn tokenize_document(input: &str) -> (Vec<RichToken<'_>>, Vec<ParseError>) {
-    DocumentLexer::new(input).tokenize()
+    let lexer = DocumentLexer::new(input);
+    let mut tokens = Vec::new();
+    let mut errors = Vec::new();
+
+    for rich_token in lexer {
+        if let Some(error_kind) = &rich_token.error {
+            errors.push(ParseError::new(error_kind.clone(), rich_token.span));
+        }
+        tokens.push(rich_token);
+    }
+
+    (tokens, errors)
 }
 
 #[cfg(test)]
@@ -1559,6 +1866,38 @@ mod tests {
         assert!(
             tab_token.is_some(),
             "Should find WhitespaceWithTabs token for tab"
+        );
+    }
+
+    #[test]
+    fn test_multi_document_with_directives() {
+        // Test that DocumentLexer correctly handles multi-document streams
+        // with directives, document markers, and phase transitions
+        let input = "%YAML 1.2\n---\ndoc1\n...\n%TAG !e! tag:example,2000:\n---\ndoc2\n";
+        let tokens = get_tokens(input);
+
+        // Should have: YamlDirective, DocStart, Plain(doc1), DocEnd,
+        //              TagDirective, DocStart, Plain(doc2)
+        assert!(
+            tokens.iter().any(|t| matches!(t, Token::YamlDirective(_))),
+            "Should have YAML directive"
+        );
+        assert!(
+            tokens.iter().any(|t| matches!(t, Token::TagDirective(_))),
+            "Should have TAG directive after ..."
+        );
+        assert_eq!(
+            tokens
+                .iter()
+                .filter(|t| matches!(t, Token::DocStart))
+                .count(),
+            2,
+            "Should have two DocStart markers"
+        );
+        assert_eq!(
+            tokens.iter().filter(|t| matches!(t, Token::DocEnd)).count(),
+            1,
+            "Should have one DocEnd marker"
         );
     }
 }

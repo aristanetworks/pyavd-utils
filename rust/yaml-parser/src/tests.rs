@@ -21,6 +21,410 @@
 use super::*;
 
 #[test]
+fn test_debug_3hfz_invalid_after_doc_end() {
+    // Test 3HFZ: Invalid content after document end marker
+    let input = "---\nkey: value\n... invalid\n";
+
+    // Test via emit_events
+    let (events, event_errors) = crate::emit_events(input);
+    println!("Events for 3HFZ:");
+    for (i, e) in events.iter().enumerate() {
+        println!("  {}: {:?}", i, e);
+    }
+    println!("Event errors: {:?}", event_errors);
+
+    // Test via parse
+    let (docs, parse_errors) = parse(input);
+    println!("Docs: {:?}", docs.len());
+    println!("Parse errors: {:?}", parse_errors);
+
+    // Should have an error for invalid content after `...`
+    assert!(
+        !event_errors.is_empty(),
+        "Expected error for content after `...` (emit_events)"
+    );
+    assert!(
+        !parse_errors.is_empty(),
+        "Expected error for content after `...` (parse)"
+    );
+}
+
+#[test]
+fn test_debug_2lfx_reserved_directive() {
+    // Test 2LFX: Reserved directive with comment
+    let input =
+        "%FOO  bar baz # Should be ignored\n              # with a warning.\n---\n\"foo\"\n";
+
+    // First, check tokenization
+    let (tokens, lex_errors) = crate::tokenize_document(input);
+    println!("Tokens for 2LFX:");
+    for (i, t) in tokens.iter().enumerate() {
+        println!("  {}: {:?}", i, t);
+    }
+    println!("Lex errors: {:?}", lex_errors);
+
+    // Test via parse
+    let (docs, parse_errors) = parse(input);
+    println!("Docs: {:?}", docs.len());
+    println!("Parse errors: {:?}", parse_errors);
+
+    // Should have no errors
+    assert!(
+        parse_errors.is_empty(),
+        "Expected no errors, got {:?}",
+        parse_errors
+    );
+}
+
+#[test]
+fn test_debug_7z25_bare_doc_after_doc_end() {
+    // Test 7Z25: Bare document after document end marker
+    // This should be VALID - a bare doc can follow `...` on a new line
+    let input = "---\nscalar1\n...\nkey: value\n";
+
+    let (events, errors) = crate::emit_events(input);
+    println!("Events for 7Z25:");
+    for (i, e) in events.iter().enumerate() {
+        println!("  {}: {:?}", i, e);
+    }
+    println!("Errors: {:?}", errors);
+
+    // Should have NO errors - bare documents after `...` are valid
+    assert!(
+        errors.is_empty(),
+        "Expected no errors for bare doc after `...`, got {:?}",
+        errors
+    );
+
+    // Should have two documents
+    let doc_starts = events
+        .iter()
+        .filter(|e| matches!(e, crate::Event::DocumentStart { .. }))
+        .count();
+    assert_eq!(doc_starts, 2, "Expected 2 documents");
+}
+
+#[test]
+fn test_debug_6xdy_two_doc_start_markers() {
+    // Test 6XDY: Two document start markers
+    // Input: "---\n---\n" should produce TWO documents
+    let input = "---\n---\n";
+
+    let (events, errors) = crate::emit_events(input);
+    println!("Events for 6XDY:");
+    for (i, e) in events.iter().enumerate() {
+        println!("  {}: {:?}", i, e);
+    }
+    println!("Errors: {:?}", errors);
+
+    // Should have two document starts
+    let doc_starts = events
+        .iter()
+        .filter(|e| matches!(e, crate::Event::DocumentStart { .. }))
+        .count();
+    assert_eq!(
+        doc_starts, 2,
+        "Expected 2 document starts, got {}",
+        doc_starts
+    );
+
+    // Count scalars - each document should have an empty scalar
+    let scalars = events
+        .iter()
+        .filter(|e| matches!(e, crate::Event::Scalar { .. }))
+        .count();
+    assert_eq!(
+        scalars, 2,
+        "Expected 2 scalars (one per doc), got {}",
+        scalars
+    );
+}
+
+#[test]
+fn test_debug_n4jp_bad_indentation() {
+    // Test N4JP: Bad indentation in mapping - under-indented key
+    // key2 is at indent 1 when it should be at indent 2 (continuation) or 0 (sibling of map)
+    let input = "map:\n  key1: \"quoted1\"\n key2: \"bad indentation\"\n";
+
+    let (events, errors) = crate::emit_events(input);
+    println!("N4JP Events:");
+    for (i, e) in events.iter().enumerate() {
+        println!("  {}: {}", i, e);
+    }
+    println!("N4JP Errors ({}):", errors.len());
+    for e in &errors {
+        println!("  {:?}", e);
+    }
+
+    // Should have an indentation error
+    assert!(!errors.is_empty(), "Expected indentation error for N4JP");
+}
+
+#[test]
+fn test_debug_u44r_bad_indentation() {
+    // Test U44R: Bad indentation in mapping - over-indented key
+    // key2 is at indent 3 when it should be at indent 2 (sibling of key1)
+    let input = "map:\n  key1: \"quoted1\"\n   key2: \"bad indentation\"\n";
+
+    let (events, errors) = crate::emit_events(input);
+    println!("U44R Events:");
+    for (i, e) in events.iter().enumerate() {
+        println!("  {}: {}", i, e);
+    }
+    println!("U44R Errors ({}):", errors.len());
+    for e in &errors {
+        println!("  {:?}", e);
+    }
+
+    // Should have an indentation error
+    assert!(!errors.is_empty(), "Expected indentation error for U44R");
+}
+
+#[test]
+fn test_debug_4hvu_bad_sequence_indentation() {
+    // Test 4HVU: Wrong indentation in sequence
+    // Third entry is at indent 2 when it should be at indent 3 (like others)
+    let input = "key:\n   - ok\n   - also ok\n  - wrong\n";
+
+    let (events, errors) = crate::emit_events(input);
+    println!("4HVU Events:");
+    for (i, e) in events.iter().enumerate() {
+        println!("  {}: {}", i, e);
+    }
+    println!("4HVU Errors ({}):", errors.len());
+    for e in &errors {
+        println!("  {:?}", e);
+    }
+
+    // Should have an indentation error
+    assert!(!errors.is_empty(), "Expected indentation error for 4HVU");
+}
+
+#[test]
+fn test_debug_4h7k_extra_closing_bracket() {
+    // Test 4H7K: Flow sequence with extra closing bracket
+    let input = "---\n[ a, b, c ] ]\n";
+
+    let tokens = crate::tokenize_document(input).0;
+    println!("4H7K Tokens:");
+    for (i, rt) in tokens.iter().enumerate() {
+        println!("  {}: {:?}", i, rt.token);
+    }
+
+    let (events, errors) = crate::emit_events(input);
+    println!("\n4H7K Events:");
+    for (i, e) in events.iter().enumerate() {
+        println!("  {}: {}", i, e);
+    }
+    println!("4H7K Errors ({}):", errors.len());
+    for e in &errors {
+        println!("  {:?}", e);
+    }
+
+    // Should have an error for the extra bracket
+    assert!(
+        !errors.is_empty(),
+        "Expected error for extra closing bracket"
+    );
+}
+
+#[test]
+fn test_debug_6s55_invalid_scalar_after_sequence() {
+    // Test 6S55: Invalid scalar at the end of sequence
+    // 'invalid' is at indent 1 but without a dash - this is an error
+    let input = "key:\n - bar\n - baz\n invalid\n";
+
+    let tokens = crate::tokenize_document(input).0;
+    println!("6S55 Tokens:");
+    for (i, rt) in tokens.iter().enumerate() {
+        println!("  {}: {:?}", i, rt.token);
+    }
+
+    let (events, errors) = crate::emit_events(input);
+    println!("\n6S55 Events:");
+    for (i, e) in events.iter().enumerate() {
+        println!("  {}: {}", i, e);
+    }
+    println!("6S55 Errors ({}):", errors.len());
+    for e in &errors {
+        println!("  {:?}", e);
+    }
+
+    // Should have an error for the invalid content
+    assert!(
+        !errors.is_empty(),
+        "Expected error for invalid scalar after sequence"
+    );
+}
+
+#[test]
+fn test_debug_mus6_01_duplicate_directive() {
+    // Test MUS6-01: Directive after document start - not allowed
+    let input = "%YAML 1.2\n---\n%YAML 1.2\n---\n";
+
+    let tokens = crate::tokenize_document(input).0;
+    println!("MUS6-01 Tokens:");
+    for (i, rt) in tokens.iter().enumerate() {
+        println!("  {}: {:?}", i, rt.token);
+    }
+
+    let (events, errors) = crate::emit_events(input);
+    println!("\nMUS6-01 Events:");
+    for (i, e) in events.iter().enumerate() {
+        println!("  {}: {}", i, e);
+    }
+    println!("MUS6-01 Errors ({}):", errors.len());
+    for e in &errors {
+        println!("  {:?}", e);
+    }
+
+    // Should have an error - directives after document start
+    assert!(
+        !errors.is_empty(),
+        "Expected error for directive after document"
+    );
+}
+
+#[test]
+fn test_debug_2cms_invalid_mapping_in_plain_multiline() {
+    // Test 2CMS: A mapping key appearing inside a plain multiline scalar is invalid
+    let input = "this\n is\n  invalid: x\n";
+
+    let tokens = crate::tokenize_document(input).0;
+    println!("2CMS Tokens:");
+    for (i, rt) in tokens.iter().enumerate() {
+        println!("  {}: {:?}", i, rt.token);
+    }
+
+    let (events, errors) = crate::emit_events(input);
+    println!("\n2CMS Events:");
+    for (i, e) in events.iter().enumerate() {
+        println!("  {}: {}", i, e);
+    }
+    println!("2CMS Errors ({}):", errors.len());
+    for e in &errors {
+        println!("  {:?}", e);
+    }
+
+    // Should have an error - mapping key inside plain scalar
+    assert!(
+        !errors.is_empty(),
+        "Expected error for mapping key in plain scalar"
+    );
+}
+
+#[test]
+fn test_debug_8xdj_comment_in_plain_multiline() {
+    // Test 8XDJ: A comment breaks plain scalar continuation
+    let input = "key: word1\n#  xxx\n  word2\n";
+
+    let tokens = crate::tokenize_document(input).0;
+    println!("8XDJ Tokens:");
+    for (i, rt) in tokens.iter().enumerate() {
+        println!("  {}: {:?}", i, rt.token);
+    }
+
+    let (events, errors) = crate::emit_events(input);
+    println!("\n8XDJ Events:");
+    for (i, e) in events.iter().enumerate() {
+        println!("  {}: {}", i, e);
+    }
+    println!("8XDJ Errors ({}):", errors.len());
+    for e in &errors {
+        println!("  {:?}", e);
+    }
+
+    // Should have an error - continuation after comment is invalid
+    assert!(
+        !errors.is_empty(),
+        "Expected error for continuation after comment"
+    );
+}
+
+#[test]
+fn test_debug_qlj7_tag_scoping_error() {
+    // Test QLJ7: Tag shorthand used in documents but only defined in the first
+    // Each document should have its own tag scope - using !prefix! in doc 2 and 3
+    // without redefining %TAG should be an error
+    let input = "%TAG !prefix! tag:example.com,2011:\n--- !prefix!A\na: b\n--- !prefix!B\nc: d\n--- !prefix!C\ne: f\n";
+
+    let (events, errors) = crate::emit_events(input);
+    println!("Events for QLJ7:");
+    for (i, e) in events.iter().enumerate() {
+        println!("  {}: {}", i, e);
+    }
+    println!("Errors ({}):", errors.len());
+    for e in &errors {
+        println!("  {:?}", e);
+    }
+
+    // Should have errors for undefined tag handles in docs 2 and 3
+    assert!(
+        !errors.is_empty(),
+        "Expected errors for undefined tag handles in later documents"
+    );
+}
+
+#[test]
+fn test_debug_hwv9_doc_end_only() {
+    // Test HWV9: Just a document end marker - should produce empty stream
+    let input = "...\n";
+
+    let (events, errors) = crate::emit_events(input);
+    println!("Events for HWV9:");
+    for (i, e) in events.iter().enumerate() {
+        println!("  {}: {:?}", i, e);
+    }
+    println!("Errors: {:?}", errors);
+
+    // Should have just StreamStart and StreamEnd (no documents)
+    // ... by itself doesn't create a document
+    assert_eq!(events.len(), 2, "Expected only StreamStart + StreamEnd");
+    assert!(matches!(events[0], crate::Event::StreamStart));
+    assert!(matches!(events[1], crate::Event::StreamEnd));
+}
+
+#[test]
+fn test_debug_6wlz_tag_directive_scoping() {
+    // Test 6WLZ: TAG directive applies to second document only
+    let input = "# Private\n---\n!foo \"bar\"\n...\n# Global\n%TAG ! tag:example.com,2000:app/\n---\n!foo \"bar\"\n";
+
+    let (events, errors) = crate::emit_events(input);
+    println!("Events for 6WLZ:");
+    for (i, e) in events.iter().enumerate() {
+        println!("  {}: {:?}", i, e);
+    }
+    println!("Errors: {:?}", errors);
+
+    // Find the two scalar events and check their tags
+    let scalars: Vec<_> = events
+        .iter()
+        .filter_map(|e| {
+            if let crate::Event::Scalar { tag, value, .. } = e {
+                Some((
+                    value.as_ref(),
+                    tag.as_ref().map(|(cow, _span)| cow.as_ref()),
+                ))
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    println!("Scalars: {:?}", scalars);
+
+    // First scalar should have tag "!foo" (unexpanded)
+    // Second scalar should have tag "tag:example.com,2000:app/foo" (expanded)
+    assert_eq!(scalars.len(), 2);
+    assert_eq!(scalars[0].1, Some("!foo"), "First doc tag should be !foo");
+    assert_eq!(
+        scalars[1].1,
+        Some("tag:example.com,2000:app/foo"),
+        "Second doc tag should be expanded"
+    );
+}
+
+#[test]
 fn test_emit_e76z() {
     // Test E76Z: Aliases as implicit block mapping keys
     // Input: &a a: &b b\n*b : *a\n
@@ -438,7 +842,7 @@ fn test_zero_copy_parsing() {
     assert!(lexer_errors.is_empty());
 
     // Parse to events - events lifetime is tied to input
-    let (events, parse_errors) = parse_single_document(&tokens, input, &[]);
+    let (events, parse_errors) = parse_single_document(&tokens, input);
     assert!(parse_errors.is_empty());
 
     // Reconstruct AST from events using EventParser
@@ -476,22 +880,23 @@ fn test_debug_p2ad() {
     // Uses Unicode arrows (↓, U+2193) in comments
     let input = "- | # Empty header\u{2193}\n literal\n- >1 # Indentation indicator\u{2193}\n  folded\n- |+ # Chomping indicator\u{2193}\n keep\n\n- >1- # Both indicators\u{2193}\n  strip\n";
 
-    // Verify the stream lexer correctly handles multi-byte UTF-8 characters
-    let (docs, errors) = crate::lexer::tokenize_stream(input);
-    assert!(errors.is_empty(), "Stream lexer should not produce errors");
-    assert_eq!(docs.len(), 1, "Should have exactly one document");
-
-    let doc = docs.first().unwrap();
-    // The document content should include all 4 entries including the last one
-    assert_eq!(
-        doc.content.len(),
-        input.len(),
-        "Document content should span the entire input"
-    );
+    // Verify the document lexer correctly handles multi-byte UTF-8 characters
+    let (tokens, errors) = crate::tokenize_document(input);
     assert!(
-        doc.content.ends_with("strip\n"),
-        "Document content should end with 'strip\\n'"
+        errors.is_empty(),
+        "Document lexer should not produce errors"
     );
+    assert!(!tokens.is_empty(), "Should produce tokens");
+
+    // Verify the full input can be parsed without errors
+    let (events, parse_errors) = crate::emit_events(input);
+    assert!(
+        parse_errors.is_empty(),
+        "Parser should not produce errors: {:?}",
+        parse_errors
+    );
+    // Should have stream start, doc start, sequence with 4 scalars, doc end, stream end
+    assert!(events.len() >= 6, "Should produce at least 6 events");
 }
 
 #[test]
@@ -1239,6 +1644,15 @@ fn test_emit_events_4wa9_literal_scalars() {
   bbb: |
     xxx
 ";
+
+    let tokens = crate::tokenize_document(input).0;
+    println!("Tokens:");
+    for (i, rt) in tokens.iter().enumerate() {
+        let has_err = if rt.error.is_some() { " [ERROR]" } else { "" };
+        println!("  {}: {:?}{}", i, rt.token, has_err);
+    }
+    println!();
+
     let (events, errors) = emit_events(input);
 
     println!("Errors: {errors:?}");

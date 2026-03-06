@@ -22,7 +22,7 @@ use std::collections::{HashMap, HashSet};
 use crate::error::{ErrorKind, ParseError};
 use crate::event::{CollectionStyle, Event, ScalarStyle};
 use crate::lexer::{RichToken, Token};
-use crate::span::{IndentLevel, Span, Spanned, usize_to_indent};
+use crate::span::{IndentLevel, Span, usize_to_indent};
 #[cfg(test)]
 use crate::value::Value;
 use crate::value::{Node, Properties};
@@ -544,6 +544,26 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
         }
     }
 
+    /// Check if an indentation level is valid (exists in the indent stack).
+    ///
+    /// Returns `true` if the indent is in the stack or is greater than all stack entries
+    /// (which indicates a new nested level). Returns `false` if the indent is an
+    /// "orphan" level that falls between existing stack entries.
+    pub fn is_valid_indent(&self, indent: IndentLevel) -> bool {
+        // Check if indent matches any level in the stack
+        if self.indent_stack.contains(&indent) {
+            return true;
+        }
+        // Check if indent is greater than all stack entries (new nested level)
+        if let Some(&top) = self.indent_stack.last() {
+            if indent > top {
+                return true;
+            }
+        }
+        // Indent falls between stack entries - this is an orphan indentation error
+        false
+    }
+
     /// Check if there's whitespace (tabs) after `LineStart` that would indicate
     /// invalid tab indentation.
     ///
@@ -747,23 +767,28 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
 
         // Check if there's content at or below the root indentation
         if let Some((tok, span)) = self.peek() {
-            let is_content = matches!(
-                tok,
-                Token::Plain(_)
-                    | Token::StringStart(_)
-                    | Token::Anchor(_)
-                    | Token::Alias(_)
-                    | Token::Tag(_)
-                    | Token::FlowSeqStart
-                    | Token::FlowMapStart
-                    | Token::BlockSeqIndicator
-            );
+            // Extra flow collection end tokens are always an error (unmatched brackets)
+            if matches!(tok, Token::FlowSeqEnd | Token::FlowMapEnd) {
+                self.error(ErrorKind::UnmatchedBracket, span);
+            } else {
+                let is_content = matches!(
+                    tok,
+                    Token::Plain(_)
+                        | Token::StringStart(_)
+                        | Token::Anchor(_)
+                        | Token::Alias(_)
+                        | Token::Tag(_)
+                        | Token::FlowSeqStart
+                        | Token::FlowMapStart
+                        | Token::BlockSeqIndicator
+                );
 
-            // Get the column of this token
-            let col = self.current_token_column();
+                // Get the column of this token
+                let col = self.current_token_column();
 
-            if is_content && col <= root_indent {
-                self.error(ErrorKind::TrailingContent, span);
+                if is_content && col <= root_indent {
+                    self.error(ErrorKind::TrailingContent, span);
+                }
             }
         }
 
@@ -949,20 +974,40 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
         self.errors.push(ParseError::new(kind, span));
     }
 
-    /// Populate tag handles from directives provided by the stream lexer.
-    /// This is the primary method for setting up tag handle validation.
-    pub fn populate_tag_handles_from_directives(
-        &mut self,
-        directives: &[Spanned<crate::lexer::Directive>],
-    ) {
+    /// Populate tag handles from `TagDirective` tokens in the token stream.
+    ///
+    /// This scans the tokens for `TagDirective` tokens that appear before
+    /// for this document's prologue.
+    ///
+    /// Scans from the CURRENT position (not beginning) to handle multi-document
+    /// streams where each document may have its own directives.
+    pub fn populate_tag_handles_from_tokens(&mut self) {
         self.tag_handles.clear();
 
-        for (directive, _span) in directives {
-            if let crate::lexer::Directive::Tag(value) = directive {
-                // Parse "!prefix! tag:example.com,2011:" into handle + prefix
-                if let Some((handle, prefix)) = Self::parse_tag_directive_value(value) {
-                    self.tag_handles.insert(handle, prefix);
+        // Scan from current position, not from beginning
+        for rich_token in self.tokens.get(self.pos..).unwrap_or_default() {
+            match &rich_token.token {
+                Token::TagDirective(value) => {
+                    // Parse "!prefix! tag:example.com,2011:" into handle + prefix
+                    if let Some((handle, prefix)) = Self::parse_tag_directive_value(value) {
+                        self.tag_handles.insert(handle, prefix);
+                    }
                 }
+                // Stop scanning when we hit document content
+                Token::DocStart | Token::Plain(_) | Token::BlockSeqIndicator | Token::Colon => {
+                    break;
+                }
+                // Skip whitespace, comments, YAML directives, and other directives
+                Token::YamlDirective(_)
+                | Token::ReservedDirective(_)
+                | Token::Whitespace
+                | Token::WhitespaceWithTabs
+                | Token::LineStart(_)
+                | Token::Comment(_)
+                | Token::Indent(_)
+                | Token::Dedent => {}
+                // Any other token means we're in content
+                _ => break,
             }
         }
     }
@@ -977,6 +1022,157 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
             (Some(handle), Some(prefix)) => Some((handle.to_owned(), prefix.to_owned())),
             _ => None,
         }
+    }
+
+    /// Parse a single document and emit events (without StreamStart/StreamEnd).
+    ///
+    /// This is used by `parse_stream_from_tokens` to parse each document in a
+    /// multi-document stream. It handles:
+    /// - Optional `---` document start marker
+    /// - Document content
+    /// - Optional `...` document end marker
+    ///
+    /// Returns `true` if the document ended with explicit `...`, `false` otherwise.
+    pub fn parse_document_events(&mut self) -> bool {
+        // Check for explicit document start marker `---`
+        let has_doc_start = matches!(self.peek(), Some((Token::DocStart, _)));
+        let doc_start_span = self.current_span();
+        let mut content_on_start_line = false;
+
+        if has_doc_start {
+            self.advance(); // consume DocStart
+
+            // Skip whitespace after `---` (but NOT newlines yet)
+            while matches!(
+                self.peek(),
+                Some((Token::Whitespace | Token::WhitespaceWithTabs, _))
+            ) {
+                self.advance();
+            }
+
+            // Check if there's content on the same line as `---`
+            if !self.is_eof()
+                && !matches!(self.peek(), Some((Token::LineStart(_) | Token::DocEnd, _)))
+            {
+                content_on_start_line = true;
+            }
+
+            // Skip newlines after `---`
+            self.skip_ws_and_newlines();
+        }
+
+        // Check if the first token starts a block mapping on the --- line
+        if content_on_start_line && !self.is_eof() {
+            let has_block_mapping_on_start_line = self.check_block_mapping_on_start_line();
+            if has_block_mapping_on_start_line {
+                self.error(ErrorKind::ContentOnSameLine, self.current_span());
+            }
+        }
+
+        // Emit DocumentStart
+        self.emit(Event::DocumentStart {
+            explicit: has_doc_start,
+            span: doc_start_span,
+        });
+
+        // Parse document content if not empty
+        // A document is empty if we hit EOF, `...`, or another `---` (next document)
+        if self.is_eof() || matches!(self.peek(), Some((Token::DocEnd | Token::DocStart, _))) {
+            // Empty document after explicit ---
+            if has_doc_start {
+                let null_span = Span::from_usize_range(0..0);
+                self.emit(Event::Scalar {
+                    style: ScalarStyle::Plain,
+                    value: Cow::Borrowed(""),
+                    anchor: None,
+                    tag: None,
+                    span: null_span,
+                });
+            }
+        } else {
+            // Parse document content
+            let _ = self.parse_value(0);
+        }
+
+        // After parsing, skip remaining whitespace and Dedent tokens
+        loop {
+            self.skip_ws_and_newlines();
+            if matches!(self.peek(), Some((Token::Dedent, _))) {
+                self.advance();
+            } else {
+                break;
+            }
+        }
+
+        // Consume any remaining content that belongs to this document
+        // (content before the next document marker)
+        while !self.is_eof() {
+            if matches!(self.peek(), Some((Token::Dedent, _))) {
+                self.advance();
+                continue;
+            }
+            // Stop at document markers
+            if matches!(self.peek(), Some((Token::DocStart | Token::DocEnd, _))) {
+                break;
+            }
+            // Stop at directives (they belong to the next document's prologue)
+            if matches!(
+                self.peek(),
+                Some((
+                    Token::YamlDirective(_) | Token::TagDirective(_) | Token::ReservedDirective(_),
+                    _
+                ))
+            ) {
+                break;
+            }
+
+            // Check if this is orphan content that should trigger an error.
+            // Skip whitespace, indent, and line start tokens without error.
+            // Content tokens (Plain, StringStart, etc.) at ANY column are errors because
+            // they weren't consumed by the normal parsing flow.
+            if let Some((token, span)) = self.peek() {
+                let is_content = matches!(
+                    token,
+                    Token::Plain(_)
+                        | Token::StringStart(_)
+                        | Token::Colon
+                        | Token::MappingKey
+                        | Token::BlockSeqIndicator
+                        | Token::Anchor(_)
+                        | Token::Tag(_)
+                        | Token::Alias(_)
+                        | Token::FlowMapStart
+                        | Token::FlowSeqStart
+                );
+                if is_content {
+                    // This is orphan content that wasn't consumed - report error
+                    self.error(ErrorKind::TrailingContent, span);
+                }
+            }
+            self.advance();
+            self.skip_ws_and_newlines();
+        }
+
+        // Check for document end marker `...`
+        let has_doc_end = matches!(self.peek(), Some((Token::DocEnd, _)));
+        let doc_end_span = self.current_span();
+        if has_doc_end {
+            self.advance(); // consume DocEnd
+            self.skip_ws_and_newlines();
+        }
+
+        // Emit DocumentEnd
+        self.emit(Event::DocumentEnd {
+            explicit: has_doc_end,
+            span: doc_end_span,
+        });
+
+        // Skip trailing Dedent tokens
+        while matches!(self.peek(), Some((Token::Dedent, _))) {
+            self.advance();
+        }
+
+        has_doc_end
     }
 
     /// Expand a tag to its full URI form and validate handle declaration.
@@ -1709,6 +1905,94 @@ pub fn parse_tokens<'input>(
     (stream, parser.errors)
 }
 
+/// Parse a token stream from the unified lexer into events.
+///
+/// This is the entry point for the unified streaming architecture where
+/// `DocumentLexer` handles the entire input (including directives and
+/// document markers) in a single pass.
+///
+/// Returns: `(Vec<Event>, Vec<ParseError>)`
+///
+/// The event stream follows YAML Test Suite format:
+/// `StreamStart`, (`DocumentStart`, content, `DocumentEnd`)*, `StreamEnd`
+pub fn parse_stream_from_tokens<'tokens: 'input, 'input>(
+    tokens: &'tokens [RichToken<'input>],
+    input: &'input str,
+) -> (Vec<Event<'input>>, Vec<ParseError>) {
+    let mut parser = Parser::new(tokens, input);
+
+    // Emit StreamStart
+    parser.emit(Event::StreamStart);
+
+    // Skip initial whitespace/newlines
+    parser.skip_ws_and_newlines();
+
+    // Parse documents until EOF
+    loop {
+        if parser.is_eof() {
+            break;
+        }
+
+        // Skip any orphan DocEnd markers that don't belong to a document.
+        // A `...` at the start of a stream (or after another `...`) doesn't create a document.
+        while matches!(parser.peek(), Some((Token::DocEnd, _))) {
+            parser.advance();
+            parser.skip_ws_and_newlines();
+        }
+
+        // After skipping DocEnd markers, check if we've reached EOF
+        if parser.is_eof() {
+            break;
+        }
+
+        // Populate tag handles for this document (clears old handles and reads new ones from current position)
+        // This ensures each document has its own tag scope
+        parser.populate_tag_handles_from_tokens();
+
+        // Track directives for "directive without document" error
+        let mut has_directive_in_prologue = false;
+        let mut first_directive_span = Span::from_usize_range(0..0);
+
+        // Skip directive tokens (they've been processed by populate_tag_handles_from_tokens)
+        while let Some((tok, span)) = parser.peek() {
+            match tok {
+                Token::YamlDirective(_) | Token::TagDirective(_) | Token::ReservedDirective(_) => {
+                    if !has_directive_in_prologue {
+                        first_directive_span = span;
+                    }
+                    has_directive_in_prologue = true;
+                    parser.advance();
+                    parser.skip_ws_and_newlines();
+                }
+                _ => break,
+            }
+        }
+
+        // Check for "directive without document" error:
+        // If we saw directives but now hit EOF or `...` (doc end), that's an error
+        if has_directive_in_prologue {
+            let at_doc_end_or_eof =
+                parser.is_eof() || matches!(parser.peek(), Some((Token::DocEnd, _)));
+            if at_doc_end_or_eof {
+                parser.error(ErrorKind::TrailingContent, first_directive_span);
+                // Continue to next iteration to skip the DocEnd or exit
+                continue;
+            }
+        }
+
+        // Parse one document; returns true if it ended with explicit `...`
+        let _ended_with_doc_end = parser.parse_document_events();
+
+        // After document, skip whitespace before next iteration
+        parser.skip_ws_and_newlines();
+    }
+
+    // Emit StreamEnd
+    parser.emit(Event::StreamEnd);
+
+    (parser.take_events(), parser.errors)
+}
+
 /// Parse a token stream as a single document (zero-copy API).
 ///
 /// This is the **zero-copy parsing API**. The returned `Node<'input>` borrows string data
@@ -1743,15 +2027,14 @@ pub fn parse_tokens<'input>(
 pub fn parse_single_document<'tokens: 'input, 'input>(
     tokens: &'tokens [RichToken<'input>],
     input: &'input str,
-    directives: &[Spanned<crate::lexer::Directive>],
 ) -> (Vec<Event<'input>>, Vec<ParseError>) {
     let mut parser = Parser::new(tokens, input);
 
     // Emit StreamStart
     parser.emit(Event::StreamStart);
 
-    // Populate tag handles from the directives provided by the stream lexer
-    parser.populate_tag_handles_from_directives(directives);
+    // Populate tag handles from TagDirective tokens in the token stream
+    parser.populate_tag_handles_from_tokens();
 
     parser.skip_ws_and_newlines();
 

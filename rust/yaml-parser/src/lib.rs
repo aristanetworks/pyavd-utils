@@ -137,80 +137,30 @@ pub fn parse_via_events(input: &str) -> (Stream<'static>, Vec<ParseError>) {
 /// - `Vec<ParseError>` - Any errors encountered during lexing/parsing
 #[must_use]
 pub fn emit_events(input: &str) -> (Vec<Event<'static>>, Vec<ParseError>) {
-    // Step 1: Tokenize stream into raw documents
-    let (raw_docs, stream_errors) = lexer::tokenize_stream(input);
-    let mut all_errors: Vec<ParseError> = stream_errors;
+    // Unified single-pass lexing: DocumentLexer handles directives, document
+    // markers, and content in a single pass over the input.
+    let lexer = lexer::DocumentLexer::new(input);
+    let tokens: Vec<lexer::RichToken<'_>> = lexer.collect();
 
-    if raw_docs.is_empty() {
-        // Empty input - just stream markers
-        return (vec![Event::StreamStart, Event::StreamEnd], all_errors);
-    }
+    // Extract errors from tokens
+    let mut all_errors: Vec<ParseError> = tokens
+        .iter()
+        .filter_map(|rich_token| {
+            rich_token
+                .error
+                .clone()
+                .map(|kind| error::ParseError::new(kind, rich_token.span))
+        })
+        .collect();
 
-    // Single document case: parse_single_document emits full stream with markers
-    if let [raw_doc] = &raw_docs[..] {
-        let (tokens, lexer_errors) = lexer::tokenize_document(raw_doc.content);
+    // Parse the token stream into events
+    let (events, parser_errors) = parser::parse_stream_from_tokens(&tokens, input);
+    all_errors.extend(parser_errors);
 
-        let doc_offset = raw_doc.content_span.start_usize();
-        all_errors.extend(
-            lexer_errors
-                .into_iter()
-                .map(|err| err.with_offset(doc_offset)),
-        );
+    // Convert to owned events
+    let owned_events: Vec<Event<'static>> = events.into_iter().map(Event::into_owned).collect();
 
-        let (events, parser_errors) =
-            parser::parse_single_document(&tokens, raw_doc.content, &raw_doc.directives);
-
-        all_errors.extend(
-            parser_errors
-                .into_iter()
-                .map(|err| err.with_offset(doc_offset)),
-        );
-
-        // Offset event spans to be absolute in the original input
-        let owned_events: Vec<Event<'static>> = events
-            .into_iter()
-            .map(|event| event.with_offset(doc_offset).into_owned())
-            .collect();
-
-        return (owned_events, all_errors);
-    }
-
-    // Multi-document case: need to emit our own StreamStart/End markers
-    // and strip the per-document stream markers from parse_single_document
-    let mut all_events: Vec<Event<'static>> = vec![Event::StreamStart];
-
-    for raw_doc in &raw_docs {
-        let (tokens, lexer_errors) = lexer::tokenize_document(raw_doc.content);
-
-        let doc_offset = raw_doc.content_span.start_usize();
-        all_errors.extend(
-            lexer_errors
-                .into_iter()
-                .map(|err| err.with_offset(doc_offset)),
-        );
-
-        let (events, parser_errors) =
-            parser::parse_single_document(&tokens, raw_doc.content, &raw_doc.directives);
-
-        // Skip StreamStart and StreamEnd from each document's events
-        // Keep only DocumentStart, content, and DocumentEnd
-        // Also offset event spans to be absolute in the original input
-        for event in events {
-            if !matches!(&event, Event::StreamStart | Event::StreamEnd) {
-                all_events.push(event.with_offset(doc_offset).into_owned());
-            }
-        }
-
-        all_errors.extend(
-            parser_errors
-                .into_iter()
-                .map(|err| err.with_offset(doc_offset)),
-        );
-    }
-
-    all_events.push(Event::StreamEnd);
-
-    (all_events, all_errors)
+    (owned_events, all_errors)
 }
 
 #[cfg(test)]

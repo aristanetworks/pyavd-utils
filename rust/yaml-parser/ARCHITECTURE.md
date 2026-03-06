@@ -58,7 +58,7 @@ This is a YAML 1.2 parser written in Rust with the following key features:
 
 ## High-Level Architecture
 
-The parser uses a **three-layer architecture**:
+The parser uses a **two-layer architecture** with unified streaming tokenization:
 
 ```txt
 ┌─────────────────────────────────────────────────────────────┐
@@ -67,32 +67,37 @@ The parser uses a **three-layer architecture**:
                            │
                            ▼
 ┌─────────────────────────────────────────────────────────────┐
-│  Layer 1: Stream Lexer (lexer/stream.rs)                    │
-│  - Splits input into raw documents                          │
-│  - Extracts directives (%YAML, %TAG)                        │
-│  - Identifies document boundaries (---, ...)                │
-│  Output: Vec<RawDocument>                                   │
-└──────────────────────────┬──────────────────────────────────┘
-                           │
-                           ▼
-┌─────────────────────────────────────────────────────────────┐
-│  Layer 2: Document Lexer (lexer/document.rs)                │
-│  - Tokenizes document content                               │
+│  Layer 1: Unified Document Lexer (lexer/document.rs)        │
+│  - Tokenizes entire YAML stream (single + multi-document)   │
+│  - Handles directives (%YAML, %TAG) inline                  │
+│  - Tracks document boundaries (---, ...)                    │
 │  - Tracks flow depth (nested {}/[])                         │
 │  - Emits INDENT/DEDENT tokens                               │
 │  - Context-aware: ,[]{}  are delimiters in flow,            │
 │                   part of plain scalars in block            │
-│  Output: Vec<Spanned<Token>>                                │
+│  - Phase tracking: DirectivePrologue vs InDocument          │
+│  - Inline error detection (attached to RichToken)           │
+│  Output: Vec<RichToken>                                     │
 └──────────────────────────┬──────────────────────────────────┘
                            │
                            ▼
 ┌─────────────────────────────────────────────────────────────┐
-│  Layer 3: Parser (parser/mod.rs, block.rs, flow.rs,         │
-│                   scalar.rs)                                │
-│  - Parses tokens into AST (Node tree)                       │
+│  Layer 2: Event-Based Parser (parser/mod.rs, block.rs,      │
+│                               flow.rs, scalar.rs)           │
+│  - Emits SAX-style events (StreamStart, DocumentStart,      │
+│    Scalar, MappingStart/End, SequenceStart/End, etc.)       │
 │  - Validates structure and indentation                      │
+│  - Validates tag handles from directive tokens              │
+│  - Detects orphan content and trailing errors               │
+│  Output: Vec<Event>                                         │
+└──────────────────────────┬──────────────────────────────────┘
+                           │
+                           ▼
+┌─────────────────────────────────────────────────────────────┐
+│  Layer 3: Event Parser (event_parser.rs)                    │
+│  - Reconstructs AST (Node tree) from event stream           │
 │  - Resolves anchors and aliases                             │
-│  - Validates tag handles                                    │
+│  - Handles nested structures via stack-based parsing        │
 │  Output: Vec<Node> (Stream)                                 │
 └──────────────────────────┬──────────────────────────────────┘
                            │
@@ -122,13 +127,12 @@ The parser uses a **three-layer architecture**:
   ```txt
   src/lexer/
   ├── mod.rs           # Module root, re-exports public API
-  ├── stream.rs        # Stream-level lexer (document boundaries)
-  ├── document.rs      # Document lexer (context-aware tokenizer)
+  ├── document.rs      # Unified streaming lexer (handles everything)
   ├── token.rs         # Token type definitions
-  └── rich_token.rs    # Token wrapper with span
+  └── rich_token.rs    # Token wrapper with span and optional error
   ```
 
-- **Re-exports**: `tokenize_document`, `tokenize_stream`, `RichToken`, `Token`, `Directive`, etc.
+- **Re-exports**: `tokenize_document`, `DocumentLexer`, `RichToken`, `Token`, etc.
 
 #### `span.rs` (~275 lines) - Source Location Tracking
 
@@ -254,31 +258,15 @@ The parser uses a **three-layer architecture**:
   - This matches the YAML spec's data model
   - Allows tags/anchors on any value type
 
-### Layer 1: Stream Lexer
+### Layer 1: Unified Document Lexer
 
-#### `lexer/stream.rs` (~468 lines)
+#### `lexer/document.rs` (~1,500 lines)
 
-- **Purpose**: Split YAML stream into raw documents
+- **Purpose**: Unified streaming lexer that tokenizes the entire YAML stream (including directives, document boundaries, and content)
 - **Key Types**:
-  - `RawDocument<'input>`: Contains directives, content (slice of input), and content span
-  - `Directive`: Enum for `%YAML`, `%TAG`, and reserved directives
-  - `StreamLexerState<'input>`: Internal state machine for stream parsing
-- **Main Function**: `tokenize_stream(input) -> (Vec<RawDocument>, Vec<ParseError>)`
-- **Responsibilities**:
-  - Detect document boundaries (`---`, `...`)
-  - Extract directives from document headers
-  - Handle multi-document streams
-  - Preserve raw content (zero-copy) for next layer
-- **Error Handling**: Emits `TrailingContent` errors for invalid content after directives
-
-### Layer 2: Document Lexer
-
-#### `lexer/document.rs` (~1,465 lines)
-
-- **Purpose**: Tokenizes a single document with context-aware handling
-- **Key Types**:
-  - `DocumentLexer<'input>`: Main lexer state machine with zero-copy tokenization
+  - `DocumentLexer<'input>`: Main lexer state machine with zero-copy tokenization, implements `Iterator<Item = RichToken<'input>>`
   - `LexMode`: `Block` or `Flow` context
+  - `LexerPhase`: `DirectivePrologue` (before document content) or `InDocument` (processing content)
 - **State Tracking**:
   - `flow_depth`: Nesting level of `{}`/`[]`
   - `indent_stack`: Stack of indentation levels
@@ -287,6 +275,14 @@ The parser uses a **three-layer architecture**:
   - `prev_was_separator`: For comment validation (# after whitespace)
   - `byte_pos`: Current position in input (direct string slicing, no Vec<char>)
   - `pending_tokens`: Queue for multi-token constructs
+  - `lexer_phase`: Tracks whether directives are valid at current position
+  - `has_yaml_directive`: Tracks if `%YAML` was seen (for duplicate detection)
+  - `has_directive_in_prologue`: For "directive without document" error
+- **Unified Stream Handling**:
+  - Handles directives (`%YAML`, `%TAG`, reserved) inline via `try_lex_directive()`
+  - Emits `YamlDirective`, `TagDirective`, `ReservedDirective` tokens
+  - Validates directive position (only valid before document content)
+  - Detects `%` at column 0 in document context as error
 - **Key Innovation**: Context-aware character interpretation
   - In **block context**: `,[]{}` are part of plain scalars
   - In **flow context**: `,[]{}` are delimiters
@@ -294,6 +290,7 @@ The parser uses a **three-layer architecture**:
   - Emitted after `LineStart` in block context
   - Used by parser to determine block structure boundaries
 - **Modular Token Lexing**: The main `next_token()` method delegates to helper methods:
+  - `try_lex_directive()` - Directives (`%YAML`, `%TAG`, reserved)
   - `try_lex_document_marker()` - Document start/end markers (`---`, `...`)
   - `try_lex_newline()` - Newline and indentation handling
   - `try_lex_whitespace()` - Inline whitespace
@@ -307,6 +304,7 @@ The parser uses a **three-layer architecture**:
 - **Shared Helpers for Quoted Strings**:
   - `handle_quoted_newline()` - Shared newline handling for both quote styles
   - `finalize_quoted_string()` - Shared end-of-string handling
+- **Inline Error Attachment**: Errors are attached to `RichToken.error` rather than collected separately
 
 #### `lexer/token.rs` (~188 lines)
 
@@ -321,13 +319,17 @@ The parser uses a **three-layer architecture**:
   - `is_flow_indicator()`: Check if token is a flow indicator
 - **Display Implementation**: Human-readable token formatting for errors
 
-#### `lexer/rich_token.rs` (~36 lines)
+#### `lexer/rich_token.rs` (~50 lines)
 
-- **Purpose**: Token wrapper with span information
-- **Key Type**: `RichToken<'input>` - combines `Token<'input>` with `Span`
-- **Usage**: The context lexer produces `Vec<RichToken>` for the parser
+- **Purpose**: Token wrapper with span information and optional error
+- **Key Type**: `RichToken<'input>` - combines `Token<'input>` with `Span` and optional `ParseError`
+- **Fields**:
+  - `token: Token<'input>` - The token variant
+  - `span: Span` - Source location
+  - `error: Option<ParseError>` - Lexer error attached to this token (if any)
+- **Usage**: The lexer produces `Vec<RichToken>` for the parser; errors are inline
 
-### Layer 3: Parser
+### Layer 2: Event-Based Parser
 
 #### `parser/mod.rs` (~1,450 lines)
 
@@ -426,6 +428,37 @@ The parser uses a **three-layer architecture**:
 - **Error Handling**: Emits `TrailingContent`, `MultilineImplicitKey` for specific errors
 - **Complexity**: Handles complex indentation rules
 
+### Layer 3: Event Parser
+
+#### `event/mod.rs` (~160 lines)
+
+- **Purpose**: Define SAX-style event types for YAML parsing
+- **Key Types**:
+  - `Event<'input>`: 13 event variants for stream structure
+    - `StreamStart`, `StreamEnd` - Stream boundaries
+    - `DocumentStart`, `DocumentEnd` - Document boundaries with explicit flag
+    - `MappingStart`, `MappingEnd` - Mapping boundaries with style
+    - `SequenceStart`, `SequenceEnd` - Sequence boundaries with style
+    - `Scalar` - Scalar value with style, anchor, tag
+    - `Alias` - Reference to anchor
+  - `CollectionStyle`: `Block` or `Flow`
+  - `ScalarStyle`: `Plain`, `SingleQuoted`, `DoubleQuoted`, `Literal`, `Folded`
+- **Usage**: Parser emits events; `EventParser` reconstructs AST
+
+#### `event_parser.rs` (~350 lines)
+
+- **Purpose**: Reconstruct AST from event stream
+- **Key Types**:
+  - `EventParser<'input>`: Stack-based parser for events
+  - `BuilderStackEntry`: Tracks in-progress collections (mapping key/value, sequence)
+- **Main Function**: `parse_events(events) -> (Vec<Node>, Vec<ParseError>)`
+- **Responsibilities**:
+  - Build `Node` tree from flat event stream
+  - Track anchors via `HashMap<&str, Node>`
+  - Resolve aliases by cloning anchored nodes
+  - Validate structure (balanced start/end events)
+- **Error Handling**: Reports `UndefinedAlias` for unknown anchor references
+
 ---
 
 ## Data Flow
@@ -440,21 +473,12 @@ name: Alice
 age: 30
 ```
 
-**Layer 1 (Stream Lexer) Output:**
-
-```rust
-RawDocument {
-  directives: [],
-  content: "name: Alice\nage: 30\n",
-  content_span: 4..27
-}
-```
-
-**Layer 2 (Document Lexer) Output:**
+**Layer 1 (Unified Document Lexer) Output:**
 
 ```rust
 [
-  (LineStart(0), 4..4),
+  (DocStart, 0..3),           // ---
+  (LineStart(0), 3..4),
   (Plain("name"), 4..8),
   (Colon, 8..9),
   (Whitespace, 9..10),
@@ -468,7 +492,24 @@ RawDocument {
 ]
 ```
 
-**Layer 3 (Parser) Output:**
+**Layer 2 (Event-Based Parser) Output:**
+
+```rust
+[
+  StreamStart,
+  DocumentStart { explicit: true, version: None },
+  MappingStart { anchor: None, tag: None, style: Block },
+  Scalar { value: "name", style: Plain, ... },
+  Scalar { value: "Alice", style: Plain, ... },
+  Scalar { value: "age", style: Plain, ... },
+  Scalar { value: "30", style: Plain, ... },
+  MappingEnd,
+  DocumentEnd { explicit: false },
+  StreamEnd,
+]
+```
+
+**Layer 3 (Event Parser) Output:**
 
 ```rust
 Node {
@@ -677,22 +718,27 @@ pub enum Value<'input> {
 
 ## Key Design Decisions
 
-### 1. Three-Layer Architecture
+### 1. Unified Streaming Architecture
 
-**Why separate layers?**
+**Why a unified lexer with event-based parsing?**
 
 - **Separation of Concerns**: Each layer has a single responsibility
-  - Stream lexer: Document boundaries
-  - Document lexer: Context-aware tokenization
-  - Parser: Structure validation and AST building
+  - Unified lexer: Tokenizes entire stream (directives, markers, content)
+  - Event-based parser: Emits SAX-style events, validates structure
+  - Event parser: Reconstructs AST from events, resolves anchors
+- **Streaming Design**: `DocumentLexer` implements `Iterator<Item = RichToken>`
+  - Enables lazy tokenization and potential streaming support
+  - Simplifies document boundary handling (directives handled inline)
+- **Phase Tracking**: `LexerPhase` (DirectivePrologue vs InDocument) determines valid tokens
+  - Directives only valid before document content
+  - Errors detected at lexer level with inline error attachment
 - **Testability**: Each layer can be tested independently
-- **Maintainability**: Changes to one layer don't affect others
-- **Clarity**: Easier to understand and debug
+- **Maintainability**: Single lexer pass reduces complexity
 
-**Alternative Considered:** Single-pass lexer+parser (like `parse_legacy()`)
+**Previous Design (removed):** Two-pass lexer with separate `StreamLexer`
 
-- **Rejected because**: Context-dependent tokenization is too complex to handle in a single pass
-- The legacy lexer is kept for comparison and benchmarking
+- **Removed because**: The separate pre-processing pass added complexity without benefits
+- The unified lexer handles directives and document markers inline
 
 ### 2. INDENT/DEDENT Tokens
 
@@ -985,19 +1031,21 @@ The parser uses optimized type sizes to reduce memory footprint. This introduces
 
 ## Conclusion
 
-This YAML parser achieves **100% YAML 1.2 compliance** (842/842 tests) through a carefully designed three-layer architecture with **zero external dependencies**:
+This YAML parser achieves **100% YAML 1.2 compliance** (842/842 tests) through a carefully designed unified streaming architecture with **zero external dependencies**:
 
-1. **Stream Lexer**: Handles document boundaries and directives
-2. **Document Lexer**: Tokenizes single documents with context-aware handling
-3. **Parser**: Builds AST with error recovery
+1. **Unified Document Lexer**: Tokenizes entire stream with phase tracking (directives, markers, content)
+2. **Event-Based Parser**: Emits SAX-style events, validates structure and indentation
+3. **Event Parser**: Reconstructs AST from events, resolves anchors and aliases
 
 **Key achievements:**
 
 - **Zero dependencies**: Self-contained crate with custom `Span` implementation
 - **Zero-copy parsing**: `Cow<'input, str>` throughout for minimal allocations
+- **Streaming design**: `DocumentLexer` implements `Iterator<Item = RichToken>` for lazy tokenization
 - **Actionable errors**: 27 error kinds with specific suggestions (100% specific, no generic fallback errors)
+- **Inline error attachment**: Lexer errors attached directly to tokens via `RichToken.error`
 - **High performance**: Faster than saphyr in most benchmarks while always providing spans
-- **~7,200 lines**: Readable, hand-written recursive descent parser
+- **~6,600 lines**: Readable, hand-written recursive descent parser (reduced from ~7,200 after removing StreamLexer)
 
 The architecture achieves both **correctness** and **performance**, making it suitable for IDE integration and user-facing tools where helpful error messages are crucial, as well as for high-throughput parsing scenarios.
 

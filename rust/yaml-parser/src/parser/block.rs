@@ -93,9 +93,15 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
 
             loop {
                 match self.peek() {
-                    Some((Token::LineStart(n), _)) => {
+                    Some((Token::LineStart(n), span)) => {
                         let n = *n;
+                        let span = span;
                         if n < seq_indent {
+                            // Check for orphan indentation: n is not in the parser's indent stack
+                            // and is between valid levels (e.g., indent 2 when stack is [0, 3])
+                            if !self.is_valid_indent(n) {
+                                self.error(ErrorKind::InvalidIndentation, span);
+                            }
                             // Use last event's end position for span calculation
                             let end = self.last_event_end_position().max(start);
                             self.pop_indent();
@@ -120,6 +126,39 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                     _ => {
                         break;
                     }
+                }
+            }
+        }
+
+        // Check if we stopped because of unexpected content at seq_indent level
+        // e.g., a plain scalar where we expected '-' or end of sequence.
+        // But NOT if the content is a mapping key (followed by colon), which is valid
+        // for a sibling mapping entry at the parent level.
+        if let Some((tok, span)) = self.peek() {
+            let col = self.current_token_column();
+            // Only check at seq_indent level, not at lower indents (those are valid dedents)
+            if col == seq_indent {
+                let is_unexpected_content = match tok {
+                    Token::Plain(_) => {
+                        // Check if this might be a mapping key (followed by colon)
+                        // If so, it's a valid sibling mapping entry
+                        let next = self.tokens.get(self.pos + 1);
+                        !matches!(next, Some(rt) if matches!(rt.token, Token::Colon))
+                    }
+                    Token::StringStart(_) => {
+                        // Quoted strings could be mapping keys - skip this check
+                        // since they'd need more complex lookahead to find StringEnd + Colon
+                        false
+                    }
+                    // Anchors, aliases, and tags alone at seq_indent are unexpected
+                    Token::Anchor(_) | Token::Alias(_) | Token::Tag(_) => {
+                        // But if followed by content that makes a mapping entry, allow it
+                        false
+                    }
+                    _ => false,
+                };
+                if is_unexpected_content {
+                    self.error(ErrorKind::TrailingContent, span);
                 }
             }
         }
@@ -318,11 +357,17 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
             return false; // End mapping
         }
 
-        while let Some((tok, _)) = self.peek() {
+        while let Some((tok, span)) = self.peek() {
             match tok {
                 Token::LineStart(n) => {
                     let n = *n;
+                    let span = span;
                     if n < map_indent {
+                        // Check for orphan indentation: n is not in the parser's indent stack
+                        // and is between valid levels (e.g., indent 1 when stack is [0, 2])
+                        if !self.is_valid_indent(n) {
+                            self.error(ErrorKind::InvalidIndentation, span);
+                        }
                         return false; // End mapping
                     }
                     if n == map_indent {

@@ -174,6 +174,11 @@ pub enum ErrorKind {
     #[display("document marker not allowed in flow context")]
     DocumentMarkerInFlow,
 
+    /// Document marker (`---` or `...`) inside a quoted scalar
+    /// e.g., `"text\n---\nmore"` where `---` at column 0 is forbidden
+    #[display("document marker not allowed in scalar content")]
+    DocumentMarkerInScalar,
+
     /// Anchor or tag without a following value
     /// e.g., `key: &anchor` on its own line, or `&x\n- item` where the anchor
     /// cannot attach to the block sequence
@@ -241,6 +246,9 @@ impl ErrorKind {
             Self::DocumentMarkerInFlow => {
                 Some("document markers (--- and ...) cannot appear inside flow collections")
             }
+            Self::DocumentMarkerInScalar => Some(
+                "document markers (--- and ...) at column 0 are forbidden in multi-line scalars",
+            ),
             // No specific suggestion for these
             Self::UnexpectedEof
             | Self::InvalidCharacter

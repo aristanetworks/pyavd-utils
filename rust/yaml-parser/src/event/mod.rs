@@ -16,7 +16,7 @@
 //!
 //! The parser emits events as it parses, which can be:
 //! - Used directly for streaming/SAX-style processing
-//! - Consumed by EventParser to build an AST
+//! - Consumed by `EventParser` to build an AST
 //!
 //! # Zero-Copy Design
 //!

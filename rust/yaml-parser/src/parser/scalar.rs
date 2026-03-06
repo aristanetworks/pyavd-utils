@@ -60,10 +60,24 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
 
         match tok {
             Token::Plain(string) => {
+                // Check for reserved indicator `%` at column 0 starting a plain scalar.
+                // Per YAML 1.2 spec production [22] c-indicator and [126] ns-plain-first,
+                // `%` is a c-indicator and cannot start a plain scalar.
+                // This is only an error at the START of a scalar, not in continuations
+                // (e.g., XLQ9 where `%YAML 1.2` is a continuation of `scalar`).
+                // We check if the token starts with `%` and is at column 0.
+                let starts_with_percent = string.starts_with('%');
+                let col = self.column_of_position(span.start_usize());
+
                 // Clone the string value before we lose the borrow
                 let string_value = string.to_string();
                 let value = Self::scalar_to_value(string_value.clone());
                 self.advance();
+
+                // Report error after releasing the borrow from peek()
+                if starts_with_percent && col == 0 {
+                    self.error(ErrorKind::InvalidDirective, span);
+                }
 
                 // Emit Scalar event
                 self.emit(Event::Scalar {
@@ -904,6 +918,9 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
             }
             // Key event already emitted - no need to track Node
 
+            // Track this mapping's indentation for orphan indent detection
+            self.push_indent(map_indent);
+
             self.advance(); // consume ':'
             self.check_tabs_after_block_indicator();
             self.skip_ws();
@@ -990,6 +1007,9 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
 
             // Continue parsing more key-value pairs at same indentation
             self.parse_remaining_mapping_entries(map_indent);
+
+            // Pop the indent level we pushed for this mapping
+            self.pop_indent();
 
             // Use the last event's end position for span calculation
             let end = self.last_event_end_position().max(start);
@@ -1172,11 +1192,18 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
     fn advance_to_same_indent(&mut self, target_indent: IndentLevel) -> bool {
         loop {
             match self.peek() {
-                Some((Token::LineStart(n), _)) => {
-                    if *n < target_indent {
+                Some((Token::LineStart(n), span)) => {
+                    let n = *n;
+                    let span = span;
+                    if n < target_indent {
+                        // Check for orphan indentation: n is not in the parser's indent stack
+                        // and is between valid levels (e.g., indent 1 when stack is [0, 2])
+                        if !self.is_valid_indent(n) {
+                            self.error(ErrorKind::InvalidIndentation, span);
+                        }
                         return false;
                     }
-                    if *n == target_indent {
+                    if n == target_indent {
                         self.advance();
                         while let Some((Token::Dedent, _)) = self.peek() {
                             self.advance();
@@ -1196,7 +1223,37 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                         self.skip_ws();
                         return true;
                     }
-                    // n > target_indent: skip this indented line (could be blank or comment)
+                    // n > target_indent: this is an over-indented line
+                    // Check if this is invalid orphan indentation (content at unexpected level)
+                    // by checking if there's actual content (not just comments)
+                    let saved_pos = self.pos;
+                    self.advance(); // past LineStart
+                    // Skip Dedent/Indent tokens
+                    while let Some((Token::Dedent | Token::Indent(_), _)) = self.peek() {
+                        self.advance();
+                    }
+                    // Check what's on this line
+                    if let Some((tok, _)) = self.peek() {
+                        match tok {
+                            // These are valid on over-indented lines (comments, blank lines)
+                            Token::Comment(_) | Token::LineStart(_) => {
+                                // Continue looking - this is just a comment or blank line
+                            }
+                            // Content that would start a new entry at wrong indent
+                            Token::Plain(_)
+                            | Token::StringStart(_)
+                            | Token::MappingKey
+                            | Token::Colon
+                            | Token::Anchor(_)
+                            | Token::Tag(_) => {
+                                // This is content at an orphan indent - report error
+                                self.error(ErrorKind::InvalidIndentation, span);
+                            }
+                            _ => {}
+                        }
+                    }
+                    // Restore position and skip past this line to continue looking
+                    self.pos = saved_pos;
                     self.advance();
                 }
                 // Skip Dedent, Comment, and Indent tokens - they don't affect our search
