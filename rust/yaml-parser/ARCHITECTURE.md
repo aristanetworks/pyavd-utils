@@ -7,8 +7,8 @@
 # YAML Parser Architecture Documentation
 
 **Version:** 0.0.2
-**Date:** 2026-03-04
-**Status:** 98.2% YAML 1.2 Test Suite Compliance (827/842 tests passing with structural event comparison)
+**Date:** 2026-03-06
+**Status:** 100% YAML 1.2 Test Suite Compliance (842/842 tests passing)
 **Dependencies:** Zero external dependencies
 
 ---
@@ -34,7 +34,7 @@ This is a YAML 1.2 parser written in Rust with the following key features:
 
 - **Error Recovery**: Continues parsing after errors, collecting multiple errors in a single pass
 - **Span Tracking**: Every parsed value includes its source location (byte range)
-- **98.2% YAML 1.2 Compliance**: Passes 827/842 tests with structural event comparison (see below for gaps)
+- **100% YAML 1.2 Compliance**: Passes all 842 tests (402 positive + 440 error tests)
 - **Zero Dependencies**: Self-contained with custom span/error handling
 - **Zero-Copy Design**: Uses `Cow<'input, str>` throughout to minimize allocations
 - **Layered Architecture**: Separates stream-level parsing from document-level parsing
@@ -842,7 +842,7 @@ Output:
 The parser is tested against the official YAML 1.2 test suite:
 
 - **842 tests** covering all YAML 1.2 features (402 positive + 440 error tests)
-- **827 passing (98.2%)** - See Parser Gaps section below for remaining 15 failures
+- **842 passing (100%)** - Full compliance achieved
 - Tests are in `tests/test_suite.rs`
 - Error analysis test (`analyze_error_kinds`) tracks error distribution across 440+ error test cases
 
@@ -951,33 +951,7 @@ The parser uses optimized type sizes to reduce memory footprint. This introduces
 2. ~~**Full Test Suite Event Comparison**~~ ✅ DONE
    - Implemented structural event comparison in `tests/test_suite.rs`
    - Compares AST against YAML Test Suite `.event` files
-   - Current pass rate: 827/842 (98.2%) - see parser gaps below
-
-### Parser Gaps (15 failing tests)
-
-The following parser limitations were identified through structural event comparison:
-
-1. **Tag Expansion and Comparison** (9 tests)
-   - Tags need proper expansion for test suite comparison
-   - Named handles (`!e!`) need `%TAG` directive lookup
-   - Tests: 2AUY, 74H7, 9KAX, C4HZ, F2C7, J7PZ, L94M, S4JQ, 33X3
-
-2. **Block Collection Nodes** (1 test)
-   - Complex block structure with properties
-   - Tests: 57H4 (Spec Example 8.22)
-
-3. **Multi-Document Stream Handling** (2 tests)
-   - Document boundaries with directives
-   - Tests: 6ZKB, 9DXL (Spec Example 9.6)
-
-4. **Plain Scalar Edge Cases** (2 tests)
-   - Complex plain scalar parsing in specific contexts
-   - Tests: DBG4 (Spec Example 7.10), RZT7 (Spec Example 2.28)
-
-5. **Folded Block Scalar Line Folding** (1 test)
-   - Trailing whitespace preservation before line folds
-   - MJS9: Expected `"foo \n..."` but got `"foo\n..."` (missing trailing space)
-   - Tests: MJS9 (Spec Example 6.7)
+   - **Current pass rate: 842/842 (100%)**
 
 ### Short-Term (Feature Additions)
 

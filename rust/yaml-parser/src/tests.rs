@@ -7,6 +7,17 @@
 //! These tests verify parsing behavior for various YAML constructs,
 //! error recovery, and edge cases.
 
+// Allow these pedantic lints in test code where they add noise without benefit
+#![allow(
+    clippy::min_ident_chars,
+    reason = "single-char names are fine in tests"
+)]
+#![allow(clippy::indexing_slicing, reason = "panics are acceptable in tests")]
+#![allow(
+    clippy::approx_constant,
+    reason = "test values don't need constant refs"
+)]
+
 use super::*;
 
 #[test]
@@ -411,24 +422,32 @@ fn measure_type_sizes() {
     );
 }
 
-/// Test parsing using `parse_single_document` directly.
+/// Test parsing using `parse_single_document` directly with `EventParser`.
 ///
 /// This demonstrates using the lower-level API that allows working with
 /// `Node<'input>` before converting to owned data. This can avoid allocations
 /// when the node doesn't need to outlive the input.
 #[test]
 fn test_zero_copy_parsing() {
+    use crate::event_parser::EventParser;
+
     let input = "key: value";
 
     // Tokenize the document
     let (tokens, lexer_errors) = tokenize_document(input);
     assert!(lexer_errors.is_empty());
 
-    // Parse - node lifetime is tied to input
-    let (parsed_node, parse_errors) = parse_single_document(&tokens, input, &[]);
+    // Parse to events - events lifetime is tied to input
+    let (events, parse_errors) = parse_single_document(&tokens, input, &[]);
     assert!(parse_errors.is_empty());
 
-    let node = parsed_node.unwrap();
+    // Reconstruct AST from events using EventParser
+    let mut event_parser = EventParser::new(&events);
+    let nodes = event_parser.parse();
+    assert!(event_parser.take_errors().is_empty());
+    assert_eq!(nodes.len(), 1);
+
+    let node = &nodes[0];
 
     // Verify it's a mapping with the expected content
     assert!(matches!(&node.value, Value::Mapping(pairs) if pairs.len() == 1));
@@ -446,7 +465,7 @@ fn test_zero_copy_parsing() {
     }
 
     // Convert to owned when needed (e.g., to outlive the input)
-    let owned_node: Node<'static> = node.into_owned();
+    let owned_node: Node<'static> = node.clone().into_owned();
     assert!(matches!(&owned_node.value, Value::Mapping(_)));
 }
 
@@ -717,7 +736,7 @@ mod event_tests {
         let has_anchor = events.iter().any(|ev| {
             matches!(
                 ev,
-                Event::Scalar { anchor: Some(anc), .. } if anc == "anchor"
+                Event::Scalar { anchor: Some((anchor_name, _)), .. } if anchor_name == "anchor"
             )
         });
         assert!(has_anchor, "Expected scalar with anchor, got: {events:?}");
@@ -740,7 +759,7 @@ mod event_tests {
         let has_tag = events.iter().any(|ev| {
             matches!(
                 ev,
-                Event::Scalar { tag: Some(tg), .. } if tg == "tag:yaml.org,2002:str"
+                Event::Scalar { tag: Some((tg, _)), .. } if tg == "tag:yaml.org,2002:str"
             )
         });
         assert!(
@@ -853,9 +872,9 @@ mod event_tests {
     }
 }
 
-/// Tests for the event-based parser (EventParser).
+/// Tests for the event-based parser (`EventParser`).
 mod event_parser_tests {
-    use crate::parser::EventParser;
+    use crate::event_parser::EventParser;
     use crate::value::Value;
 
     /// Parse input through the full event pipeline and return nodes.
@@ -863,6 +882,108 @@ mod event_parser_tests {
         let (events, _errors) = crate::emit_events(input);
         let mut parser = EventParser::new(&events);
         parser.parse().into_iter().map(|n| n.into_owned()).collect()
+    }
+
+    /// Test that EventParser produces identical output to the hybrid parser.
+    /// This is the key test ensuring we can remove node-building from the hybrid parser.
+    #[test]
+    #[allow(clippy::print_stderr, reason = "Debug output on failure")]
+    fn test_event_parser_matches_hybrid_parser() {
+        let test_cases = [
+            // Simple scalars
+            "hello",
+            "42",
+            "3.14",
+            "true",
+            "null",
+            "~",
+            "",
+            // Quoted strings
+            "'single quoted'",
+            "\"double quoted\"",
+            "\"with\\nescape\"",
+            // Block scalars
+            "|\n  literal\n  block",
+            ">\n  folded\n  block",
+            // Simple collections
+            "a: 1",
+            "- item",
+            "a: 1\nb: 2",
+            "- a\n- b\n- c",
+            // Flow collections
+            "{a: 1, b: 2}",
+            "[1, 2, 3]",
+            "{a: [1, 2], b: {c: 3}}",
+            // Nested block
+            "outer:\n  inner: value",
+            "- - nested\n  - items",
+            "- a: 1\n  b: 2",
+            // Anchors and aliases
+            "&anchor value",
+            "- &a 1\n- *a",
+            // Tags
+            "!!str 42",
+            "!custom tagged",
+            // Multi-document
+            "---\nfirst\n---\nsecond",
+            // Complex cases
+            "key: |\n  multi\n  line",
+            "list:\n  - a\n  - b",
+            "mixed: [1, {a: b}]",
+            // Empty values
+            "key:",
+            "- \n- value",
+            // Explicit keys
+            "? explicit\n: value",
+        ];
+
+        let mut failures = Vec::new();
+
+        for input in test_cases {
+            let (hybrid_nodes, hybrid_errors) = crate::parse(input);
+            let (via_events_nodes, via_events_errors) = crate::parse_via_events(input);
+
+            // Compare node counts
+            if hybrid_nodes.len() != via_events_nodes.len() {
+                failures.push(format!(
+                    "Input: {input:?}\n  Node count mismatch: hybrid={}, via_events={}",
+                    hybrid_nodes.len(),
+                    via_events_nodes.len()
+                ));
+                continue;
+            }
+
+            // Compare each node
+            for (i, (hybrid, via_events)) in
+                hybrid_nodes.iter().zip(via_events_nodes.iter()).enumerate()
+            {
+                if hybrid != via_events {
+                    failures.push(format!(
+                        "Input: {input:?}\n  Document {i} mismatch:\n    hybrid:     {hybrid:?}\n    via_events: {via_events:?}"
+                    ));
+                }
+            }
+
+            // Compare error counts (not exact errors, as span offsets may differ in event path)
+            if hybrid_errors.len() != via_events_errors.len() {
+                failures.push(format!(
+                    "Input: {input:?}\n  Error count mismatch: hybrid={}, via_events={}",
+                    hybrid_errors.len(),
+                    via_events_errors.len()
+                ));
+            }
+        }
+
+        if !failures.is_empty() {
+            eprintln!("\n=== EventParser vs Hybrid Parser Mismatches ===");
+            for failure in &failures {
+                eprintln!("{failure}\n");
+            }
+            panic!(
+                "{} test case(s) failed - EventParser output differs from hybrid parser",
+                failures.len()
+            );
+        }
     }
 
     #[test]
@@ -1339,5 +1460,26 @@ fn test_emit_events_k858_debug() {
     println!("Errors: {errors:?}");
     for (i, event) in events.iter().enumerate() {
         println!("  [{i}] {event:?}");
+    }
+}
+
+#[test]
+fn debug_f2c7_tag_issue() {
+    let input = " - !!int 2\n";
+    let (events, errors) = crate::emit_events(input);
+    println!("Input: {:?}", input);
+    println!("Events:");
+    for (i, e) in events.iter().enumerate() {
+        println!("  {}: {:?}", i, e);
+    }
+    println!("Errors: {:?}", errors);
+
+    // Check the scalar at index 3 (after StreamStart, DocStart?, SequenceStart)
+    if let Some(crate::event::Event::Scalar { value, .. }) = events.get(3) {
+        assert_eq!(
+            value.as_ref(),
+            "2",
+            "Scalar value should be '2', not include tag"
+        );
     }
 }

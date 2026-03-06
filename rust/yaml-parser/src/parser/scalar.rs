@@ -39,15 +39,23 @@ enum FoldedLineType {
 impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
     /// Parse a simple scalar token.
     /// For mapping keys (typically single-line), uses `min_indent=0`.
-    pub fn parse_scalar(&mut self) -> Option<Node<'input>> {
+    /// Parse a plain or quoted scalar.
+    ///
+    /// Returns `(Span, Value)` where Value is the inferred type.
+    /// Emits: `Scalar` event with the appropriate style.
+    pub fn parse_scalar(&mut self) -> Option<(Span, Value<'input>)> {
         self.parse_scalar_with_indent(0)
     }
 
     /// Parse a scalar token with a specified minimum indentation for continuations.
     /// This is used when parsing values where multi-line strings must respect indentation.
     ///
+    /// Returns `(Span, Value)` where Value is the inferred type.
     /// Emits: `Scalar` event with the appropriate style.
-    pub fn parse_scalar_with_indent(&mut self, min_indent: IndentLevel) -> Option<Node<'input>> {
+    pub fn parse_scalar_with_indent(
+        &mut self,
+        min_indent: IndentLevel,
+    ) -> Option<(Span, Value<'input>)> {
         let (tok, span) = self.peek()?;
 
         match tok {
@@ -66,7 +74,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                     span,
                 });
 
-                Some(Node::new(value, span))
+                Some((span, value))
             }
             Token::StringStart(_style) => self.parse_quoted_string(min_indent),
             _ => None,
@@ -74,7 +82,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
     }
 
     /// Parse a quoted string from `StringStart`/`StringContent`/`LineStart`/`StringEnd` tokens.
-    /// Returns the assembled string as a Node, or None if not at a `StringStart` token.
+    /// Returns `(Span, Value)` or None if not at a `StringStart` token.
     /// Validates that continuation lines have proper indentation (>= `min_indent`).
     ///
     /// Implements YAML 1.2 flow folding rules:
@@ -85,7 +93,10 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
     ///
     /// Emits: `Scalar` event with the appropriate quoted style.
     #[allow(clippy::too_many_lines, reason = "Complex quoted string parsing")]
-    pub fn parse_quoted_string(&mut self, min_indent: IndentLevel) -> Option<Node<'input>> {
+    pub fn parse_quoted_string(
+        &mut self,
+        min_indent: IndentLevel,
+    ) -> Option<(Span, Value<'input>)> {
         let (first_token, start_span) = self.peek()?;
 
         let style = match first_token {
@@ -229,7 +240,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
             span: full_span,
         });
 
-        Some(Node::new(Value::String(content.into()), full_span))
+        Some((full_span, Value::String(content.into())))
     }
 
     /// Convert a plain scalar string to an appropriate Value.
@@ -268,7 +279,11 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
     /// Parse an alias: *name
     ///
     /// Emits: `Alias` event.
-    pub fn parse_alias(&mut self) -> Option<Node<'input>> {
+    /// Parse an alias reference (*name).
+    ///
+    /// Returns the span of the alias if parsed, None otherwise.
+    /// Emits: `Alias` event.
+    pub fn parse_alias(&mut self) -> Option<Span> {
         let (tok, span) = self.advance()?;
 
         let name = if let Token::Alias(name) = tok {
@@ -277,7 +292,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
             return None;
         };
 
-        if !self.anchors.contains_key(name) {
+        if !self.anchors.contains(name) {
             self.error(ErrorKind::UndefinedAlias, span);
         }
 
@@ -287,7 +302,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
             span,
         });
 
-        Some(Node::new(Value::Alias(Cow::Borrowed(name)), span))
+        Some(span)
     }
 
     /// Parse a literal block scalar: |
@@ -296,8 +311,12 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
     /// (typically the parent block's indent + 1). For explicit indentation indicators,
     /// the content indent is calculated relative to `min_indent - 1` (the parent's indent).
     ///
+    /// Returns the span and content of the parsed scalar.
     /// Emits: `Scalar` event with `Literal` style.
-    pub fn parse_literal_block_scalar(&mut self, min_indent: IndentLevel) -> Option<Node<'input>> {
+    pub fn parse_literal_block_scalar(
+        &mut self,
+        min_indent: IndentLevel,
+    ) -> Option<(Span, Cow<'input, str>)> {
         let (tok, span) = self.advance()?;
         let start = span.start_usize();
 
@@ -319,7 +338,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
             span: scalar_span,
         });
 
-        Some(Node::new(Value::String(content.into()), scalar_span))
+        Some((scalar_span, Cow::Owned(content)))
     }
 
     /// Parse a folded block scalar: >
@@ -328,8 +347,12 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
     /// (typically the parent block's indent + 1). For explicit indentation indicators,
     /// the content indent is calculated relative to `min_indent - 1` (the parent's indent).
     ///
+    /// Returns the span and content of the parsed scalar.
     /// Emits: `Scalar` event with `Folded` style.
-    pub fn parse_folded_block_scalar(&mut self, min_indent: IndentLevel) -> Option<Node<'input>> {
+    pub fn parse_folded_block_scalar(
+        &mut self,
+        min_indent: IndentLevel,
+    ) -> Option<(Span, Cow<'input, str>)> {
         let (tok, span) = self.advance()?;
         let start = span.start_usize();
 
@@ -351,7 +374,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
             span: scalar_span,
         });
 
-        Some(Node::new(Value::String(content.into()), scalar_span))
+        Some((scalar_span, Cow::Owned(content)))
     }
 
     /// Consume content tokens from a block line.
@@ -766,12 +789,13 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
     }
 
     /// Convert multiline scalar content to final value.
+    /// Returns `(Span, Value)` tuple.
     fn finalize_multiline_scalar(
         content: String,
         had_continuations: bool,
         start: usize,
         end: usize,
-    ) -> Node<'static> {
+    ) -> (Span, Value<'static>) {
         // If we had continuations, always treat as string (no type coercion)
         // If no continuations, apply normal scalar type detection
         let value = if had_continuations {
@@ -779,7 +803,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
         } else {
             Self::scalar_to_value(content)
         };
-        Node::new(value, Span::from_usize_range(start..end))
+        (Span::from_usize_range(start..end), value)
     }
 
     /// Parse a scalar and check if it's actually a mapping key.
@@ -810,7 +834,8 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
         // Check if this is a mapping key (followed by colon)
         if let Some((Token::Colon, colon_span)) = self.peek() {
             // Check for multiline implicit key (invalid in block context)
-            self.check_multiline_implicit_key(scalar.span.start_usize(), scalar.span.end_usize());
+            let (scalar_span, _scalar_value) = scalar;
+            self.check_multiline_implicit_key(scalar_span.start_usize(), scalar_span.end_usize());
 
             // Check for invalid nested mapping on same line.
             // Pattern like `a: b: c` or `a: 'b': c` is invalid
@@ -856,14 +881,13 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
 
             if is_nested_value_position {
                 self.error(ErrorKind::UnexpectedColon, colon_span);
-                return Some(scalar);
+                return Some(Node::null(scalar_span));
             }
 
             // This is actually a mapping - reparse
-            let start = scalar.span.start_usize();
-            let start_span = scalar.span;
+            let start = scalar_span.start_usize();
+            let start_span = scalar_span;
             let map_indent = self.column_of_position(start);
-            let mut pairs: Vec<(Node, Node)> = Vec::new();
 
             // The key scalar event was already emitted by parse_scalar_with_indent.
             // We need to insert MappingStart BEFORE that scalar event.
@@ -878,8 +902,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
             if let Some(ev) = key_event {
                 self.events.push(ev);
             }
-
-            let key = scalar;
+            // Key event already emitted - no need to track Node
 
             self.advance(); // consume ':'
             self.check_tabs_after_block_indicator();
@@ -891,7 +914,8 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
             }
 
             // Parse the value
-            let value_on_same_line = !matches!(self.peek(), Some((Token::LineStart(_), _)));
+            // Track whether this is a same-line scalar (not a block collection spanning lines)
+            let mut check_trailing = false;
             let value = if let Some((Token::LineStart(_), _)) = self.peek() {
                 self.advance();
                 self.check_tabs_as_indentation();
@@ -928,6 +952,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                         )) = self.peek()
                         {
                             // Block collection follows - parse it with properties and bridging
+                            // Don't check trailing content - block collections span multiple lines
                             let mut new_props = props;
                             new_props.crossed_line_boundary = true;
                             self.parse_value_with_properties(n, new_props)
@@ -941,58 +966,62 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                         self.parse_value_with_properties(map_indent + 1, props)
                     }
                 } else {
-                    // No LineStart - content is on same line
+                    // No LineStart - content is on same line with tag/anchor
+                    // This is a same-line scalar like `key: !!int 42`
+                    check_trailing = true;
                     self.parse_value_with_properties(map_indent + 1, props)
                 }
             } else {
+                // Value directly on same line (no anchor/tag) - check for trailing content
+                check_trailing = true;
                 self.parse_value(map_indent + 1)
             };
 
-            let value_node = value.unwrap_or_else(|| self.emit_null_scalar());
+            // Value event was emitted by parse_value - just check trailing content
+            let _value_span = value
+                .map(|n| n.span)
+                .unwrap_or_else(|| self.emit_null_scalar());
 
-            // Check for trailing content after quoted scalars in block context
-            if value_on_same_line && let Value::String(_) = &value_node.value {
+            // Check for trailing content after same-line scalars in block context
+            // Don't check after block collections that span multiple lines
+            if check_trailing {
                 self.check_trailing_content_after_scalar();
             }
 
-            pairs.push((key, value_node));
-
             // Continue parsing more key-value pairs at same indentation
-            self.parse_remaining_mapping_entries(&mut pairs, map_indent);
+            self.parse_remaining_mapping_entries(map_indent);
 
-            let end = pairs.last().map_or(start, |(_, val)| val.span.end_usize());
+            // Use the last event's end position for span calculation
+            let end = self.last_event_end_position().max(start);
 
             // Emit MappingEnd event
             self.emit(Event::MappingEnd {
                 span: Span::from_usize_range(end..end),
             });
 
-            Some(Node::new(
-                Value::Mapping(pairs),
-                Span::from_usize_range(start..end),
-            ))
+            Some(Node::null(Span::from_usize_range(start..end)))
         } else {
             // Just a scalar - check for multiline continuation (plain scalars only)
             // Note: If we saw a comment after the scalar, it terminates the plain scalar
             // and we should NOT look for continuation lines (YAML spec section 7.3.3)
+            let (scalar_span, _scalar_value) = scalar;
             if is_quoted_scalar || saw_comment {
                 // Comment terminated the scalar - check for trailing content at root
                 if min_indent == 0 && saw_comment {
                     self.check_trailing_content_at_root(0);
                 }
-                Some(scalar)
+                Some(Node::null(scalar_span))
             } else {
-                Some(self.consume_plain_scalar_continuations(scalar, min_indent))
+                let (span, _value) = self
+                    .consume_plain_scalar_continuations((scalar_span, _scalar_value), min_indent);
+                Some(Node::null(span))
             }
         }
     }
 
     /// Helper to parse remaining mapping entries at the same indentation level.
-    fn parse_remaining_mapping_entries(
-        &mut self,
-        pairs: &mut Vec<(Node<'input>, Node<'input>)>,
-        map_indent: IndentLevel,
-    ) {
+    /// Emits key-value events directly without collecting into a pairs vector.
+    fn parse_remaining_mapping_entries(&mut self, map_indent: IndentLevel) {
         loop {
             let loop_start_pos = self.pos;
 
@@ -1028,8 +1057,8 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
 
             // Handle explicit key indicator (?)
             if let Some((Token::MappingKey, _)) = self.peek() {
-                if let Some((key, value)) = self.parse_explicit_mapping_entry(map_indent) {
-                    pairs.push((key, value));
+                if self.parse_explicit_mapping_entry(map_indent) {
+                    // Entry was parsed and events emitted
                     continue;
                 }
                 break;
@@ -1038,7 +1067,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
             // Handle empty key (: at start of line)
             if let Some((Token::Colon, _colon_span)) = self.peek() {
                 // Emit scalar event for the null key
-                let key_node = self.emit_null_scalar();
+                self.emit_null_scalar();
                 self.advance();
 
                 // Skip whitespace only (not comments) - check for Whitespace/WhitespaceWithTabs
@@ -1049,29 +1078,28 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                 // If there's a comment, the value is null (comment terminates)
                 if let Some((Token::Comment(_), _)) = self.peek() {
                     self.advance();
-                    pairs.push((key_node, self.emit_null_scalar()));
+                    self.emit_null_scalar();
                     continue;
                 }
 
                 // If we hit LineStart immediately, value is null
                 if let Some((Token::LineStart(_), _)) = self.peek() {
-                    pairs.push((key_node, self.emit_null_scalar()));
+                    self.emit_null_scalar();
                     continue;
                 }
 
                 // Otherwise, parse the value
                 let value = self.parse_value(map_indent + 1);
-                let value_node = value.unwrap_or_else(|| self.emit_null_scalar());
-                pairs.push((key_node, value_node));
+                if value.is_none() {
+                    self.emit_null_scalar();
+                }
                 continue;
             }
 
             // Try to parse an implicit key-value pair
-            let Some((key, value_node)) = self.parse_implicit_mapping_entry(map_indent) else {
+            if !self.parse_implicit_mapping_entry(map_indent) {
                 break;
-            };
-
-            pairs.push((key, value_node));
+            }
 
             // Ensure progress
             if self.pos == loop_start_pos && !self.is_eof() {
@@ -1081,14 +1109,9 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
     }
 
     /// Parse an explicit mapping entry (? key : value).
-    #[allow(
-        clippy::unnecessary_wraps,
-        reason = "Consistent API with other mapping entry parsers"
-    )]
-    fn parse_explicit_mapping_entry(
-        &mut self,
-        map_indent: IndentLevel,
-    ) -> Option<(Node<'input>, Node<'input>)> {
+    /// Returns true if entry was parsed, false otherwise.
+    /// Emits key and value events directly.
+    fn parse_explicit_mapping_entry(&mut self, map_indent: IndentLevel) -> bool {
         // Consume the ?
         self.advance();
         self.skip_ws();
@@ -1103,7 +1126,9 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
         } else {
             self.parse_value(map_indent + 1)
         };
-        let key_node = key.unwrap_or_else(|| self.emit_null_scalar());
+        if key.is_none() {
+            self.emit_null_scalar();
+        }
 
         // Skip to colon (may be on next line)
         self.skip_ws();
@@ -1119,7 +1144,8 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
 
         // Expect colon
         if !matches!(self.peek(), Some((Token::Colon, _))) {
-            return Some((key_node, self.emit_null_scalar()));
+            self.emit_null_scalar();
+            return true;
         }
         self.advance();
         self.skip_ws();
@@ -1134,9 +1160,11 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
         } else {
             self.parse_value(map_indent + 1)
         };
-        let value_node = value.unwrap_or_else(|| self.emit_null_scalar());
+        if value.is_none() {
+            self.emit_null_scalar();
+        }
 
-        Some((key_node, value_node))
+        true
     }
 
     /// Advance to the next line at the specified indent level.
@@ -1182,26 +1210,26 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
     }
 
     /// Parse a single implicit mapping entry (key: value).
-    /// Returns None if no valid entry could be parsed.
-    fn parse_implicit_mapping_entry(
-        &mut self,
-        map_indent: IndentLevel,
-    ) -> Option<(Node<'input>, Node<'input>)> {
+    /// Returns false if no valid entry could be parsed.
+    /// Emits key and value events directly.
+    fn parse_implicit_mapping_entry(&mut self, map_indent: IndentLevel) -> bool {
         // Collect any anchor/tag properties before the key
         let key_props = self.collect_node_properties(NodeProperties::default());
 
         // Parse the key (scalar or alias)
-        let key = self.parse_mapping_key_or_alias(key_props)?;
+        let Some(key_span) = self.parse_mapping_key_or_alias(key_props) else {
+            return false;
+        };
 
         self.skip_ws();
 
         // Expect colon after key
         if let Some((Token::Colon, _)) = self.peek() {
-            self.check_multiline_implicit_key(key.span.start_usize(), key.span.end_usize());
+            self.check_multiline_implicit_key(key_span.start_usize(), key_span.end_usize());
             self.advance();
         } else {
-            self.error(ErrorKind::MissingColon, key.span);
-            return None;
+            self.error(ErrorKind::MissingColon, key_span);
+            return false;
         }
 
         self.skip_ws();
@@ -1212,21 +1240,19 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
         }
 
         let value_on_same_line = !matches!(self.peek(), Some((Token::LineStart(_), _)));
-        let value_node = self.parse_mapping_value(map_indent);
+        self.parse_mapping_value(map_indent);
 
-        if value_on_same_line && let Value::String(_) = &value_node.value {
+        if value_on_same_line {
             self.check_trailing_content_after_scalar();
         }
 
-        Some((key, value_node))
+        true
     }
 
     /// Parse a mapping key that can be a scalar or alias, with optional properties.
     /// Returns None if no valid key could be parsed.
-    fn parse_mapping_key_or_alias(
-        &mut self,
-        key_props: NodeProperties<'input>,
-    ) -> Option<Node<'input>> {
+    /// Emits key event directly, returns key span for error reporting.
+    fn parse_mapping_key_or_alias(&mut self, key_props: NodeProperties<'input>) -> Option<Span> {
         if let Some((Token::Alias(name), span)) = self.peek() {
             // Alias key - properties on aliases are invalid
             let alias_name = *name;
@@ -1234,7 +1260,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                 self.error(ErrorKind::PropertiesOnAlias, span);
             }
             self.advance();
-            if !self.anchors.contains_key(alias_name) {
+            if !self.anchors.contains(alias_name) {
                 self.error(ErrorKind::UndefinedAlias, span);
             }
             // Emit Alias event for the key
@@ -1242,14 +1268,16 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                 name: Cow::Borrowed(alias_name),
                 span,
             });
-            Some(Node::new(Value::Alias(Cow::Borrowed(alias_name)), span))
-        } else if let Some(key) = self.parse_scalar() {
-            // Scalar key - apply properties if present
-            if key_props.is_empty() {
-                Some(key)
-            } else {
-                Some(self.apply_properties_and_register(key_props, key))
+            Some(span)
+        } else if let Some((span, _value)) = self.parse_scalar() {
+            // Scalar key - apply properties if present (event already emitted by parse_scalar)
+            if !key_props.is_empty() {
+                self.apply_properties_to_events(&key_props);
+                if let Some((name, _)) = &key_props.anchor {
+                    self.anchors.insert(name);
+                }
             }
+            Some(span)
         } else {
             // Couldn't parse a key - report orphaned properties error
             if let Some((_, anchor_span)) = key_props.anchor {
@@ -1407,8 +1435,8 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
     /// Returns `None` if the node is not a scalar type (e.g., Mapping or Sequence).
     /// For typed scalars like `null`, `true`, `false`, returns the original text representation
     /// so that multiline continuations produce correct results (e.g., `null\n  d` → `null d`).
-    fn extract_scalar_content(node: &Node<'input>) -> Option<String> {
-        match &node.value {
+    fn extract_scalar_content(value: &Value<'_>) -> Option<String> {
+        match value {
             Value::String(string) => Some(string.clone().into_owned()),
             Value::Bool(boolean) => Some(boolean.to_string()),
             Value::Int(integer) => Some(integer.to_string()),
@@ -1480,11 +1508,12 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
     )]
     pub fn consume_plain_scalar_continuations(
         &mut self,
-        initial: Node<'input>,
+        initial: (Span, Value<'input>),
         block_min_indent: IndentLevel,
-    ) -> Node<'input> {
-        let start = initial.span.start_usize();
-        let mut end = initial.span.end_usize();
+    ) -> (Span, Value<'static>) {
+        let (initial_span, initial_value) = initial;
+        let start = initial_span.start_usize();
+        let mut end = initial_span.end_usize();
 
         // For plain scalar continuations, the minimum indent depends on context:
         // - At top level (block_min_indent == 0): continuations can be at column 0
@@ -1494,8 +1523,9 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
         let min_indent = block_min_indent;
 
         // Extract the initial content
-        let Some(mut content) = Self::extract_scalar_content(&initial) else {
-            return initial; // Not a scalar type, return as-is
+        let Some(mut content) = Self::extract_scalar_content(&initial_value) else {
+            // Not a scalar type, return as-is (convert to owned)
+            return (initial_span, initial_value.into_owned());
         };
 
         // Track the index of the scalar event we need to update if continuations are found
@@ -1614,6 +1644,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
 
     /// Finalize a multiline scalar AND update the corresponding event.
     /// This is an instance method that ensures the event buffer is updated when returning early.
+    /// Returns `(Span, Value)` tuple.
     fn finalize_multiline_scalar_with_event(
         &mut self,
         content: String,
@@ -1621,7 +1652,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
         event_index: usize,
         start: usize,
         end: usize,
-    ) -> Node<'input> {
+    ) -> (Span, Value<'static>) {
         if had_continuations {
             self.update_scalar_event(event_index, &content, start, end);
         }

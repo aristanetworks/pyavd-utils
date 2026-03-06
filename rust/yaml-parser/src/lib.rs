@@ -37,6 +37,7 @@
 
 mod error;
 mod event;
+mod event_parser;
 mod lexer;
 mod parser;
 mod span;
@@ -87,58 +88,22 @@ pub use value::{Node, Properties, Value};
 ///
 /// See `test_zero_copy_parsing` in the test module for a usage example.
 pub fn parse(input: &str) -> (Stream<'static>, Vec<ParseError>) {
-    let mut all_docs: Stream<'static> = Vec::new();
-    let mut all_errors = Vec::new();
-
-    // Step 1: Tokenize stream into raw documents
-    let (raw_docs, stream_errors) = lexer::tokenize_stream(input);
-    all_errors.extend(stream_errors);
-
-    for raw_doc in raw_docs {
-        // Step 2: Tokenize document content with context awareness
-        let (tokens, lexer_errors) = lexer::tokenize_document(raw_doc.content);
-
-        // Set span_offset for converting local spans to global coordinates
-        let doc_offset = raw_doc.content_span.start_usize();
-        all_errors.extend(
-            lexer_errors
-                .into_iter()
-                .map(|err| err.with_offset(doc_offset)),
-        );
-
-        // Step 3: Parse tokens into a single document
-        // Each raw document from the stream lexer should produce exactly one parsed document.
-        // The stream lexer already handles document boundaries (--- and ...).
-        // Pass the directives so the parser can validate tag handles.
-        let (doc, errors) = parse_single_document(&tokens, raw_doc.content, &raw_doc.directives);
-        all_errors.extend(errors.into_iter().map(|err| err.with_offset(doc_offset)));
-
-        // Check if document has explicit markers (--- or ...) in the content
-        let has_explicit_marker = raw_doc.content.trim_start().starts_with("---")
-            || raw_doc.content.trim_end().ends_with("...");
-
-        if let Some(doc_) = doc {
-            // Convert to owned data since tokens are dropped at end of loop iteration
-            all_docs.push(doc_.into_owned());
-        } else if has_explicit_marker {
-            // Empty explicit document -> produce null
-            all_docs.push(Node::null(Span::from_usize_range(0..0)));
-        }
-    }
-
-    (all_docs, all_errors)
+    // Phase 3: Use event-based parsing exclusively
+    // The parser emits events, and EventParser reconstructs the AST from them.
+    // This is now the canonical path - see DESIGN_EVENT_LAYER.md
+    parse_via_events(input)
 }
 
 /// Parse YAML using the event-based architecture.
 ///
-/// This function uses the EventParser to build AST from the events emitted
+/// This function uses the [`EventParser`] to build AST from the events emitted
 /// by the parser. It has the same interface as [`parse`].
 ///
 /// Note: The regular [`parse`] function also emits events now, so this function
-/// primarily exists for testing the EventParser reconstruction path.
+/// primarily exists for testing the [`EventParser`] reconstruction path.
 #[must_use]
 pub fn parse_via_events(input: &str) -> (Stream<'static>, Vec<ParseError>) {
-    use parser::EventParser;
+    use event_parser::EventParser;
 
     // Get events from the parser
     let (events, mut all_errors) = emit_events(input);
@@ -176,17 +141,13 @@ pub fn emit_events(input: &str) -> (Vec<Event<'static>>, Vec<ParseError>) {
     let (raw_docs, stream_errors) = lexer::tokenize_stream(input);
     let mut all_errors: Vec<ParseError> = stream_errors;
 
-    // For single document, use parse_single_document which emits all events
-    // For multi-doc, we'll need to handle stream boundaries ourselves
     if raw_docs.is_empty() {
         // Empty input - just stream markers
         return (vec![Event::StreamStart, Event::StreamEnd], all_errors);
     }
 
-    // For now, handle single document case
-    // The parser emits StreamStart, DocumentStart, content, DocumentEnd, StreamEnd
-    if raw_docs.len() == 1 {
-        let raw_doc = &raw_docs[0];
+    // Single document case: parse_single_document emits full stream with markers
+    if let [raw_doc] = &raw_docs[..] {
         let (tokens, lexer_errors) = lexer::tokenize_document(raw_doc.content);
 
         let doc_offset = raw_doc.content_span.start_usize();
@@ -196,67 +157,8 @@ pub fn emit_events(input: &str) -> (Vec<Event<'static>>, Vec<ParseError>) {
                 .map(|err| err.with_offset(doc_offset)),
         );
 
-        let (_node, parser_errors) =
+        let (events, parser_errors) =
             parser::parse_single_document(&tokens, raw_doc.content, &raw_doc.directives);
-
-        // Get events from a fresh parser run
-        let (tokens, _) = lexer::tokenize_document(raw_doc.content);
-        let mut parser = parser::Parser::new(&tokens, raw_doc.content);
-        parser.populate_tag_handles_from_directives(&raw_doc.directives);
-
-        // Run the same logic as parse_single_document but capture events
-        parser.emit(Event::StreamStart);
-        parser.skip_ws_and_newlines();
-
-        let has_doc_start = matches!(parser.peek(), Some((lexer::Token::DocStart, _)));
-        let doc_start_span = parser.current_span();
-
-        if has_doc_start {
-            parser.advance();
-            parser.skip_ws_and_newlines();
-        }
-
-        parser.emit(Event::DocumentStart {
-            explicit: has_doc_start,
-            span: doc_start_span,
-        });
-
-        // Parse the document content (this will emit content events)
-        // Check for empty document first (EOF or DocEnd immediately after DocumentStart)
-        if parser.is_eof() || matches!(parser.peek(), Some((lexer::Token::DocEnd, _))) {
-            // Empty document with explicit start - emit empty scalar
-            if has_doc_start {
-                parser.emit(Event::Scalar {
-                    style: event::ScalarStyle::Plain,
-                    value: std::borrow::Cow::Borrowed(""),
-                    anchor: None,
-                    tag: None,
-                    span: span::Span::from_usize_range(0..0),
-                });
-            }
-        } else {
-            let _ = parser.parse_value(0);
-        }
-
-        parser.skip_ws_and_newlines();
-
-        // Skip dedents
-        while matches!(parser.peek(), Some((lexer::Token::Dedent, _))) {
-            parser.advance();
-        }
-
-        let has_doc_end = matches!(parser.peek(), Some((lexer::Token::DocEnd, _)));
-        let doc_end_span = parser.current_span();
-        if has_doc_end {
-            parser.advance();
-        }
-
-        parser.emit(Event::DocumentEnd {
-            explicit: has_doc_end,
-            span: doc_end_span,
-        });
-
-        parser.emit(Event::StreamEnd);
 
         all_errors.extend(
             parser_errors
@@ -264,16 +166,17 @@ pub fn emit_events(input: &str) -> (Vec<Event<'static>>, Vec<ParseError>) {
                 .map(|err| err.with_offset(doc_offset)),
         );
 
-        let events: Vec<Event<'static>> = parser
-            .take_events()
+        // Offset event spans to be absolute in the original input
+        let owned_events: Vec<Event<'static>> = events
             .into_iter()
-            .map(Event::into_owned)
+            .map(|event| event.with_offset(doc_offset).into_owned())
             .collect();
 
-        return (events, all_errors);
+        return (owned_events, all_errors);
     }
 
-    // Multi-document case: emit StreamStart, then each document, then StreamEnd
+    // Multi-document case: need to emit our own StreamStart/End markers
+    // and strip the per-document stream markers from parse_single_document
     let mut all_events: Vec<Event<'static>> = vec![Event::StreamStart];
 
     for raw_doc in &raw_docs {
@@ -286,65 +189,20 @@ pub fn emit_events(input: &str) -> (Vec<Event<'static>>, Vec<ParseError>) {
                 .map(|err| err.with_offset(doc_offset)),
         );
 
-        let mut parser = parser::Parser::new(&tokens, raw_doc.content);
-        parser.populate_tag_handles_from_directives(&raw_doc.directives);
+        let (events, parser_errors) =
+            parser::parse_single_document(&tokens, raw_doc.content, &raw_doc.directives);
 
-        parser.skip_ws_and_newlines();
-
-        let has_doc_start = matches!(parser.peek(), Some((lexer::Token::DocStart, _)));
-        let doc_start_span = parser.current_span();
-
-        if has_doc_start {
-            parser.advance();
-            parser.skip_ws_and_newlines();
-        }
-
-        parser.emit(Event::DocumentStart {
-            explicit: has_doc_start,
-            span: doc_start_span,
-        });
-
-        // Parse the document content
-        // Check for empty document first (EOF or DocEnd immediately after DocumentStart)
-        if parser.is_eof() || matches!(parser.peek(), Some((lexer::Token::DocEnd, _))) {
-            // Empty document with explicit start - emit empty scalar
-            if has_doc_start {
-                parser.emit(Event::Scalar {
-                    style: event::ScalarStyle::Plain,
-                    value: std::borrow::Cow::Borrowed(""),
-                    anchor: None,
-                    tag: None,
-                    span: span::Span::from_usize_range(0..0),
-                });
+        // Skip StreamStart and StreamEnd from each document's events
+        // Keep only DocumentStart, content, and DocumentEnd
+        // Also offset event spans to be absolute in the original input
+        for event in events {
+            if !matches!(&event, Event::StreamStart | Event::StreamEnd) {
+                all_events.push(event.with_offset(doc_offset).into_owned());
             }
-        } else {
-            let _ = parser.parse_value(0);
-        }
-
-        parser.skip_ws_and_newlines();
-        while matches!(parser.peek(), Some((lexer::Token::Dedent, _))) {
-            parser.advance();
-        }
-
-        let has_doc_end = matches!(parser.peek(), Some((lexer::Token::DocEnd, _)));
-        let doc_end_span = parser.current_span();
-        if has_doc_end {
-            parser.advance();
-        }
-
-        parser.emit(Event::DocumentEnd {
-            explicit: has_doc_end,
-            span: doc_end_span,
-        });
-
-        // Collect events first, then errors (to avoid partial move)
-        for event in parser.take_events() {
-            all_events.push(event.into_owned());
         }
 
         all_errors.extend(
-            parser
-                .errors
+            parser_errors
                 .into_iter()
                 .map(|err| err.with_offset(doc_offset)),
         );

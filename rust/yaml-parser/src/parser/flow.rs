@@ -10,7 +10,7 @@ use crate::error::ErrorKind;
 use crate::event::{CollectionStyle, Event, ScalarStyle};
 use crate::lexer::Token;
 use crate::span::Span;
-use crate::value::{Node, Value};
+use crate::value::Node;
 
 use super::{NodeProperties, Parser};
 
@@ -83,10 +83,15 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
     ///
     /// Emits: `MappingStart` at entry, key/value pairs recursively, `MappingEnd` at exit.
     #[allow(clippy::too_many_lines, reason = "Complex flow mapping logic")]
-    pub fn parse_flow_mapping(&mut self) -> Option<Node<'input>> {
-        let start = self.enter_flow_collection()?;
+    /// Parse a flow mapping: `{ key: value, ... }`
+    ///
+    /// Emits: `MappingStart` at entry, key/value events, `MappingEnd` at exit.
+    /// Returns `true` if a mapping was parsed, `false` otherwise.
+    pub fn parse_flow_mapping(&mut self) -> bool {
+        let Some(start) = self.enter_flow_collection() else {
+            return false;
+        };
         let start_span = Span::from_usize_range(start..start + 1);
-        let mut pairs: Vec<(Node<'input>, Node<'input>)> = Vec::new();
         let mut just_saw_comma = true; // Start true to catch leading comma
 
         // Emit MappingStart event
@@ -104,14 +109,10 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
 
             // Check for end of mapping
             if let Some((Token::FlowMapEnd, end_span)) = self.peek() {
-                let end = end_span.end_usize();
                 self.advance();
                 self.exit_flow_collection();
                 self.emit(Event::MappingEnd { span: end_span });
-                return Some(Node::new(
-                    Value::Mapping(pairs),
-                    Span::from_usize_range(start..end),
-                ));
+                return true;
             }
 
             // Check for consecutive commas (e.g., `{ a: 1, , b: 2 }`)
@@ -130,20 +131,20 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
             if let Some((Token::Colon, _)) = self.peek()
                 && (explicit_key || matches!(self.peek(), Some((Token::Colon, _))))
             {
-                let key = self.emit_null_scalar();
+                // Emit null key
+                self.emit_null_scalar();
                 just_saw_comma = false;
 
                 self.advance(); // consume ':'
                 self.skip_ws_and_newlines();
 
-                let value = if matches!(self.peek(), Some((Token::Comma | Token::FlowMapEnd, _))) {
-                    self.emit_null_scalar()
-                } else {
-                    self.parse_flow_value()
-                        .unwrap_or_else(|| self.emit_null_scalar())
-                };
+                // Parse value or emit null
+                if matches!(self.peek(), Some((Token::Comma | Token::FlowMapEnd, _))) {
+                    self.emit_null_scalar();
+                } else if self.parse_flow_value().is_none() {
+                    self.emit_null_scalar();
+                }
 
-                pairs.push((key, value));
                 self.skip_ws_and_newlines();
 
                 if let Some((Token::Comma, _)) = self.peek() {
@@ -154,46 +155,48 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                 continue;
             }
 
-            // Parse key
-            let key = match self.parse_flow_value() {
-                Some(node) => {
+            // Parse key (events emitted by parse_flow_value)
+            let key_parsed = match self.parse_flow_value() {
+                Some(_) => {
                     just_saw_comma = false;
-                    node
+                    true
                 }
                 None => {
                     if explicit_key {
-                        self.emit_null_scalar()
+                        self.emit_null_scalar();
+                        true
                     } else {
                         self.skip_to_flow_delimiter();
                         if self.pos == loop_start_pos && !self.is_eof() {
                             self.advance();
                         }
-                        continue;
+                        false
                     }
                 }
             };
 
+            if !key_parsed {
+                continue;
+            }
+
             self.skip_ws_and_newlines();
 
             // Check for colon (explicit value) or comma/end (implicit null value)
-            let value = if let Some((Token::Colon, _)) = self.peek() {
+            if let Some((Token::Colon, _)) = self.peek() {
                 self.advance();
                 self.skip_ws_and_newlines();
 
                 if matches!(self.peek(), Some((Token::Comma | Token::FlowMapEnd, _))) {
-                    self.emit_null_scalar()
-                } else {
-                    self.parse_flow_value()
-                        .unwrap_or_else(|| self.emit_null_scalar())
+                    self.emit_null_scalar();
+                } else if self.parse_flow_value().is_none() {
+                    self.emit_null_scalar();
                 }
             } else if matches!(self.peek(), Some((Token::Comma | Token::FlowMapEnd, _))) {
-                self.emit_null_scalar()
+                self.emit_null_scalar();
             } else {
                 self.error(ErrorKind::MissingSeparator, self.current_span());
-                self.emit_null_scalar()
-            };
-
-            pairs.push((key, value));
+                self.emit_null_scalar();
+            }
 
             self.skip_ws_and_newlines();
 
@@ -213,21 +216,20 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
         self.emit(Event::MappingEnd {
             span: Span::from_usize_range(end..end),
         });
-        Some(Node::new(
-            Value::Mapping(pairs),
-            Span::from_usize_range(start..end),
-        ))
+        true
     }
 
-    /// Parse a flow sequence: [ item, ... ]
-    /// Also handles implicit flow mappings like [ key: value, ... ]
+    /// Parse a flow sequence: `[ item, ... ]`
+    /// Also handles implicit flow mappings like `[ key: value, ... ]`
     ///
     /// Emits: `SequenceStart` at entry, items recursively, `SequenceEnd` at exit.
+    /// Returns `true` if a sequence was parsed, `false` otherwise.
     #[allow(clippy::too_many_lines, reason = "Complex flow sequence logic")]
-    pub fn parse_flow_sequence(&mut self) -> Option<Node<'input>> {
-        let start = self.enter_flow_collection()?;
+    pub fn parse_flow_sequence(&mut self) -> bool {
+        let Some(start) = self.enter_flow_collection() else {
+            return false;
+        };
         let start_span = Span::from_usize_range(start..start + 1);
-        let mut items: Vec<Node<'input>> = Vec::new();
         let mut just_saw_comma = true;
 
         // Emit SequenceStart event
@@ -244,14 +246,10 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
             let loop_start_pos = self.pos;
 
             if let Some((Token::FlowSeqEnd, end_span)) = self.peek() {
-                let end = end_span.end_usize();
                 self.advance();
                 self.exit_flow_collection();
                 self.emit(Event::SequenceEnd { span: end_span });
-                return Some(Node::new(
-                    Value::Sequence(items),
-                    Span::from_usize_range(start..end),
-                ));
+                return true;
             }
 
             // Check for consecutive commas
@@ -280,38 +278,24 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                 });
 
                 // Emit empty scalar for null key
-                self.emit(Event::Scalar {
-                    style: ScalarStyle::Plain,
-                    value: Cow::Borrowed(""),
-                    anchor: None,
-                    tag: None,
-                    span: key_span,
-                });
-                let key = Node::null(key_span);
+                self.emit_null_scalar();
 
                 self.advance(); // consume ':'
                 self.skip_ws_and_newlines();
 
-                let value = if matches!(self.peek(), Some((Token::Comma | Token::FlowSeqEnd, _))) {
-                    self.emit_null_scalar()
-                } else {
-                    self.parse_flow_value()
-                        .unwrap_or_else(|| self.emit_null_scalar())
-                };
-
-                let map_start = key_span.start_usize();
-                let map_end = value.span.end_usize();
+                // Parse value or emit null
+                if matches!(self.peek(), Some((Token::Comma | Token::FlowSeqEnd, _)))
+                    || self.parse_flow_value().is_none()
+                {
+                    self.emit_null_scalar();
+                }
 
                 // Emit MappingEnd
+                let map_end = self.last_event_end_position();
                 self.emit(Event::MappingEnd {
                     span: Span::from_usize_range(map_end..map_end),
                 });
 
-                let mapping_node = Node::new(
-                    Value::Mapping(vec![(key, value)]),
-                    Span::from_usize_range(map_start..map_end),
-                );
-                items.push(mapping_node);
                 self.skip_ws_and_newlines();
                 self.handle_flow_entry_end(&mut just_saw_comma, |tok| {
                     matches!(tok, Token::FlowSeqEnd)
@@ -322,14 +306,19 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
             // Check if this could be an implicit single-pair mapping by looking ahead
             // We need to parse the potential key, then check for colon
             let item_start_event_index = self.events.len();
-            if let Some(item) = self.parse_flow_value() {
+            if self.parse_flow_value().is_some() {
                 just_saw_comma = false;
                 self.skip_ws();
 
                 if let Some((Token::Colon, _)) = self.peek() {
                     // This is an implicit single-pair mapping!
                     // Insert MappingStart before the key event(s)
-                    let map_start_span = item.span;
+                    // Get start span from the first event of this item
+                    let map_start_span = self
+                        .events
+                        .get(item_start_event_index)
+                        .and_then(Event::span)
+                        .unwrap_or(start_span);
                     let mapping_start_event = Event::MappingStart {
                         style: CollectionStyle::Flow,
                         anchor: None,
@@ -342,30 +331,21 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                     self.advance();
                     self.skip_ws_and_newlines();
 
-                    let value =
-                        if matches!(self.peek(), Some((Token::Comma | Token::FlowSeqEnd, _))) {
-                            self.emit_null_scalar()
-                        } else {
-                            self.parse_flow_value()
-                                .unwrap_or_else(|| self.emit_null_scalar())
-                        };
-
-                    let map_start = item.span.start_usize();
-                    let map_end = value.span.end_usize();
+                    // Parse value or emit null
+                    if matches!(self.peek(), Some((Token::Comma | Token::FlowSeqEnd, _)))
+                        || self.parse_flow_value().is_none()
+                    {
+                        self.emit_null_scalar();
+                    }
 
                     // Emit MappingEnd
+                    let map_end = self.last_event_end_position();
                     self.emit(Event::MappingEnd {
                         span: Span::from_usize_range(map_end..map_end),
                     });
-
-                    let mapping_node = Node::new(
-                        Value::Mapping(vec![(item, value)]),
-                        Span::from_usize_range(map_start..map_end),
-                    );
-                    items.push(mapping_node);
                 } else {
                     self.skip_ws_and_newlines();
-                    items.push(item);
+                    // Item already emitted by parse_flow_value
                 }
             } else {
                 self.skip_to_flow_delimiter();
@@ -387,10 +367,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
         self.emit(Event::SequenceEnd {
             span: Span::from_usize_range(end..end),
         });
-        Some(Node::new(
-            Value::Sequence(items),
-            Span::from_usize_range(start..end),
-        ))
+        true
     }
 
     /// Parse a value in flow context (no block structures).
@@ -412,18 +389,38 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
         let (tok, span) = self.peek()?;
         let start_span = span;
 
+        #[allow(clippy::if_then_some_else_none, reason = "side effects in the block")]
         match tok {
-            Token::FlowMapStart => self
-                .parse_flow_mapping()
-                .map(|node| self.apply_properties_and_register(props, node)),
-            Token::FlowSeqStart => self
-                .parse_flow_sequence()
-                .map(|node| self.apply_properties_and_register(props, node)),
+            Token::FlowMapStart => {
+                if self.parse_flow_mapping() {
+                    self.apply_properties_to_events(&props);
+                    if let Some((name, _)) = &props.anchor {
+                        self.anchors.insert(name);
+                    }
+                    // Return placeholder - actual structure is in events
+                    Some(Node::null(start_span))
+                } else {
+                    None
+                }
+            }
+            Token::FlowSeqStart => {
+                if self.parse_flow_sequence() {
+                    self.apply_properties_to_events(&props);
+                    if let Some((name, _)) = &props.anchor {
+                        self.anchors.insert(name);
+                    }
+                    // Return placeholder - actual structure is in events
+                    Some(Node::null(start_span))
+                } else {
+                    None
+                }
+            }
             Token::Alias(_) => {
                 if !props.is_empty() {
                     self.error(ErrorKind::PropertiesOnAlias, start_span);
                 }
-                self.parse_alias()
+                // parse_alias emits the Alias event and returns the span
+                self.parse_alias().map(Node::null)
             }
             Token::Plain(string) => {
                 let mut combined = string.to_string();
@@ -460,7 +457,6 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                     }
                 }
 
-                let value = Self::scalar_to_value(combined.clone());
                 let full_span =
                     Span::from_usize_range(start_span.start_usize()..end_span.end_usize());
 
@@ -468,19 +464,29 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                 self.emit(Event::Scalar {
                     style: ScalarStyle::Plain,
                     value: Cow::Owned(combined),
-                    anchor: None, // Properties applied by caller
+                    anchor: None,
                     tag: None,
                     span: full_span,
                 });
 
-                let node = Node::new(value, full_span);
-                Some(self.apply_properties_and_register(props, node))
+                // Apply properties to the emitted event
+                self.apply_properties_to_events(&props);
+                if let Some((name, _)) = &props.anchor {
+                    self.anchors.insert(name);
+                }
+                Some(Node::null(full_span))
             }
             Token::StringStart(_) => {
                 // Parse the quoted string using the new token sequence
                 // In flow context, indentation rules are relaxed, so use min_indent=0
-                self.parse_quoted_string(0)
-                    .map(|node| self.apply_properties_and_register(props, node))
+                // parse_quoted_string emits the Scalar event
+                self.parse_quoted_string(0).map(|(quoted_span, _value)| {
+                    self.apply_properties_to_events(&props);
+                    if let Some((name, _)) = &props.anchor {
+                        self.anchors.insert(name);
+                    }
+                    Node::null(quoted_span)
+                })
             }
             Token::Comma | Token::FlowSeqEnd | Token::FlowMapEnd | Token::Colon => {
                 if props.is_empty() {
@@ -490,16 +496,14 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                     self.emit(Event::Scalar {
                         style: ScalarStyle::Plain,
                         value: Cow::Borrowed(""),
-                        anchor: props.anchor.as_ref().map(|(name, _)| Cow::Borrowed(*name)),
-                        tag: props.tag.as_ref().map(|(tag, _)| tag.clone()),
+                        anchor: props.anchor.map(|(name, sp)| (Cow::Borrowed(name), sp)),
+                        tag: props.tag.clone(),
                         span: start_span,
                     });
-                    let null_node = Node::null(start_span);
-                    let node_with_props = props.clone().apply_to(null_node);
                     if let Some((name, _)) = &props.anchor {
-                        self.anchors.insert(name, node_with_props.clone());
+                        self.anchors.insert(name);
                     }
-                    Some(node_with_props)
+                    Some(Node::null(start_span))
                 }
             }
             _ => None,

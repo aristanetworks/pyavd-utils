@@ -7,6 +7,13 @@
 //! This module runs the parser against the official YAML 1.2 test suite
 //! from <https://github.com/yaml/yaml-test-suite>.
 
+// Allow pedantic lints in test code where they add noise without benefit
+#![allow(
+    clippy::min_ident_chars,
+    reason = "single-char names are fine in tests"
+)]
+#![allow(clippy::indexing_slicing, reason = "panics are acceptable in tests")]
+
 use std::fs;
 use std::path::Path;
 
@@ -14,10 +21,12 @@ use yaml_parser::{Node, Value, parse};
 
 /// Known failing tests that are tracked in ARCHITECTURE.md.
 /// These represent parser gaps that need to be fixed.
-/// Note: The Event Layer passes 100% of tests (402/402). These failures are in
-/// the legacy AST-based test path that will be deprecated once the Event Layer
-/// becomes the primary interface.
-const KNOWN_FAILING_TESTS: usize = 18;
+/// After fixing:
+/// 1. `EventParser::apply_properties` to NOT extend spans to include anchor/tag syntax
+/// 2. `emit_events` to offset event spans for documents with leading comments
+///
+/// The parser now passes 100% of YAML Test Suite tests (842/842).
+const KNOWN_FAILING_TESTS: usize = 0;
 
 /// Event notation for YAML test suite comparison.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1259,16 +1268,16 @@ fn library_events_to_test_events(events: &[yaml_parser::Event<'_>]) -> Vec<Event
                 style, anchor, tag, ..
             } => Event::MappingStart {
                 flow: matches!(style, yaml_parser::CollectionStyle::Flow),
-                anchor: anchor.as_ref().map(|s| s.to_string()),
-                tag: tag.as_ref().map(|s| s.to_string()),
+                anchor: anchor.as_ref().map(|(s, _)| s.to_string()),
+                tag: tag.as_ref().map(|(s, _)| s.to_string()),
             },
             yaml_parser::Event::MappingEnd { .. } => Event::MappingEnd,
             yaml_parser::Event::SequenceStart {
                 style, anchor, tag, ..
             } => Event::SequenceStart {
                 flow: matches!(style, yaml_parser::CollectionStyle::Flow),
-                anchor: anchor.as_ref().map(|s| s.to_string()),
-                tag: tag.as_ref().map(|s| s.to_string()),
+                anchor: anchor.as_ref().map(|(s, _)| s.to_string()),
+                tag: tag.as_ref().map(|(s, _)| s.to_string()),
             },
             yaml_parser::Event::SequenceEnd { .. } => Event::SequenceEnd,
             yaml_parser::Event::Scalar {
@@ -1286,8 +1295,8 @@ fn library_events_to_test_events(events: &[yaml_parser::Event<'_>]) -> Vec<Event
                     yaml_parser::ScalarStyle::Folded => ScalarStyle::Folded,
                 },
                 value: value.to_string(),
-                anchor: anchor.as_ref().map(|s| s.to_string()),
-                tag: tag.as_ref().map(|s| s.to_string()),
+                anchor: anchor.as_ref().map(|(s, _)| s.to_string()),
+                tag: tag.as_ref().map(|(s, _)| s.to_string()),
             },
             yaml_parser::Event::Alias { name, .. } => Event::Alias {
                 name: name.to_string(),
