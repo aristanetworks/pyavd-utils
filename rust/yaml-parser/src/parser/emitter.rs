@@ -11,6 +11,22 @@
 //! The `Emitter` is validated against the batch `Parser` - both must
 //! produce identical event sequences for all inputs.
 
+// This module is work-in-progress. Allow dead code during development.
+#![allow(dead_code, reason = "WIP: Emitter is under active development")]
+#![allow(
+    clippy::map_unwrap_or,
+    clippy::match_same_arms,
+    clippy::collapsible_if,
+    clippy::too_many_lines,
+    clippy::shadow_reuse,
+    clippy::redundant_locals,
+    clippy::unnecessary_wraps,
+    clippy::type_complexity,
+    clippy::unused_self,
+    clippy::string_slice,
+    reason = "WIP: These will be addressed as the emitter matures"
+)]
+
 use std::borrow::Cow;
 use std::collections::HashSet;
 
@@ -360,7 +376,7 @@ impl<'tokens: 'input, 'input> Emitter<'tokens, 'input> {
         false
     }
 
-    /// Populate tag handles from TagDirective tokens.
+    /// Populate tag handles from `TagDirective` tokens.
     fn populate_tag_handles(&mut self) {
         self.tag_handles.clear();
         // Add default handles

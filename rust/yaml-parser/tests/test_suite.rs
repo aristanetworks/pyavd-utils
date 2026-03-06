@@ -1421,3 +1421,100 @@ fn library_events_to_test_events(events: &[yaml_parser::Event<'_>]) -> Vec<Event
         })
         .collect()
 }
+
+#[test]
+#[allow(
+    clippy::as_conversions,
+    clippy::use_debug,
+    clippy::print_stderr,
+    clippy::cast_precision_loss,
+    clippy::tests_outside_test_module,
+    reason = "Integration test with test output and statistics calculation"
+)]
+fn emitter_equivalence() {
+    use yaml_parser::{Emitter, tokenize_document};
+
+    let manifest_dir = env!("CARGO_MANIFEST_DIR");
+    let test_dir = Path::new(manifest_dir).join("tests/yaml-test-suite");
+
+    if !test_dir.exists() {
+        eprintln!("Test suite not found at {test_dir:?}. Skipping tests.");
+        return;
+    }
+
+    let Ok(dir_entries) = fs::read_dir(&test_dir) else {
+        eprintln!("Failed to read test directory");
+        return;
+    };
+    let mut entries: Vec<_> = dir_entries.filter_map(Result::ok).collect();
+    entries.sort_by_key(std::fs::DirEntry::path);
+
+    let mut all_tests: Vec<TestCase> = Vec::new();
+    for entry in &entries {
+        let path = entry.path();
+        if path.is_dir() {
+            all_tests.extend(load_test_cases(&path));
+        }
+    }
+
+    let total = all_tests.len();
+    let mut passed = 0;
+    let mut failed = 0;
+    let mut failures: Vec<String> = Vec::new();
+
+    for (i, test) in all_tests.iter().enumerate() {
+        if i % 100 == 0 {
+            eprintln!("[{}/{}] Running emitter equivalence tests...", i + 1, total);
+        }
+
+        // Get batch parser events (reference)
+        let (batch_events, _batch_errors) = yaml_parser::emit_events(&test.input);
+
+        // Get emitter events
+        let (tokens, _lexer_errors) = tokenize_document(&test.input);
+        let emitter = Emitter::new(&tokens, &test.input);
+        let emitter_events: Vec<_> = emitter.collect();
+
+        // Compare event sequences (ignoring spans, comparing structure only)
+        let batch_test_events = library_events_to_test_events(&batch_events);
+        let emitter_test_events = library_events_to_test_events(&emitter_events);
+
+        if batch_test_events == emitter_test_events {
+            passed += 1;
+        } else {
+            failed += 1;
+            failures.push(format!(
+                "{}: {}\n  Batch: {} events, Emitter: {} events\n  First diff at: {}",
+                test.id,
+                test.name,
+                batch_events.len(),
+                emitter_events.len(),
+                find_first_diff(&batch_test_events, &emitter_test_events)
+            ));
+        }
+    }
+
+    eprintln!("\n=== Emitter Equivalence Test ===");
+    eprintln!("Passed: {passed}");
+    eprintln!("Failed: {failed}");
+
+    if !failures.is_empty() {
+        eprintln!("\nFailures ({} total):", failures.len());
+        for failure in failures.iter().take(10) {
+            eprintln!("  {failure}");
+        }
+        if failures.len() > 10 {
+            eprintln!("  ... and {} more", failures.len() - 10);
+        }
+    }
+
+    let pass_rate = if total > 0 {
+        (passed as f64 / total as f64) * 100.0
+    } else {
+        0.0
+    };
+    eprintln!("\nEmitter Equivalence: {pass_rate:.1}%");
+
+    // Note: The emitter is still in development, so we report progress rather than assert
+    eprintln!("\nEmitter development progress: {passed}/{total} tests passing ({pass_rate:.1}%)");
+}

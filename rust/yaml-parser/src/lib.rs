@@ -46,7 +46,7 @@ mod value;
 pub use error::{ErrorKind, ParseError};
 pub use event::{CollectionStyle, Event, ScalarStyle};
 pub use lexer::{RichToken, Token, tokenize_document};
-pub use parser::{Stream, StreamingParser, parse_single_document, parse_tokens};
+pub use parser::{Emitter, Stream, StreamingParser, parse_single_document, parse_tokens};
 pub use span::{
     BytePosition, IndentLevel, Position, SourceMap, Span, Spanned, indent_to_usize, pos_to_usize,
     usize_to_indent, usize_to_pos,
