@@ -50,7 +50,7 @@ enum StreamState {
 ///
 /// Step 6: This determines which parsing path to take based on the first token.
 /// Each variant currently delegates to the batch parser's corresponding method.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy)]
 enum ValueKind {
     /// Block sequence starting with `-`
     BlockSequence,
@@ -72,61 +72,19 @@ enum ValueKind {
     Empty,
 }
 
-/// Parsing context stack entry.
-///
-/// Step 7: This tracks where we are in nested structures.
-/// Step 8: Updated by `update_context_for_event()` as events are emitted.
-/// Step 9+: Will be used alongside `ValueState` to drive state-machine parsing.
-#[derive(Debug, Clone)]
-#[allow(
-    dead_code,
-    reason = "Fields will be used in future state-machine steps"
-)]
-enum ParseContext {
-    /// Root document level
-    Document,
-    /// Inside a block sequence at given indent level
-    BlockSequence { indent: crate::span::IndentLevel },
-    /// Inside a block mapping at given indent level
-    BlockMapping { indent: crate::span::IndentLevel },
-    /// Inside a flow sequence at given depth
-    FlowSequence { depth: usize },
-    /// Inside a flow mapping at given depth
-    FlowMapping { depth: usize },
-}
-
-/// Value parsing state for state-driven parsing.
-///
-/// Step 9: This represents what we're currently parsing within a document.
-/// The state stack allows us to handle nested structures without recursion.
-#[derive(Debug, Clone)]
-#[allow(dead_code, reason = "Will be used in future state-machine steps")]
-enum ValueState {
-    /// Dispatch to appropriate parser based on token.
-    /// This is the `parse_value()` equivalent in the state machine.
-    Dispatch {
-        min_indent: crate::span::IndentLevel,
-    },
-    /// Delegate to batch parser for complex cases we haven't converted yet.
-    DelegateToBatch,
-}
-
 /// A streaming YAML parser that implements `Iterator<Item = Event>`.
 ///
 /// This parser yields events one at a time, enabling incremental processing
 /// of YAML documents without loading the entire event stream into memory.
 ///
-/// # Current Implementation (Step 9)
+/// # Current Implementation (Step 5)
 ///
-/// Document boundaries (`DocumentStart`/`DocumentEnd`) are state-driven.
-/// Value dispatch classifies by `ValueKind`. Context stack tracks nesting.
-/// Value state stack infrastructure is in place for future state-driven parsing.
-/// Content parsing still delegates to the batch parser.
+/// Document boundaries (`DocumentStart`/`DocumentEnd`) are now state-driven.
+/// Content parsing still delegates to the batch parser and drains from a buffer.
 ///
-/// # Future Implementation (Steps 9+)
+/// # Future Implementation (Steps 6+)
 ///
-/// Will progressively convert content parsing to true state-driven emission
-/// using the `value_stack` to track nested parsing states.
+/// Will progressively convert content parsing to state-driven as well.
 #[derive(Debug)]
 pub struct StreamingParser<'tokens, 'input> {
     /// The underlying batch parser.
@@ -137,13 +95,6 @@ pub struct StreamingParser<'tokens, 'input> {
     state: StreamState,
     /// Whether we've emitted `StreamStart`.
     emitted_stream_start: bool,
-    /// Stack tracking nested parsing contexts (observational).
-    /// Updated as events are emitted to track where we are in nested structures.
-    context_stack: Vec<ParseContext>,
-    /// Stack tracking what parsing action to take next (operational).
-    /// Step 9: Foundation for state-driven parsing of nested structures.
-    #[allow(dead_code, reason = "Will be used in future state-machine steps")]
-    value_stack: Vec<ValueState>,
 }
 
 impl<'tokens: 'input, 'input> StreamingParser<'tokens, 'input> {
@@ -155,8 +106,6 @@ impl<'tokens: 'input, 'input> StreamingParser<'tokens, 'input> {
             buffer: VecDeque::new(),
             state: StreamState::Ready,
             emitted_stream_start: false,
-            context_stack: Vec::new(),
-            value_stack: Vec::new(),
         }
     }
 
@@ -304,16 +253,13 @@ impl<'tokens: 'input, 'input> StreamingParser<'tokens, 'input> {
 
     /// Dispatch to the appropriate parser based on value kind and parse content into buffer.
     ///
-    /// Step 7: Tracks parsing context via `context_stack` while still delegating to batch parser.
-    /// Future steps will use the context stack to drive state-machine parsing.
+    /// Step 6: Each value kind currently delegates to the batch parser's method.
+    /// Future steps will convert these to state-driven parsing.
     fn dispatch_and_parse_content(&mut self, has_explicit_start: bool) {
         use crate::event::ScalarStyle;
         use std::borrow::Cow;
 
         let kind = self.classify_value();
-
-        // Push document context
-        self.context_stack.push(ParseContext::Document);
 
         match kind {
             ValueKind::Empty => {
@@ -347,9 +293,6 @@ impl<'tokens: 'input, 'input> StreamingParser<'tokens, 'input> {
                 }
             }
         }
-
-        // Pop document context
-        self.context_stack.pop();
     }
 
     /// Finish parsing the document and determine if it ends explicitly.
@@ -433,56 +376,6 @@ impl<'tokens: 'input, 'input> StreamingParser<'tokens, 'input> {
             self.parser.skip_ws_and_newlines();
         }
     }
-
-    /// Update the context stack based on an event being emitted.
-    ///
-    /// Step 8: This observes events as they're drained from the buffer and
-    /// maintains the context stack accordingly. This prepares for future steps
-    /// where the context stack will drive parsing decisions.
-    fn update_context_for_event(&mut self, event: &Event<'_>) {
-        use crate::event::CollectionStyle;
-
-        match event {
-            Event::SequenceStart { style, .. } => {
-                let ctx = match style {
-                    CollectionStyle::Block => ParseContext::BlockSequence { indent: 0 },
-                    CollectionStyle::Flow => ParseContext::FlowSequence {
-                        depth: self.parser.flow_depth,
-                    },
-                };
-                self.context_stack.push(ctx);
-            }
-            Event::SequenceEnd { .. } => {
-                // Pop the sequence context
-                if matches!(
-                    self.context_stack.last(),
-                    Some(ParseContext::BlockSequence { .. } | ParseContext::FlowSequence { .. })
-                ) {
-                    self.context_stack.pop();
-                }
-            }
-            Event::MappingStart { style, .. } => {
-                let ctx = match style {
-                    CollectionStyle::Block => ParseContext::BlockMapping { indent: 0 },
-                    CollectionStyle::Flow => ParseContext::FlowMapping {
-                        depth: self.parser.flow_depth,
-                    },
-                };
-                self.context_stack.push(ctx);
-            }
-            Event::MappingEnd { .. } => {
-                // Pop the mapping context
-                if matches!(
-                    self.context_stack.last(),
-                    Some(ParseContext::BlockMapping { .. } | ParseContext::FlowMapping { .. })
-                ) {
-                    self.context_stack.pop();
-                }
-            }
-            // Scalar, Alias, DocumentStart/End, StreamStart/End don't change nesting
-            _ => {}
-        }
-    }
 }
 
 impl<'tokens: 'input, 'input> Iterator for StreamingParser<'tokens, 'input> {
@@ -529,8 +422,6 @@ impl<'tokens: 'input, 'input> Iterator for StreamingParser<'tokens, 'input> {
 
                 StreamState::DrainBuffer => {
                     if let Some(event) = self.buffer.pop_front() {
-                        // Step 8: Track context based on events being emitted
-                        self.update_context_for_event(&event);
                         return Some(event);
                     }
                     // Buffer empty, finish document
