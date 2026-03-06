@@ -50,7 +50,7 @@ enum StreamState {
 ///
 /// Step 6: This determines which parsing path to take based on the first token.
 /// Each variant currently delegates to the batch parser's corresponding method.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ValueKind {
     /// Block sequence starting with `-`
     BlockSequence,
@@ -72,19 +72,43 @@ enum ValueKind {
     Empty,
 }
 
+/// Parsing context stack entry.
+///
+/// Step 7: This tracks where we are in nested structures.
+/// Currently used for observation only - actual parsing still delegates to batch parser.
+/// Future steps will use this to drive state-machine parsing.
+#[derive(Debug, Clone)]
+#[allow(
+    dead_code,
+    reason = "Fields will be used in future state-machine steps"
+)]
+enum ParseContext {
+    /// Root document level
+    Document,
+    /// Inside a block sequence at given indent level
+    BlockSequence { indent: crate::span::IndentLevel },
+    /// Inside a block mapping at given indent level
+    BlockMapping { indent: crate::span::IndentLevel },
+    /// Inside a flow sequence at given depth
+    FlowSequence { depth: usize },
+    /// Inside a flow mapping at given depth
+    FlowMapping { depth: usize },
+}
+
 /// A streaming YAML parser that implements `Iterator<Item = Event>`.
 ///
 /// This parser yields events one at a time, enabling incremental processing
 /// of YAML documents without loading the entire event stream into memory.
 ///
-/// # Current Implementation (Step 5)
+/// # Current Implementation (Step 7)
 ///
-/// Document boundaries (`DocumentStart`/`DocumentEnd`) are now state-driven.
-/// Content parsing still delegates to the batch parser and drains from a buffer.
+/// Document boundaries (`DocumentStart`/`DocumentEnd`) are state-driven.
+/// Value dispatch classifies by `ValueKind`. Context stack tracks nesting.
+/// Content parsing still delegates to the batch parser.
 ///
-/// # Future Implementation (Steps 6+)
+/// # Future Implementation (Steps 8+)
 ///
-/// Will progressively convert content parsing to state-driven as well.
+/// Will progressively convert content parsing to true state-driven emission.
 #[derive(Debug)]
 pub struct StreamingParser<'tokens, 'input> {
     /// The underlying batch parser.
@@ -95,6 +119,9 @@ pub struct StreamingParser<'tokens, 'input> {
     state: StreamState,
     /// Whether we've emitted `StreamStart`.
     emitted_stream_start: bool,
+    /// Stack tracking nested parsing contexts.
+    /// Step 7: Currently used to track document context; will drive nested parsing in future.
+    context_stack: Vec<ParseContext>,
 }
 
 impl<'tokens: 'input, 'input> StreamingParser<'tokens, 'input> {
@@ -106,6 +133,7 @@ impl<'tokens: 'input, 'input> StreamingParser<'tokens, 'input> {
             buffer: VecDeque::new(),
             state: StreamState::Ready,
             emitted_stream_start: false,
+            context_stack: Vec::new(),
         }
     }
 
@@ -253,13 +281,16 @@ impl<'tokens: 'input, 'input> StreamingParser<'tokens, 'input> {
 
     /// Dispatch to the appropriate parser based on value kind and parse content into buffer.
     ///
-    /// Step 6: Each value kind currently delegates to the batch parser's method.
-    /// Future steps will convert these to state-driven parsing.
+    /// Step 7: Tracks parsing context via `context_stack` while still delegating to batch parser.
+    /// Future steps will use the context stack to drive state-machine parsing.
     fn dispatch_and_parse_content(&mut self, has_explicit_start: bool) {
         use crate::event::ScalarStyle;
         use std::borrow::Cow;
 
         let kind = self.classify_value();
+
+        // Push document context
+        self.context_stack.push(ParseContext::Document);
 
         match kind {
             ValueKind::Empty => {
@@ -293,6 +324,9 @@ impl<'tokens: 'input, 'input> StreamingParser<'tokens, 'input> {
                 }
             }
         }
+
+        // Pop document context
+        self.context_stack.pop();
     }
 
     /// Finish parsing the document and determine if it ends explicitly.
