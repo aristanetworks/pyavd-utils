@@ -410,6 +410,56 @@ impl<'tokens: 'input, 'input> StreamingParser<'tokens, 'input> {
             self.parser.skip_ws_and_newlines();
         }
     }
+
+    /// Update the context stack based on an event being emitted.
+    ///
+    /// Step 8: This observes events as they're drained from the buffer and
+    /// maintains the context stack accordingly. This prepares for future steps
+    /// where the context stack will drive parsing decisions.
+    fn update_context_for_event(&mut self, event: &Event<'_>) {
+        use crate::event::CollectionStyle;
+
+        match event {
+            Event::SequenceStart { style, .. } => {
+                let ctx = match style {
+                    CollectionStyle::Block => ParseContext::BlockSequence { indent: 0 },
+                    CollectionStyle::Flow => ParseContext::FlowSequence {
+                        depth: self.parser.flow_depth,
+                    },
+                };
+                self.context_stack.push(ctx);
+            }
+            Event::SequenceEnd { .. } => {
+                // Pop the sequence context
+                if matches!(
+                    self.context_stack.last(),
+                    Some(ParseContext::BlockSequence { .. } | ParseContext::FlowSequence { .. })
+                ) {
+                    self.context_stack.pop();
+                }
+            }
+            Event::MappingStart { style, .. } => {
+                let ctx = match style {
+                    CollectionStyle::Block => ParseContext::BlockMapping { indent: 0 },
+                    CollectionStyle::Flow => ParseContext::FlowMapping {
+                        depth: self.parser.flow_depth,
+                    },
+                };
+                self.context_stack.push(ctx);
+            }
+            Event::MappingEnd { .. } => {
+                // Pop the mapping context
+                if matches!(
+                    self.context_stack.last(),
+                    Some(ParseContext::BlockMapping { .. } | ParseContext::FlowMapping { .. })
+                ) {
+                    self.context_stack.pop();
+                }
+            }
+            // Scalar, Alias, DocumentStart/End, StreamStart/End don't change nesting
+            _ => {}
+        }
+    }
 }
 
 impl<'tokens: 'input, 'input> Iterator for StreamingParser<'tokens, 'input> {
@@ -456,6 +506,8 @@ impl<'tokens: 'input, 'input> Iterator for StreamingParser<'tokens, 'input> {
 
                 StreamState::DrainBuffer => {
                     if let Some(event) = self.buffer.pop_front() {
+                        // Step 8: Track context based on events being emitted
+                        self.update_context_for_event(&event);
                         return Some(event);
                     }
                     // Buffer empty, finish document
