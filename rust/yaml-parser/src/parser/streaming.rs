@@ -5,58 +5,86 @@
 //! Streaming parser that implements `Iterator<Item = Event>`.
 //!
 //! This module provides `StreamingParser`, which wraps the batch `Parser`
-//! and exposes events through an iterator interface. This is Step 4 of the
+//! and exposes events through an iterator interface. This is Step 5 of the
 //! streaming parser transformation (see `REFACTORING_STREAMING_PARSER.md`).
 //!
-//! Initially, this delegates to the batch parser and drains from an internal buffer.
-//! Future steps will convert this to a true state-machine-based streaming parser.
+//! Step 5: Document-level states are now handled by an explicit state machine.
+//! `DocumentStart` and `DocumentEnd` events are emitted directly by `next()`.
+//! Content parsing still delegates to the batch parser.
 
 use std::collections::VecDeque;
 
 use crate::error::ParseError;
 use crate::event::Event;
-use crate::lexer::RichToken;
+use crate::lexer::{RichToken, Token};
+use crate::span::Span;
 
 use super::Parser;
+
+/// State machine for document-level parsing.
+///
+/// This enum tracks where we are in the document lifecycle:
+/// - `Ready`: Ready to start a new document (or emit `StreamEnd` if at EOF)
+/// - `EmitDocStart`: About to emit `DocumentStart` event
+/// - `ParseDocContent`: Parsing document content (delegates to batch parser)
+/// - `DrainBuffer`: Draining events from the buffer after content parsing
+/// - `EmitDocEnd`: About to emit `DocumentEnd` event
+/// - `Done`: Stream has ended
+#[derive(Debug, Clone)]
+enum StreamState {
+    /// Ready to start processing the next document.
+    Ready,
+    /// About to emit `DocumentStart`.
+    EmitDocStart { explicit: bool, span: Span },
+    /// Parsing document content - delegates to batch parser.
+    ParseDocContent,
+    /// Draining buffered events from content parsing.
+    DrainBuffer,
+    /// About to emit `DocumentEnd`.
+    EmitDocEnd { explicit: bool, span: Span },
+    /// Stream has ended.
+    Done,
+}
 
 /// A streaming YAML parser that implements `Iterator<Item = Event>`.
 ///
 /// This parser yields events one at a time, enabling incremental processing
 /// of YAML documents without loading the entire event stream into memory.
 ///
-/// # Current Implementation (Step 4)
+/// # Current Implementation (Step 5)
 ///
-/// Currently, this wraps the batch `Parser` and drains events from an internal
-/// buffer. Documents are parsed one at a time when the buffer is exhausted.
+/// Document boundaries (`DocumentStart`/`DocumentEnd`) are now state-driven.
+/// Content parsing still delegates to the batch parser and drains from a buffer.
 ///
-/// # Future Implementation (Steps 5+)
+/// # Future Implementation (Steps 6+)
 ///
-/// Will be converted to a true state-machine-based parser that only advances
-/// token consumption when `next()` is called.
+/// Will progressively convert content parsing to state-driven as well.
 #[derive(Debug)]
 pub struct StreamingParser<'tokens, 'input> {
     /// The underlying batch parser.
     parser: Parser<'tokens, 'input>,
-    /// Buffer of events to drain.
+    /// Buffer of events to drain (used during content parsing).
     buffer: VecDeque<Event<'input>>,
-    /// Whether we've emitted StreamStart.
+    /// Current state in the document lifecycle.
+    state: StreamState,
+    /// Whether we've emitted `StreamStart`.
     emitted_stream_start: bool,
-    /// Whether we've emitted StreamEnd.
-    emitted_stream_end: bool,
 }
 
 impl<'tokens: 'input, 'input> StreamingParser<'tokens, 'input> {
     /// Create a new streaming parser from a token slice.
+    #[must_use]
     pub fn new(tokens: &'tokens [RichToken<'input>], input: &'input str) -> Self {
         Self {
             parser: Parser::new(tokens, input),
             buffer: VecDeque::new(),
+            state: StreamState::Ready,
             emitted_stream_start: false,
-            emitted_stream_end: false,
         }
     }
 
     /// Get any parse errors encountered so far.
+    #[must_use]
     pub fn errors(&self) -> &[ParseError] {
         &self.parser.errors
     }
@@ -66,24 +94,25 @@ impl<'tokens: 'input, 'input> StreamingParser<'tokens, 'input> {
         std::mem::take(&mut self.parser.errors)
     }
 
-    /// Fill the buffer by parsing the next document.
-    /// Returns true if events were added, false if at EOF.
-    fn fill_buffer(&mut self) -> bool {
+    /// Skip whitespace, orphan doc-end markers, and directives.
+    /// Returns `Some((explicit, span))` if a document should be started,
+    /// or `None` if at EOF (or directive without document error).
+    fn prepare_document(&mut self) -> Option<(bool, Span)> {
         // Skip initial whitespace/newlines
         self.parser.skip_ws_and_newlines();
 
         if self.parser.is_eof() {
-            return false;
+            return None;
         }
 
         // Skip any orphan DocEnd markers
-        while matches!(self.parser.peek(), Some((crate::lexer::Token::DocEnd, _))) {
+        while matches!(self.parser.peek(), Some((Token::DocEnd, _))) {
             self.parser.advance();
             self.parser.skip_ws_and_newlines();
         }
 
         if self.parser.is_eof() {
-            return false;
+            return None;
         }
 
         // Populate tag handles for this document
@@ -91,14 +120,12 @@ impl<'tokens: 'input, 'input> StreamingParser<'tokens, 'input> {
 
         // Track directives for "directive without document" error
         let mut has_directive_in_prologue = false;
-        let mut first_directive_span = crate::span::Span::from_usize_range(0..0);
+        let mut first_directive_span = Span::from_usize_range(0..0);
 
         // Skip directive tokens
         while let Some((tok, span)) = self.parser.peek() {
             match tok {
-                crate::lexer::Token::YamlDirective(_)
-                | crate::lexer::Token::TagDirective(_)
-                | crate::lexer::Token::ReservedDirective(_) => {
+                Token::YamlDirective(_) | Token::TagDirective(_) | Token::ReservedDirective(_) => {
                     if !has_directive_in_prologue {
                         first_directive_span = span;
                     }
@@ -110,35 +137,179 @@ impl<'tokens: 'input, 'input> StreamingParser<'tokens, 'input> {
             }
         }
 
-        // Check for "directive without document" error:
-        // If we saw directives but now hit EOF or `...` (doc end), that's an error
+        // Check for "directive without document" error
         if has_directive_in_prologue {
-            let at_doc_end_or_eof = self.parser.is_eof()
-                || matches!(self.parser.peek(), Some((crate::lexer::Token::DocEnd, _)));
+            let at_doc_end_or_eof =
+                self.parser.is_eof() || matches!(self.parser.peek(), Some((Token::DocEnd, _)));
             if at_doc_end_or_eof {
                 self.parser.error(
                     crate::error::ErrorKind::TrailingContent,
                     first_directive_span,
                 );
-                // Return false to skip to next iteration / EOF check
-                return false;
+                return None;
             }
         }
 
         if self.parser.is_eof() {
-            return false;
+            return None;
         }
 
-        // Parse one document
-        self.parser.parse_document_events();
-        self.parser.skip_ws_and_newlines();
+        // Check for explicit document start marker `---`
+        let has_doc_start = matches!(self.parser.peek(), Some((Token::DocStart, _)));
+        let doc_start_span = self.parser.current_span();
 
-        // Move events from parser to our buffer
-        for event in self.parser.take_events() {
-            self.buffer.push_back(event);
+        if has_doc_start {
+            self.parser.advance(); // consume DocStart
+
+            // Skip whitespace after `---` (but NOT newlines yet)
+            while matches!(
+                self.parser.peek(),
+                Some((Token::Whitespace | Token::WhitespaceWithTabs, _))
+            ) {
+                self.parser.advance();
+            }
+
+            // Check if there's content on the same line as `---`
+            let content_on_start_line = !self.parser.is_eof()
+                && !matches!(
+                    self.parser.peek(),
+                    Some((Token::LineStart(_) | Token::DocEnd, _))
+                );
+
+            // Skip newlines after `---`
+            self.parser.skip_ws_and_newlines();
+
+            // Check for block mapping error on start line
+            if content_on_start_line && !self.parser.is_eof() {
+                let has_block_mapping_on_start_line =
+                    self.parser.check_block_mapping_on_start_line();
+                if has_block_mapping_on_start_line {
+                    self.parser.error(
+                        crate::error::ErrorKind::ContentOnSameLine,
+                        self.parser.current_span(),
+                    );
+                }
+            }
         }
 
-        !self.buffer.is_empty()
+        Some((has_doc_start, doc_start_span))
+    }
+
+    /// Parse document content into the buffer.
+    /// This delegates to the batch parser's content parsing.
+    fn parse_content_into_buffer(&mut self, has_explicit_start: bool) {
+        use crate::event::ScalarStyle;
+        use std::borrow::Cow;
+
+        // Check if document is empty
+        if self.parser.is_eof()
+            || matches!(
+                self.parser.peek(),
+                Some((Token::DocEnd | Token::DocStart, _))
+            )
+        {
+            // Empty document after explicit ---
+            if has_explicit_start {
+                let null_span = Span::from_usize_range(0..0);
+                self.buffer.push_back(Event::Scalar {
+                    style: ScalarStyle::Plain,
+                    value: Cow::Borrowed(""),
+                    anchor: None,
+                    tag: None,
+                    span: null_span,
+                });
+            }
+        } else {
+            // Parse document content using the batch parser
+            let _ = self.parser.parse_value(0);
+
+            // Move events from parser to our buffer
+            for event in self.parser.take_events() {
+                self.buffer.push_back(event);
+            }
+        }
+    }
+
+    /// Finish parsing the document and determine if it ends explicitly.
+    /// Returns `(explicit, span)` for the `DocumentEnd` event.
+    fn finish_document(&mut self) -> (bool, Span) {
+        // After parsing, skip remaining whitespace and Dedent tokens
+        loop {
+            self.parser.skip_ws_and_newlines();
+            if matches!(self.parser.peek(), Some((Token::Dedent, _))) {
+                self.parser.advance();
+            } else {
+                break;
+            }
+        }
+
+        // Consume any remaining content that belongs to this document
+        self.consume_trailing_content();
+
+        // Check for document end marker `...`
+        let has_doc_end = matches!(self.parser.peek(), Some((Token::DocEnd, _)));
+        let doc_end_span = self.parser.current_span();
+        if has_doc_end {
+            self.parser.advance(); // consume DocEnd
+            self.parser.skip_ws_and_newlines();
+        }
+
+        // Skip trailing Dedent tokens
+        while matches!(self.parser.peek(), Some((Token::Dedent, _))) {
+            self.parser.advance();
+        }
+
+        (has_doc_end, doc_end_span)
+    }
+
+    /// Consume trailing content before the next document marker.
+    fn consume_trailing_content(&mut self) {
+        while !self.parser.is_eof() {
+            if matches!(self.parser.peek(), Some((Token::Dedent, _))) {
+                self.parser.advance();
+                continue;
+            }
+            // Stop at document markers
+            if matches!(
+                self.parser.peek(),
+                Some((Token::DocStart | Token::DocEnd, _))
+            ) {
+                break;
+            }
+            // Stop at directives
+            if matches!(
+                self.parser.peek(),
+                Some((
+                    Token::YamlDirective(_) | Token::TagDirective(_) | Token::ReservedDirective(_),
+                    _
+                ))
+            ) {
+                break;
+            }
+
+            // Check for orphan content
+            if let Some((token, span)) = self.parser.peek() {
+                let is_content = matches!(
+                    token,
+                    Token::Plain(_)
+                        | Token::StringStart(_)
+                        | Token::Colon
+                        | Token::MappingKey
+                        | Token::BlockSeqIndicator
+                        | Token::Anchor(_)
+                        | Token::Tag(_)
+                        | Token::Alias(_)
+                        | Token::FlowMapStart
+                        | Token::FlowSeqStart
+                );
+                if is_content {
+                    self.parser
+                        .error(crate::error::ErrorKind::TrailingContent, span);
+                }
+            }
+            self.parser.advance();
+            self.parser.skip_ws_and_newlines();
+        }
     }
 }
 
@@ -152,17 +323,58 @@ impl<'tokens: 'input, 'input> Iterator for StreamingParser<'tokens, 'input> {
             return Some(Event::StreamStart);
         }
 
-        // If buffer is empty, try to fill it
-        if self.buffer.is_empty() && !self.fill_buffer() {
-            // No more documents, emit StreamEnd if we haven't
-            if !self.emitted_stream_end {
-                self.emitted_stream_end = true;
-                return Some(Event::StreamEnd);
-            }
-            return None;
-        }
+        loop {
+            match &self.state {
+                StreamState::Ready => {
+                    // Try to prepare the next document
+                    if let Some((explicit, span)) = self.prepare_document() {
+                        self.state = StreamState::EmitDocStart { explicit, span };
+                    } else {
+                        // No more documents
+                        self.state = StreamState::Done;
+                        return Some(Event::StreamEnd);
+                    }
+                }
 
-        // Drain from buffer
-        self.buffer.pop_front()
+                StreamState::EmitDocStart { explicit, span } => {
+                    let event = Event::DocumentStart {
+                        explicit: *explicit,
+                        span: *span,
+                    };
+                    let has_explicit = *explicit;
+                    self.state = StreamState::ParseDocContent;
+                    // Parse content now (will be drained in DrainBuffer state)
+                    self.parse_content_into_buffer(has_explicit);
+                    return Some(event);
+                }
+
+                StreamState::ParseDocContent => {
+                    // Content has been parsed, transition to draining
+                    self.state = StreamState::DrainBuffer;
+                }
+
+                StreamState::DrainBuffer => {
+                    if let Some(event) = self.buffer.pop_front() {
+                        return Some(event);
+                    }
+                    // Buffer empty, finish document
+                    let (explicit, span) = self.finish_document();
+                    self.state = StreamState::EmitDocEnd { explicit, span };
+                }
+
+                StreamState::EmitDocEnd { explicit, span } => {
+                    let event = Event::DocumentEnd {
+                        explicit: *explicit,
+                        span: *span,
+                    };
+                    self.state = StreamState::Ready;
+                    return Some(event);
+                }
+
+                StreamState::Done => {
+                    return None;
+                }
+            }
+        }
     }
 }
