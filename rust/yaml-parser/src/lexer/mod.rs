@@ -23,4 +23,4 @@ mod token;
 pub use document::tokenize_document;
 pub use rich_token::RichToken;
 pub use stream::{Directive, tokenize_stream};
-pub use token::{BlockScalarHeader, Chomping, Token};
+pub use token::{BlockScalarHeader, Chomping, QuoteStyle, Token};

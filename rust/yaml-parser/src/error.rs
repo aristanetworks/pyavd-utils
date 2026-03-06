@@ -64,6 +64,11 @@ pub enum ErrorKind {
     #[display("unmatched closing bracket")]
     UnmatchedBracket,
 
+    /// Mismatched bracket types
+    /// e.g., `[a, b}` - opened with `[` but closed with `}`
+    #[display("mismatched brackets (expected matching bracket type)")]
+    MismatchedBrackets,
+
     /// Content on same line as previous mapping entry
     /// e.g., `{y: z}invalid` or `- item- invalid`
     #[display("invalid content on same line as previous entry")]
@@ -218,6 +223,7 @@ impl ErrorKind {
             Self::UnmatchedBracket => {
                 Some("remove the extra closing bracket/brace, or add the matching opening")
             }
+            Self::MismatchedBrackets => Some("use matching bracket types: [ with ] or { with }"),
             Self::ContentOnSameLine => {
                 Some("start new mapping entries or sequence items on their own line")
             }

@@ -7,7 +7,8 @@
 use std::borrow::Cow;
 
 use crate::error::ErrorKind;
-use crate::lexer::{BlockScalarHeader, Chomping, Token};
+use crate::event::{CollectionStyle, Event, ScalarStyle};
+use crate::lexer::{BlockScalarHeader, Chomping, QuoteStyle, Token};
 use crate::span::{IndentLevel, Span, indent_to_usize};
 use crate::value::{Node, Value};
 
@@ -44,13 +45,27 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
 
     /// Parse a scalar token with a specified minimum indentation for continuations.
     /// This is used when parsing values where multi-line strings must respect indentation.
+    ///
+    /// Emits: `Scalar` event with the appropriate style.
     pub fn parse_scalar_with_indent(&mut self, min_indent: IndentLevel) -> Option<Node<'input>> {
         let (tok, span) = self.peek()?;
 
         match tok {
             Token::Plain(string) => {
-                let value = Self::scalar_to_value(string.to_string());
+                // Clone the string value before we lose the borrow
+                let string_value = string.to_string();
+                let value = Self::scalar_to_value(string_value.clone());
                 self.advance();
+
+                // Emit Scalar event
+                self.emit(Event::Scalar {
+                    style: ScalarStyle::Plain,
+                    value: Cow::Owned(string_value),
+                    anchor: None, // Caller handles properties
+                    tag: None,
+                    span,
+                });
+
                 Some(Node::new(value, span))
             }
             Token::StringStart(_style) => self.parse_quoted_string(min_indent),
@@ -67,6 +82,9 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
     /// - Single line break followed by content becomes a space
     /// - Multiple consecutive line breaks preserve (n-1) newlines
     /// - Leading whitespace on continuation lines is trimmed (handled by lexer)
+    ///
+    /// Emits: `Scalar` event with the appropriate quoted style.
+    #[allow(clippy::too_many_lines, reason = "Complex quoted string parsing")]
     pub fn parse_quoted_string(&mut self, min_indent: IndentLevel) -> Option<Node<'input>> {
         let (first_token, start_span) = self.peek()?;
 
@@ -195,6 +213,22 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
         }
 
         let full_span = Span::from_usize_range(start_span.start_usize()..end_span.end_usize());
+
+        // Convert lexer QuoteStyle to event ScalarStyle
+        let event_style = match style {
+            QuoteStyle::Single => ScalarStyle::SingleQuoted,
+            QuoteStyle::Double => ScalarStyle::DoubleQuoted,
+        };
+
+        // Emit Scalar event
+        self.emit(Event::Scalar {
+            style: event_style,
+            value: Cow::Owned(content.clone()),
+            anchor: None, // Caller handles properties
+            tag: None,
+            span: full_span,
+        });
+
         Some(Node::new(Value::String(content.into()), full_span))
     }
 
@@ -232,6 +266,8 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
     }
 
     /// Parse an alias: *name
+    ///
+    /// Emits: `Alias` event.
     pub fn parse_alias(&mut self) -> Option<Node<'input>> {
         let (tok, span) = self.advance()?;
 
@@ -244,6 +280,13 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
         if !self.anchors.contains_key(name) {
             self.error(ErrorKind::UndefinedAlias, span);
         }
+
+        // Emit Alias event
+        self.emit(Event::Alias {
+            name: Cow::Borrowed(name),
+            span,
+        });
+
         Some(Node::new(Value::Alias(Cow::Borrowed(name)), span))
     }
 
@@ -252,6 +295,8 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
     /// The `min_indent` parameter is the minimum indentation for block content
     /// (typically the parent block's indent + 1). For explicit indentation indicators,
     /// the content indent is calculated relative to `min_indent - 1` (the parent's indent).
+    ///
+    /// Emits: `Scalar` event with `Literal` style.
     pub fn parse_literal_block_scalar(&mut self, min_indent: IndentLevel) -> Option<Node<'input>> {
         let (tok, span) = self.advance()?;
         let start = span.start_usize();
@@ -263,10 +308,18 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
         };
 
         let (content, end) = self.collect_block_scalar_content(&header, true, min_indent);
-        Some(Node::new(
-            Value::String(content.into()),
-            Span::from_usize_range(start..end),
-        ))
+        let scalar_span = Span::from_usize_range(start..end);
+
+        // Emit Scalar event
+        self.emit(Event::Scalar {
+            style: ScalarStyle::Literal,
+            value: Cow::Owned(content.clone()),
+            anchor: None, // Caller handles properties
+            tag: None,
+            span: scalar_span,
+        });
+
+        Some(Node::new(Value::String(content.into()), scalar_span))
     }
 
     /// Parse a folded block scalar: >
@@ -274,6 +327,8 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
     /// The `min_indent` parameter is the minimum indentation for block content
     /// (typically the parent block's indent + 1). For explicit indentation indicators,
     /// the content indent is calculated relative to `min_indent - 1` (the parent's indent).
+    ///
+    /// Emits: `Scalar` event with `Folded` style.
     pub fn parse_folded_block_scalar(&mut self, min_indent: IndentLevel) -> Option<Node<'input>> {
         let (tok, span) = self.advance()?;
         let start = span.start_usize();
@@ -285,10 +340,18 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
         };
 
         let (content, end) = self.collect_block_scalar_content(&header, false, min_indent);
-        Some(Node::new(
-            Value::String(content.into()),
-            Span::from_usize_range(start..end),
-        ))
+        let scalar_span = Span::from_usize_range(start..end);
+
+        // Emit Scalar event
+        self.emit(Event::Scalar {
+            style: ScalarStyle::Folded,
+            value: Cow::Owned(content.clone()),
+            anchor: None, // Caller handles properties
+            tag: None,
+            span: scalar_span,
+        });
+
+        Some(Node::new(Value::String(content.into()), scalar_span))
     }
 
     /// Consume content tokens from a block line.
@@ -303,6 +366,11 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
     /// eliminating the need for lookahead.
     ///
     /// Optimized to iterate directly over the token slice, avoiding per-iteration bounds checks.
+    ///
+    /// Note: For block scalars, trailing whitespace must be preserved. The lexer trims
+    /// trailing whitespace from Plain tokens but consumes it without emitting a Whitespace
+    /// token. We fix this by scanning the input directly to find whitespace between
+    /// the last token's span end and the newline.
     fn consume_block_line_with_detection(&mut self, initial_end_pos: usize) -> (usize, bool, bool) {
         let Some(remaining) = self.tokens.get(self.pos..) else {
             return (initial_end_pos, false, false);
@@ -312,6 +380,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
         let mut has_content = false;
         let mut starts_with_whitespace = false;
         let mut consumed = 0;
+        let mut newline_start_pos: Option<usize> = None;
 
         for rt in remaining {
             match &rt.token {
@@ -319,8 +388,11 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                 Token::Dedent | Token::Indent(_) => {
                     consumed += 1;
                 }
-                // Line-ending tokens terminate the line
-                Token::LineStart(_) | Token::DocStart | Token::DocEnd => break,
+                // Line-ending tokens terminate the line; remember their start position
+                Token::LineStart(_) | Token::DocStart | Token::DocEnd => {
+                    newline_start_pos = Some(rt.span.start_usize());
+                    break;
+                }
                 // Whitespace tokens: content, but also mark as "starts with whitespace" if first
                 Token::Whitespace | Token::WhitespaceWithTabs => {
                     if !has_content {
@@ -335,6 +407,25 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                     end_pos = rt.span.end_usize();
                     has_content = true;
                     consumed += 1;
+                }
+            }
+        }
+
+        // For block scalars, recover trailing whitespace that the lexer consumed but didn't
+        // include in the Plain token span. Scan from end_pos to newline/EOF to find it.
+        // The newline token's span starts at the newline character. Any characters
+        // between end_pos and newline_pos are trailing whitespace to preserve.
+        if let Some(newline_pos) = newline_start_pos {
+            if has_content && newline_pos > end_pos {
+                // Validate it's all whitespace (spaces/tabs)
+                // Positions are from token spans, guaranteed to be UTF-8 boundaries
+                #[allow(
+                    clippy::string_slice,
+                    reason = "positions from lexer spans are UTF-8 boundaries"
+                )]
+                let trailing = &self.input[end_pos..newline_pos];
+                if trailing.chars().all(|ch| ch == ' ' || ch == '\t') {
+                    end_pos = newline_pos;
                 }
             }
         }
@@ -770,8 +861,23 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
 
             // This is actually a mapping - reparse
             let start = scalar.span.start_usize();
+            let start_span = scalar.span;
             let map_indent = self.column_of_position(start);
             let mut pairs: Vec<(Node, Node)> = Vec::new();
+
+            // The key scalar event was already emitted by parse_scalar_with_indent.
+            // We need to insert MappingStart BEFORE that scalar event.
+            // Pop the last event (the key scalar), emit MappingStart, then re-emit the scalar.
+            let key_event = self.events.pop();
+            self.emit(Event::MappingStart {
+                style: CollectionStyle::Block,
+                anchor: None, // Properties are handled by caller
+                tag: None,
+                span: start_span,
+            });
+            if let Some(ev) = key_event {
+                self.events.push(ev);
+            }
 
             let key = scalar;
 
@@ -796,11 +902,53 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                     ..Default::default()
                 };
                 self.parse_value_with_properties(map_indent + 1, props)
+            } else if let Some((Token::Anchor(_) | Token::Tag(_), _)) = self.peek() {
+                // Collect properties on same line, then check for block collection on next line
+                // This handles 57H4: `key: !!seq\n- entry`
+                let props = self.collect_node_properties(NodeProperties::default());
+
+                // Check if we have LineStart followed by block collection at lower indentation
+                let line_indent = if let Some((Token::LineStart(n), _)) = self.peek() {
+                    Some(*n)
+                } else {
+                    None
+                };
+
+                if let Some(n) = line_indent {
+                    if n < map_indent + 1 {
+                        let saved_pos = self.pos;
+                        self.advance(); // past LineStart
+                        while let Some((Token::Dedent, _)) = self.peek() {
+                            self.advance();
+                        }
+
+                        if let Some((
+                            Token::BlockSeqIndicator | Token::MappingKey | Token::Colon,
+                            _,
+                        )) = self.peek()
+                        {
+                            // Block collection follows - parse it with properties and bridging
+                            let mut new_props = props;
+                            new_props.crossed_line_boundary = true;
+                            self.parse_value_with_properties(n, new_props)
+                        } else {
+                            // No block collection - restore and continue normally
+                            self.pos = saved_pos;
+                            self.parse_value_with_properties(map_indent + 1, props)
+                        }
+                    } else {
+                        // LineStart at valid indentation - continue normally
+                        self.parse_value_with_properties(map_indent + 1, props)
+                    }
+                } else {
+                    // No LineStart - content is on same line
+                    self.parse_value_with_properties(map_indent + 1, props)
+                }
             } else {
                 self.parse_value(map_indent + 1)
             };
 
-            let value_node = value.unwrap_or_else(|| Node::null(self.current_span()));
+            let value_node = value.unwrap_or_else(|| self.emit_null_scalar());
 
             // Check for trailing content after quoted scalars in block context
             if value_on_same_line && let Value::String(_) = &value_node.value {
@@ -813,6 +961,12 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
             self.parse_remaining_mapping_entries(&mut pairs, map_indent);
 
             let end = pairs.last().map_or(start, |(_, val)| val.span.end_usize());
+
+            // Emit MappingEnd event
+            self.emit(Event::MappingEnd {
+                span: Span::from_usize_range(end..end),
+            });
+
             Some(Node::new(
                 Value::Mapping(pairs),
                 Span::from_usize_range(start..end),
@@ -858,7 +1012,8 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                             | Token::MappingKey
                             | Token::Colon
                             | Token::Anchor(_)
-                            | Token::Tag(_),
+                            | Token::Tag(_)
+                            | Token::Alias(_),
                         _
                     ))
                 );
@@ -881,8 +1036,9 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
             }
 
             // Handle empty key (: at start of line)
-            if let Some((Token::Colon, colon_span)) = self.peek() {
-                let key_node = Node::null(colon_span);
+            if let Some((Token::Colon, _colon_span)) = self.peek() {
+                // Emit scalar event for the null key
+                let key_node = self.emit_null_scalar();
                 self.advance();
 
                 // Skip whitespace only (not comments) - check for Whitespace/WhitespaceWithTabs
@@ -893,19 +1049,19 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                 // If there's a comment, the value is null (comment terminates)
                 if let Some((Token::Comment(_), _)) = self.peek() {
                     self.advance();
-                    pairs.push((key_node, Node::null(self.current_span())));
+                    pairs.push((key_node, self.emit_null_scalar()));
                     continue;
                 }
 
                 // If we hit LineStart immediately, value is null
                 if let Some((Token::LineStart(_), _)) = self.peek() {
-                    pairs.push((key_node, Node::null(self.current_span())));
+                    pairs.push((key_node, self.emit_null_scalar()));
                     continue;
                 }
 
                 // Otherwise, parse the value
                 let value = self.parse_value(map_indent + 1);
-                let value_node = value.unwrap_or_else(|| Node::null(self.current_span()));
+                let value_node = value.unwrap_or_else(|| self.emit_null_scalar());
                 pairs.push((key_node, value_node));
                 continue;
             }
@@ -947,7 +1103,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
         } else {
             self.parse_value(map_indent + 1)
         };
-        let key_node = key.unwrap_or_else(|| Node::null(self.current_span()));
+        let key_node = key.unwrap_or_else(|| self.emit_null_scalar());
 
         // Skip to colon (may be on next line)
         self.skip_ws();
@@ -963,7 +1119,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
 
         // Expect colon
         if !matches!(self.peek(), Some((Token::Colon, _))) {
-            return Some((key_node, Node::null(self.current_span())));
+            return Some((key_node, self.emit_null_scalar()));
         }
         self.advance();
         self.skip_ws();
@@ -978,7 +1134,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
         } else {
             self.parse_value(map_indent + 1)
         };
-        let value_node = value.unwrap_or_else(|| Node::null(self.current_span()));
+        let value_node = value.unwrap_or_else(|| self.emit_null_scalar());
 
         Some((key_node, value_node))
     }
@@ -1081,6 +1237,11 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
             if !self.anchors.contains_key(alias_name) {
                 self.error(ErrorKind::UndefinedAlias, span);
             }
+            // Emit Alias event for the key
+            self.emit(Event::Alias {
+                name: Cow::Borrowed(alias_name),
+                span,
+            });
             Some(Node::new(Value::Alias(Cow::Borrowed(alias_name)), span))
         } else if let Some(key) = self.parse_scalar() {
             // Scalar key - apply properties if present
@@ -1305,6 +1466,10 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
     ///
     /// Called after the first line of a plain scalar has been parsed.
     /// Continuation lines must be more indented than the scalar's starting column.
+    ///
+    /// Note: The initial scalar event was already emitted by `parse_scalar_with_indent`.
+    /// If continuations are found, we update the last emitted Scalar event with the
+    /// full multiline content.
     #[allow(
         clippy::string_slice,
         reason = "Positions are from lexer tokens and guaranteed to be on UTF-8 boundaries"
@@ -1333,6 +1498,9 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
             return initial; // Not a scalar type, return as-is
         };
 
+        // Track the index of the scalar event we need to update if continuations are found
+        let initial_event_index = self.events.len().saturating_sub(1);
+
         // Track consecutive empty lines for folding
         let mut consecutive_newlines = 0;
         let mut had_continuations = false;
@@ -1351,9 +1519,10 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                 ) {
                     LowIndentResult::Continue => continue,
                     LowIndentResult::Return => {
-                        return Self::finalize_multiline_scalar(
+                        return self.finalize_multiline_scalar_with_event(
                             content,
                             had_continuations,
+                            initial_event_index,
                             start,
                             end,
                         );
@@ -1365,7 +1534,13 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
             // Check if the following content is a mapping key
             let content_pos = self.skip_to_content_position(self.pos + 1);
             if self.is_mapping_key_at_position(content_pos) {
-                return Self::finalize_multiline_scalar(content, had_continuations, start, end);
+                return self.finalize_multiline_scalar_with_event(
+                    content,
+                    had_continuations,
+                    initial_event_index,
+                    start,
+                    end,
+                );
             }
 
             // Valid continuation, consume the LineStart
@@ -1417,6 +1592,38 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                     break;
                 }
             }
+        }
+
+        self.finalize_multiline_scalar_with_event(
+            content,
+            had_continuations,
+            initial_event_index,
+            start,
+            end,
+        )
+    }
+
+    /// Update a previously emitted Scalar event with new content and span.
+    /// Used when multiline plain scalar continuations are collected.
+    fn update_scalar_event(&mut self, event_index: usize, content: &str, start: usize, end: usize) {
+        if let Some(Event::Scalar { value, span, .. }) = self.events.get_mut(event_index) {
+            *value = Cow::Owned(content.to_owned());
+            *span = Span::from_usize_range(start..end);
+        }
+    }
+
+    /// Finalize a multiline scalar AND update the corresponding event.
+    /// This is an instance method that ensures the event buffer is updated when returning early.
+    fn finalize_multiline_scalar_with_event(
+        &mut self,
+        content: String,
+        had_continuations: bool,
+        event_index: usize,
+        start: usize,
+        end: usize,
+    ) -> Node<'input> {
+        if had_continuations {
+            self.update_scalar_event(event_index, &content, start, end);
         }
         Self::finalize_multiline_scalar(content, had_continuations, start, end)
     }

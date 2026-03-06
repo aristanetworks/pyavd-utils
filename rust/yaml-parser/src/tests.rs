@@ -10,6 +10,25 @@
 use super::*;
 
 #[test]
+fn test_emit_e76z() {
+    // Test E76Z: Aliases as implicit block mapping keys
+    // Input: &a a: &b b\n*b : *a\n
+    // Expected: Both aliases (*b key and *a value) emit Alias events
+    let input = "&a a: &b b\n*b : *a\n";
+    let (events, _errors) = crate::emit_events(input);
+
+    let alias_events: Vec<_> = events
+        .iter()
+        .filter(|e| matches!(e, crate::Event::Alias { .. }))
+        .collect();
+    assert_eq!(
+        alias_events.len(),
+        2,
+        "Expected 2 Alias events (for *b key and *a value)"
+    );
+}
+
+#[test]
 fn test_empty_input() {
     let (docs, errors) = parse("");
     assert!(errors.is_empty());
@@ -535,5 +554,790 @@ fn test_debug_m5dy() {
                 eprintln!("    [{entry_idx}] key={key:?} val={val:?}");
             }
         }
+    }
+}
+
+// ============================================================================
+// Event Emitter Tests (now testing parser-emitted events)
+// ============================================================================
+
+mod event_tests {
+    use crate::event::{CollectionStyle, Event, ScalarStyle};
+
+    /// Helper to get events from YAML input using the parser
+    fn events_from(input: &str) -> Vec<Event<'static>> {
+        let (events, _errors) = crate::emit_events(input);
+        events
+    }
+
+    #[test]
+    fn test_plain_scalar() {
+        let events = events_from("hello");
+        assert!(events.iter().any(|ev| matches!(
+            ev,
+            Event::Scalar {
+                style: ScalarStyle::Plain,
+                value,
+                ..
+            } if value == "hello"
+        )));
+    }
+
+    #[test]
+    fn test_flow_mapping() {
+        let events = events_from("{a: 1}");
+
+        let has_map_start = events.iter().any(|ev| {
+            matches!(
+                ev,
+                Event::MappingStart {
+                    style: CollectionStyle::Flow,
+                    ..
+                }
+            )
+        });
+        let has_map_end = events
+            .iter()
+            .any(|ev| matches!(ev, Event::MappingEnd { .. }));
+
+        assert!(has_map_start, "Expected MappingStart, got: {events:?}");
+        assert!(has_map_end, "Expected MappingEnd, got: {events:?}");
+    }
+
+    #[test]
+    fn test_flow_sequence() {
+        let events = events_from("[1, 2, 3]");
+
+        let has_seq_start = events.iter().any(|ev| {
+            matches!(
+                ev,
+                Event::SequenceStart {
+                    style: CollectionStyle::Flow,
+                    ..
+                }
+            )
+        });
+        let has_seq_end = events
+            .iter()
+            .any(|ev| matches!(ev, Event::SequenceEnd { .. }));
+
+        assert!(has_seq_start, "Expected SequenceStart, got: {events:?}");
+        assert!(has_seq_end, "Expected SequenceEnd, got: {events:?}");
+    }
+
+    #[test]
+    fn test_block_sequence() {
+        let events = events_from("- a\n- b");
+
+        let seq_starts: Vec<_> = events
+            .iter()
+            .filter(|ev| {
+                matches!(
+                    ev,
+                    Event::SequenceStart {
+                        style: CollectionStyle::Block,
+                        ..
+                    }
+                )
+            })
+            .collect();
+
+        // Should have exactly ONE block sequence start, not one per entry
+        assert_eq!(
+            seq_starts.len(),
+            1,
+            "Expected 1 SequenceStart for block sequence, got {}: {events:?}",
+            seq_starts.len()
+        );
+    }
+
+    #[test]
+    fn test_block_mapping() {
+        let events = events_from("a: 1\nb: 2");
+
+        let map_starts: Vec<_> = events
+            .iter()
+            .filter(|ev| {
+                matches!(
+                    ev,
+                    Event::MappingStart {
+                        style: CollectionStyle::Block,
+                        ..
+                    }
+                )
+            })
+            .collect();
+
+        // Should have exactly ONE block mapping start
+        assert_eq!(
+            map_starts.len(),
+            1,
+            "Expected 1 MappingStart for block mapping, got {}: {events:?}",
+            map_starts.len()
+        );
+    }
+
+    #[test]
+    fn test_quoted_string() {
+        let events = events_from("\"hello world\"");
+
+        let has_quoted = events.iter().any(|ev| {
+            matches!(
+                ev,
+                Event::Scalar {
+                    style: ScalarStyle::DoubleQuoted,
+                    ..
+                }
+            )
+        });
+        assert!(has_quoted, "Expected double-quoted scalar, got: {events:?}");
+    }
+
+    #[test]
+    fn test_document_markers() {
+        let events = events_from("---\nhello\n...");
+
+        let has_doc_start = events
+            .iter()
+            .any(|ev| matches!(ev, Event::DocumentStart { explicit: true, .. }));
+        let has_doc_end = events
+            .iter()
+            .any(|ev| matches!(ev, Event::DocumentEnd { explicit: true, .. }));
+
+        assert!(has_doc_start, "Expected DocumentStart, got: {events:?}");
+        assert!(has_doc_end, "Expected DocumentEnd, got: {events:?}");
+    }
+
+    #[test]
+    fn test_anchor_and_alias() {
+        // Use a sequence so both anchor and alias are in the same document
+        let events = events_from("- &anchor value\n- *anchor");
+
+        // Check for anchored scalar
+        let has_anchor = events.iter().any(|ev| {
+            matches!(
+                ev,
+                Event::Scalar { anchor: Some(anc), .. } if anc == "anchor"
+            )
+        });
+        assert!(has_anchor, "Expected scalar with anchor, got: {events:?}");
+
+        // Check for alias
+        let has_alias = events.iter().any(|ev| {
+            matches!(
+                ev,
+                Event::Alias { name, .. } if name == "anchor"
+            )
+        });
+        assert!(has_alias, "Expected alias, got: {events:?}");
+    }
+
+    #[test]
+    fn test_tagged_scalar() {
+        let events = events_from("!!str 42");
+
+        // Check for tagged scalar with expanded tag
+        let has_tag = events.iter().any(|ev| {
+            matches!(
+                ev,
+                Event::Scalar { tag: Some(tg), .. } if tg == "tag:yaml.org,2002:str"
+            )
+        });
+        assert!(
+            has_tag,
+            "Expected scalar with expanded tag, got: {events:?}"
+        );
+    }
+
+    #[test]
+    fn test_nested_block_structures() {
+        // Test nested mapping inside sequence
+        let events = events_from("- a: 1\n- b: 2");
+
+        let seq_count = events
+            .iter()
+            .filter(|ev| matches!(ev, Event::SequenceStart { .. }))
+            .count();
+        let map_count = events
+            .iter()
+            .filter(|ev| matches!(ev, Event::MappingStart { .. }))
+            .count();
+
+        assert_eq!(
+            seq_count, 1,
+            "Expected 1 sequence, got {seq_count}: {events:?}"
+        );
+        assert!(
+            map_count >= 2,
+            "Expected at least 2 mappings, got {map_count}: {events:?}"
+        );
+    }
+
+    // Helper to get events and errors using the parser
+    fn events_and_errors_from(input: &str) -> (Vec<Event<'static>>, Vec<crate::error::ParseError>) {
+        crate::emit_events(input)
+    }
+
+    #[test]
+    fn test_unclosed_flow_sequence_produces_error() {
+        // Unclosed flow sequence should report error and auto-close
+        let (events, errors) = events_and_errors_from("[a, b");
+
+        // Should produce SequenceStart, scalars, and SequenceEnd (auto-closed)
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, Event::SequenceStart { .. })),
+            "Should have SequenceStart: {events:?}"
+        );
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, Event::SequenceEnd { .. })),
+            "Should have SequenceEnd (auto-closed): {events:?}"
+        );
+        // Should report error
+        assert!(
+            errors
+                .iter()
+                .any(|e| matches!(e.kind, crate::error::ErrorKind::UnexpectedEof)),
+            "Should report UnexpectedEof error: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn test_unclosed_flow_mapping_produces_error() {
+        // Unclosed flow mapping should report error and auto-close
+        let (events, errors) = events_and_errors_from("{a: 1");
+
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, Event::MappingStart { .. })),
+            "Should have MappingStart: {events:?}"
+        );
+        assert!(
+            events.iter().any(|e| matches!(e, Event::MappingEnd { .. })),
+            "Should have MappingEnd (auto-closed): {events:?}"
+        );
+        assert!(
+            errors
+                .iter()
+                .any(|e| matches!(e.kind, crate::error::ErrorKind::UnexpectedEof)),
+            "Should report UnexpectedEof error: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn test_mismatched_brackets_produces_error() {
+        // Mismatched brackets: opened with [ but closed with }
+        let (events, errors) = events_and_errors_from("[a, b}");
+
+        // Should produce SequenceStart and SequenceEnd (correct type despite mismatch)
+        let seq_starts = events
+            .iter()
+            .filter(|e| matches!(e, Event::SequenceStart { .. }))
+            .count();
+        let seq_ends = events
+            .iter()
+            .filter(|e| matches!(e, Event::SequenceEnd { .. }))
+            .count();
+        assert_eq!(seq_starts, 1, "Should have 1 SequenceStart: {events:?}");
+        assert_eq!(seq_ends, 1, "Should have 1 SequenceEnd: {events:?}");
+        // Should report some error for the invalid syntax
+        // The exact error type may vary (MismatchedBrackets, MissingSeparator, UnexpectedEof, etc.)
+        assert!(
+            !errors.is_empty(),
+            "Should report at least one error for mismatched brackets: {errors:?}"
+        );
+    }
+}
+
+/// Tests for the event-based parser (EventParser).
+mod event_parser_tests {
+    use crate::parser::EventParser;
+    use crate::value::Value;
+
+    /// Parse input through the full event pipeline and return nodes.
+    fn parse_via_events(input: &str) -> Vec<crate::value::Node<'static>> {
+        let (events, _errors) = crate::emit_events(input);
+        let mut parser = EventParser::new(&events);
+        parser.parse().into_iter().map(|n| n.into_owned()).collect()
+    }
+
+    #[test]
+    fn test_event_parser_simple_scalar() {
+        let nodes = parse_via_events("hello");
+        assert_eq!(nodes.len(), 1);
+        assert!(matches!(&nodes[0].value, Value::String(s) if s == "hello"));
+    }
+
+    #[test]
+    fn test_event_parser_typed_scalars() {
+        // Test type inference for plain scalars
+        let test_cases: &[(&str, fn(&Value) -> bool)] = &[
+            ("true", |v| matches!(v, Value::Bool(true))),
+            ("false", |v| matches!(v, Value::Bool(false))),
+            ("null", |v| matches!(v, Value::Null)),
+            ("42", |v| matches!(v, Value::Int(42))),
+            (
+                "3.14",
+                |v| matches!(v, Value::Float(f) if (*f - 3.14).abs() < 0.001),
+            ),
+        ];
+
+        for (input, check) in test_cases {
+            let nodes = parse_via_events(input);
+            assert_eq!(nodes.len(), 1, "Input: {input}");
+            assert!(
+                check(&nodes[0].value),
+                "Input: {input}, got: {:?}",
+                nodes[0].value
+            );
+        }
+    }
+
+    #[test]
+    fn test_event_parser_simple_mapping() {
+        let nodes = parse_via_events("a: 1\nb: 2");
+        assert_eq!(nodes.len(), 1);
+
+        if let Value::Mapping(pairs) = &nodes[0].value {
+            assert_eq!(pairs.len(), 2);
+            // First pair
+            assert!(matches!(&pairs[0].0.value, Value::String(s) if s == "a"));
+            assert!(matches!(&pairs[0].1.value, Value::Int(1)));
+            // Second pair
+            assert!(matches!(&pairs[1].0.value, Value::String(s) if s == "b"));
+            assert!(matches!(&pairs[1].1.value, Value::Int(2)));
+        } else {
+            panic!("Expected mapping, got: {:?}", nodes[0].value);
+        }
+    }
+
+    #[test]
+    fn test_event_parser_simple_sequence() {
+        let nodes = parse_via_events("- a\n- b\n- c");
+        assert_eq!(nodes.len(), 1);
+
+        if let Value::Sequence(items) = &nodes[0].value {
+            assert_eq!(items.len(), 3);
+            assert!(matches!(&items[0].value, Value::String(s) if s == "a"));
+            assert!(matches!(&items[1].value, Value::String(s) if s == "b"));
+            assert!(matches!(&items[2].value, Value::String(s) if s == "c"));
+        } else {
+            panic!("Expected sequence, got: {:?}", nodes[0].value);
+        }
+    }
+
+    #[test]
+    fn test_event_parser_flow_mapping() {
+        let nodes = parse_via_events("{a: 1, b: 2}");
+        assert_eq!(nodes.len(), 1);
+
+        if let Value::Mapping(pairs) = &nodes[0].value {
+            assert_eq!(pairs.len(), 2);
+        } else {
+            panic!("Expected mapping, got: {:?}", nodes[0].value);
+        }
+    }
+
+    #[test]
+    fn test_event_parser_flow_sequence() {
+        let nodes = parse_via_events("[1, 2, 3]");
+        assert_eq!(nodes.len(), 1);
+
+        if let Value::Sequence(items) = &nodes[0].value {
+            assert_eq!(items.len(), 3);
+            assert!(matches!(&items[0].value, Value::Int(1)));
+            assert!(matches!(&items[1].value, Value::Int(2)));
+            assert!(matches!(&items[2].value, Value::Int(3)));
+        } else {
+            panic!("Expected sequence, got: {:?}", nodes[0].value);
+        }
+    }
+
+    #[test]
+    fn test_event_parser_anchor_and_alias() {
+        let nodes = parse_via_events("- &anchor value\n- *anchor");
+        assert_eq!(nodes.len(), 1);
+
+        if let Value::Sequence(items) = &nodes[0].value {
+            assert_eq!(items.len(), 2);
+            // First item has anchor
+            assert_eq!(items[0].anchor(), Some("anchor"));
+            assert!(matches!(&items[0].value, Value::String(s) if s == "value"));
+            // Second item is alias
+            assert!(matches!(&items[1].value, Value::Alias(s) if s == "anchor"));
+        } else {
+            panic!("Expected sequence, got: {:?}", nodes[0].value);
+        }
+    }
+
+    #[test]
+    fn test_event_parser_nested_mapping() {
+        let nodes = parse_via_events("outer:\n  inner: value");
+        assert_eq!(nodes.len(), 1);
+
+        if let Value::Mapping(pairs) = &nodes[0].value {
+            assert_eq!(pairs.len(), 1);
+            // Check outer key
+            assert!(matches!(&pairs[0].0.value, Value::String(s) if s == "outer"));
+            // Check inner mapping
+            if let Value::Mapping(inner_pairs) = &pairs[0].1.value {
+                assert_eq!(inner_pairs.len(), 1);
+                assert!(matches!(&inner_pairs[0].0.value, Value::String(s) if s == "inner"));
+                assert!(matches!(&inner_pairs[0].1.value, Value::String(s) if s == "value"));
+            } else {
+                panic!("Expected inner mapping, got: {:?}", pairs[0].1.value);
+            }
+        } else {
+            panic!("Expected mapping, got: {:?}", nodes[0].value);
+        }
+    }
+
+    #[test]
+    fn test_event_parser_nested_sequence() {
+        let input = "- - a\n  - b\n- c";
+        let nodes = parse_via_events(input);
+
+        assert_eq!(nodes.len(), 1);
+
+        if let Value::Sequence(items) = &nodes[0].value {
+            assert_eq!(items.len(), 2);
+            // First item is nested sequence
+            if let Value::Sequence(nested) = &items[0].value {
+                assert_eq!(nested.len(), 2);
+                assert!(matches!(&nested[0].value, Value::String(s) if s == "a"));
+                assert!(matches!(&nested[1].value, Value::String(s) if s == "b"));
+            } else {
+                panic!("Expected nested sequence, got: {:?}", items[0].value);
+            }
+            // Second item is scalar
+            assert!(matches!(&items[1].value, Value::String(s) if s == "c"));
+        } else {
+            panic!("Expected sequence, got: {:?}", nodes[0].value);
+        }
+    }
+
+    #[test]
+    fn test_event_parser_sequence_of_mappings() {
+        let nodes = parse_via_events("- a: 1\n- b: 2");
+        assert_eq!(nodes.len(), 1);
+
+        if let Value::Sequence(items) = &nodes[0].value {
+            assert_eq!(items.len(), 2);
+            // First item is mapping
+            if let Value::Mapping(pairs) = &items[0].value {
+                assert!(matches!(&pairs[0].0.value, Value::String(s) if s == "a"));
+                assert!(matches!(&pairs[0].1.value, Value::Int(1)));
+            } else {
+                panic!("Expected mapping, got: {:?}", items[0].value);
+            }
+        } else {
+            panic!("Expected sequence, got: {:?}", nodes[0].value);
+        }
+    }
+}
+
+#[test]
+#[allow(clippy::print_stdout, reason = "Debug output for test")]
+fn test_emit_events_debug() {
+    let input = "key: value";
+    let (events, errors) = emit_events(input);
+
+    assert!(errors.is_empty(), "Errors: {errors:?}");
+
+    for event in &events {
+        println!("{event}");
+    }
+
+    // Should be: +STR, +DOC, +MAP, =VAL :key, =VAL :value, -MAP, -DOC, -STR
+    assert!(
+        events.len() >= 8,
+        "Expected at least 8 events, got {}",
+        events.len()
+    );
+}
+
+#[test]
+#[allow(clippy::print_stdout, reason = "Debug output for test")]
+fn test_emit_events_7zz5() {
+    // Test case 7ZZ5: Empty flow collections
+    let input = "---
+nested sequences:
+- - - []
+- - - {}
+key1: []
+key2: {}
+";
+    let (events, errors) = emit_events(input);
+
+    println!("Errors: {errors:?}");
+    println!("\nActual events:");
+    for event in &events {
+        println!("{event}");
+    }
+
+    // Expected from test.event:
+    // +STR +DOC --- +MAP =VAL :nested sequences +SEQ +SEQ +SEQ +SEQ [] -SEQ -SEQ -SEQ
+    // +SEQ +SEQ +MAP {} -MAP -SEQ -SEQ -SEQ =VAL :key1 +SEQ [] -SEQ =VAL :key2 +MAP {} -MAP -MAP -DOC -STR
+
+    // Just verify no parse errors for now
+    assert!(errors.is_empty(), "Unexpected errors");
+}
+
+#[test]
+#[allow(clippy::print_stdout, reason = "Debug output for test")]
+fn test_emit_events_simple_seq_then_key() {
+    // Simpler test: sequence followed by another key at same level
+    let input = "a:
+- x
+b: y
+";
+    let (events, errors) = emit_events(input);
+
+    println!("Errors: {errors:?}");
+    println!("\nActual events:");
+    for event in &events {
+        println!("{event}");
+    }
+
+    // Expected:
+    // +STR +DOC +MAP =VAL :a +SEQ =VAL :x -SEQ =VAL :b =VAL :y -MAP -DOC -STR
+
+    assert!(errors.is_empty(), "Unexpected errors");
+}
+
+#[test]
+#[allow(clippy::print_stdout, reason = "Debug output for test")]
+fn test_emit_events_4wa9_literal_scalars() {
+    // Test case 4WA9: Literal scalars
+    let input = "- aaa: |2
+    xxx
+  bbb: |
+    xxx
+";
+    let (events, errors) = emit_events(input);
+
+    println!("Errors: {errors:?}");
+    println!("\nActual events:");
+    for event in &events {
+        println!("{event}");
+    }
+
+    // Expected: +STR +DOC +SEQ +MAP =VAL :aaa =VAL |xxx\n =VAL :bbb =VAL |xxx\n -MAP -SEQ -DOC -STR
+    assert!(errors.is_empty(), "Unexpected errors");
+}
+
+#[test]
+#[allow(clippy::print_stdout, reason = "Debug output for test")]
+fn test_emit_events_2jqs_missing_keys() {
+    // Test case 2JQS: Block Mapping with Missing Keys
+    let input = ": a\n: b\n";
+    let (events, errors) = emit_events(input);
+
+    println!("Errors: {errors:?}");
+    println!("\nActual events:");
+    for event in &events {
+        println!("{event}");
+    }
+
+    // Expected: +STR +DOC +MAP =VAL : =VAL :a =VAL : =VAL :b -MAP -DOC -STR
+    assert!(errors.is_empty(), "Unexpected errors");
+}
+
+#[test]
+#[allow(clippy::print_stdout, reason = "Debug output for test")]
+fn test_lexer_tokens_2jqs() {
+    use crate::lexer::tokenize_document;
+
+    let input = "- !!str\n-\n  !!null : a\n  b: !!str\n- !!str : !!null\n";
+    let (tokens, errors) = tokenize_document(input);
+
+    println!("Lexer errors: {errors:?}");
+    println!("\nTokens:");
+    for tok in &tokens {
+        println!("{:?} @ {:?}", tok.token, tok.span);
+    }
+
+    assert!(errors.is_empty(), "Unexpected lexer errors");
+}
+
+#[test]
+#[allow(clippy::print_stdout, reason = "Debug output for test")]
+fn test_emit_events_7w2p_mapping_missing_values() {
+    // Test case 7W2P: Block Mapping with Missing Values (explicit keys)
+    // ? a
+    // ? b
+    // c:
+    let input = "? a\n? b\nc:\n";
+    let (events, errors) = emit_events(input);
+
+    println!("Errors: {errors:?}");
+    println!("\nActual events:");
+    for event in &events {
+        println!("{event}");
+    }
+
+    // Expected: +STR +DOC +MAP =VAL :a =VAL : =VAL :b =VAL : =VAL :c =VAL : -MAP -DOC -STR
+    assert!(errors.is_empty(), "Unexpected errors");
+}
+
+#[test]
+#[allow(clippy::print_stdout, reason = "Debug output for test")]
+fn test_emit_events_26dv_nested_mappings() {
+    // 26DV: Anchor on value that's a nested mapping
+    // top3: &node3
+    //   *alias1 : scalar3
+    // The &node3 should be attached to the MappingStart, not the scalar
+    // Note: *alias1 is undefined in this snippet (would be defined earlier in full 26DV test),
+    // so we expect an UndefinedAlias error - that's OK, we're testing event structure.
+    let input = "top3: &node3 \n  *alias1 : scalar3";
+
+    // First, let's see what tokens the lexer produces
+    println!("Input: {input:?}");
+    println!("\nTokens:");
+    let (tokens, _) = crate::tokenize_document(input);
+    for token in &tokens {
+        println!("  {:?}", token);
+    }
+
+    let (events, errors) = emit_events(input);
+    println!("\nErrors: {errors:?}");
+    println!("\nActual events:");
+    for event in &events {
+        println!("{event}");
+    }
+
+    // Expected: +MAP =VAL :top3 +MAP &node3 *alias1 =VAL :scalar3 -MAP -MAP
+    // The UndefinedAlias error is expected since alias1 isn't defined in this snippet
+    assert!(
+        errors.len() == 1 && errors[0].kind == crate::error::ErrorKind::UndefinedAlias,
+        "Expected exactly one UndefinedAlias error, got: {errors:?}"
+    );
+}
+
+#[test]
+#[allow(clippy::print_stdout, reason = "Debug output for test")]
+fn test_emit_events_26dv_anchor_on_same_line_key() {
+    // 26DV - anchor on same line as key should attach to key, not mapping
+    // top6:
+    //   &anchor6 'key6' : scalar6
+    // The &anchor6 should be attached to the key 'key6', NOT to the MappingStart
+    // NOTE: Testing with full 26DV input to match exact conditions
+    let input = r#""top1" :
+  "key1" : &alias1 scalar1
+'top2' :
+  'key2' : &alias2 scalar2
+top3: &node3
+  *alias1 : scalar3
+top4:
+  *alias2 : scalar4
+top5   :
+  scalar5
+top6:
+  &anchor6 'key6' : scalar6
+"#;
+    // Debug: print all tokens with their spans
+    println!("Input length: {}", input.len());
+    println!("\nTokens:");
+    let (tokens, _) = crate::tokenize_document(input);
+    for token in &tokens {
+        println!("  {:?}", token);
+    }
+
+    let (events, errors) = emit_events(input);
+    println!("\nErrors: {errors:?}");
+    println!("\nActual events:");
+    for event in &events {
+        println!("{event}");
+    }
+
+    assert!(errors.is_empty(), "Unexpected errors");
+
+    // Find the MappingStart that comes right after the "top6" scalar
+    // It should have NO anchor (anchor belongs to key 'key6')
+    let events_vec: Vec<_> = events.iter().collect();
+    for (idx, event) in events_vec.iter().enumerate() {
+        if let crate::event::Event::Scalar { value, .. } = event {
+            if value.as_ref() == "top6" {
+                // Next event should be MappingStart with no anchor
+                if let Some(crate::event::Event::MappingStart { anchor, .. }) =
+                    events_vec.get(idx + 1)
+                {
+                    assert!(
+                        anchor.is_none(),
+                        "MappingStart after 'top6' should not have anchor, but got {:?}",
+                        anchor
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+#[allow(clippy::print_stdout, reason = "Debug output for test")]
+fn test_emit_events_fh7j_debug() {
+    // FH7J: Tags on Empty Scalars
+    let input = "- !!str\n-\n  !!null : a\n  b: !!str\n- !!str : !!null\n";
+
+    println!("Input: {input:?}");
+    println!("\nTokens:");
+    let (tokens, _) = crate::tokenize_document(input);
+    for tok in &tokens {
+        println!("{:?} @ {:?}", tok.token, tok.span);
+    }
+
+    println!("\nEvents:");
+    let (events, errors) = emit_events(input);
+    println!("Errors: {errors:?}");
+    for event in &events {
+        println!("{event:?}");
+    }
+}
+
+#[test]
+fn test_emit_events_9yrd_debug() {
+    // 9YRD: Multiline Scalar at Top Level
+    // Expected: "a b c d\ne" (one scalar - d at col 0 is continuation, not key)
+    let input = "a\nb  \n  c\nd\n\ne\n";
+
+    println!("Input: {input:?}");
+    println!("\nTokens:");
+    let (tokens, _) = crate::tokenize_document(input);
+    for tok in &tokens {
+        println!("{:?} @ {:?}", tok.token, tok.span);
+    }
+
+    println!("\nEvents:");
+    let (events, errors) = emit_events(input);
+    println!("Errors: {errors:?}");
+    for event in &events {
+        println!("{event:?}");
+    }
+}
+
+#[test]
+fn test_emit_events_k858_debug() {
+    // K858: Spec Example 8.6. Empty Scalar Chomping
+    // strip: >-  -> empty
+    // clip: >    -> empty
+    // keep: |+   -> "\n"
+    let input = "strip: >-\n\nclip: >\n\nkeep: |+\n\n";
+
+    println!("Input: {input:?}");
+    println!("\nTokens:");
+    let (tokens, _) = crate::tokenize_document(input);
+    for (i, tok) in tokens.iter().enumerate() {
+        println!("  [{i}] {:?} @ {:?}", tok.token, tok.span);
+    }
+
+    println!("\nEvents:");
+    let (events, errors) = emit_events(input);
+    println!("Errors: {errors:?}");
+    for (i, event) in events.iter().enumerate() {
+        println!("  [{i}] {event:?}");
     }
 }

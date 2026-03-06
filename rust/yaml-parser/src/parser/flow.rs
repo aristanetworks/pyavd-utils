@@ -4,7 +4,10 @@
 
 //! Flow collection parsing (sequences and mappings in `[]` and `{}`).
 
+use std::borrow::Cow;
+
 use crate::error::ErrorKind;
+use crate::event::{CollectionStyle, Event, ScalarStyle};
 use crate::lexer::Token;
 use crate::span::Span;
 use crate::value::{Node, Value};
@@ -77,10 +80,22 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
     }
 
     /// Parse a flow mapping: { key: value, ... }
+    ///
+    /// Emits: `MappingStart` at entry, key/value pairs recursively, `MappingEnd` at exit.
+    #[allow(clippy::too_many_lines, reason = "Complex flow mapping logic")]
     pub fn parse_flow_mapping(&mut self) -> Option<Node<'input>> {
         let start = self.enter_flow_collection()?;
+        let start_span = Span::from_usize_range(start..start + 1);
         let mut pairs: Vec<(Node<'input>, Node<'input>)> = Vec::new();
         let mut just_saw_comma = true; // Start true to catch leading comma
+
+        // Emit MappingStart event
+        self.emit(Event::MappingStart {
+            style: CollectionStyle::Flow,
+            anchor: None, // Properties are handled by caller
+            tag: None,
+            span: start_span,
+        });
 
         self.skip_ws_and_newlines();
 
@@ -92,6 +107,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                 let end = end_span.end_usize();
                 self.advance();
                 self.exit_flow_collection();
+                self.emit(Event::MappingEnd { span: end_span });
                 return Some(Node::new(
                     Value::Mapping(pairs),
                     Span::from_usize_range(start..end),
@@ -114,18 +130,17 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
             if let Some((Token::Colon, _)) = self.peek()
                 && (explicit_key || matches!(self.peek(), Some((Token::Colon, _))))
             {
-                let key_span = self.current_span();
-                let key = Node::null(key_span);
+                let key = self.emit_null_scalar();
                 just_saw_comma = false;
 
                 self.advance(); // consume ':'
                 self.skip_ws_and_newlines();
 
                 let value = if matches!(self.peek(), Some((Token::Comma | Token::FlowMapEnd, _))) {
-                    Node::null(self.current_span())
+                    self.emit_null_scalar()
                 } else {
                     self.parse_flow_value()
-                        .unwrap_or_else(|| Node::null(self.current_span()))
+                        .unwrap_or_else(|| self.emit_null_scalar())
                 };
 
                 pairs.push((key, value));
@@ -147,7 +162,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                 }
                 None => {
                     if explicit_key {
-                        Node::null(self.current_span())
+                        self.emit_null_scalar()
                     } else {
                         self.skip_to_flow_delimiter();
                         if self.pos == loop_start_pos && !self.is_eof() {
@@ -166,16 +181,16 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                 self.skip_ws_and_newlines();
 
                 if matches!(self.peek(), Some((Token::Comma | Token::FlowMapEnd, _))) {
-                    Node::null(self.current_span())
+                    self.emit_null_scalar()
                 } else {
                     self.parse_flow_value()
-                        .unwrap_or_else(|| Node::null(self.current_span()))
+                        .unwrap_or_else(|| self.emit_null_scalar())
                 }
             } else if matches!(self.peek(), Some((Token::Comma | Token::FlowMapEnd, _))) {
-                Node::null(self.current_span())
+                self.emit_null_scalar()
             } else {
                 self.error(ErrorKind::MissingSeparator, self.current_span());
-                Node::null(self.current_span())
+                self.emit_null_scalar()
             };
 
             pairs.push((key, value));
@@ -195,6 +210,9 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
         self.error(ErrorKind::UnexpectedEof, self.current_span());
         self.exit_flow_collection();
         let end = self.tokens.last().map_or(start, |rt| rt.span.end_usize());
+        self.emit(Event::MappingEnd {
+            span: Span::from_usize_range(end..end),
+        });
         Some(Node::new(
             Value::Mapping(pairs),
             Span::from_usize_range(start..end),
@@ -203,10 +221,22 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
 
     /// Parse a flow sequence: [ item, ... ]
     /// Also handles implicit flow mappings like [ key: value, ... ]
+    ///
+    /// Emits: `SequenceStart` at entry, items recursively, `SequenceEnd` at exit.
+    #[allow(clippy::too_many_lines, reason = "Complex flow sequence logic")]
     pub fn parse_flow_sequence(&mut self) -> Option<Node<'input>> {
         let start = self.enter_flow_collection()?;
+        let start_span = Span::from_usize_range(start..start + 1);
         let mut items: Vec<Node<'input>> = Vec::new();
         let mut just_saw_comma = true;
+
+        // Emit SequenceStart event
+        self.emit(Event::SequenceStart {
+            style: CollectionStyle::Flow,
+            anchor: None, // Properties are handled by caller
+            tag: None,
+            span: start_span,
+        });
 
         self.skip_ws_and_newlines();
 
@@ -217,6 +247,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                 let end = end_span.end_usize();
                 self.advance();
                 self.exit_flow_collection();
+                self.emit(Event::SequenceEnd { span: end_span });
                 return Some(Node::new(
                     Value::Sequence(items),
                     Span::from_usize_range(start..end),
@@ -238,21 +269,44 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
             // Check for empty key (: at start without key) - creates single-pair mapping
             if let Some((Token::Colon, colon_span)) = self.peek() {
                 let key_span = colon_span;
-                let key = Node::null(key_span);
                 just_saw_comma = false;
+
+                // Emit MappingStart for implicit single-pair mapping
+                self.emit(Event::MappingStart {
+                    style: CollectionStyle::Flow,
+                    anchor: None,
+                    tag: None,
+                    span: key_span,
+                });
+
+                // Emit empty scalar for null key
+                self.emit(Event::Scalar {
+                    style: ScalarStyle::Plain,
+                    value: Cow::Borrowed(""),
+                    anchor: None,
+                    tag: None,
+                    span: key_span,
+                });
+                let key = Node::null(key_span);
 
                 self.advance(); // consume ':'
                 self.skip_ws_and_newlines();
 
                 let value = if matches!(self.peek(), Some((Token::Comma | Token::FlowSeqEnd, _))) {
-                    Node::null(self.current_span())
+                    self.emit_null_scalar()
                 } else {
                     self.parse_flow_value()
-                        .unwrap_or_else(|| Node::null(self.current_span()))
+                        .unwrap_or_else(|| self.emit_null_scalar())
                 };
 
                 let map_start = key_span.start_usize();
                 let map_end = value.span.end_usize();
+
+                // Emit MappingEnd
+                self.emit(Event::MappingEnd {
+                    span: Span::from_usize_range(map_end..map_end),
+                });
+
                 let mapping_node = Node::new(
                     Value::Mapping(vec![(key, value)]),
                     Span::from_usize_range(map_start..map_end),
@@ -265,24 +319,45 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                 continue;
             }
 
+            // Check if this could be an implicit single-pair mapping by looking ahead
+            // We need to parse the potential key, then check for colon
+            let item_start_event_index = self.events.len();
             if let Some(item) = self.parse_flow_value() {
                 just_saw_comma = false;
                 self.skip_ws();
 
                 if let Some((Token::Colon, _)) = self.peek() {
+                    // This is an implicit single-pair mapping!
+                    // Insert MappingStart before the key event(s)
+                    let map_start_span = item.span;
+                    let mapping_start_event = Event::MappingStart {
+                        style: CollectionStyle::Flow,
+                        anchor: None,
+                        tag: None,
+                        span: map_start_span,
+                    };
+                    self.events
+                        .insert(item_start_event_index, mapping_start_event);
+
                     self.advance();
                     self.skip_ws_and_newlines();
 
                     let value =
                         if matches!(self.peek(), Some((Token::Comma | Token::FlowSeqEnd, _))) {
-                            Node::null(self.current_span())
+                            self.emit_null_scalar()
                         } else {
                             self.parse_flow_value()
-                                .unwrap_or_else(|| Node::null(self.current_span()))
+                                .unwrap_or_else(|| self.emit_null_scalar())
                         };
 
                     let map_start = item.span.start_usize();
                     let map_end = value.span.end_usize();
+
+                    // Emit MappingEnd
+                    self.emit(Event::MappingEnd {
+                        span: Span::from_usize_range(map_end..map_end),
+                    });
+
                     let mapping_node = Node::new(
                         Value::Mapping(vec![(item, value)]),
                         Span::from_usize_range(map_start..map_end),
@@ -309,6 +384,9 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
         self.error(ErrorKind::UnexpectedEof, self.current_span());
         self.exit_flow_collection();
         let end = self.tokens.last().map_or(start, |rt| rt.span.end_usize());
+        self.emit(Event::SequenceEnd {
+            span: Span::from_usize_range(end..end),
+        });
         Some(Node::new(
             Value::Sequence(items),
             Span::from_usize_range(start..end),
@@ -382,11 +460,20 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                     }
                 }
 
-                let value = Self::scalar_to_value(combined);
-                let node = Node::new(
-                    value,
-                    Span::from_usize_range(start_span.start_usize()..end_span.end_usize()),
-                );
+                let value = Self::scalar_to_value(combined.clone());
+                let full_span =
+                    Span::from_usize_range(start_span.start_usize()..end_span.end_usize());
+
+                // Emit Scalar event for flow plain scalar
+                self.emit(Event::Scalar {
+                    style: ScalarStyle::Plain,
+                    value: Cow::Owned(combined),
+                    anchor: None, // Properties applied by caller
+                    tag: None,
+                    span: full_span,
+                });
+
+                let node = Node::new(value, full_span);
                 Some(self.apply_properties_and_register(props, node))
             }
             Token::StringStart(_) => {
@@ -399,7 +486,20 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                 if props.is_empty() {
                     None
                 } else {
-                    Some(self.apply_properties_and_register(props, Node::null(start_span)))
+                    // Emit scalar event for the null with properties
+                    self.emit(Event::Scalar {
+                        style: ScalarStyle::Plain,
+                        value: Cow::Borrowed(""),
+                        anchor: props.anchor.as_ref().map(|(name, _)| Cow::Borrowed(*name)),
+                        tag: props.tag.as_ref().map(|(tag, _)| tag.clone()),
+                        span: start_span,
+                    });
+                    let null_node = Node::null(start_span);
+                    let node_with_props = props.clone().apply_to(null_node);
+                    if let Some((name, _)) = &props.anchor {
+                        self.anchors.insert(name, node_with_props.clone());
+                    }
+                    Some(node_with_props)
                 }
             }
             _ => None,

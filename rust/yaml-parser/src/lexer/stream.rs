@@ -332,18 +332,26 @@ impl<'input> StreamLexer<'input> {
             }
 
             // Skip comment-only or empty lines in directive prologue
-            let trimmed_remaining = remaining.trim_start();
-            if self.in_directive_prologue
-                && (remaining.starts_with('#')
-                    || trimmed_remaining.starts_with('#')
-                    || trimmed_remaining.is_empty())
-            {
+            // Important: check the CURRENT LINE only, not all remaining content
+            // (trim_start() would trim across newlines and incorrectly match multi-line content)
+            if self.in_directive_prologue {
                 let line_end = find_eol_at(self.input, self.pos);
-                self.pos = line_end;
-                if self.pos < self.input.len() {
-                    self.pos = skip_newline(self.input, self.pos);
+                #[allow(
+                    clippy::string_slice,
+                    reason = "positions from byte scanning are UTF-8 boundaries"
+                )]
+                let current_line = &self.input[self.pos..line_end];
+                let trimmed_line = current_line.trim();
+                if current_line.starts_with('#')
+                    || trimmed_line.starts_with('#')
+                    || trimmed_line.is_empty()
+                {
+                    self.pos = line_end;
+                    if self.pos < self.input.len() {
+                        self.pos = skip_newline(self.input, self.pos);
+                    }
+                    continue;
                 }
-                continue;
             }
 
             // Check for directive-like content outside the directive prologue

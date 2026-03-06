@@ -7,6 +7,7 @@
 use std::borrow::Cow;
 
 use crate::error::ErrorKind;
+use crate::event::{CollectionStyle, Event, ScalarStyle};
 use crate::lexer::Token;
 use crate::span::{IndentLevel, Span};
 use crate::value::{Node, Value};
@@ -15,11 +16,29 @@ use super::{NodeProperties, Parser};
 
 impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
     /// Parse a block sequence: - item\n- item
-    pub fn parse_block_sequence(&mut self, _min_indent: IndentLevel) -> Option<Node<'input>> {
+    ///
+    /// Emits: `SequenceStart` at entry, items recursively, `SequenceEnd` at exit.
+    pub fn parse_block_sequence(
+        &mut self,
+        _min_indent: IndentLevel,
+        props: NodeProperties<'input>,
+    ) -> Option<Node<'input>> {
         let (_, start_span) = self.peek()?;
         let start = start_span.start_usize();
         let seq_indent = self.current_token_column();
         let mut items: Vec<Node<'input>> = Vec::new();
+
+        // Extract properties for event emission
+        let anchor_name = props.anchor.as_ref().map(|(name, _)| *name);
+        let tag_value = props.tag.as_ref().map(|(tag, _)| tag.clone());
+
+        // Emit SequenceStart event with properties
+        self.emit(Event::SequenceStart {
+            style: CollectionStyle::Block,
+            anchor: anchor_name.map(Cow::Borrowed),
+            tag: tag_value,
+            span: start_span,
+        });
 
         self.push_indent(seq_indent);
 
@@ -55,7 +74,16 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
             if let Some(node) = item {
                 items.push(node);
             } else {
-                items.push(Node::null(self.current_span()));
+                // Emit empty scalar for null item
+                let null_span = self.current_span();
+                self.emit(Event::Scalar {
+                    style: ScalarStyle::Plain,
+                    value: Cow::Borrowed(""),
+                    anchor: None,
+                    tag: None,
+                    span: null_span,
+                });
+                items.push(Node::null(null_span));
             }
 
             self.skip_ws();
@@ -70,6 +98,10 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                         if n < seq_indent {
                             let end = items.last().map_or(start, |node| node.span.end_usize());
                             self.pop_indent();
+                            // Emit SequenceEnd event
+                            self.emit(Event::SequenceEnd {
+                                span: Span::from_usize_range(end..end),
+                            });
                             return Some(Node::new(
                                 Value::Sequence(items),
                                 Span::from_usize_range(start..end),
@@ -96,13 +128,27 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
 
         let end = items.last().map_or(start, |node| node.span.end_usize());
         self.pop_indent();
-        Some(Node::new(
-            Value::Sequence(items),
-            Span::from_usize_range(start..end),
-        ))
+        // Emit SequenceEnd event
+        self.emit(Event::SequenceEnd {
+            span: Span::from_usize_range(end..end),
+        });
+
+        // Build node and apply properties
+        let node = Node::new(Value::Sequence(items), Span::from_usize_range(start..end));
+
+        // Extract anchor name before apply_to consumes props
+        let anchor_to_register = anchor_name;
+        let node_with_props = props.apply_to(node);
+
+        // Register anchor if present
+        if let Some(name) = anchor_to_register {
+            self.anchors.insert(name, node_with_props.clone());
+        }
+
+        Some(node_with_props)
     }
 
-    /// Build a mapping node from collected pairs.
+    /// Build a mapping node from collected pairs (no event emission).
     fn build_mapping_node(pairs: Vec<(Node<'input>, Node<'input>)>, start: usize) -> Node<'input> {
         let end = pairs
             .last()
@@ -181,6 +227,11 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                 if !self.anchors.contains_key(alias_name) {
                     self.error(ErrorKind::UndefinedAlias, span);
                 }
+                // Emit Alias event for the key
+                self.emit(Event::Alias {
+                    name: Cow::Borrowed(alias_name),
+                    span,
+                });
                 Some(Node::new(Value::Alias(Cow::Borrowed(alias_name)), span))
             } else {
                 self.parse_scalar()
@@ -198,11 +249,29 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
             }
             None if explicit_key || empty_key => {
                 // For explicit keys with properties (e.g., "? &d"), apply properties to null
-                let null_node = Node::null(self.current_span());
+                let null_span = self.current_span();
+                let null_node = Node::null(null_span);
+                // Emit empty scalar event for the null key
+                self.emit(Event::Scalar {
+                    style: ScalarStyle::Plain,
+                    value: Cow::Borrowed(""),
+                    anchor: key_props
+                        .anchor
+                        .as_ref()
+                        .map(|(name, _)| Cow::Borrowed(*name)),
+                    tag: key_props.tag.as_ref().map(|(tag, _)| tag.clone()),
+                    span: null_span,
+                });
                 if key_props.is_empty() {
                     Some(null_node)
                 } else {
-                    Some(self.apply_properties_and_register(key_props, null_node))
+                    // Apply props to node and register anchor (don't use apply_properties_and_register
+                    // as it would try to update the event we just emitted)
+                    let node_with_props = key_props.clone().apply_to(null_node);
+                    if let Some((name, _)) = &key_props.anchor {
+                        self.anchors.insert(name, node_with_props.clone());
+                    }
+                    Some(node_with_props)
                 }
             }
             None => None,
@@ -240,18 +309,13 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
     }
 
     /// Skip tokens until next mapping entry or end of mapping.
-    /// Returns `Ok(())` to continue parsing, `Err(node)` if the mapping should end.
-    fn skip_to_next_mapping_entry(
-        &mut self,
-        pairs: Vec<(Node<'input>, Node<'input>)>,
-        start: usize,
-        map_indent: IndentLevel,
-    ) -> Result<(), Node<'input>> {
+    /// Returns `true` to continue parsing, `false` if the mapping should end.
+    /// When returning `false`, the caller is responsible for calling `pop_indent()`.
+    fn skip_to_next_mapping_entry(&mut self, map_indent: IndentLevel) -> bool {
         // Handle immediate Dedent at mapping level
         if let Some((Token::Dedent, _)) = self.peek() {
             self.advance();
-            self.pop_indent();
-            return Err(Self::build_mapping_node(pairs, start));
+            return false; // End mapping
         }
 
         while let Some((tok, _)) = self.peek() {
@@ -259,8 +323,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                 Token::LineStart(n) => {
                     let n = *n;
                     if n < map_indent {
-                        self.pop_indent();
-                        return Err(Self::build_mapping_node(pairs, start));
+                        return false; // End mapping
                     }
                     if n == map_indent {
                         self.advance();
@@ -271,7 +334,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                         // Check if there's a mapping entry token now.
                         // If not, continue the loop to handle blank lines.
                         if self.is_mapping_entry_token() {
-                            return Ok(());
+                            return true; // Continue
                         }
                         // Otherwise continue - might be a blank line
                     } else {
@@ -290,10 +353,10 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                     self.advance();
                     // Continue looking for the next LineStart
                 }
-                _ => return Ok(()),
+                _ => return true, // Continue
             }
         }
-        Ok(())
+        true // Continue (or EOF)
     }
 
     /// Skip tokens until the next `LineStart` token (or EOF).
@@ -326,10 +389,29 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
     }
 
     /// Parse a block mapping with explicit key indicator or implicit keys.
-    pub fn parse_block_mapping(&mut self, _min_indent: IndentLevel) -> Node<'input> {
-        let start = self.current_span().start_usize();
+    ///
+    /// Emits: `MappingStart` at entry, key/value pairs recursively, `MappingEnd` at exit.
+    pub fn parse_block_mapping(
+        &mut self,
+        _min_indent: IndentLevel,
+        props: NodeProperties<'input>,
+    ) -> Node<'input> {
+        let start_span = self.current_span();
+        let start = start_span.start_usize();
         let map_indent = self.current_token_column();
         let mut pairs: Vec<(Node<'input>, Node<'input>)> = Vec::new();
+
+        // Extract properties for event emission
+        let anchor_name = props.anchor.as_ref().map(|(name, _)| *name);
+        let tag_value = props.tag.as_ref().map(|(tag, _)| tag.clone());
+
+        // Emit MappingStart event with properties
+        self.emit(Event::MappingStart {
+            style: CollectionStyle::Block,
+            anchor: anchor_name.map(Cow::Borrowed),
+            tag: tag_value,
+            span: start_span,
+        });
 
         self.push_indent(map_indent);
 
@@ -378,7 +460,16 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
             let value_node = if has_value {
                 self.parse_mapping_value(map_indent)
             } else {
-                Node::null(self.current_span())
+                // Emit empty scalar for null value
+                let null_span = self.current_span();
+                self.emit(Event::Scalar {
+                    style: ScalarStyle::Plain,
+                    value: Cow::Borrowed(""),
+                    anchor: None,
+                    tag: None,
+                    span: null_span,
+                });
+                Node::null(null_span)
             };
 
             pairs.push((key_node, value_node));
@@ -391,8 +482,21 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
             }
 
             // Skip to next entry or end mapping
-            if let Err(node) = self.skip_to_next_mapping_entry(pairs.clone(), start, map_indent) {
-                return node;
+            if !self.skip_to_next_mapping_entry(map_indent) {
+                // Mapping ended
+                self.pop_indent();
+                let end = pairs
+                    .last()
+                    .map_or(start, |(_, node)| node.span.end_usize());
+                self.emit(Event::MappingEnd {
+                    span: Span::from_usize_range(end..end),
+                });
+                let node = Self::build_mapping_node(pairs, start);
+                let node_with_props = props.clone().apply_to(node);
+                if let Some(name) = anchor_name {
+                    self.anchors.insert(name, node_with_props.clone());
+                }
+                return node_with_props;
             }
 
             // Check if current token can start a new entry
@@ -408,22 +512,113 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
         }
 
         self.pop_indent();
-        Self::build_mapping_node(pairs, start)
+        let end = pairs
+            .last()
+            .map_or(start, |(_, node)| node.span.end_usize());
+        self.emit(Event::MappingEnd {
+            span: Span::from_usize_range(end..end),
+        });
+        let node = Self::build_mapping_node(pairs, start);
+        let node_with_props = props.apply_to(node);
+        if let Some(name) = anchor_name {
+            self.anchors.insert(name, node_with_props.clone());
+        }
+        node_with_props
     }
 
     /// Parse a block mapping where the first key already has properties (anchor/tag).
+    ///
+    /// Emits: `MappingStart` at entry (with properties), key/value pairs recursively, `MappingEnd` at exit.
+    ///
+    /// This function uses a lookahead approach: it first checks (without emitting events) whether
+    /// there's actually a mapping here (key followed by colon). Only if confirmed does it emit
+    /// `MappingStart` and parse the key with event emission.
     #[allow(clippy::too_many_lines, reason = "Complex mapping logic")]
     pub fn parse_block_mapping_with_props(
         &mut self,
         _min_indent: IndentLevel,
         first_key_props: NodeProperties<'input>,
     ) -> Option<Node<'input>> {
-        let start = self.current_span().start_usize();
+        let start_span = self.current_span();
+        let start = start_span.start_usize();
         let map_indent = self.current_indent();
+
+        // PHASE 1: Lookahead to confirm this is actually a mapping (key + colon).
+        // We do NOT emit any events in this phase - if it's not a mapping, we return None
+        // without having emitted MappingStart.
+        // Important: Save/restore errors too to avoid spurious errors during speculative parse.
+        {
+            let saved_pos = self.pos;
+            let saved_events_len = self.events.len();
+            let saved_errors_len = self.errors.len();
+
+            // Collect any additional properties (without permanently consuming them)
+            let _key_props = self.collect_node_properties(first_key_props.clone());
+
+            // Check if there's a key token
+            let has_key = matches!(
+                self.peek(),
+                Some((
+                    Token::Plain(_)
+                        | Token::StringStart(_)
+                        | Token::FlowSeqStart
+                        | Token::FlowMapStart,
+                    _
+                ))
+            );
+            if !has_key {
+                self.pos = saved_pos;
+                self.events.truncate(saved_events_len);
+                self.errors.truncate(saved_errors_len);
+                return None;
+            }
+
+            // Parse the potential key (speculatively)
+            let key_parsed = match self.peek() {
+                Some((Token::Plain(_) | Token::StringStart(_), _)) => self.parse_scalar().is_some(),
+                Some((Token::FlowSeqStart | Token::FlowMapStart, _)) => {
+                    self.parse_flow_value().is_some()
+                }
+                _ => false,
+            };
+            if !key_parsed {
+                self.pos = saved_pos;
+                self.events.truncate(saved_events_len);
+                self.errors.truncate(saved_errors_len);
+                return None;
+            }
+
+            self.skip_ws();
+
+            // Check for colon
+            let has_colon = matches!(self.peek(), Some((Token::Colon, _)));
+            if !has_colon {
+                self.pos = saved_pos;
+                self.events.truncate(saved_events_len);
+                self.errors.truncate(saved_errors_len);
+                return None;
+            }
+
+            // Confirmed! Restore position and proceed with actual parsing
+            self.pos = saved_pos;
+            self.events.truncate(saved_events_len);
+            self.errors.truncate(saved_errors_len);
+        }
+
+        // PHASE 2: Actually parse the mapping, now that we've confirmed it's valid.
         let mut pairs: Vec<(Node<'input>, Node<'input>)> = Vec::new();
 
         // Collect any additional properties after the initial ones
         let key_props = self.collect_node_properties(first_key_props);
+
+        // Emit MappingStart event - note: properties are on the KEY, not the mapping
+        // The mapping itself doesn't have anchor/tag in this case.
+        self.emit(Event::MappingStart {
+            style: CollectionStyle::Block,
+            anchor: None,
+            tag: None,
+            span: start_span,
+        });
 
         let first_key = match self.peek() {
             Some((Token::Plain(_) | Token::StringStart(_), _)) => {
@@ -431,24 +626,23 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                 self.apply_properties_and_register(key_props, scalar)
             }
             Some((Token::FlowSeqStart | Token::FlowMapStart, _)) => {
-                if let Some(n) = self.parse_flow_value() {
-                    self.apply_properties_and_register(key_props, n)
+                if let Some(node) = self.parse_flow_value() {
+                    self.apply_properties_and_register(key_props, node)
                 } else {
+                    // Shouldn't happen since we checked in phase 1, but handle gracefully
                     return None;
                 }
             }
             _ => {
+                // Shouldn't happen since we checked in phase 1
                 return None;
             }
         };
 
         self.skip_ws();
 
-        let has_value = matches!(self.peek(), Some((Token::Colon, _)));
-        if !has_value {
-            return None;
-        }
-
+        // We already confirmed colon exists in phase 1
+        debug_assert!(matches!(self.peek(), Some((Token::Colon, _))));
         self.advance(); // consume ':'
         self.skip_ws();
 
@@ -458,7 +652,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
         } else {
             self.parse_value(map_indent + 1)
         };
-        let first_value_node = first_value.unwrap_or_else(|| Node::null(self.current_span()));
+        let first_value_node = first_value.unwrap_or_else(|| self.emit_null_scalar());
 
         pairs.push((first_key, first_value_node));
 
@@ -490,7 +684,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                     self.skip_ws();
                     // Parse the key after ?
                     let key = self.parse_value(map_indent + 1);
-                    let key_node = key.unwrap_or_else(|| Node::null(self.current_span()));
+                    let key_node = key.unwrap_or_else(|| self.emit_null_scalar());
                     // Skip to colon (may be on next line)
                     self.skip_ws();
                     while let Some((Token::LineStart(line_n), _)) = self.peek() {
@@ -512,7 +706,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                         } else {
                             self.parse_value(map_indent + 1)
                         };
-                        let value_node = value.unwrap_or_else(|| Node::null(self.current_span()));
+                        let value_node = value.unwrap_or_else(|| self.emit_null_scalar());
                         pairs.push((key_node, value_node));
                     }
                     continue;
@@ -528,6 +722,11 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                             self.error(ErrorKind::UndefinedAlias, alias_span);
                         }
                         self.advance();
+                        // Emit Alias event for the key
+                        self.emit(Event::Alias {
+                            name: Cow::Borrowed(alias_name),
+                            span: alias_span,
+                        });
                         Some(Node::new(
                             Value::Alias(Cow::Borrowed(alias_name)),
                             alias_span,
@@ -581,7 +780,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                         } else {
                             self.parse_value(map_indent + 1)
                         };
-                        let value_node = value.unwrap_or_else(|| Node::null(self.current_span()));
+                        let value_node = value.unwrap_or_else(|| self.emit_null_scalar());
                         pairs.push((key, value_node));
                     }
                 }
@@ -593,111 +792,9 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
         let end = pairs
             .last()
             .map_or(start, |(_, node)| node.span.end_usize());
-        Some(Node::new(
-            Value::Mapping(pairs),
-            Span::from_usize_range(start..end),
-        ))
-    }
-
-    /// Parse a block mapping when we already have the first key.
-    pub fn parse_block_mapping_starting_with_key(
-        &mut self,
-        _min_indent: IndentLevel,
-        first_key: Node<'input>,
-    ) -> Option<Node<'input>> {
-        let start = first_key.span.start_usize();
-        let map_indent = self.current_indent();
-        let mut pairs: Vec<(Node<'input>, Node<'input>)> = Vec::new();
-
-        if !matches!(self.peek(), Some((Token::Colon, _))) {
-            return Some(first_key);
-        }
-        self.advance(); // consume ':'
-        self.skip_ws();
-
-        let first_value = if let Some((Token::LineStart(_), _)) = self.peek() {
-            self.advance();
-            self.parse_value(map_indent + 1)
-        } else {
-            self.parse_value(map_indent + 1)
-        };
-        let first_value_node = first_value.unwrap_or_else(|| Node::null(self.current_span()));
-
-        pairs.push((first_key, first_value_node));
-
-        loop {
-            self.skip_ws();
-
-            let Some((Token::LineStart(n), _)) = self.peek() else {
-                break;
-            };
-            let n = *n;
-
-            if n < map_indent {
-                break;
-            }
-            if n > map_indent {
-                self.advance();
-                continue;
-            }
-            self.advance();
-
-            while let Some((Token::Indent(_) | Token::Dedent, _)) = self.peek() {
-                self.advance();
-            }
-
-            match self.peek() {
-                Some((Token::Plain(_) | Token::StringStart(_), _)) => {
-                    let key = self.parse_scalar()?;
-                    self.skip_ws();
-
-                    if !matches!(self.peek(), Some((Token::Colon, _))) {
-                        break;
-                    }
-                    self.advance();
-                    self.skip_ws();
-
-                    let value = if let Some((Token::LineStart(_), _)) = self.peek() {
-                        self.advance();
-                        self.parse_value(map_indent + 1)
-                    } else {
-                        self.parse_value(map_indent + 1)
-                    };
-                    let value_node = value.unwrap_or_else(|| Node::null(self.current_span()));
-
-                    pairs.push((key, value_node));
-                }
-                Some((Token::FlowSeqStart | Token::FlowMapStart, _)) => {
-                    let key = if matches!(self.peek(), Some((Token::FlowSeqStart, _))) {
-                        self.parse_flow_sequence()?
-                    } else {
-                        self.parse_flow_mapping()?
-                    };
-                    self.skip_ws();
-
-                    if !matches!(self.peek(), Some((Token::Colon, _))) {
-                        break;
-                    }
-                    self.advance();
-                    self.skip_ws();
-
-                    let value = if let Some((Token::LineStart(_), _)) = self.peek() {
-                        self.advance();
-                        self.parse_value(map_indent + 1)
-                    } else {
-                        self.parse_value(map_indent + 1)
-                    };
-                    let value_node = value.unwrap_or_else(|| Node::null(self.current_span()));
-
-                    pairs.push((key, value_node));
-                }
-                _ => break,
-            }
-        }
-
-        let end = pairs
-            .last()
-            .map_or(start, |(_, node)| node.span.end_usize());
+        self.emit(Event::MappingEnd {
+            span: Span::from_usize_range(end..end),
+        });
         Some(Node::new(
             Value::Mapping(pairs),
             Span::from_usize_range(start..end),
@@ -705,22 +802,48 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
     }
 
     /// Parse a block mapping where the first key is a null with properties.
+    ///
+    /// Emits: `MappingStart` at entry, key/value pairs recursively, `MappingEnd` at exit.
     pub fn parse_block_mapping_with_tagged_null_key(
         &mut self,
         _min_indent: IndentLevel,
         key_props: NodeProperties<'input>,
     ) -> Option<Node<'input>> {
-        let start = self.current_span().start_usize();
+        let start_span = self.current_span();
+        let start = start_span.start_usize();
         let map_indent = self.current_indent();
         let mut pairs: Vec<(Node<'input>, Node<'input>)> = Vec::new();
-
-        // First key is a null with properties (tag/anchor)
-        let first_key =
-            self.apply_properties_and_register(key_props, Node::null(self.current_span()));
 
         if !matches!(self.peek(), Some((Token::Colon, _))) {
             return None;
         }
+
+        // Now we know it's a mapping, emit MappingStart
+        self.emit(Event::MappingStart {
+            style: CollectionStyle::Block,
+            anchor: None,
+            tag: None,
+            span: start_span,
+        });
+
+        // Emit scalar event for the null key with properties
+        let key_span = self.current_span();
+        self.emit(Event::Scalar {
+            style: ScalarStyle::Plain,
+            value: Cow::Borrowed(""),
+            anchor: key_props
+                .anchor
+                .as_ref()
+                .map(|(name, _)| Cow::Borrowed(*name)),
+            tag: key_props.tag.as_ref().map(|(tag, _)| tag.clone()),
+            span: key_span,
+        });
+        let null_node = Node::null(key_span);
+        let first_key = key_props.clone().apply_to(null_node);
+        if let Some((name, _)) = &key_props.anchor {
+            self.anchors.insert(name, first_key.clone());
+        }
+
         self.advance();
         self.skip_ws();
 
@@ -757,6 +880,12 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
             }
         }
 
+        let end = pairs
+            .last()
+            .map_or(start, |(_, node)| node.span.end_usize());
+        self.emit(Event::MappingEnd {
+            span: Span::from_usize_range(end..end),
+        });
         Some(Self::build_mapping_node(pairs, start))
     }
 
@@ -792,7 +921,8 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
             }
             // Empty key (colon at line start)
             Some((Token::Colon, _)) => {
-                let key = Node::null(self.current_span());
+                // Emit empty scalar for the null key
+                let key = self.emit_null_scalar();
                 self.advance();
                 self.check_tabs_after_block_indicator();
                 self.skip_ws();
@@ -833,8 +963,20 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
             }
             // Null key with properties (tag/anchor followed by colon)
             Some((Token::Colon, _)) => {
-                let key =
-                    self.apply_properties_and_register(props, Node::null(self.current_span()));
+                // Emit scalar event for the null key with properties
+                let key_span = self.current_span();
+                self.emit(Event::Scalar {
+                    style: ScalarStyle::Plain,
+                    value: Cow::Borrowed(""),
+                    anchor: props.anchor.as_ref().map(|(name, _)| Cow::Borrowed(*name)),
+                    tag: props.tag.as_ref().map(|(tag, _)| tag.clone()),
+                    span: key_span,
+                });
+                let null_node = Node::null(key_span);
+                let key = props.clone().apply_to(null_node);
+                if let Some((name, _)) = &props.anchor {
+                    self.anchors.insert(name, key.clone());
+                }
                 self.advance();
                 self.skip_ws();
 
@@ -849,11 +991,30 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
     /// Parse a block mapping starting with an empty key (colon at line start).
     pub fn parse_block_mapping_with_empty_key(&mut self, _min_indent: IndentLevel) -> Node<'input> {
         let start = self.current_span().start_usize();
+        let start_span = self.current_span();
         let map_indent = self.current_indent();
         let mut pairs: Vec<(Node<'input>, Node<'input>)> = Vec::new();
 
+        // Emit MappingStart event
+        self.emit(Event::MappingStart {
+            style: CollectionStyle::Block,
+            anchor: None,
+            tag: None,
+            span: start_span,
+        });
+
         while let Some((Token::Colon, _)) = self.peek() {
-            let key = Node::null(self.current_span());
+            let key_span = self.current_span();
+            let key = Node::null(key_span);
+
+            // Emit empty key scalar event
+            self.emit(Event::Scalar {
+                style: ScalarStyle::Plain,
+                value: Cow::Borrowed(""),
+                anchor: None,
+                tag: None,
+                span: key_span,
+            });
 
             self.advance();
             self.check_tabs_after_block_indicator();
@@ -866,7 +1027,18 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                 self.parse_value(map_indent + 1)
             };
 
-            let value_node = value.unwrap_or_else(|| Node::null(self.current_span()));
+            let value_node = value.unwrap_or_else(|| {
+                // Emit scalar event for null value
+                let null_span = self.current_span();
+                self.emit(Event::Scalar {
+                    style: ScalarStyle::Plain,
+                    value: Cow::Borrowed(""),
+                    anchor: None,
+                    tag: None,
+                    span: null_span,
+                });
+                Node::null(null_span)
+            });
 
             pairs.push((key, value_node));
 
@@ -876,6 +1048,8 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                     let end = pairs
                         .last()
                         .map_or(start, |(_, node)| node.span.end_usize());
+                    let end_span = Span::from_usize_range(end..end);
+                    self.emit(Event::MappingEnd { span: end_span });
                     return Node::new(Value::Mapping(pairs), Span::from_usize_range(start..end));
                 }
                 if *n == map_indent {
@@ -893,6 +1067,8 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
         let end = pairs
             .last()
             .map_or(start, |(_, node)| node.span.end_usize());
+        let end_span = Span::from_usize_range(end..end);
+        self.emit(Event::MappingEnd { span: end_span });
         Node::new(Value::Mapping(pairs), Span::from_usize_range(start..end))
     }
 
@@ -907,6 +1083,24 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
             self.error(ErrorKind::UndefinedAlias, alias_span);
         }
 
+        // Extract properties for event emission
+        let anchor_for_mapping = props.anchor.as_ref().map(|(name, _)| *name);
+        let tag_for_mapping = props.tag.as_ref().map(|(tag, _)| tag.clone());
+
+        // Emit MappingStart with props (anchor/tag apply to the mapping)
+        self.emit(Event::MappingStart {
+            style: CollectionStyle::Block,
+            anchor: anchor_for_mapping.map(Cow::Borrowed),
+            tag: tag_for_mapping,
+            span: alias_span,
+        });
+
+        // Emit Alias event for the key
+        self.emit(Event::Alias {
+            name: Cow::Borrowed(alias_name),
+            span: alias_span,
+        });
+
         let alias_node = Node::new(Value::Alias(Cow::Borrowed(alias_name)), alias_span);
 
         self.advance(); // ':'
@@ -920,7 +1114,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
         } else {
             self.parse_value(map_indent + 1)
         };
-        let value_node = value.unwrap_or_else(|| Node::null(self.current_span()));
+        let value_node = value.unwrap_or_else(|| self.emit_null_scalar());
 
         let mut pairs = vec![(alias_node, value_node)];
 
@@ -959,6 +1153,11 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                     if !self.anchors.contains_key(new_alias_name) {
                         self.error(ErrorKind::UndefinedAlias, span);
                     }
+                    // Emit Alias event for the key
+                    self.emit(Event::Alias {
+                        name: Cow::Borrowed(new_alias_name),
+                        span,
+                    });
                     Some(Node::new(Value::Alias(Cow::Borrowed(new_alias_name)), span))
                 }
                 _ => None,
@@ -982,7 +1181,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
             } else {
                 self.parse_value(map_indent + 1)
             };
-            let linestart_node = linestart.unwrap_or_else(|| Node::null(self.current_span()));
+            let linestart_node = linestart.unwrap_or_else(|| self.emit_null_scalar());
 
             pairs.push((key_node, linestart_node));
         }
@@ -990,11 +1189,22 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
         let end = pairs
             .last()
             .map_or(alias_span.start_usize(), |(_, node)| node.span.end_usize());
+
+        // Emit MappingEnd event
+        self.emit(Event::MappingEnd {
+            span: Span::from_usize_range(end..end),
+        });
+
         let mapping = Node::new(
             Value::Mapping(pairs),
             Span::from_usize_range(alias_span.start_usize()..end),
         );
 
-        self.apply_properties_and_register(props, mapping)
+        // Apply props to the node and register anchor
+        let node_with_props = props.apply_to(mapping);
+        if let Some(name) = anchor_for_mapping {
+            self.anchors.insert(name, node_with_props.clone());
+        }
+        node_with_props
     }
 }

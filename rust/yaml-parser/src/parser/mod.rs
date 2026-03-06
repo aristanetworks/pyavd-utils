@@ -13,13 +13,17 @@
 //! with the anchor attached to the key scalar, not wrapping the mapping.
 
 mod block;
+mod event_parser;
 mod flow;
 mod scalar;
+
+pub use event_parser::EventParser;
 
 use std::borrow::Cow;
 use std::collections::HashMap;
 
 use crate::error::{ErrorKind, ParseError};
+use crate::event::{CollectionStyle, Event, ScalarStyle};
 use crate::lexer::{RichToken, Token};
 use crate::span::{IndentLevel, Span, Spanned, usize_to_indent};
 use crate::value::{Node, Properties, Value};
@@ -116,6 +120,9 @@ pub(crate) struct Parser<'tokens: 'input, 'input> {
     /// Tag handles declared in this document's prolog via %TAG directives.
     /// Key: handle like "!prefix!", Value: prefix/URI like "tag:example.com,2011:"
     pub tag_handles: HashMap<String, String>,
+    /// Event buffer for the event-emitting mode.
+    /// When populated, the parser emits events instead of (or in addition to) building nodes.
+    pub events: Vec<Event<'input>>,
 }
 
 impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
@@ -130,7 +137,18 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
             flow_context_columns: Vec::new(),
             indent_stack: vec![0], // Start with base level 0
             tag_handles: HashMap::new(),
+            events: Vec::new(),
         }
+    }
+
+    /// Emit an event to the event buffer.
+    pub fn emit(&mut self, event: Event<'input>) {
+        self.events.push(event);
+    }
+
+    /// Take the collected events, leaving an empty buffer.
+    pub fn take_events(&mut self) -> Vec<Event<'input>> {
+        std::mem::take(&mut self.events)
     }
 
     /// Check if we've reached the end of input.
@@ -269,6 +287,22 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
         usize_to_indent(col)
     }
 
+    /// Emit an empty scalar event and return a null node.
+    ///
+    /// Use this whenever a null/empty value needs to be created without properties.
+    /// This ensures the event stream stays in sync with the AST.
+    pub fn emit_null_scalar(&mut self) -> Node<'input> {
+        let null_span = self.current_span();
+        self.emit(Event::Scalar {
+            style: ScalarStyle::Plain,
+            value: Cow::Borrowed(""),
+            anchor: None,
+            tag: None,
+            span: null_span,
+        });
+        Node::null(null_span)
+    }
+
     /// Apply node properties to a node and register the anchor if present.
     pub fn apply_properties_and_register(
         &mut self,
@@ -277,12 +311,99 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
     ) -> Node<'input> {
         // Extract anchor name before applying (to get the 'input lifetime)
         let anchor_name = props.anchor.as_ref().map(|(name, _)| *name);
+        let tag_value = props.tag.as_ref().map(|(tag, _)| tag.clone());
+
+        // If we have properties, update the relevant event to include them
+        // This handles cases where scalars/collections were emitted before properties were known
+        if !props.is_empty() {
+            self.apply_properties_to_events(anchor_name, tag_value.as_ref());
+        }
+
         let node_with_props = props.apply_to(node);
         // If the node has an anchor, register it in the anchors map
         if let Some(name) = anchor_name {
             self.anchors.insert(name, node_with_props.clone());
         }
         node_with_props
+    }
+
+    /// Apply properties (anchor/tag) to the appropriate event in the event buffer.
+    ///
+    /// If the last event is a Scalar or collection Start, update it directly.
+    /// If the last event is a collection End, find the matching Start and update it.
+    fn apply_properties_to_events(
+        &mut self,
+        anchor_name: Option<&'input str>,
+        tag_value: Option<&Cow<'input, str>>,
+    ) {
+        let Some(last_event) = self.events.last() else {
+            return;
+        };
+
+        // Check if the last event is a collection end - if so, find the matching start
+        let target_idx = match last_event {
+            Event::SequenceEnd { .. } => self.find_matching_sequence_start(),
+            Event::MappingEnd { .. } => self.find_matching_mapping_start(),
+            _ => Some(self.events.len() - 1),
+        };
+
+        let Some(idx) = target_idx else {
+            return;
+        };
+
+        let Some(target_event) = self.events.get_mut(idx) else {
+            return;
+        };
+
+        match target_event {
+            Event::Scalar { anchor, tag, .. }
+            | Event::MappingStart { anchor, tag, .. }
+            | Event::SequenceStart { anchor, tag, .. } => {
+                if anchor.is_none() {
+                    *anchor = anchor_name.map(Cow::Borrowed);
+                }
+                if tag.is_none() {
+                    *tag = tag_value.cloned();
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Find the index of the matching SequenceStart for the last SequenceEnd.
+    fn find_matching_sequence_start(&self) -> Option<usize> {
+        let mut depth = 0;
+        for (i, event) in self.events.iter().enumerate().rev() {
+            match event {
+                Event::SequenceEnd { .. } => depth += 1,
+                Event::SequenceStart { .. } => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Some(i);
+                    }
+                }
+                _ => {}
+            }
+        }
+        None
+    }
+
+    /// Find the index of the matching MappingStart for the last MappingEnd.
+    fn find_matching_mapping_start(&self) -> Option<usize> {
+        let mut depth = 0;
+        for (i, event) in self.events.iter().enumerate().rev() {
+            match event {
+                Event::MappingEnd { .. } => depth += 1,
+                Event::MappingStart { .. } => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Some(i);
+                    }
+                }
+                _ => {}
+            }
+        }
+        None
     }
 
     /// Collect node properties (anchors/tags) from the current position.
@@ -337,7 +458,16 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                 // If the next line is at strictly lower indentation, value is implicitly null.
                 // Don't advance past LineStart - let the caller handle dedent.
                 if *n < map_indent {
-                    return Node::null(self.current_span());
+                    let null_span = self.current_span();
+                    // Emit empty scalar event for null value
+                    self.emit(Event::Scalar {
+                        style: ScalarStyle::Plain,
+                        value: Cow::Borrowed(""),
+                        anchor: None,
+                        tag: None,
+                        span: null_span,
+                    });
+                    return Node::null(null_span);
                 }
                 self.advance();
                 while let Some((Token::Indent(_) | Token::Dedent, _)) = self.peek() {
@@ -349,9 +479,50 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                 self.advance();
                 self.parse_value(map_indent + 1)
             }
+            Some((Token::Anchor(_) | Token::Tag(_), _)) => {
+                // Collect properties first, then check for block collection on next line
+                let props = self.collect_node_properties(NodeProperties::default());
+
+                // After properties, check if we have LineStart
+                // If the next line is dedented, this is a null value with properties
+                // (don't bridge to dedented content - the properties belong to this value)
+                if let Some((Token::LineStart(n), _)) = self.peek() {
+                    if *n < map_indent + 1 {
+                        // Dedented - emit null scalar with properties
+                        let null_span = self.current_span();
+                        self.emit(Event::Scalar {
+                            style: ScalarStyle::Plain,
+                            value: Cow::Borrowed(""),
+                            anchor: props.anchor.as_ref().map(|(name, _)| Cow::Borrowed(*name)),
+                            tag: props.tag.as_ref().map(|(tag, _)| tag.clone()),
+                            span: null_span,
+                        });
+                        let null_node = Node::null(null_span);
+                        let node_with_props = props.clone().apply_to(null_node);
+                        if let Some((name, _)) = &props.anchor {
+                            self.anchors.insert(name, node_with_props.clone());
+                        }
+                        return node_with_props;
+                    }
+                }
+
+                // Normal case - continue parsing value with properties
+                self.parse_value_with_properties(map_indent + 1, props)
+            }
             _ => self.parse_value(map_indent + 1),
         };
-        value.unwrap_or_else(|| Node::null(self.current_span()))
+        value.unwrap_or_else(|| {
+            let null_span = self.current_span();
+            // Emit empty scalar event for null value
+            self.emit(Event::Scalar {
+                style: ScalarStyle::Plain,
+                value: Cow::Borrowed(""),
+                anchor: None,
+                tag: None,
+                span: null_span,
+            });
+            Node::null(null_span)
+        })
     }
 
     /// Push an indentation level onto the stack when entering a block structure.
@@ -906,9 +1077,8 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
 
             if self.is_eof() || matches!(self.peek(), Some((Token::DocStart | Token::DocEnd, _))) {
                 if explicit_doc_start.is_some() || !documents.is_empty() || self.pos > start_pos {
-                    let span = explicit_doc_start
-                        .map_or_else(|| self.current_span(), |span| Span::at(span.end));
-                    documents.push(Node::null(span));
+                    // Empty document - emit null scalar event
+                    documents.push(self.emit_null_scalar());
                 }
             } else if let Some(node) = self.parse_value(0) {
                 documents.push(node);
@@ -934,33 +1104,62 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
         self.parse_value_with_properties(min_indent, NodeProperties::default())
     }
 
-    /// Handle a flow collection (mapping or sequence) as a value.
+    /// Check if a flow collection starting at the current position will be used as a mapping key.
     ///
-    /// This is shared logic for flow mapping and flow sequence handling:
-    /// - Checks for content after the flow
-    /// - Detects if used as a mapping key (followed by `:`)
-    /// - Checks for trailing content at root level
-    fn handle_flow_collection_as_value(
-        &mut self,
-        flow_node: Node<'input>,
-        start_pos: usize,
-        min_indent: IndentLevel,
-        props: NodeProperties<'input>,
-    ) -> Option<Node<'input>> {
-        self.check_content_after_flow(flow_node.span.end_usize());
-        self.check_multiline_implicit_key(start_pos, flow_node.span.end_usize());
+    /// Scans ahead to find the matching close bracket and checks if it's followed by a colon.
+    /// This is used to emit `MappingStart` BEFORE parsing the flow collection so events
+    /// are in the correct order.
+    fn flow_collection_is_mapping_key(&self) -> bool {
+        let start_token = match self.peek() {
+            Some((Token::FlowSeqStart, _)) => Token::FlowSeqStart,
+            Some((Token::FlowMapStart, _)) => Token::FlowMapStart,
+            _ => return false,
+        };
 
-        self.skip_ws();
-        if let Some((Token::Colon, _)) = self.peek() {
-            let key = self.apply_properties_and_register(props, flow_node);
-            self.parse_block_mapping_starting_with_key(min_indent, key)
-        } else {
-            // Flow collection not used as mapping key - check for trailing content
-            if min_indent == 0 {
-                self.check_trailing_content_at_root(0);
+        let (open_token, close_token) = match start_token {
+            Token::FlowSeqStart => (Token::FlowSeqStart, Token::FlowSeqEnd),
+            Token::FlowMapStart => (Token::FlowMapStart, Token::FlowMapEnd),
+            _ => return false,
+        };
+
+        // Scan for matching close bracket
+        let mut depth = 0i32;
+        let mut pos = self.pos;
+
+        while let Some(rt) = self.tokens.get(pos) {
+            match &rt.token {
+                t if std::mem::discriminant(t) == std::mem::discriminant(&open_token) => {
+                    depth += 1;
+                }
+                t if std::mem::discriminant(t) == std::mem::discriminant(&close_token) => {
+                    depth -= 1;
+                    if depth == 0 {
+                        // Found matching close - check what follows
+                        pos += 1;
+                        // Skip whitespace
+                        while let Some(rt) = self.tokens.get(pos) {
+                            if matches!(rt.token, Token::Whitespace | Token::WhitespaceWithTabs) {
+                                pos += 1;
+                            } else {
+                                break;
+                            }
+                        }
+                        // Check for colon
+                        return matches!(
+                            self.tokens.get(pos),
+                            Some(RichToken {
+                                token: Token::Colon,
+                                ..
+                            })
+                        );
+                    }
+                }
+                _ => {}
             }
-            Some(self.apply_properties_and_register(props, flow_node))
+            pos += 1;
         }
+
+        false
     }
 
     /// Handle an anchor token in value parsing.
@@ -1087,7 +1286,8 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
         min_indent: IndentLevel,
         props: NodeProperties<'input>,
     ) -> Option<Node<'input>> {
-        if !props.is_empty() && !props.crossed_line_boundary {
+        let crossed_line = props.crossed_line_boundary;
+        if !props.is_empty() && !crossed_line {
             if let Some((_, anchor_span)) = &props.anchor {
                 self.error(ErrorKind::ContentOnSameLine, *anchor_span);
             }
@@ -1095,13 +1295,14 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                 self.error(ErrorKind::ContentOnSameLine, *tag_span);
             }
         }
-        if let Some(n) = self.parse_block_sequence(min_indent) {
+        // Pass props into parse_block_sequence - it handles event emission and anchor registration
+        if let Some(n) = self.parse_block_sequence(min_indent, props) {
             // Only check trailing content at true root level - not when we bridged
             // indentation for properties (crossed_line_boundary indicates bridging)
-            if min_indent == 0 && !props.crossed_line_boundary {
+            if min_indent == 0 && !crossed_line {
                 self.check_trailing_content_at_root(0);
             }
-            Some(self.apply_properties_and_register(props, n))
+            Some(n)
         } else {
             None
         }
@@ -1128,6 +1329,11 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
             if !self.anchors.contains_key(alias_name) {
                 self.error(ErrorKind::UndefinedAlias, alias_span);
             }
+            // Emit Alias event
+            self.emit(Event::Alias {
+                name: Cow::Borrowed(alias_name),
+                span: alias_span,
+            });
             Some(Node::new(
                 Value::Alias(Cow::Borrowed(alias_name)),
                 alias_span,
@@ -1181,7 +1387,21 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                 // No block collection - restore position and return null with properties
                 self.pos = saved_pos;
             }
-            Some(self.apply_properties_and_register(props, Node::null(span)))
+            // Emit empty scalar event BEFORE applying properties (so props go to this scalar, not a previous event)
+            self.emit(Event::Scalar {
+                style: ScalarStyle::Plain,
+                value: Cow::Borrowed(""),
+                anchor: props.anchor.as_ref().map(|(name, _)| Cow::Borrowed(*name)),
+                tag: props.tag.as_ref().map(|(tag, _)| tag.clone()),
+                span,
+            });
+            // Register anchor if present
+            let null_node = Node::null(span);
+            let node_with_props = props.clone().apply_to(null_node);
+            if let Some((name, _)) = &props.anchor {
+                self.anchors.insert(name, node_with_props.clone());
+            }
+            Some(node_with_props)
         } else {
             None
         }
@@ -1201,24 +1421,91 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
             return if props.is_empty() {
                 None
             } else {
-                Some(self.apply_properties_and_register(props, Node::null(self.current_span())))
+                // Emit scalar event for the null with properties
+                let null_span = self.current_span();
+                self.emit(Event::Scalar {
+                    style: ScalarStyle::Plain,
+                    value: Cow::Borrowed(""),
+                    anchor: props.anchor.as_ref().map(|(name, _)| Cow::Borrowed(*name)),
+                    tag: props.tag.as_ref().map(|(tag, _)| tag.clone()),
+                    span: null_span,
+                });
+                let null_node = Node::null(null_span);
+                let node_with_props = props.clone().apply_to(null_node);
+                if let Some((name, _)) = &props.anchor {
+                    self.anchors.insert(name, node_with_props.clone());
+                }
+                Some(node_with_props)
             };
         };
 
+        // Clone token discriminant and span to avoid borrow issues
+        let is_flow_map_start = matches!(tok, Token::FlowMapStart);
+        let tok_span = span;
+
         match tok {
-            // Flow mapping
-            Token::FlowMapStart => {
-                let start_pos = span.start_usize();
-                self.parse_flow_mapping().and_then(|flow_node| {
-                    self.handle_flow_collection_as_value(flow_node, start_pos, min_indent, props)
-                })
-            }
-            // Flow sequence
-            Token::FlowSeqStart => {
-                let start_pos = span.start_usize();
-                self.parse_flow_sequence().and_then(|flow_node| {
-                    self.handle_flow_collection_as_value(flow_node, start_pos, min_indent, props)
-                })
+            // Flow mapping or sequence - check if used as mapping key first
+            Token::FlowMapStart | Token::FlowSeqStart => {
+                let start_pos = tok_span.start_usize();
+                let is_mapping_key = self.flow_collection_is_mapping_key();
+
+                if is_mapping_key {
+                    // Emit MappingStart BEFORE parsing the flow collection
+                    self.emit(Event::MappingStart {
+                        style: CollectionStyle::Block,
+                        anchor: None,
+                        tag: None,
+                        span: tok_span,
+                    });
+                }
+
+                // Parse the flow collection
+                let flow_node = if is_flow_map_start {
+                    self.parse_flow_mapping()
+                } else {
+                    self.parse_flow_sequence()
+                };
+
+                let Some(flow_node) = flow_node else {
+                    return None;
+                };
+
+                self.check_content_after_flow(flow_node.span.end_usize());
+                self.check_multiline_implicit_key(start_pos, flow_node.span.end_usize());
+
+                if is_mapping_key {
+                    // We already emitted MappingStart, now parse the value
+                    self.skip_ws();
+                    if matches!(self.peek(), Some((Token::Colon, _))) {
+                        self.advance(); // consume ':'
+                        self.skip_ws();
+                    }
+
+                    let map_indent = self.current_indent();
+                    let value = if let Some((Token::LineStart(_), _)) = self.peek() {
+                        self.advance();
+                        self.parse_value(map_indent + 1)
+                    } else {
+                        self.parse_value(map_indent + 1)
+                    };
+                    let value_node = value.unwrap_or_else(|| self.emit_null_scalar());
+
+                    let key = self.apply_properties_and_register(props, flow_node);
+                    let end = value_node.span.end_usize();
+                    self.emit(Event::MappingEnd {
+                        span: Span::from_usize_range(end..end),
+                    });
+                    Some(Node::new(
+                        Value::Mapping(vec![(key, value_node)]),
+                        Span::from_usize_range(start_pos..end),
+                    ))
+                } else {
+                    // Not used as mapping key
+                    if min_indent == 0 {
+                        self.check_trailing_content_at_root(0);
+                    }
+                    Some(self.apply_properties_and_register(props, flow_node))
+                }
             }
             // Block sequence
             Token::BlockSeqIndicator => self.handle_block_seq_indicator(min_indent, props),
@@ -1254,7 +1541,20 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                     return if props.is_empty() {
                         None
                     } else {
-                        Some(self.apply_properties_and_register(props, Node::null(span)))
+                        // Emit scalar event for the null with properties
+                        self.emit(Event::Scalar {
+                            style: ScalarStyle::Plain,
+                            value: Cow::Borrowed(""),
+                            anchor: props.anchor.as_ref().map(|(name, _)| Cow::Borrowed(*name)),
+                            tag: props.tag.as_ref().map(|(tag, _)| tag.clone()),
+                            span,
+                        });
+                        let null_node = Node::null(span);
+                        let node_with_props = props.clone().apply_to(null_node);
+                        if let Some((name, _)) = &props.anchor {
+                            self.anchors.insert(name, node_with_props.clone());
+                        }
+                        Some(node_with_props)
                     };
                 }
 
@@ -1287,8 +1587,8 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
             }
             // Mapping key indicator
             Token::MappingKey => {
-                let node = self.parse_block_mapping(min_indent);
-                Some(self.apply_properties_and_register(props, node))
+                // Pass props into parse_block_mapping - it handles event emission and anchor registration
+                Some(self.parse_block_mapping(min_indent, props))
             }
             // Empty key
             Token::Colon => {
@@ -1310,14 +1610,40 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                 if props.is_empty() {
                     None
                 } else {
-                    Some(self.apply_properties_and_register(props, Node::null(span)))
+                    // Emit scalar event for the null with properties
+                    self.emit(Event::Scalar {
+                        style: ScalarStyle::Plain,
+                        value: Cow::Borrowed(""),
+                        anchor: props.anchor.as_ref().map(|(name, _)| Cow::Borrowed(*name)),
+                        tag: props.tag.as_ref().map(|(tag, _)| tag.clone()),
+                        span,
+                    });
+                    let null_node = Node::null(span);
+                    let node_with_props = props.clone().apply_to(null_node);
+                    if let Some((name, _)) = &props.anchor {
+                        self.anchors.insert(name, node_with_props.clone());
+                    }
+                    Some(node_with_props)
                 }
             }
             // Invalid or unexpected
             _ => {
                 self.error(ErrorKind::InvalidValue, span);
                 self.advance();
-                Some(self.apply_properties_and_register(props, Node::invalid(span)))
+                // Emit scalar event for the invalid node with properties
+                self.emit(Event::Scalar {
+                    style: ScalarStyle::Plain,
+                    value: Cow::Borrowed(""),
+                    anchor: props.anchor.as_ref().map(|(name, _)| Cow::Borrowed(*name)),
+                    tag: props.tag.as_ref().map(|(tag, _)| tag.clone()),
+                    span,
+                });
+                let invalid_node = Node::invalid(span);
+                let node_with_props = props.clone().apply_to(invalid_node);
+                if let Some((name, _)) = &props.anchor {
+                    self.anchors.insert(name, node_with_props.clone());
+                }
+                Some(node_with_props)
             }
         }
     }
@@ -1361,12 +1687,16 @@ pub fn parse_tokens<'input>(
 /// to convert to `Node<'static>` with owned data when needed.
 ///
 /// See `test_zero_copy_parsing` in the test module for a usage example.
+/// Emits: `StreamStart`, `DocumentStart`, document content, `DocumentEnd`, `StreamEnd`
 pub fn parse_single_document<'tokens: 'input, 'input>(
     tokens: &'tokens [RichToken<'input>],
     input: &'input str,
     directives: &[Spanned<crate::lexer::Directive>],
 ) -> (Option<Node<'input>>, Vec<ParseError>) {
     let mut parser = Parser::new(tokens, input);
+
+    // Emit StreamStart
+    parser.emit(Event::StreamStart);
 
     // Populate tag handles from the directives provided by the stream lexer
     parser.populate_tag_handles_from_directives(directives);
@@ -1375,6 +1705,7 @@ pub fn parse_single_document<'tokens: 'input, 'input>(
 
     // Check for explicit document start marker `---`
     let has_doc_start = matches!(parser.peek(), Some((Token::DocStart, _)));
+    let doc_start_span = parser.current_span();
     let mut content_on_start_line = false;
 
     if has_doc_start {
@@ -1413,10 +1744,27 @@ pub fn parse_single_document<'tokens: 'input, 'input>(
         }
     }
 
+    // Emit DocumentStart
+    parser.emit(Event::DocumentStart {
+        explicit: has_doc_start,
+        span: doc_start_span,
+    });
+
     let doc = if parser.is_eof() || matches!(parser.peek(), Some((Token::DocEnd, _))) {
         // If we had an explicit document start (---), we should return a null node
         // rather than None. An explicit document with no content is a null value.
-        has_doc_start.then(|| Node::null(Span::from_usize_range(0..0)))
+        has_doc_start.then(|| {
+            let null_span = Span::from_usize_range(0..0);
+            // Emit empty scalar event for empty document content
+            parser.emit(Event::Scalar {
+                style: ScalarStyle::Plain,
+                value: Cow::Borrowed(""),
+                anchor: None,
+                tag: None,
+                span: null_span,
+            });
+            Node::null(null_span)
+        })
     } else {
         parser.parse_value(0)
     };
@@ -1432,10 +1780,18 @@ pub fn parse_single_document<'tokens: 'input, 'input>(
     }
 
     // Check for document end marker `...`
-    if matches!(parser.peek(), Some((Token::DocEnd, _))) {
+    let has_doc_end = matches!(parser.peek(), Some((Token::DocEnd, _)));
+    let doc_end_span = parser.current_span();
+    if has_doc_end {
         parser.advance(); // consume DocEnd
         parser.skip_ws_and_newlines();
     }
+
+    // Emit DocumentEnd
+    parser.emit(Event::DocumentEnd {
+        explicit: has_doc_end,
+        span: doc_end_span,
+    });
 
     // Check for remaining content that wasn't consumed
     while !parser.is_eof() {
@@ -1458,6 +1814,9 @@ pub fn parse_single_document<'tokens: 'input, 'input>(
             break;
         }
     }
+
+    // Emit StreamEnd
+    parser.emit(Event::StreamEnd);
 
     (doc, parser.errors)
 }
