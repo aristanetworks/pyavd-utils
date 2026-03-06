@@ -13,10 +13,12 @@
 //! with the anchor attached to the key scalar, not wrapping the mapping.
 
 mod block;
+mod emitter;
 mod flow;
 mod scalar;
 mod streaming;
 
+pub use emitter::Emitter;
 pub use streaming::StreamingParser;
 
 use std::borrow::Cow;
