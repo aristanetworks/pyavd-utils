@@ -65,34 +65,37 @@ Events are pushed to `self.events: Vec<Event>`.
 
 ## Transformation Steps
 
-### Step 1: Track Indent State (Low Risk) ✅
+### Step 1: Track Indent State (Low Risk) ✅ COMPLETE
 
 **Goal**: Eliminate backward-scanning in `current_indent()`.
 
 **Changes**:
 
-1. Add `current_line_indent: IndentLevel` field to `Parser` struct
-2. Update it in `advance()` when consuming `LineStart` tokens
-3. Replace `current_indent()` to return the tracked value
+1. ✅ Added `current_line_indent: IndentLevel` field to `Parser` struct
+2. ✅ Updated `advance()` to track `LineStart` tokens when consumed
+3. ✅ Replaced `current_indent()` to return the tracked value (simple field access)
 
-### Step 2: Add Peek Buffer (Medium Risk)
+### Step 2: Add Peek Buffer (Medium Risk) ✅ COMPLETE
 
-**Goal**: Replace direct slice access with bounded peek buffer.
+**Goal**: Abstract lookahead access for streaming compatibility.
 
 **Changes**:
 
-1. Replace `&[RichToken]` with iterator + `VecDeque` buffer
-2. Add `peek_nth(n: usize)` method that fills buffer as needed
-3. Update all `self.tokens.get(self.pos + n)` to use `peek_nth(n)`
+1. ✅ Added `peek_nth(n: usize)` method to Parser
+2. ✅ Converted lookahead patterns in `block.rs`, `flow.rs`, `mod.rs`, `scalar.rs`
+3. 🔜 Full buffer with iterator input (deferred until Step 5)
 
-### Step 3: Remove Backtracking (Low Risk)
+**Note**: Currently `peek_nth()` is backed by slice indexing. When we switch to
+iterator input in Step 5, we'll replace the backing with a `VecDeque` buffer.
+
+### Step 3: Remove Backtracking (Low Risk) ✅ COMPLETE
 
 **Goal**: Convert position save/restore patterns to peek-only.
 
 **Changes**:
 
-1. `check_trailing_content_at_root()` → use `peek_nth()` without advancing
-2. `parse_value_with_properties()` → count dedents via `peek_nth()` without consuming
+1. ✅ `check_trailing_content_at_root()` → peek-only loop using `peek_nth()`
+2. ✅ `parse_value_with_properties()` → peek-only lookahead with count, then consume
 
 ---
 
@@ -151,12 +154,14 @@ Events are pushed to `self.events: Vec<Event>`.
 
 ## Progress Tracking
 
-- [ ] Step 1: Track indent state
-- [ ] Step 2: Add peek buffer
-- [ ] Step 3: Remove backtracking
+- [x] Step 1: Track indent state ✅
+- [x] Step 2: Add peek buffer (interface ready, full buffer deferred) ✅
+- [x] Step 3: Remove backtracking ✅
 - [ ] Step 4: Callback-based emission (design pending)
 - [ ] Step 5: Iterator parser (breakdown pending)
 
 ## Test Compliance
 
 All changes must maintain 100% YAML 1.2 compliance (842/842 tests).
+
+**Current Status**: 842/842 tests passing after Steps 1-3.

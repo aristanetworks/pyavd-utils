@@ -142,7 +142,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                     Token::Plain(_) => {
                         // Check if this might be a mapping key (followed by colon)
                         // If so, it's a valid sibling mapping entry
-                        let next = self.tokens.get(self.pos + 1);
+                        let next = self.peek_nth(1);
                         !matches!(next, Some(rt) if matches!(rt.token, Token::Colon))
                     }
                     Token::StringStart(_) => {

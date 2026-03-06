@@ -717,7 +717,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
             // the block scalar terminates early.
             // Look at the token following the LineStart to check for tabs.
             if n == 0
-                && let Some(rt) = self.tokens.get(self.pos + 1)
+                && let Some(rt) = self.peek_nth(1)
                 && matches!(rt.token, Token::WhitespaceWithTabs)
             {
                 self.error(ErrorKind::InvalidIndentation, rt.span);

@@ -123,6 +123,10 @@ pub(crate) struct Parser<'tokens: 'input, 'input> {
     /// Event buffer for the event-emitting mode.
     /// When populated, the parser emits events instead of (or in addition to) building nodes.
     pub events: Vec<Event<'input>>,
+    /// Current line's indentation level, tracked from the most recent `LineStart` token.
+    /// Updated by `advance()` when consuming `LineStart` tokens.
+    /// This eliminates the need for backward-scanning in `current_indent()`.
+    pub current_line_indent: IndentLevel,
 }
 
 impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
@@ -138,6 +142,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
             indent_stack: vec![0], // Start with base level 0
             tag_handles: HashMap::new(),
             events: Vec::new(),
+            current_line_indent: 0, // Start at column 0
         }
     }
 
@@ -162,11 +167,26 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
         self.tokens.get(self.pos).map(|rt| (&rt.token, rt.span))
     }
 
+    /// Peek at the nth token ahead without consuming it (0 = current token).
+    /// Returns the full `RichToken` for cases that need span or error info.
+    ///
+    /// This is the foundation for streaming: it abstracts lookahead access.
+    /// Currently backed by slice indexing; can be replaced with buffer fill.
+    pub fn peek_nth(&self, n: usize) -> Option<&RichToken<'input>> {
+        self.tokens.get(self.pos + n)
+    }
+
     /// Consume the current token and return it.
     /// Returns the token and its span for easy destructuring.
+    ///
+    /// Side effect: Updates `self.current_line_indent` when consuming `LineStart` tokens.
     pub fn advance(&mut self) -> Option<(&Token<'input>, Span)> {
         self.tokens.get(self.pos).map(|rt| {
             self.pos += 1;
+            // Track indent level when we consume a LineStart token
+            if let Token::LineStart(n) = &rt.token {
+                self.current_line_indent = *n;
+            }
             (&rt.token, rt.span)
         })
     }
@@ -210,7 +230,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                         // Skip past Whitespace tokens (tabs used as indentation)
                         // and check the actual column of the content token
                         let mut peek_offset = 0;
-                        while let Some(rt) = self.tokens.get(self.pos + peek_offset) {
+                        while let Some(rt) = self.peek_nth(peek_offset) {
                             if matches!(rt.token, Token::Whitespace | Token::WhitespaceWithTabs) {
                                 peek_offset += 1;
                             } else {
@@ -218,7 +238,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                             }
                         }
 
-                        if let Some(rt) = self.tokens.get(self.pos + peek_offset) {
+                        if let Some(rt) = self.peek_nth(peek_offset) {
                             let is_content = !matches!(
                                 rt.token,
                                 Token::LineStart(_)
@@ -744,29 +764,29 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
     /// Check for trailing content at column 0 after a closed structure.
     /// This is used for flow collections and block sequences at the root level.
     /// For these structures, content at the same indentation level after them is invalid.
+    ///
+    /// This uses peek-only lookahead (no position modification), enabling streaming.
     pub fn check_trailing_content_at_root(&mut self, root_indent: IndentLevel) {
-        // Save current position to look ahead without advancing
-        let saved_pos = self.pos;
-
-        // Skip whitespace, newlines, and dedent tokens
-        while !self.is_eof() {
-            match self.peek() {
-                Some((
-                    Token::Whitespace
-                    | Token::WhitespaceWithTabs
-                    | Token::Comment(_)
-                    | Token::Dedent
-                    | Token::LineStart(_),
-                    _,
-                )) => {
-                    self.advance();
+        // Skip whitespace, newlines, and dedent tokens using peek-only
+        let mut peek_offset = 0;
+        while let Some(rt) = self.peek_nth(peek_offset) {
+            match &rt.token {
+                Token::Whitespace
+                | Token::WhitespaceWithTabs
+                | Token::Comment(_)
+                | Token::Dedent
+                | Token::LineStart(_) => {
+                    peek_offset += 1;
                 }
                 _ => break,
             }
         }
 
         // Check if there's content at or below the root indentation
-        if let Some((tok, span)) = self.peek() {
+        if let Some(rt) = self.peek_nth(peek_offset) {
+            let tok = &rt.token;
+            let span = rt.span;
+
             // Extra flow collection end tokens are always an error (unmatched brackets)
             if matches!(tok, Token::FlowSeqEnd | Token::FlowMapEnd) {
                 self.error(ErrorKind::UnmatchedBracket, span);
@@ -783,17 +803,14 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                         | Token::BlockSeqIndicator
                 );
 
-                // Get the column of this token
-                let col = self.current_token_column();
+                // Get the column of this token by its span position
+                let col = self.column_of_position(span.start_usize());
 
                 if is_content && col <= root_indent {
                     self.error(ErrorKind::TrailingContent, span);
                 }
             }
         }
-
-        // Restore position - we only looked ahead to check
-        self.pos = saved_pos;
     }
 
     /// Check if the first tokens form a block mapping or sequence.
@@ -910,20 +927,12 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
     }
 
     /// Get the current indentation level from the most recent `LineStart`.
+    ///
+    /// This returns the tracked `current_line_indent` value, which is updated
+    /// by `advance()` whenever a `LineStart` token is consumed.
+    /// This eliminates backward-scanning, enabling streaming parsing.
     pub fn current_indent(&self) -> IndentLevel {
-        self.tokens
-            .get(..self.pos)
-            .into_iter()
-            .flatten()
-            .rev()
-            .find_map(|rt| {
-                if let Token::LineStart(n) = rt.token {
-                    Some(n)
-                } else {
-                    None
-                }
-            })
-            .unwrap_or(0)
+        self.current_line_indent
     }
 
     /// Get the span of the current position.
@@ -1583,21 +1592,29 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
             // as a sequence entry and the next line is a sibling entry.
             if props.crossed_line_boundary {
                 // Peek ahead to see if there's a block collection at the dedented level
-                let saved_pos = self.pos;
-                self.advance(); // past LineStart
-                while let Some((Token::Dedent, _)) = self.peek() {
-                    self.advance();
+                // Use peek-only lookahead (no position modification) to enable streaming
+                let mut peek_offset = 1; // Skip past LineStart at position 0
+                while let Some(rt) = self.peek_nth(peek_offset) {
+                    if matches!(rt.token, Token::Dedent) {
+                        peek_offset += 1;
+                    } else {
+                        break;
+                    }
                 }
 
-                if let Some((Token::BlockSeqIndicator | Token::Colon, _)) = self.peek() {
-                    // There's a block collection - parse it and apply our properties
+                // Check if there's a block collection indicator
+                if let Some(rt) = self.peek_nth(peek_offset)
+                    && matches!(rt.token, Token::BlockSeqIndicator | Token::Colon)
+                {
+                    // There's a block collection - consume the tokens we peeked and parse it
+                    for _ in 0..peek_offset {
+                        self.advance();
+                    }
                     let mut new_props = props;
                     new_props.crossed_line_boundary = true;
                     return self.parse_value_with_properties(indent, new_props);
                 }
-
-                // No block collection - restore position and return null with properties
-                self.pos = saved_pos;
+                // No block collection - don't consume tokens, return null with properties
             }
             // Emit empty scalar event BEFORE applying properties (so props go to this scalar, not a previous event)
             self.emit(Event::Scalar {

@@ -441,7 +441,7 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
                         break;
                     };
 
-                    let Some(next_rt) = self.tokens.get(self.pos + 1) else {
+                    let Some(next_rt) = self.peek_nth(1) else {
                         break;
                     };
 
