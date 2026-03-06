@@ -26,7 +26,7 @@ use super::Parser;
 /// This enum tracks where we are in the document lifecycle:
 /// - `Ready`: Ready to start a new document (or emit `StreamEnd` if at EOF)
 /// - `EmitDocStart`: About to emit `DocumentStart` event
-/// - `ParseDocContent`: Parsing document content (delegates to batch parser)
+/// - `ParseDocContent`: Parsing document content (dispatches to value states)
 /// - `DrainBuffer`: Draining events from the buffer after content parsing
 /// - `EmitDocEnd`: About to emit `DocumentEnd` event
 /// - `Done`: Stream has ended
@@ -36,14 +36,40 @@ enum StreamState {
     Ready,
     /// About to emit `DocumentStart`.
     EmitDocStart { explicit: bool, span: Span },
-    /// Parsing document content - delegates to batch parser.
-    ParseDocContent,
+    /// Parsing document content - dispatches to appropriate value parser.
+    ParseDocContent { has_explicit_start: bool },
     /// Draining buffered events from content parsing.
     DrainBuffer,
     /// About to emit `DocumentEnd`.
     EmitDocEnd { explicit: bool, span: Span },
     /// Stream has ended.
     Done,
+}
+
+/// Value type dispatch for root-level content.
+///
+/// Step 6: This determines which parsing path to take based on the first token.
+/// Each variant currently delegates to the batch parser's corresponding method.
+#[derive(Debug, Clone, Copy)]
+enum ValueKind {
+    /// Block sequence starting with `-`
+    BlockSequence,
+    /// Block mapping (starting with key or `?` or `:`)
+    BlockMapping,
+    /// Flow sequence `[...]`
+    FlowSequence,
+    /// Flow mapping `{...}`
+    FlowMapping,
+    /// Scalar (plain or quoted)
+    Scalar,
+    /// Block literal scalar `|`
+    LiteralBlockScalar,
+    /// Block folded scalar `>`
+    FoldedBlockScalar,
+    /// Alias `*name`
+    Alias,
+    /// Empty document (no content)
+    Empty,
 }
 
 /// A streaming YAML parser that implements `Iterator<Item = Event>`.
@@ -195,37 +221,76 @@ impl<'tokens: 'input, 'input> StreamingParser<'tokens, 'input> {
         Some((has_doc_start, doc_start_span))
     }
 
-    /// Parse document content into the buffer.
-    /// This delegates to the batch parser's content parsing.
-    fn parse_content_into_buffer(&mut self, has_explicit_start: bool) {
+    /// Determine the value kind based on the current token.
+    ///
+    /// Step 6: This is the dispatch logic that decides which parsing path to take.
+    fn classify_value(&self) -> ValueKind {
+        match self.parser.peek() {
+            None | Some((Token::DocEnd | Token::DocStart, _)) => ValueKind::Empty,
+            Some((Token::BlockSeqIndicator, _)) => ValueKind::BlockSequence,
+            Some((Token::MappingKey | Token::Colon, _)) => ValueKind::BlockMapping,
+            Some((Token::FlowSeqStart, _)) => ValueKind::FlowSequence,
+            Some((Token::FlowMapStart, _)) => ValueKind::FlowMapping,
+            Some((Token::LiteralBlockHeader(_), _)) => ValueKind::LiteralBlockScalar,
+            Some((Token::FoldedBlockHeader(_), _)) => ValueKind::FoldedBlockScalar,
+            Some((Token::Alias(_), _)) => ValueKind::Alias,
+            Some((Token::Plain(_) | Token::StringStart(_), _)) => {
+                // Could be a scalar or the start of a block mapping
+                // The batch parser handles this detection internally
+                ValueKind::Scalar
+            }
+            Some((Token::Anchor(_) | Token::Tag(_), _)) => {
+                // Properties before a value - delegate to batch parser which handles this
+                ValueKind::Scalar
+            }
+            Some((Token::LineStart(_) | Token::Indent(_) | Token::Comment(_), _)) => {
+                // Skip these and re-classify - but for now delegate to batch parser
+                ValueKind::Scalar
+            }
+            _ => ValueKind::Scalar, // Default to scalar for unknown tokens
+        }
+    }
+
+    /// Dispatch to the appropriate parser based on value kind and parse content into buffer.
+    ///
+    /// Step 6: Each value kind currently delegates to the batch parser's method.
+    /// Future steps will convert these to state-driven parsing.
+    fn dispatch_and_parse_content(&mut self, has_explicit_start: bool) {
         use crate::event::ScalarStyle;
         use std::borrow::Cow;
 
-        // Check if document is empty
-        if self.parser.is_eof()
-            || matches!(
-                self.parser.peek(),
-                Some((Token::DocEnd | Token::DocStart, _))
-            )
-        {
-            // Empty document after explicit ---
-            if has_explicit_start {
-                let null_span = Span::from_usize_range(0..0);
-                self.buffer.push_back(Event::Scalar {
-                    style: ScalarStyle::Plain,
-                    value: Cow::Borrowed(""),
-                    anchor: None,
-                    tag: None,
-                    span: null_span,
-                });
-            }
-        } else {
-            // Parse document content using the batch parser
-            let _ = self.parser.parse_value(0);
+        let kind = self.classify_value();
 
-            // Move events from parser to our buffer
-            for event in self.parser.take_events() {
-                self.buffer.push_back(event);
+        match kind {
+            ValueKind::Empty => {
+                // Empty document after explicit ---
+                if has_explicit_start {
+                    let null_span = Span::from_usize_range(0..0);
+                    self.buffer.push_back(Event::Scalar {
+                        style: ScalarStyle::Plain,
+                        value: Cow::Borrowed(""),
+                        anchor: None,
+                        tag: None,
+                        span: null_span,
+                    });
+                }
+            }
+            ValueKind::BlockSequence
+            | ValueKind::BlockMapping
+            | ValueKind::FlowSequence
+            | ValueKind::FlowMapping
+            | ValueKind::LiteralBlockScalar
+            | ValueKind::FoldedBlockScalar
+            | ValueKind::Alias
+            | ValueKind::Scalar => {
+                // All value kinds currently delegate to parse_value(0)
+                // which handles the full dispatch internally
+                let _ = self.parser.parse_value(0);
+
+                // Move events from parser to our buffer
+                for event in self.parser.take_events() {
+                    self.buffer.push_back(event);
+                }
             }
         }
     }
@@ -342,14 +407,16 @@ impl<'tokens: 'input, 'input> Iterator for StreamingParser<'tokens, 'input> {
                         span: *span,
                     };
                     let has_explicit = *explicit;
-                    self.state = StreamState::ParseDocContent;
-                    // Parse content now (will be drained in DrainBuffer state)
-                    self.parse_content_into_buffer(has_explicit);
+                    self.state = StreamState::ParseDocContent {
+                        has_explicit_start: has_explicit,
+                    };
                     return Some(event);
                 }
 
-                StreamState::ParseDocContent => {
-                    // Content has been parsed, transition to draining
+                StreamState::ParseDocContent { has_explicit_start } => {
+                    let has_explicit = *has_explicit_start;
+                    // Dispatch based on value kind and parse content
+                    self.dispatch_and_parse_content(has_explicit);
                     self.state = StreamState::DrainBuffer;
                 }
 
