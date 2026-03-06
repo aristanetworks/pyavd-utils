@@ -75,8 +75,8 @@ enum ValueKind {
 /// Parsing context stack entry.
 ///
 /// Step 7: This tracks where we are in nested structures.
-/// Currently used for observation only - actual parsing still delegates to batch parser.
-/// Future steps will use this to drive state-machine parsing.
+/// Step 8: Updated by `update_context_for_event()` as events are emitted.
+/// Step 9+: Will be used alongside `ValueState` to drive state-machine parsing.
 #[derive(Debug, Clone)]
 #[allow(
     dead_code,
@@ -95,20 +95,38 @@ enum ParseContext {
     FlowMapping { depth: usize },
 }
 
+/// Value parsing state for state-driven parsing.
+///
+/// Step 9: This represents what we're currently parsing within a document.
+/// The state stack allows us to handle nested structures without recursion.
+#[derive(Debug, Clone)]
+#[allow(dead_code, reason = "Will be used in future state-machine steps")]
+enum ValueState {
+    /// Dispatch to appropriate parser based on token.
+    /// This is the `parse_value()` equivalent in the state machine.
+    Dispatch {
+        min_indent: crate::span::IndentLevel,
+    },
+    /// Delegate to batch parser for complex cases we haven't converted yet.
+    DelegateToBatch,
+}
+
 /// A streaming YAML parser that implements `Iterator<Item = Event>`.
 ///
 /// This parser yields events one at a time, enabling incremental processing
 /// of YAML documents without loading the entire event stream into memory.
 ///
-/// # Current Implementation (Step 7)
+/// # Current Implementation (Step 9)
 ///
 /// Document boundaries (`DocumentStart`/`DocumentEnd`) are state-driven.
 /// Value dispatch classifies by `ValueKind`. Context stack tracks nesting.
+/// Value state stack infrastructure is in place for future state-driven parsing.
 /// Content parsing still delegates to the batch parser.
 ///
-/// # Future Implementation (Steps 8+)
+/// # Future Implementation (Steps 9+)
 ///
-/// Will progressively convert content parsing to true state-driven emission.
+/// Will progressively convert content parsing to true state-driven emission
+/// using the `value_stack` to track nested parsing states.
 #[derive(Debug)]
 pub struct StreamingParser<'tokens, 'input> {
     /// The underlying batch parser.
@@ -119,9 +137,13 @@ pub struct StreamingParser<'tokens, 'input> {
     state: StreamState,
     /// Whether we've emitted `StreamStart`.
     emitted_stream_start: bool,
-    /// Stack tracking nested parsing contexts.
-    /// Step 7: Currently used to track document context; will drive nested parsing in future.
+    /// Stack tracking nested parsing contexts (observational).
+    /// Updated as events are emitted to track where we are in nested structures.
     context_stack: Vec<ParseContext>,
+    /// Stack tracking what parsing action to take next (operational).
+    /// Step 9: Foundation for state-driven parsing of nested structures.
+    #[allow(dead_code, reason = "Will be used in future state-machine steps")]
+    value_stack: Vec<ValueState>,
 }
 
 impl<'tokens: 'input, 'input> StreamingParser<'tokens, 'input> {
@@ -134,6 +156,7 @@ impl<'tokens: 'input, 'input> StreamingParser<'tokens, 'input> {
             state: StreamState::Ready,
             emitted_stream_start: false,
             context_stack: Vec::new(),
+            value_stack: Vec::new(),
         }
     }
 
