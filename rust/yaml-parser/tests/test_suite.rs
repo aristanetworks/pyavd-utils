@@ -1251,6 +1251,123 @@ fn compare_events_with_context(
     ))
 }
 
+/// Test that StreamingParser produces identical output to the batch parser.
+/// This is Step 4 of the streaming parser transformation - the comparison test
+/// that ensures behavioral equivalence during the refactoring.
+#[test]
+#[allow(
+    clippy::print_stderr,
+    clippy::cast_precision_loss,
+    clippy::as_conversions,
+    clippy::use_debug,
+    clippy::tests_outside_test_module,
+    reason = "Integration test with test output and statistics calculation"
+)]
+fn streaming_parser_equivalence() {
+    use yaml_parser::{StreamingParser, tokenize_document};
+
+    let manifest_dir = env!("CARGO_MANIFEST_DIR");
+    let test_dir = Path::new(manifest_dir).join("tests/yaml-test-suite");
+
+    if !test_dir.exists() {
+        eprintln!("Test suite not found at {test_dir:?}. Skipping tests.");
+        return;
+    }
+
+    let Ok(dir_entries) = fs::read_dir(&test_dir) else {
+        eprintln!("Failed to read test directory");
+        return;
+    };
+    let mut entries: Vec<_> = dir_entries.filter_map(Result::ok).collect();
+    entries.sort_by_key(std::fs::DirEntry::path);
+
+    let mut all_tests: Vec<TestCase> = Vec::new();
+    for entry in &entries {
+        let path = entry.path();
+        if path.is_dir() {
+            all_tests.extend(load_test_cases(&path));
+        }
+    }
+
+    let total = all_tests.len();
+    let mut passed = 0;
+    let mut failed = 0;
+    let mut failures: Vec<String> = Vec::new();
+
+    for (i, test) in all_tests.iter().enumerate() {
+        if i % 100 == 0 {
+            eprintln!(
+                "[{}/{}] Running streaming parser equivalence tests...",
+                i + 1,
+                total
+            );
+        }
+
+        // Get batch parser events
+        let (batch_events, _batch_errors) = yaml_parser::emit_events(&test.input);
+
+        // Get streaming parser events
+        let (tokens, _lexer_errors) = tokenize_document(&test.input);
+        let streaming_parser = StreamingParser::new(&tokens, &test.input);
+        let streaming_events: Vec<_> = streaming_parser.collect();
+
+        // Compare event sequences (ignoring spans, comparing structure only)
+        let batch_test_events = library_events_to_test_events(&batch_events);
+        let streaming_test_events = library_events_to_test_events(&streaming_events);
+
+        if batch_test_events == streaming_test_events {
+            passed += 1;
+        } else {
+            failed += 1;
+            failures.push(format!(
+                "{}: {}\n  Batch: {} events, Streaming: {} events\n  First diff at: {}",
+                test.id,
+                test.name,
+                batch_events.len(),
+                streaming_events.len(),
+                find_first_diff(&batch_test_events, &streaming_test_events)
+            ));
+        }
+    }
+
+    eprintln!("\n=== Streaming Parser Equivalence Test ===");
+    eprintln!("Passed: {passed}");
+    eprintln!("Failed: {failed}");
+
+    if !failures.is_empty() {
+        eprintln!("\nFailures ({} total):", failures.len());
+        for failure in failures.iter().take(10) {
+            eprintln!("  {failure}");
+        }
+        if failures.len() > 10 {
+            eprintln!("  ... and {} more", failures.len() - 10);
+        }
+    }
+
+    let pass_rate = (passed as f64 / total as f64) * 100.0;
+    eprintln!("\nStreaming Parser Equivalence: {pass_rate:.1}%");
+
+    // This test must pass 100% for the refactoring to be valid
+    assert_eq!(
+        failed, 0,
+        "StreamingParser must produce identical output to batch parser"
+    );
+}
+
+/// Find the first difference between two event sequences.
+fn find_first_diff(a: &[Event], b: &[Event]) -> String {
+    for (i, (ea, eb)) in a.iter().zip(b.iter()).enumerate() {
+        if ea != eb {
+            return format!("index {i}: {ea:?} vs {eb:?}");
+        }
+    }
+    if a.len() == b.len() {
+        "no diff found".to_owned()
+    } else {
+        format!("length {} vs {}", a.len(), b.len())
+    }
+}
+
 /// Convert library Event to test Event format.
 fn library_events_to_test_events(events: &[yaml_parser::Event<'_>]) -> Vec<Event> {
     events

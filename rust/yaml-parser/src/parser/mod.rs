@@ -15,6 +15,9 @@
 mod block;
 mod flow;
 mod scalar;
+mod streaming;
+
+pub use streaming::StreamingParser;
 
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
