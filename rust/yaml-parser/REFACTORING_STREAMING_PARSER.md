@@ -99,34 +99,162 @@ iterator input in Step 5, we'll replace the backing with a `VecDeque` buffer.
 
 ---
 
-## Future Steps (To Be Designed)
+## Phase 2: Iterator Parser via State Machine
 
-### Step 4: Callback-Based Emission (TBD)
+The goal is to make the Parser implement `Iterator<Item = Event>` for true event-by-event
+streaming. This requires converting the recursive descent parser into an explicit state machine.
 
-**Idea**: Replace `self.events.push(event)` with callback.
+### Core Insight
 
-**Open Questions**:
+The state machine replaces the **call stack**. Currently:
 
-- Should it be a callback `FnMut(Event)` or a channel?
-- How to handle errors alongside events?
-- Impact on API and backwards compatibility?
+```text
+parse_document()
+  → parse_value()
+    → parse_block_sequence()
+      → parse_value()  // for each entry
+```
 
-### Step 5: Iterator Parser (TBD - Needs Breakdown)
+With a state machine:
 
-**Goal**: Parser becomes `Iterator<Item = Event>`.
+```text
+state_stack: [Document::Content, BlockSequence::Entry, Value::Pending]
+```
 
-**Challenges**:
+When we produce an event, we return it. When `next()` is called again, we look at the
+stack and continue from where we left off.
 
-- Recursive descent doesn't map naturally to iterators
-- Need explicit state machine or coroutine-like approach
-- Complex state management for nested structures
+### Step 4: Iterator Shell (No Behavior Change)
 
-**Possible Sub-Steps** (to be refined):
+**Goal**: Create `StreamingParser` wrapper with `Iterator` interface.
 
-- 5a: Extract parsing state into explicit enum
-- 5b: Convert outer loop to iterator pattern
-- 5c: Handle nested structure state
-- 5d: Full iterator implementation
+**Changes**:
+
+1. Create `StreamingParser` that wraps existing `Parser`
+2. Implement `Iterator<Item = Event>` by draining from internal buffer
+3. Buffer is filled by calling existing batch parsing methods
+4. Add comparison test: both parsers must produce identical event sequences
+
+```rust
+pub struct StreamingParser<'input> {
+    parser: Parser<'_, 'input>,
+    buffer: VecDeque<Event<'input>>,
+}
+
+impl Iterator for StreamingParser<'_> {
+    type Item = Event<'_>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if let Some(e) = self.buffer.pop_front() {
+            return Some(e);
+        }
+        if !self.parser.is_eof() {
+            self.parser.parse_document_events();
+            std::mem::swap(&mut self.buffer, &mut self.parser.events);
+            return self.buffer.pop_front();
+        }
+        None
+    }
+}
+```
+
+**Test**: Run both parsers on all 842 test cases, assert identical events.
+
+### Step 5: Document-Level States
+
+**Goal**: Extract document start/end into state-driven emission.
+
+**Changes**:
+
+1. Add `StreamState` enum for document-level states
+2. Handle `DocumentStart` and `DocumentEnd` events directly in `next()`
+3. Delegate content parsing to existing recursive code
+
+```rust
+enum StreamState {
+    Ready,
+    EmitDocStart { has_marker: bool, span: Span },
+    ParseDocContent { min_indent: IndentLevel },  // delegates to old code
+    EmitDocEnd { span: Span },
+    BetweenDocs,
+}
+```
+
+**Test**: Still identical output, but doc boundaries are now state-driven.
+
+### Step 6: Root Value Dispatch
+
+**Goal**: State-driven dispatch at the value level.
+
+**Changes**:
+
+1. When in `ParseDocContent`, inspect token and push appropriate state
+2. Each value type becomes a state that (initially) delegates to old code
+
+```rust
+enum ValueState {
+    Dispatch,
+    BlockSequence { indent: IndentLevel },  // still delegates
+    BlockMapping { indent: IndentLevel },
+    FlowCollection,
+    Scalar,
+    Null,
+}
+```
+
+### Step 7+: Convert Collections One at a Time
+
+**Goal**: Replace delegation with true state-driven parsing.
+
+Pick one construct at a time (simplest first):
+
+1. **Flow sequences** → `FlowSeqState { EmitStart, BeforeEntry, AfterEntry, EmitEnd }`
+2. **Flow mappings** → similar states
+3. **Block sequences** → `BlockSeqState { ... }`
+4. **Block mappings** → `BlockMapState { ... }`
+5. **Scalars** (plain, quoted, block)
+
+Each construct conversion:
+
+- Add states for that construct
+- When state needs to parse a nested value, push `ValueState::Dispatch`
+- When nested parsing completes, control returns to parent state
+- Maintain test compatibility throughout
+
+### Error Recovery in State Machine
+
+Error recovery translates cleanly to the state machine:
+
+1. Errors are still collected in `self.errors: Vec<ParseError>`
+2. When an error is detected, we can push recovery states:
+
+```rust
+enum StreamState {
+    // ... normal states ...
+
+    // Error recovery states
+    RecoverToIndent { target_indent: IndentLevel },
+    RecoverToFlowEnd { depth: usize },
+    RecoverToDocBoundary,
+}
+```
+
+1. Recovery becomes explicit stack manipulation instead of implicit call stack unwinding
+2. This is actually **cleaner** than recursive recovery because recovery points are visible
+
+**Example**: Unterminated flow sequence
+
+```rust
+// In next():
+FlowSeqState::BeforeEntry => {
+    if self.is_eof() {
+        self.error(ErrorKind::UnterminatedFlow, span);
+        self.state_stack.pop();  // explicit "unwind"
+        return Some(Event::SequenceEnd { ... });
+    }
+    // ... normal parsing
+}
+```
 
 ---
 
@@ -140,28 +268,39 @@ iterator input in Step 5, we'll replace the backing with a `VecDeque` buffer.
                            │
                            ▼
 ┌─────────────────────────────────────────────────────────────┐
-│  Parser::new(lexer)                                         │
+│  StreamingParser::new(lexer)                                │
+│  - Implements Iterator<Item = Event>                        │
+│  - State machine with explicit stack                        │
 │  - Consumes tokens lazily via peek buffer                   │
-│  - Emits events via callback or as iterator                 │
 └─────────────────────────────────────────────────────────────┘
                            │
                            ▼
 ┌─────────────────────────────────────────────────────────────┐
-│  Consumer (EventParser, direct callback, etc.)              │
-│  - Processes events as they arrive                          │
+│  Consumer (EventParser, direct iteration, etc.)             │
+│  - Processes events one at a time as they arrive            │
 └─────────────────────────────────────────────────────────────┘
 ```
 
 ## Progress Tracking
 
+### Phase 1: Preparation (Complete)
+
 - [x] Step 1: Track indent state ✅
-- [x] Step 2: Add peek buffer (interface ready, full buffer deferred) ✅
+- [x] Step 2: Add peek buffer interface ✅
 - [x] Step 3: Remove backtracking ✅
-- [ ] Step 4: Callback-based emission (design pending)
-- [ ] Step 5: Iterator parser (breakdown pending)
+
+### Phase 2: State Machine Transformation
+
+- [ ] Step 4: Iterator shell with comparison test
+- [ ] Step 5: Document-level states
+- [ ] Step 6: Root value dispatch
+- [ ] Step 7+: Convert collections (flow seq, flow map, block seq, block map, scalars)
 
 ## Test Compliance
 
 All changes must maintain 100% YAML 1.2 compliance (842/842 tests).
 
 **Current Status**: 842/842 tests passing after Steps 1-3.
+
+**Regression Safety**: A comparison test will verify that `StreamingParser` produces
+identical event sequences to the batch `Parser` throughout the transformation.
