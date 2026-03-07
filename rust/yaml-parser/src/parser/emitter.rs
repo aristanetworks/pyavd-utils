@@ -338,6 +338,31 @@ impl<'tokens: 'input, 'input> Emitter<'tokens, 'input> {
         });
     }
 
+    /// Check if a span contains a newline (used for multiline implicit key detection).
+    /// If the key spans multiple lines, it cannot be an implicit key.
+    fn check_multiline_implicit_key(&mut self, key_span: Span) {
+        // Get the key text from the input
+        let start = key_span.start_usize();
+        let end = key_span.end_usize().min(self.input.len());
+        if start >= end {
+            return;
+        }
+        let key_text = &self.input[start..end];
+
+        // Check if the key text contains a newline
+        if key_text.contains('\n') {
+            // Find the colon span for error reporting (look ahead for colon)
+            let colon_span = (0..10)
+                .find_map(|i| match self.peek_nth(i) {
+                    Some((Token::Colon, span)) => Some(span),
+                    _ => None,
+                })
+                .unwrap_or(key_span);
+
+            self.error(ErrorKind::MultilineImplicitKey, colon_span);
+        }
+    }
+
     // ─────────────────────────────────────────────────────────────
     // Whitespace/newline skipping
     // ─────────────────────────────────────────────────────────────
@@ -1007,10 +1032,23 @@ impl<'tokens: 'input, 'input> Emitter<'tokens, 'input> {
             }
 
             Some((Token::Alias(name), span)) => {
-                let alias_name = Cow::Borrowed(*name);
+                // Copy values before advancing (to avoid borrow issues)
+                let alias_name_str = *name;
                 let alias_span = span;
                 self.advance();
                 self.skip_ws();
+
+                // Error: Properties (anchor/tag) on alias are invalid
+                if (anchor.is_some() || tag.is_some()) && !crossed_line_boundary {
+                    self.error(ErrorKind::PropertiesOnAlias, alias_span);
+                }
+
+                // Error: Undefined alias
+                if !self.anchors.contains(alias_name_str) {
+                    self.error(ErrorKind::UndefinedAlias, alias_span);
+                }
+
+                let alias_name = Cow::Borrowed(alias_name_str);
 
                 // Check if alias is a mapping key (followed by colon) after crossing line boundary
                 // This can create a nested mapping even without outer anchor/tag
@@ -1409,6 +1447,9 @@ impl<'tokens: 'input, 'input> Emitter<'tokens, 'input> {
                                 style,
                             }) = key_event
                             {
+                                // Check for multiline implicit key error
+                                self.check_multiline_implicit_key(k_span);
+
                                 self.state_stack.push(ParseState::BlockMap {
                                     indent: map_indent,
                                     phase: BlockMapPhase::AfterKey,
@@ -1562,27 +1603,64 @@ impl<'tokens: 'input, 'input> Emitter<'tokens, 'input> {
     ) {
         let mut crossed_line_boundary = false;
         loop {
-            match self.peek() {
-                Some((Token::Anchor(name), span)) => {
-                    let name_owned = Cow::Owned(String::from(*name));
-                    // Register anchor
-                    self.anchors.insert(name);
-                    anchor = Some((name_owned, span));
+            // Peek and extract info before any mutation
+            enum PropAction {
+                Anchor { name: String, span: Span },
+                Tag { tag_str: String, span: Span },
+                Comment,
+                LineStart { should_continue: bool },
+                Break,
+            }
+
+            let has_props = anchor.is_some() || tag.is_some();
+            let action = match self.peek() {
+                Some((Token::Anchor(name), span)) => PropAction::Anchor {
+                    name: String::from(*name),
+                    span,
+                },
+                Some((Token::Tag(tag_str), span)) => PropAction::Tag {
+                    tag_str: tag_str.to_string(),
+                    span,
+                },
+                Some((Token::Comment(_), _)) if has_props => PropAction::Comment,
+                Some((Token::LineStart(_), _)) if has_props => PropAction::LineStart {
+                    should_continue: self.should_continue_collecting_properties(),
+                },
+                _ => PropAction::Break,
+            };
+
+            match action {
+                PropAction::Anchor { name, span } => {
+                    // Error: Duplicate anchor on same node
+                    if anchor.is_some() {
+                        self.error(ErrorKind::DuplicateAnchor, span);
+                    }
+
+                    // Register anchor (need to get reference from tokens for HashSet)
+                    if let Some((Token::Anchor(name_ref), _)) = self.peek() {
+                        self.anchors.insert(name_ref);
+                    }
+                    anchor = Some((Cow::Owned(name), span));
                     self.advance();
                     self.skip_ws();
                 }
-                Some((Token::Tag(tag_str), span)) => {
+                PropAction::Tag { tag_str, span } => {
+                    // Error: Duplicate tag on same node
+                    if tag.is_some() {
+                        self.error(ErrorKind::DuplicateTag, span);
+                    }
+
                     // Expand tag handle
-                    let expanded = self.expand_tag(tag_str);
+                    let expanded = self.expand_tag(&tag_str);
                     tag = Some((Cow::Owned(expanded), span));
                     self.advance();
                     self.skip_ws();
                 }
-                Some((Token::Comment(_), _)) if anchor.is_some() || tag.is_some() => {
+                PropAction::Comment => {
                     // Skip comment - the line boundary after it will be handled next iteration
                     self.advance();
                 }
-                Some((Token::LineStart(_), _)) if anchor.is_some() || tag.is_some() => {
+                PropAction::LineStart { should_continue } => {
                     // We have collected at least one property and there's a line boundary.
                     // Check if the next line has more properties that we should collect.
                     //
@@ -1592,7 +1670,6 @@ impl<'tokens: 'input, 'input> Emitter<'tokens, 'input> {
                     //
                     // We should STOP if the next line has properties followed by an implicit key,
                     // because then the first properties go on the parent mapping.
-                    let should_continue = self.should_continue_collecting_properties();
                     if should_continue {
                         crossed_line_boundary = true;
                         self.advance(); // consume LineStart
@@ -1606,7 +1683,7 @@ impl<'tokens: 'input, 'input> Emitter<'tokens, 'input> {
                         break;
                     }
                 }
-                _ => break,
+                PropAction::Break => break,
             }
         }
         (anchor, tag, crossed_line_boundary)
@@ -3353,6 +3430,8 @@ impl<'tokens: 'input, 'input> Emitter<'tokens, 'input> {
                 style,
             }) = key_event
             {
+                // Check for multiline implicit key error
+                self.check_multiline_implicit_key(k_span);
                 // Determine mapping indent based on context:
                 // - If there are properties (anchor or tag), use current_indent because
                 //   the mapping's indent is the line's indent (e.g., `&a a: b` at root = indent 0)

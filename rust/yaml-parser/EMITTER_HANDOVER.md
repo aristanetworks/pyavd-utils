@@ -8,11 +8,17 @@
 
 ## Current Status
 
-Pass rate: 94.5% (380/402 tests structural)
+Pass rate: **100% (842/842)** - All positive (402) and negative (440) tests pass.
 
-All 22 remaining structural failures are error test cases where the batch parser and emitter have different error recovery behavior. This is expected and acceptable - the emitter produces correct output for all valid YAML inputs.
+The streaming `Emitter` module is now fully compliant with the YAML Test Suite. Error detection has been ported from the legacy batch parser.
 
-The streaming `Emitter` module is being built to produce an event stream 100% identical to the legacy batch parser.
+### Ported Error Detection (from legacy batch parser)
+
+- `UndefinedAlias` - Alias used before anchor is defined
+- `PropertiesOnAlias` - Anchor/tag applied to alias (invalid)
+- `DuplicateAnchor` - Multiple anchors on same node
+- `DuplicateTag` - Multiple tags on same node
+- `MultilineImplicitKey` - Implicit key spans multiple lines (invalid in block context)
 
 ## Key Files
 
