@@ -363,6 +363,85 @@ impl<'tokens: 'input, 'input> Emitter<'tokens, 'input> {
         }
     }
 
+    /// Check for tabs used as indentation after a `LineStart` token.
+    /// In block context, tabs used for indentation are invalid.
+    fn check_tabs_as_indentation(&mut self) {
+        // Only check in block context
+        if self.flow_depth > 0 {
+            return;
+        }
+
+        // Check if current token is WhitespaceWithTabs
+        if let Some((Token::WhitespaceWithTabs, tab_span)) = self.peek() {
+            // Look ahead to see what follows the whitespace
+            let mut look_ahead = 1;
+            while let Some((tok, _)) = self.peek_nth(look_ahead) {
+                match tok {
+                    Token::Whitespace | Token::WhitespaceWithTabs => look_ahead += 1,
+                    // Tabs allowed before:
+                    // - Flow collection start/end (entering/exiting flow)
+                    // - Blank line (line has only whitespace)
+                    Token::FlowMapStart
+                    | Token::FlowMapEnd
+                    | Token::FlowSeqStart
+                    | Token::FlowSeqEnd
+                    | Token::LineStart(_) => return,
+                    // Any other content - tabs used for indentation, which is invalid
+                    _ => break,
+                }
+            }
+            // If we exhausted tokens (EOF), tabs are allowed (trailing whitespace)
+            if self.peek_nth(look_ahead).is_none() {
+                return;
+            }
+            // Content after tabs - report error
+            self.error(ErrorKind::InvalidIndentation, tab_span);
+        }
+    }
+
+    /// Check for tabs after block indicators (`:`, `?`, `-`).
+    /// Tabs are allowed as separation space before scalar content, but invalid
+    /// before block structure indicators (`-`, `?`, `:`) as they would make
+    /// the structure appear indented.
+    fn check_tabs_after_block_indicator(&mut self) {
+        // Only check in block context
+        if self.flow_depth > 0 {
+            return;
+        }
+
+        // Check if current token is WhitespaceWithTabs
+        if let Some((Token::WhitespaceWithTabs, tab_span)) = self.peek() {
+            // Look ahead to see what follows
+            let mut lookahead = 1;
+            while let Some((tok, _)) = self.peek_nth(lookahead) {
+                match tok {
+                    Token::Whitespace | Token::WhitespaceWithTabs => lookahead += 1,
+                    // Block structure indicators after tab - error (ambiguous indentation)
+                    Token::BlockSeqIndicator | Token::MappingKey | Token::Colon => {
+                        self.error(ErrorKind::InvalidIndentation, tab_span);
+                        return;
+                    }
+                    // Scalar followed by colon - this creates an implicit mapping (like `key:`)
+                    // which is also ambiguous after tabs
+                    Token::Plain(_) => {
+                        // Check if the scalar is followed by a colon
+                        if self
+                            .peek_nth(lookahead + 1)
+                            .is_some_and(|(next_tok, _)| matches!(next_tok, Token::Colon))
+                        {
+                            self.error(ErrorKind::InvalidIndentation, tab_span);
+                            return;
+                        }
+                        // Simple scalar without colon - allowed
+                        return;
+                    }
+                    // Other content after tab - allowed (separation space)
+                    _ => return,
+                }
+            }
+        }
+    }
+
     // ─────────────────────────────────────────────────────────────
     // Whitespace/newline skipping
     // ─────────────────────────────────────────────────────────────
@@ -387,7 +466,7 @@ impl<'tokens: 'input, 'input> Emitter<'tokens, 'input> {
     }
 
     /// Skip whitespace, newlines, indentation tokens, and comments.
-    /// Returns (crossed_line, last_linestart_span) where:
+    /// Returns (`crossed_line`, `last_linestart_span`) where:
     /// - `crossed_line`: true if a `LineStart` token was encountered
     /// - `last_linestart_span`: span of the last `LineStart` token (for empty value positioning)
     fn skip_ws_and_newlines_impl(&mut self) -> (bool, Option<Span>) {
@@ -400,6 +479,8 @@ impl<'tokens: 'input, 'input> Emitter<'tokens, 'input> {
                     crossed_line = true;
                     last_linestart_span = Some(span);
                     self.advance();
+                    // Check for tabs as indentation after crossing a line boundary
+                    self.check_tabs_as_indentation();
                 }
                 Some((Token::Indent(_), _)) => self.advance(),
                 Some((Token::Comment(_), _)) => self.advance(),
@@ -1939,6 +2020,8 @@ impl<'tokens: 'input, 'input> Emitter<'tokens, 'input> {
 
                         self.advance(); // consume `-`
                         self.skip_ws();
+                        // Check for tabs after block sequence indicator
+                        self.check_tabs_after_block_indicator();
 
                         // Push AfterEntry, then Value
                         self.state_stack.push(ParseState::BlockSeq {
@@ -2167,6 +2250,8 @@ impl<'tokens: 'input, 'input> Emitter<'tokens, 'input> {
                 if matches!(self.peek(), Some((Token::Colon, _))) {
                     self.advance();
                     self.skip_ws();
+                    // Check for tabs after block mapping indicator (colon)
+                    self.check_tabs_after_block_indicator();
 
                     // Reset crossed_line_boundary before parsing value.
                     // We only want to track line crossings DURING value parsing,
