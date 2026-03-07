@@ -329,7 +329,18 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
     /// This ensures the event stream stays in sync with the AST.
     /// Callers that need a Node can wrap with `Node::null(span)`.
     pub fn emit_null_scalar(&mut self) -> Span {
-        let null_span = self.current_span();
+        // Use current_span if available, otherwise use last event's end position
+        // This avoids 0:0 spans when at EOF
+        let null_span = {
+            let current = self.current_span();
+            if current.start_usize() == 0 && current.end_usize() == 0 && !self.events.is_empty() {
+                // At EOF with no tokens - use last event's end position
+                let end = self.last_event_end_position();
+                Span::from_usize_range(end..end)
+            } else {
+                current
+            }
+        };
         self.emit(Event::Scalar {
             style: ScalarStyle::Plain,
             value: Cow::Borrowed(""),
@@ -1094,7 +1105,8 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
         if self.is_eof() || matches!(self.peek(), Some((Token::DocEnd | Token::DocStart, _))) {
             // Empty document after explicit ---
             if has_doc_start {
-                let null_span = Span::from_usize_range(0..0);
+                // Use position after document start for empty scalar span
+                let null_span = self.current_span();
                 self.emit(Event::Scalar {
                     style: ScalarStyle::Plain,
                     value: Cow::Borrowed(""),
@@ -1169,11 +1181,16 @@ impl<'tokens: 'input, 'input> Parser<'tokens, 'input> {
 
         // Check for document end marker `...`
         let has_doc_end = matches!(self.peek(), Some((Token::DocEnd, _)));
-        let doc_end_span = self.current_span();
-        if has_doc_end {
+        let doc_end_span = if has_doc_end {
+            let span = self.current_span();
             self.advance(); // consume DocEnd
             self.skip_ws_and_newlines();
-        }
+            span
+        } else {
+            // For implicit document end, use last content position instead of 0:0
+            let end = self.last_event_end_position();
+            Span::from_usize_range(end..end)
+        };
 
         // Emit DocumentEnd
         self.emit(Event::DocumentEnd {
@@ -2110,7 +2127,8 @@ pub fn parse_single_document<'tokens: 'input, 'input>(
     if parser.is_eof() || matches!(parser.peek(), Some((Token::DocEnd, _))) {
         // If we had an explicit document start (---), emit empty scalar
         if has_doc_start {
-            let null_span = Span::from_usize_range(0..0);
+            // Use position after document start for empty scalar span
+            let null_span = parser.current_span();
             parser.emit(Event::Scalar {
                 style: ScalarStyle::Plain,
                 value: Cow::Borrowed(""),
@@ -2136,11 +2154,16 @@ pub fn parse_single_document<'tokens: 'input, 'input>(
 
     // Check for document end marker `...`
     let has_doc_end = matches!(parser.peek(), Some((Token::DocEnd, _)));
-    let doc_end_span = parser.current_span();
-    if has_doc_end {
+    let doc_end_span = if has_doc_end {
+        let span = parser.current_span();
         parser.advance(); // consume DocEnd
         parser.skip_ws_and_newlines();
-    }
+        span
+    } else {
+        // For implicit document end, use last content position instead of 0:0
+        let end = parser.last_event_end_position();
+        Span::from_usize_range(end..end)
+    };
 
     // Emit DocumentEnd
     parser.emit(Event::DocumentEnd {

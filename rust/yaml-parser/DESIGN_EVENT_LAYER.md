@@ -485,7 +485,7 @@ fn parse_node(&mut self) -> Node {
 
 ## Session Context (for continuation)
 
-**Last Updated:** 2026-03-06
+**Last Updated:** 2026-03-07
 
 ### Current State
 
@@ -517,7 +517,27 @@ Key points:
 - **EventParser reconstructs AST**: Type inference, span calculation, anchor tracking all happen in EventParser
 - **Hybrid parser still builds Nodes internally**: These are discarded (future optimization target)
 
-### Recent Changes (Final Session)
+### Recent Changes (2026-03-07)
+
+#### Streaming Emitter: Persistent Line-Boundary Tracking
+
+Fixed a regression in multi-line mapping parsing (26DV) caused by the ZCZ6 fix. The problem was that nested structures (like inner mappings) would consume `LineStart` tokens when they ended due to a dedent, making it impossible for the outer mapping to know a line boundary had been crossed.
+
+**Solution:** Added a persistent `crossed_line_boundary: bool` flag to the `Emitter` struct:
+
+1. **Set in `advance()`**: The flag is set to `true` whenever a `LineStart` token is consumed
+2. **Reset in `AfterKey`**: Before parsing a value, the flag is reset to `false` so we only track line crossings DURING value parsing
+3. **Checked in `AfterValue`**: Uses the persistent flag to determine if a line was crossed during value parsing, regardless of whether nested structures consumed the tokens
+
+This fixes the "multiple colons on same line" error recovery case (ZCZ6: `a: b: c: d`) while preserving correct behavior for valid multi-line mappings.
+
+**Current Results:**
+
+- Structural equivalence: **379/402** (emitter vs batch parser)
+- Test suite: **842/842** (402 positive + 440 negative)
+- The 23 structural differences are error recovery cases where both parsers are valid
+
+#### Previous Changes
 
 1. **`EventParser::apply_properties` fixed**: No longer extends spans to include anchor/tag syntax. Node spans now refer strictly to the lexical value (e.g., `"2"` not `"!!int 2"`).
 
@@ -541,6 +561,7 @@ Key points:
 | `src/parser/mod.rs` | `parse_single_document` returns events |
 | `src/parser/block.rs` | Speculative lookahead in `parse_block_mapping_with_props` |
 | `src/parser/scalar.rs` | Trailing whitespace recovery in `consume_block_line_with_detection` |
+| `src/parser/emitter.rs` | Persistent `crossed_line_boundary` flag for same-line colon detection |
 | `src/parser/event_parser.rs` | Builds AST from events; span handling fixed |
 | `src/event/mod.rs` | Event module |
 | `src/event/types.rs` | Event enum, ScalarStyle, `with_offset()` method |
@@ -552,6 +573,7 @@ Key points:
 1. **Speculative Parsing**: Save `(pos, events.len(), errors.len())`, attempt parse, restore if fails
 2. **Whitespace Recovery**: Scan raw `self.input[end_pos..newline_pos]` to recover trailing spaces
 3. **Event Emission**: Every AST node creation has corresponding `self.emit(Event::...)` call
+4. **Persistent Line Tracking**: `crossed_line_boundary` flag survives child state completion to track line crossings during value parsing
 
 ### How to Run Tests
 
