@@ -1491,22 +1491,40 @@ fn emitter_equivalence() {
     let total = all_tests.len();
     let mut full_passed = 0; // Passes including spans
     let mut structural_passed = 0; // Passes ignoring spans
+    let mut error_passed = 0; // Error equivalence
     let mut structural_failures: Vec<String> = Vec::new();
     let mut span_only_diffs: Vec<String> = Vec::new(); // Structural match, span differs
     let mut unexpected_span_diffs: Vec<String> = Vec::new(); // Not in whitelist
+    let mut error_failures: Vec<String> = Vec::new(); // Error mismatches
 
     for (i, test) in all_tests.iter().enumerate() {
         if i % 100 == 0 {
             eprintln!("[{}/{}] Running emitter equivalence tests...", i + 1, total);
         }
 
-        // Get batch parser events (reference)
-        let (batch_events, _batch_errors) = yaml_parser::emit_events(&test.input);
+        // Get batch parser events and errors (reference)
+        let (batch_events, batch_errors) = yaml_parser::emit_events(&test.input);
 
-        // Get emitter events
-        let (tokens, _lexer_errors) = tokenize_document(&test.input);
-        let emitter = Emitter::new(&tokens, &test.input);
-        let emitter_events: Vec<_> = emitter.collect();
+        // Get emitter events and errors
+        let (tokens, lexer_errors) = tokenize_document(&test.input);
+        let mut emitter = Emitter::new(&tokens, &test.input);
+        let emitter_events: Vec<_> = emitter.by_ref().collect();
+        let mut emitter_errors: Vec<_> = lexer_errors;
+        emitter_errors.extend(emitter.take_errors());
+
+        // Compare errors (by kind, ignoring spans for now)
+        let batch_error_kinds: Vec<_> = batch_errors.iter().map(|e| &e.kind).collect();
+        let emitter_error_kinds: Vec<_> = emitter_errors.iter().map(|e| &e.kind).collect();
+        let errors_match = batch_error_kinds == emitter_error_kinds;
+
+        if errors_match {
+            error_passed += 1;
+        } else {
+            error_failures.push(format!(
+                "{}: {}\n  Batch errors: {:?}\n  Emitter errors: {:?}",
+                test.id, test.name, batch_error_kinds, emitter_error_kinds
+            ));
+        }
 
         // Check full equivalence (including spans)
         let full_match = batch_events == emitter_events;
@@ -1547,8 +1565,10 @@ fn emitter_equivalence() {
     eprintln!("\n=== Emitter Equivalence Test ===");
     eprintln!("Full equivalence (with spans): {full_passed}/{total}");
     eprintln!("Structural equivalence: {structural_passed}/{total}");
+    eprintln!("Error equivalence: {error_passed}/{total}");
     eprintln!("Span-only differences: {}", span_only_diffs.len());
     eprintln!("Structural failures: {}", structural_failures.len());
+    eprintln!("Error failures: {}", error_failures.len());
 
     if !structural_failures.is_empty() {
         eprintln!(
@@ -1557,6 +1577,16 @@ fn emitter_equivalence() {
         );
         for failure in &structural_failures {
             eprintln!("  {failure}");
+        }
+    }
+
+    if !error_failures.is_empty() {
+        eprintln!("\nError Failures ({} total):", error_failures.len());
+        for failure in error_failures.iter().take(20) {
+            eprintln!("  {failure}");
+        }
+        if error_failures.len() > 20 {
+            eprintln!("  ... and {} more", error_failures.len() - 20);
         }
     }
 
@@ -1570,11 +1600,17 @@ fn emitter_equivalence() {
     } else {
         0.0
     };
+    let error_rate = if total > 0 {
+        (error_passed as f64 / total as f64) * 100.0
+    } else {
+        0.0
+    };
 
     eprintln!("\nEmitter Structural Equivalence: {structural_rate:.1}%");
     eprintln!("Emitter Full Equivalence: {full_rate:.1}%");
+    eprintln!("Emitter Error Equivalence: {error_rate:.1}%");
     eprintln!(
-        "\nEmitter development progress: {structural_passed}/{total} structural ({structural_rate:.1}%), {full_passed}/{total} full ({full_rate:.1}%)"
+        "\nEmitter development progress: {structural_passed}/{total} structural ({structural_rate:.1}%), {full_passed}/{total} full ({full_rate:.1}%), {error_passed}/{total} errors ({error_rate:.1}%)"
     );
 
     // Assert: no unexpected span differences (tests not in whitelist)
