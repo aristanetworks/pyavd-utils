@@ -431,7 +431,7 @@ The parser uses a **two-layer architecture** with unified streaming tokenization
 
 ### Layer 3: Event Parser
 
-#### `event/mod.rs`
+#### `event.rs`
 
 - **Purpose**: Define SAX-style event types for YAML parsing
 - **Key Types**:
@@ -445,19 +445,21 @@ The parser uses a **two-layer architecture** with unified streaming tokenization
   - `CollectionStyle`: `Block` or `Flow`
   - `ScalarStyle`: `Plain`, `SingleQuoted`, `DoubleQuoted`, `Literal`, `Folded`
 - **Usage**: Emitter emits events; `Parser` reconstructs AST
+- **Note**: Consolidated from `event/` directory into single file (416 lines) for better maintainability
 
-#### `parser/event_parser.rs`
+#### `parser/mod.rs`
 
 - **Purpose**: Reconstruct AST from event stream
 - **Key Types**:
   - `Parser<'input>`: Stack-based parser for events
-  - `BuilderStackEntry`: Tracks in-progress collections (mapping key/value, sequence)
-- **Main Function**: `parse_events(events) -> (Vec<Node>, Vec<ParseError>)`
+  - Tracks in-progress collections (mapping key/value, sequence)
+- **Main Function**: `Parser::parse() -> Vec<Node>`
 - **Responsibilities**:
   - Build `Node` tree from flat event stream
-  - Track anchors via `HashMap<&str, Node>`
+  - Track anchors via `HashSet<String>`
   - Resolve aliases by cloning anchored nodes
   - Validate structure (balanced start/end events)
+  - Apply type inference to scalars (bool, int, float, null)
 - **Error Handling**: Reports `UndefinedAlias` for unknown anchor references
 
 ---
