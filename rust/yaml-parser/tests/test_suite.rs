@@ -545,8 +545,8 @@ fn collect_error_test_cases(test_dir: &Path) -> Vec<(String, String, String)> {
                 .unwrap_or("")
                 .to_owned();
 
-            // Skip hidden directories
-            if dir_name.starts_with('.') {
+            // Skip special directories (name/tags are symlinks to actual tests)
+            if dir_name == "name" || dir_name == "tags" || dir_name.starts_with('.') {
                 continue;
             }
 
@@ -738,15 +738,10 @@ fn error_test_cases_produce_errors() {
         for failure in &failures {
             eprintln!("  {failure}");
         }
+        panic!(
+            "Error detection test failed: {failed} test cases should have produced errors but didn't"
+        );
     }
-
-    // The emitter has 31 known error detection differences from the YAML test suite
-    // These are documented in EMITTER_HANDOVER.md
-    const KNOWN_ERROR_DIFFERENCES: usize = 31;
-    assert_eq!(
-        failed, KNOWN_ERROR_DIFFERENCES,
-        "Expected {KNOWN_ERROR_DIFFERENCES} known error differences, but got {failed}"
-    );
 }
 
 /// Analyze error kind distribution across all error test cases.

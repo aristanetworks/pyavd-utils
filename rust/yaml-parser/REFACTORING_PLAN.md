@@ -248,3 +248,23 @@ src/
 7. Review
 
 **Total estimated effort**: 21-23 hours
+
+## Execution Notes
+
+### Phase 1: Lexer Refactoring - Skipped
+
+**Deviation from Plan**: After analyzing the actual code structure in `src/lexer/document.rs` (1,901 lines), the proposed 9-file split with a `scalars/` subdirectory is not optimal for this codebase. The lexer is highly integrated with shared state and helper methods. A more conservative approach is needed to maintain code cohesion and avoid breaking changes.
+
+**Decision**: Skipping lexer refactoring for now. The lexer will remain as `document.rs`. The focus will shift to Phases 2-4 which offer clearer separation boundaries and better maintainability gains.
+
+### Phase 2: Event Consolidation - Complete ✅
+
+**Status**: Successfully consolidated `src/event/` directory into single `src/event.rs` file (416 lines).
+
+**Changes**:
+
+- Merged `src/event/mod.rs` and `src/event/types.rs` into `src/event.rs`
+- Deleted old `src/event/` directory
+- All tests pass (97 unit tests + 44 integration tests + YAML test suite)
+
+**Result**: Cleaner module structure, easier to navigate. Event types are now in a single, focused file similar to other supporting modules like `error.rs`, `span.rs`, and `value.rs`.

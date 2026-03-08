@@ -35,18 +35,18 @@
 //! }
 //! ```
 
+mod emitter;
 mod error;
 mod event;
-mod parser;
 mod lexer;
-mod emitter;
+mod parser;
 mod span;
 mod value;
 
+pub use emitter::{Emitter, Stream};
 pub use error::{ErrorKind, ParseError};
 pub use event::{CollectionStyle, Event, ScalarStyle};
 pub use lexer::{Lexer, RichToken, Token, tokenize_document};
-pub use emitter::{Emitter, Stream};
 pub use parser::Parser;
 pub use span::{
     BytePosition, IndentLevel, Position, SourceMap, Span, Spanned, indent_to_usize, pos_to_usize,
@@ -119,16 +119,17 @@ pub fn parse(input: &str) -> (Stream<'static>, Vec<ParseError>) {
 /// The event stream follows the YAML Test Suite format:
 /// `StreamStart`, `DocumentStart`, content events, `DocumentEnd`, `StreamEnd`
 ///
-/// This function returns owned events (`Event<'static>`) for convenience. For
-/// zero-copy event processing, use [`tokenize_document`] and [`Emitter`] directly.
+/// This function performs zero-copy parsing where possible - events borrow string
+/// data directly from the input. Escaped strings and processed block scalars will
+/// be allocated as needed.
 ///
 /// # Returns
 ///
 /// A tuple of:
-/// - `Vec<Event<'static>>` - The emitted events (owned)
+/// - `Vec<Event<'_>>` - The emitted events (borrowing from input)
 /// - `Vec<ParseError>` - Any errors encountered during lexing/parsing
 #[must_use]
-pub fn emit_events(input: &str) -> (Vec<Event<'static>>, Vec<ParseError>) {
+pub fn emit_events(input: &str) -> (Vec<Event<'_>>, Vec<ParseError>) {
     // Unified single-pass lexing: Lexer handles directives, document
     // markers, and content in a single pass over the input.
     let mut lexer = lexer::Lexer::new(input);
@@ -142,10 +143,7 @@ pub fn emit_events(input: &str) -> (Vec<Event<'static>>, Vec<ParseError>) {
     let events: Vec<Event<'_>> = emitter.by_ref().collect();
     all_errors.extend(emitter.take_errors());
 
-    // Convert to owned events
-    let owned_events: Vec<Event<'static>> = events.into_iter().map(Event::into_owned).collect();
-
-    (owned_events, all_errors)
+    (events, all_errors)
 }
 
 #[cfg(test)]

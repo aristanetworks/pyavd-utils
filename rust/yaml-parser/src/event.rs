@@ -4,6 +4,25 @@
 
 //! YAML serialization tree events.
 //!
+//! This module defines the event types following the YAML 1.2 spec's
+//! "Serialization Tree" layer. Events are emitted by the `Emitter` during
+//! parsing and represent structural elements that preserve presentation details.
+//!
+//! # Architecture
+//!
+//! ```text
+//! Lexer → Emitter (emits Events) → Parser → AST
+//! ```
+//!
+//! The `Emitter` emits events as it parses, which can be:
+//! - Used directly for streaming/SAX-style processing
+//! - Consumed by `Parser` to build an AST
+//!
+//! # Zero-Copy Design
+//!
+//! Events use `Cow<'input, str>` for values, borrowing from the input
+//! when possible. Use [`Event::into_owned`] to convert to `'static` lifetime.
+//!
 //! This module implements event-based parsing following the YAML 1.2 spec's
 //! "Serialization Tree" layer. Events represent structure + presentation,
 //! preserving:
@@ -14,12 +33,6 @@
 //! The event stream can be consumed by:
 //! - The parser to build a typed AST (`Node`/`Value`)
 //! - Tools for round-tripping, reformatting, or analysis
-//!
-//! # Zero-Copy Design
-//!
-//! Events use `Cow<'input, str>` for scalar values, borrowing directly from
-//! the input when possible. Block scalar processing may require owned strings
-//! for folding/chomping.
 
 use std::borrow::Cow;
 

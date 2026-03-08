@@ -856,29 +856,33 @@ impl<'input> Lexer<'input> {
     }
 
     fn consume_tag(&mut self, start: usize) -> Spanned<Token<'input>> {
-        let mut tag = String::new();
+        let tag_start = start; // Position of the '!'
         self.advance(); // consume !
 
         // Check for !! or !<
         match self.peek() {
             Some('!') => {
-                tag.push('!');
+                // Secondary tag like !!str - can borrow the whole thing from input
                 self.advance();
-                // Named tag like !!str
                 while let Some(peek_ch) = self.peek() {
                     if peek_ch.is_whitespace() || Self::is_flow_indicator(peek_ch) {
                         break;
                     }
-                    tag.push(peek_ch);
                     self.advance();
                 }
+                // Borrow from input: includes both ! characters
+                let tag_slice = &self.input[tag_start..self.byte_pos];
+                return (
+                    Token::Tag(Cow::Borrowed(tag_slice)),
+                    self.current_span(start),
+                );
             }
             Some('<') => {
-                self.advance();
                 // Verbatim tag !<uri>
                 // Mark with a leading '\0' so the parser knows not to expand it.
                 // This internal marker is stripped by expand_tag().
-                tag.push('\0');
+                self.advance(); // consume '<'
+                let mut tag = String::from("\0");
                 while let Some(peek_ch) = self.peek() {
                     if peek_ch == '>' {
                         self.advance();
@@ -887,25 +891,41 @@ impl<'input> Lexer<'input> {
                     tag.push(peek_ch);
                     self.advance();
                 }
+                return (Token::Tag(Cow::Owned(tag)), self.current_span(start));
             }
             Some(ch) if Self::is_valid_tag_start_char(ch) => {
-                // Regular tag !name
+                // Regular tag !name - can borrow the whole thing from input
                 while let Some(peek_ch) = self.peek() {
                     if peek_ch.is_whitespace() || Self::is_flow_indicator(peek_ch) {
                         break;
                     }
-                    tag.push(peek_ch);
                     self.advance();
                 }
+                // Borrow from input: includes the ! prefix
+                let tag_slice = &self.input[tag_start..self.byte_pos];
+                return (
+                    Token::Tag(Cow::Borrowed(tag_slice)),
+                    self.current_span(start),
+                );
             }
             // ! followed by whitespace, EOF, or flow indicator is the non-specific tag
             Some(ch) if ch.is_whitespace() || Self::is_flow_indicator(ch) => {
                 // Empty tag (non-specific tag `!`)
-                // tag stays empty, which represents `!`
+                // Borrow the single '!' from input
+                let tag_slice = &self.input[tag_start..self.byte_pos];
+                return (
+                    Token::Tag(Cow::Borrowed(tag_slice)),
+                    self.current_span(start),
+                );
             }
             None => {
                 // ! at end of input is also a valid non-specific tag
-                // tag stays empty
+                // Borrow the single '!' from input
+                let tag_slice = &self.input[tag_start..self.byte_pos];
+                return (
+                    Token::Tag(Cow::Borrowed(tag_slice)),
+                    self.current_span(start),
+                );
             }
             _ => {
                 // `!` followed by non-tag character (like `!"#$%...`)
@@ -936,9 +956,6 @@ impl<'input> Lexer<'input> {
                 return (Token::Plain(Cow::Owned(plain)), self.current_span(start));
             }
         }
-
-        // Tag content uses owned string (constructed from pieces like !!str)
-        (Token::Tag(Cow::Owned(tag)), self.current_span(start))
     }
 
     /// Check if a character is valid at the start of a tag name.
@@ -1315,23 +1332,23 @@ impl<'input> Lexer<'input> {
     fn consume_escape_sequence(&mut self, start_byte_pos: usize) -> Option<String> {
         let ch = self.advance()?;
         let result = match ch {
-            '0' => "\0".to_owned(),
-            'a' => "\x07".to_owned(),
-            'b' => "\x08".to_owned(),
-            't' | '\t' => "\t".to_owned(),
-            'n' => "\n".to_owned(),
-            'v' => "\x0B".to_owned(),
-            'f' => "\x0C".to_owned(),
-            'r' => "\r".to_owned(),
-            'e' => "\x1B".to_owned(),
-            ' ' => " ".to_owned(),
-            '"' => "\"".to_owned(),
-            '/' => "/".to_owned(),
-            '\\' => "\\".to_owned(),
-            'N' => "\u{0085}".to_owned(),
-            '_' => "\u{00A0}".to_owned(),
-            'L' => "\u{2028}".to_owned(),
-            'P' => "\u{2029}".to_owned(),
+            '0' => String::from("\0"),
+            'a' => String::from("\x07"),
+            'b' => String::from("\x08"),
+            't' | '\t' => String::from("\t"),
+            'n' => String::from("\n"),
+            'v' => String::from("\x0B"),
+            'f' => String::from("\x0C"),
+            'r' => String::from("\r"),
+            'e' => String::from("\x1B"),
+            ' ' => String::from(" "),
+            '"' => String::from("\""),
+            '/' => String::from("/"),
+            '\\' => String::from("\\"),
+            'N' => String::from("\u{0085}"),
+            '_' => String::from("\u{00A0}"),
+            'L' => String::from("\u{2028}"),
+            'P' => String::from("\u{2029}"),
             'x' => self.consume_hex_escape(2),
             'u' => self.consume_hex_escape(4),
             'U' => self.consume_hex_escape(8),

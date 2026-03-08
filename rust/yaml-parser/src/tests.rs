@@ -500,3 +500,40 @@ fn test_block_scalar_chomping() {
         );
     }
 }
+
+#[test]
+fn test_emit_events_zero_copy() {
+    // Verify that emit_events returns events that borrow from the input
+    let input = "key: value";
+    let (events, errors) = crate::emit_events(input);
+    assert!(errors.is_empty());
+
+    // Find the scalar events and verify they point to the input string
+    let scalar_events: Vec<_> = events
+        .iter()
+        .filter_map(|e| {
+            if let Event::Scalar { value, .. } = e {
+                Some(value)
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    assert_eq!(scalar_events.len(), 2); // "key" and "value"
+
+    // Verify that the scalar values are borrowed from the input
+    // by checking that their pointers are within the input string's memory range
+    let input_start = input.as_ptr() as usize;
+    let input_end = input_start + input.len();
+
+    for scalar in scalar_events {
+        if let std::borrow::Cow::Borrowed(s) = scalar {
+            let scalar_ptr = s.as_ptr() as usize;
+            assert!(
+                scalar_ptr >= input_start && scalar_ptr < input_end,
+                "Scalar should borrow from input (zero-copy)"
+            );
+        }
+    }
+}

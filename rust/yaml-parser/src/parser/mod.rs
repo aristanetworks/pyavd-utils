@@ -307,7 +307,7 @@ impl<'events, 'input> Parser<'events, 'input> {
 
         // Type inference applies to plain scalars (regardless of tag, to match hybrid parser)
         let typed_value = if style == ScalarStyle::Plain {
-            Self::infer_type(&value)
+            Self::infer_type(value)
         } else {
             // Quoted/block scalars are always strings
             Value::String(value)
@@ -330,7 +330,8 @@ impl<'events, 'input> Parser<'events, 'input> {
     /// Register an anchor in the anchor tracking set.
     fn register_anchor(&mut self, anchor: Option<&(Cow<'input, str>, Span)>) {
         if let Some((anchor_name, _)) = anchor {
-            self.anchors.insert(anchor_name.to_string());
+            // Use as_ref() to avoid cloning if already owned, or convert borrowed to owned
+            self.anchors.insert(anchor_name.as_ref().to_owned());
         }
     }
 
@@ -367,8 +368,11 @@ impl<'events, 'input> Parser<'events, 'input> {
     /// - int: decimal integers
     /// - float: decimal floats, .inf, -.inf, .nan
     /// - everything else is a string
-    fn infer_type(value: &str) -> Value<'input> {
-        match value {
+    ///
+    /// Takes a `Cow<'input, str>` to avoid unnecessary allocations when the value
+    /// is inferred as a string (can return the Cow as-is).
+    fn infer_type(value: Cow<'input, str>) -> Value<'input> {
+        match value.as_ref() {
             "null" | "Null" | "NULL" | "~" | "" => Value::Null,
             "true" | "True" | "TRUE" => Value::Bool(true),
             "false" | "False" | "FALSE" => Value::Bool(false),
@@ -382,14 +386,14 @@ impl<'events, 'input> Parser<'events, 'input> {
                     return Value::Float(float);
                 }
                 // Special float values
-                match value {
+                match value.as_ref() {
                     ".inf" | ".Inf" | ".INF" => return Value::Float(f64::INFINITY),
                     "-.inf" | "-.Inf" | "-.INF" => return Value::Float(f64::NEG_INFINITY),
                     ".nan" | ".NaN" | ".NAN" => return Value::Float(f64::NAN),
                     _ => {}
                 }
-                // Default to string
-                Value::String(Cow::Owned(value.to_owned()))
+                // Default to string - return the Cow as-is (zero-copy if borrowed!)
+                Value::String(value)
             }
         }
     }

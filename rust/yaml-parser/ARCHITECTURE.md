@@ -7,8 +7,8 @@
 # YAML Parser Architecture Documentation
 
 **Version:** 0.0.2
-**Date:** 2026-03-06
-**Status:** 100% YAML 1.2 Test Suite Compliance (842/842 tests passing)
+**Date:** 2026-03-08
+**Status:** Production-ready, YAML 1.2 compliant
 **Dependencies:** Zero external dependencies
 
 ---
@@ -34,10 +34,10 @@ This is a YAML 1.2 parser written in Rust with the following key features:
 
 - **Error Recovery**: Continues parsing after errors, collecting multiple errors in a single pass
 - **Span Tracking**: Every parsed value includes its source location (byte range)
-- **100% YAML 1.2 Compliance**: Passes all 842 tests (402 positive + 440 error tests)
+- **YAML 1.2 Compliance**: Passes all 496 unique tests from the YAML Test Suite (402 positive + 94 negative)
 - **Zero Dependencies**: Self-contained with custom span/error handling
 - **Zero-Copy Design**: Uses `Cow<'input, str>` throughout to minimize allocations
-- **Layered Architecture**: Separates stream-level parsing from document-level parsing
+- **Layered Architecture**: Separates tokenization, event emission, and AST construction
 - **Context-Aware Lexing**: Tracks flow depth and quote state to correctly tokenize context-dependent characters
 - **High Performance**: Competitive with or faster than saphyr in most benchmarks (see `BENCHMARKS.md`)
 
@@ -67,7 +67,7 @@ The parser uses a **two-layer architecture** with unified streaming tokenization
                            │
                            ▼
 ┌─────────────────────────────────────────────────────────────┐
-│  Layer 1: Unified Document Lexer (lexer/document.rs)        │
+│  Layer 1: Unified Lexer (lexer/document.rs)                 │
 │  - Tokenizes entire YAML stream (single + multi-document)   │
 │  - Handles directives (%YAML, %TAG) inline                  │
 │  - Tracks document boundaries (---, ...)                    │
@@ -77,7 +77,8 @@ The parser uses a **two-layer architecture** with unified streaming tokenization
 │                   part of plain scalars in block            │
 │  - Phase tracking: DirectivePrologue vs InDocument          │
 │  - Inline error detection (attached to RichToken)           │
-│  Output: Vec<RichToken>                                     │
+│  - Implements Iterator<Item = RichToken> for streaming      │
+│  Output: Vec<RichToken> (or streamed via Iterator)          │
 └──────────────────────────┬──────────────────────────────────┘
                            │
                            ▼
@@ -134,7 +135,7 @@ The parser uses a **two-layer architecture** with unified streaming tokenization
 
 - **Re-exports**: `tokenize_document`, `DocumentLexer`, `RichToken`, `Token`, etc.
 
-#### `span.rs` (~275 lines) - Source Location Tracking
+#### `span.rs` - Source Location Tracking
 
 - **Type Aliases** (for consistency and memory optimization):
   - **`BytePosition`**: Type alias for `u32`, used for all byte offsets in source text
@@ -159,7 +160,7 @@ The parser uses a **two-layer architecture** with unified streaming tokenization
   - `line_range(line) -> Option<Range<usize>>`: Get byte range for a line
 - Every token and node includes its source location
 
-#### `error.rs` (~480 lines) - Error Types
+#### `error.rs` - Error Types
 
 - **`ParseError`**: Contains `kind`, `span`, `span_offset`
   - `global_span()`: Convert document-relative span to input-relative coordinates
@@ -258,13 +259,13 @@ The parser uses a **two-layer architecture** with unified streaming tokenization
   - This matches the YAML spec's data model
   - Allows tags/anchors on any value type
 
-### Layer 1: Unified Document Lexer
+### Layer 1: Unified Lexer
 
-#### `lexer/document.rs` (~1,500 lines)
+#### `lexer/document.rs`
 
 - **Purpose**: Unified streaming lexer that tokenizes the entire YAML stream (including directives, document boundaries, and content)
 - **Key Types**:
-  - `DocumentLexer<'input>`: Main lexer state machine with zero-copy tokenization, implements `Iterator<Item = RichToken<'input>>`
+  - `Lexer<'input>`: Main lexer state machine with zero-copy tokenization, implements `Iterator<Item = RichToken<'input>>`
   - `LexMode`: `Block` or `Flow` context
   - `LexerPhase`: `DirectivePrologue` (before document content) or `InDocument` (processing content)
 - **State Tracking**:
@@ -306,7 +307,7 @@ The parser uses a **two-layer architecture** with unified streaming tokenization
   - `finalize_quoted_string()` - Shared end-of-string handling
 - **Inline Error Attachment**: Errors are attached to `RichToken.error` rather than collected separately
 
-#### `lexer/token.rs` (~188 lines)
+#### `lexer/token.rs`
 
 - **Purpose**: Token type definitions with zero-copy support
 - **Key Types**:
@@ -319,7 +320,7 @@ The parser uses a **two-layer architecture** with unified streaming tokenization
   - `is_flow_indicator()`: Check if token is a flow indicator
 - **Display Implementation**: Human-readable token formatting for errors
 
-#### `lexer/rich_token.rs` (~50 lines)
+#### `lexer/rich_token.rs`
 
 - **Purpose**: Token wrapper with span information and optional error
 - **Key Type**: `RichToken<'input>` - combines `Token<'input>` with `Span` and optional `ParseError`
@@ -331,7 +332,7 @@ The parser uses a **two-layer architecture** with unified streaming tokenization
 
 ### Layer 2: Event-Based Parser
 
-#### `parser/mod.rs` (~1,450 lines)
+#### `parser/mod.rs`
 
 - **Purpose**: Main parser orchestration
 - **Key Types**:
@@ -368,7 +369,7 @@ The parser uses a **two-layer architecture** with unified streaming tokenization
   - Anchor/alias resolution (`DuplicateAnchor`, `UndefinedAlias`)
   - Tag handle validation (`UndefinedTagHandle`)
 
-#### `parser/scalar.rs` (~1,070 lines)
+#### `parser/scalar.rs`
 
 - **Purpose**: Parse all scalar types
 - **Functions**:
@@ -392,7 +393,7 @@ The parser uses a **two-layer architecture** with unified streaming tokenization
 - **Error Handling**: Emits `ContentOnSameLine`, `UnexpectedColon` for specific errors
 - **Complexity**: Multiline string handling with indentation validation
 
-#### `parser/flow.rs` (~400 lines)
+#### `parser/flow.rs`
 
 - **Purpose**: Parse flow collections
 - **Functions**:
@@ -408,7 +409,7 @@ The parser uses a **two-layer architecture** with unified streaming tokenization
   - Handles nested flow collections
   - Validates continuation line indentation
 
-#### `parser/block.rs` (~830 lines)
+#### `parser/block.rs`
 
 - **Purpose**: Parse block structures
 - **Functions**:
@@ -430,7 +431,7 @@ The parser uses a **two-layer architecture** with unified streaming tokenization
 
 ### Layer 3: Event Parser
 
-#### `event/mod.rs` (~160 lines)
+#### `event/mod.rs`
 
 - **Purpose**: Define SAX-style event types for YAML parsing
 - **Key Types**:
@@ -445,7 +446,7 @@ The parser uses a **two-layer architecture** with unified streaming tokenization
   - `ScalarStyle`: `Plain`, `SingleQuoted`, `DoubleQuoted`, `Literal`, `Folded`
 - **Usage**: Emitter emits events; `Parser` reconstructs AST
 
-#### `parser/mod.rs` (~350 lines)
+#### `parser/event_parser.rs`
 
 - **Purpose**: Reconstruct AST from event stream
 - **Key Types**:
@@ -473,7 +474,7 @@ name: Alice
 age: 30
 ```
 
-**Layer 1 (Unified Document Lexer) Output:**
+**Layer 1 (Unified Lexer) Output:**
 
 ```rust
 [
@@ -537,7 +538,7 @@ Node {
 items: [apple, banana, {color: red}]
 ```
 
-**Document Lexer Behavior:**
+**Lexer Behavior:**
 
 - Outside `[...]`: Block context
   - `items` is a plain scalar
@@ -807,7 +808,6 @@ After analysis, we chose a hand-written recursive descent parser because:
 - **Performance**: Direct control over memory allocation and iteration (zero-copy `Cow<'input, str>`)
 - **Error Recovery**: Custom recovery logic tailored to YAML's specific error patterns
 - **Zero Dependencies**: The entire crate has zero external dependencies, simplifying auditing and deployment
-- **Maintainability**: ~7,200 lines of readable, imperative Rust code
 
 **Error Recovery Strategy:**
 
@@ -887,10 +887,12 @@ Output:
 
 The parser is tested against the official YAML 1.2 test suite:
 
-- **842 tests** covering all YAML 1.2 features (402 positive + 440 error tests)
-- **842 passing (100%)** - Full compliance achieved
+- **496 unique tests** covering all YAML 1.2 features
+  - 402 positive tests (valid YAML that should parse successfully)
+  - 94 negative tests (invalid YAML that should produce errors)
+- **100% pass rate** - All tests passing
 - Tests are in `tests/test_suite.rs`
-- Error analysis test (`analyze_error_kinds`) tracks error distribution across 440+ error test cases
+- Note: The test suite directory contains 842 total test instances due to symlinks in `name/` and `tags/` directories that organize the same tests in different ways
 
 ### Test Suite Format
 
@@ -994,11 +996,6 @@ The parser uses optimized type sizes to reduce memory footprint. This introduces
    - Location: `parser/scalar.rs` in `parse_scalar_with_indent()` (Token::Plain branch)
    - Potential impact: Reduced allocations for string-heavy documents
 
-2. ~~**Full Test Suite Event Comparison**~~ ✅ DONE
-   - Implemented structural event comparison in `tests/test_suite.rs`
-   - Compares AST against YAML Test Suite `.event` files
-   - **Current pass rate: 842/842 (100%)**
-
 ### Short-Term (Feature Additions)
 
 1. **Schema Validation**
@@ -1011,9 +1008,17 @@ The parser uses optimized type sizes to reduce memory footprint. This introduces
 
 ### Long-Term (Major Changes)
 
-1. **Streaming API**
-   - Support for large files
-   - Event-based parsing
+1. **True Streaming AST Builder**
+   - **Current State**: The `Emitter` already implements `Iterator<Item = Event>` using a state machine. The `Parser` consumes all events into a `Vec<Event>` before building the AST.
+   - **Goal**: Make the `Parser` streaming-capable so it can build AST nodes incrementally as events arrive
+   - **Benefits**:
+     - Process large files without buffering all events in memory
+     - Enable lazy evaluation and early termination
+     - Better memory efficiency for streaming applications
+   - **Challenges**:
+     - Handle incomplete documents gracefully
+     - Maintain anchor/alias resolution across streaming boundaries
+     - Preserve error recovery capabilities
 
 2. **YAML 1.3 Support**
    - When YAML 1.3 spec is finalized
@@ -1031,21 +1036,20 @@ The parser uses optimized type sizes to reduce memory footprint. This introduces
 
 ## Conclusion
 
-This YAML parser achieves **100% YAML 1.2 compliance** (842/842 tests) through a carefully designed unified streaming architecture with **zero external dependencies**:
+This YAML parser achieves **full YAML 1.2 compliance** through a carefully designed three-layer architecture with **zero external dependencies**:
 
-1. **Unified Document Lexer**: Tokenizes entire stream with phase tracking (directives, markers, content)
-2. **Event-Based Emitter**: Emits SAX-style events, validates structure and indentation
-3. **Parser**: Reconstructs AST from events, resolves anchors and aliases
+1. **Unified Lexer**: Tokenizes entire stream with phase tracking (directives, markers, content)
+2. **Event-Based Parser**: Emits SAX-style events, validates structure and indentation
+3. **AST Builder**: Reconstructs typed AST from events, resolves anchors and aliases
 
 **Key achievements:**
 
 - **Zero dependencies**: Self-contained crate with custom `Span` implementation
 - **Zero-copy parsing**: `Cow<'input, str>` throughout for minimal allocations
-- **Streaming design**: `DocumentLexer` implements `Iterator<Item = RichToken>` for lazy tokenization
-- **Actionable errors**: 27 error kinds with specific suggestions (100% specific, no generic fallback errors)
+- **Streaming-ready lexer**: `Lexer` implements `Iterator<Item = RichToken>` for lazy tokenization
+- **Actionable errors**: 27 error kinds with specific suggestions (no generic fallback errors)
 - **Inline error attachment**: Lexer errors attached directly to tokens via `RichToken.error`
 - **High performance**: Faster than saphyr in most benchmarks while always providing spans
-- **~6,600 lines**: Readable, hand-written recursive descent parser (reduced from ~7,200 after removing StreamLexer)
 
 The architecture achieves both **correctness** and **performance**, making it suitable for IDE integration and user-facing tools where helpful error messages are crucial, as well as for high-throughput parsing scenarios.
 
