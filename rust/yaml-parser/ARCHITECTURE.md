@@ -94,7 +94,7 @@ The parser uses a **two-layer architecture** with unified streaming tokenization
                            │
                            ▼
 ┌─────────────────────────────────────────────────────────────┐
-│  Layer 3: Event Parser (event_parser.rs)                    │
+│  Layer 3: Parser (parser/mod.rs)                            │
 │  - Reconstructs AST (Node tree) from event stream           │
 │  - Resolves anchors and aliases                             │
 │  - Handles nested structures via stack-based parsing        │
@@ -443,13 +443,13 @@ The parser uses a **two-layer architecture** with unified streaming tokenization
     - `Alias` - Reference to anchor
   - `CollectionStyle`: `Block` or `Flow`
   - `ScalarStyle`: `Plain`, `SingleQuoted`, `DoubleQuoted`, `Literal`, `Folded`
-- **Usage**: Parser emits events; `EventParser` reconstructs AST
+- **Usage**: Emitter emits events; `Parser` reconstructs AST
 
-#### `event_parser.rs` (~350 lines)
+#### `parser/mod.rs` (~350 lines)
 
 - **Purpose**: Reconstruct AST from event stream
 - **Key Types**:
-  - `EventParser<'input>`: Stack-based parser for events
+  - `Parser<'input>`: Stack-based parser for events
   - `BuilderStackEntry`: Tracks in-progress collections (mapping key/value, sequence)
 - **Main Function**: `parse_events(events) -> (Vec<Node>, Vec<ParseError>)`
 - **Responsibilities**:
@@ -1034,8 +1034,8 @@ The parser uses optimized type sizes to reduce memory footprint. This introduces
 This YAML parser achieves **100% YAML 1.2 compliance** (842/842 tests) through a carefully designed unified streaming architecture with **zero external dependencies**:
 
 1. **Unified Document Lexer**: Tokenizes entire stream with phase tracking (directives, markers, content)
-2. **Event-Based Parser**: Emits SAX-style events, validates structure and indentation
-3. **Event Parser**: Reconstructs AST from events, resolves anchors and aliases
+2. **Event-Based Emitter**: Emits SAX-style events, validates structure and indentation
+3. **Parser**: Reconstructs AST from events, resolves anchors and aliases
 
 **Key achievements:**
 

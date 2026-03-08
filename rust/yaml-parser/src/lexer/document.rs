@@ -2,14 +2,15 @@
 // Use of this source code is governed by the Apache License 2.0
 // that can be found in the LICENSE file.
 
-//! Document lexer for YAML.
+//! YAML lexer.
 //!
-//! This lexer tokenizes a single YAML document. It is context-aware, tracking
-//! flow depth to properly tokenize characters that have different meanings:
+//! This lexer tokenizes YAML streams, including multi-document streams with
+//! directives (`%YAML`, `%TAG`) and document markers (`---`, `...`).
+//!
+//! It is context-aware, tracking flow depth to properly tokenize characters
+//! that have different meanings:
 //! - In **block context** (`flow_depth` = 0): `,[]{}` are valid in plain scalars
 //! - In **flow context** (`flow_depth` > 0): `,[]{}` are delimiters
-//!
-//! This is Step 2 of the two-layer lexer architecture (after stream lexer).
 //!
 //! Uses `Cow<'input, str>` for zero-copy tokenization where possible.
 
@@ -65,13 +66,17 @@ enum LexerPhase {
     InDocument,
 }
 
-/// Document lexer state.
+/// YAML lexer state.
 ///
 /// The lifetime `'input` refers to the input string being tokenized.
 ///
 /// Implements `Iterator<Item = RichToken<'input>>` for streaming tokenization.
-/// Errors are attached to individual tokens via [`RichToken::error`].
-pub struct DocumentLexer<'input> {
+/// Errors are collected internally and retrieved via [`Lexer::take_errors`].
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "state machine requires multiple boolean flags"
+)]
+pub struct Lexer<'input> {
     input: &'input str,
     /// Byte offset of current position in the input string.
     byte_pos: usize,
@@ -95,13 +100,13 @@ pub struct DocumentLexer<'input> {
     in_quoted_string: bool,
     /// Current phase of the iterator state machine
     phase: IteratorPhase,
-    /// Error for the next token to be produced (set during lexing, consumed when yielding)
-    pending_error: Option<ErrorKind>,
+    /// Collected errors during lexing
+    errors: Vec<ParseError>,
     /// Current phase for multi-document stream handling.
     /// Determines whether directives are valid (in prologue) or not (in document).
-    lexer_phase: LexerPhase,
+    phase_state: LexerPhase,
     /// Whether we've seen a %YAML directive in the current document's prologue.
-    /// Reset to false when entering a new document (on DocEnd or DocStart after content).
+    /// Reset to false when entering a new document (on `DocEnd` or `DocStart` after content).
     has_yaml_directive: bool,
     /// Whether we've seen any directive in the current prologue (for "directive without document" error).
     has_directive_in_prologue: bool,
@@ -109,7 +114,7 @@ pub struct DocumentLexer<'input> {
     first_directive_span: Option<Span>,
 }
 
-impl<'input> DocumentLexer<'input> {
+impl<'input> Lexer<'input> {
     pub fn new(input: &'input str) -> Self {
         Self {
             input,
@@ -121,27 +126,28 @@ impl<'input> DocumentLexer<'input> {
             pending_tokens: VecDeque::new(),
             in_quoted_string: false,
             phase: IteratorPhase::Initial,
-            pending_error: None,
-            lexer_phase: LexerPhase::DirectivePrologue, // Start in directive prologue
+            errors: Vec::new(),
+            phase_state: LexerPhase::DirectivePrologue, // Start in directive prologue
             has_yaml_directive: false,
             has_directive_in_prologue: false,
             first_directive_span: None,
         }
     }
 
-    /// Record an error to be attached to the next token produced.
-    /// This replaces the old `errors.push()` approach - errors are now
-    /// attached inline to tokens for streaming.
-    fn add_error(&mut self, kind: ErrorKind, _span: Span) {
-        // Only keep the first error if multiple occur during one token
-        if self.pending_error.is_none() {
-            self.pending_error = Some(kind);
-        }
+    /// Get collected errors (read-only).
+    #[must_use]
+    pub fn errors(&self) -> &[ParseError] {
+        &self.errors
     }
 
-    /// Take the pending error (if any) and attach it to a token.
-    fn take_pending_error(&mut self) -> Option<ErrorKind> {
-        self.pending_error.take()
+    /// Take collected errors.
+    pub fn take_errors(&mut self) -> Vec<ParseError> {
+        std::mem::take(&mut self.errors)
+    }
+
+    /// Record an error during lexing.
+    fn add_error(&mut self, kind: ErrorKind, span: Span) {
+        self.errors.push(ParseError::new(kind, span));
     }
 
     fn mode(&self) -> LexMode {
@@ -259,12 +265,12 @@ impl<'input> DocumentLexer<'input> {
         // Phase transitions:
         // - DirectivePrologue -> InDocument: when we see `---` or content
         // - InDocument -> DirectivePrologue: when we see `...` (document end)
-        match self.lexer_phase {
+        match self.phase_state {
             LexerPhase::DirectivePrologue => {
                 match token {
                     Token::DocStart => {
                         // `---` starts a document - reset directive tracking for this doc
-                        self.lexer_phase = LexerPhase::InDocument;
+                        self.phase_state = LexerPhase::InDocument;
                         self.has_yaml_directive = false;
                         self.has_directive_in_prologue = false;
                         self.first_directive_span = None;
@@ -283,7 +289,7 @@ impl<'input> DocumentLexer<'input> {
                     _ => {
                         // Any other content token starts an implicit document
                         // Reset directive tracking for this doc
-                        self.lexer_phase = LexerPhase::InDocument;
+                        self.phase_state = LexerPhase::InDocument;
                         self.has_yaml_directive = false;
                         self.has_directive_in_prologue = false;
                         self.first_directive_span = None;
@@ -294,7 +300,7 @@ impl<'input> DocumentLexer<'input> {
                 if matches!(token, Token::DocEnd) {
                     // `...` ends the document, back to directive prologue
                     // Reset for the next document's prologue
-                    self.lexer_phase = LexerPhase::DirectivePrologue;
+                    self.phase_state = LexerPhase::DirectivePrologue;
                     self.has_yaml_directive = false;
                     self.has_directive_in_prologue = false;
                     self.first_directive_span = None;
@@ -311,6 +317,7 @@ impl<'input> DocumentLexer<'input> {
     /// we push it as a new level without emitting an error. This is intentional because:
     /// - Block scalar content may have irregular indentation
     /// - Implicit block mappings inside sequences may not be tracked in the stack
+    ///
     /// The parser is responsible for detecting semantically invalid indentation.
     fn queue_indent_dedent_tokens(&mut self, new_indent: IndentLevel, span: Span) {
         let current_indent = *self.indent_stack.last().unwrap_or(&0);
@@ -342,15 +349,9 @@ impl<'input> DocumentLexer<'input> {
     }
 
     /// Produce the next raw token (without INDENT/DEDENT processing).
-    /// Returns the token with any pending error attached.
     fn produce_next_token(&mut self) -> Option<RichToken<'input>> {
         let (token, span) = self.next_token()?;
-        let error = self.take_pending_error();
-        if let Some(err) = error {
-            Some(RichToken::with_error(token, span, err))
-        } else {
-            Some(RichToken::new(token, span))
-        }
+        Some(RichToken::new(token, span))
     }
 
     /// Check if we're at column 0 (start of input or right after a newline).
@@ -436,7 +437,7 @@ impl<'input> DocumentLexer<'input> {
         // Directives start with `%` at column 0, only in directive prologue
         if ch != '%'
             || !self.is_at_column_zero()
-            || self.lexer_phase != LexerPhase::DirectivePrologue
+            || self.phase_state != LexerPhase::DirectivePrologue
         {
             return None;
         }
@@ -810,7 +811,7 @@ impl<'input> DocumentLexer<'input> {
 
         // In directive prologue, content (other than directives/doc markers) is only valid at column 0.
         // Content NOT at column 0 is invalid trailing content after `...` on the same line.
-        if self.lexer_phase == LexerPhase::DirectivePrologue && !self.is_at_column_zero() {
+        if self.phase_state == LexerPhase::DirectivePrologue && !self.is_at_column_zero() {
             // This is invalid trailing content after document end marker (e.g., "... invalid")
             // Consume to end of line and emit error
             while let Some(peek_ch) = self.peek() {
@@ -822,6 +823,10 @@ impl<'input> DocumentLexer<'input> {
             let span = self.current_span(start);
             self.add_error(ErrorKind::TrailingContent, span);
             // Return a plain scalar token (with error attached) so parsing can continue
+            #[allow(
+                clippy::string_slice,
+                reason = "byte positions are guaranteed to be on char boundaries"
+            )]
             let content = &self.input[start..self.byte_pos];
             return Some((Token::Plain(Cow::Borrowed(content)), span));
         }
@@ -1486,10 +1491,10 @@ impl<'input> DocumentLexer<'input> {
 
 /// Iterator implementation for streaming tokenization.
 ///
-/// The lexer yields tokens one at a time, with errors attached to individual tokens
-/// via [`RichToken::error`]. This enables streaming processing without buffering
-/// all tokens in memory.
-impl<'input> Iterator for DocumentLexer<'input> {
+/// The lexer yields tokens one at a time. Errors are collected internally
+/// and can be retrieved via [`Lexer::take_errors`]. This enables streaming
+/// processing without buffering all tokens in memory.
+impl<'input> Iterator for Lexer<'input> {
     type Item = RichToken<'input>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -1557,26 +1562,13 @@ impl<'input> Iterator for DocumentLexer<'input> {
 /// Returns `RichToken`s wrapping each token. All tokens (including `Whitespace`,
 /// `WhitespaceWithTabs`, `Comment`) are kept as real tokens in the stream.
 ///
-/// Errors are attached to individual tokens via [`RichToken::error`]. To collect
-/// errors separately, use:
-/// ```ignore
-/// let (tokens, errors): (Vec<_>, Vec<_>) = lexer
-///     .map(|t| (t.clone(), t.error.map(|e| ParseError::new(e, t.span))))
-///     .unzip();
-/// ```
+/// Errors are collected internally by the lexer and returned separately.
 ///
-/// For streaming usage, iterate directly over `DocumentLexer::new(input)`.
+/// For streaming usage, iterate directly over `Lexer::new(input)`.
 pub fn tokenize_document(input: &str) -> (Vec<RichToken<'_>>, Vec<ParseError>) {
-    let lexer = DocumentLexer::new(input);
-    let mut tokens = Vec::new();
-    let mut errors = Vec::new();
-
-    for rich_token in lexer {
-        if let Some(error_kind) = &rich_token.error {
-            errors.push(ParseError::new(error_kind.clone(), rich_token.span));
-        }
-        tokens.push(rich_token);
-    }
+    let mut lexer = Lexer::new(input);
+    let tokens: Vec<RichToken<'_>> = lexer.by_ref().collect();
+    let errors = lexer.take_errors();
 
     (tokens, errors)
 }
@@ -1871,7 +1863,7 @@ mod tests {
 
     #[test]
     fn test_multi_document_with_directives() {
-        // Test that DocumentLexer correctly handles multi-document streams
+        // Test that Lexer correctly handles multi-document streams
         // with directives, document markers, and phase transitions
         let input = "%YAML 1.2\n---\ndoc1\n...\n%TAG !e! tag:example,2000:\n---\ndoc2\n";
         let tokens = get_tokens(input);

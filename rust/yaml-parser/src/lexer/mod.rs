@@ -4,11 +4,12 @@
 
 //! Lexer components for YAML parsing.
 //!
-//! This module contains the unified streaming lexer architecture:
+//! This module contains the unified lexer architecture:
 //!
 //! - **Document lexer** (`document`): Tokenizes YAML content including
 //!   directives (`%YAML`, `%TAG`), document markers (`---`, `...`), and
 //!   all document content. Tracks flow depth to distinguish block vs flow context.
+//!   Implements `Iterator<Item = RichToken>` for lazy tokenization.
 //!
 //! Also includes token definitions used by the lexer.
 
@@ -17,6 +18,6 @@ mod rich_token;
 mod token;
 
 // Re-export main types and functions
-pub use document::{DocumentLexer, tokenize_document};
+pub use document::{Lexer, tokenize_document};
 pub use rich_token::RichToken;
 pub use token::{BlockScalarHeader, Chomping, QuoteStyle, Token};

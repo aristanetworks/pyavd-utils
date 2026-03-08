@@ -2,14 +2,14 @@
 // Use of this source code is governed by the Apache License 2.0
 // that can be found in the LICENSE file.
 
-//! Streaming event emitter - a pure state-machine parser.
+//! Event emitter - a state-machine YAML parser.
 //!
 //! This module provides `Emitter`, a YAML parser that produces events
-//! one at a time using an explicit state stack instead of recursion.
-//! It is designed from the ground up for true streaming operation.
+//! using an explicit state stack instead of recursion. It processes
+//! a slice of tokens and emits events via the `Iterator` interface.
 //!
-//! The `Emitter` is validated against the batch `Parser` - both must
-//! produce identical event sequences for all inputs.
+//! The `Emitter` is validated against the YAML Test Suite to ensure
+//! correct event sequences for all inputs.
 
 // This module is work-in-progress. Allow dead code during development.
 #![allow(dead_code, reason = "WIP: Emitter is under active development")]
@@ -57,7 +57,9 @@ enum BlockMapPhase {
     /// same-line entries like `a: b: c`.
     BeforeKey { require_line_boundary: bool },
     /// After key, expect `:` and value.
-    AfterKey,
+    /// `is_implicit_scalar_key`: If true, the key was an implicit scalar (like `key:`).
+    /// Block sequences on the same line as such keys are invalid (`key: - item`).
+    AfterKey { is_implicit_scalar_key: bool },
     /// After value, check for next pair or end.
     AfterValue,
 }
@@ -75,7 +77,7 @@ enum FlowSeqPhase {
     ImplicitMapEmptyKey { map_start_span: Span },
     /// After implicit mapping key, expect `:` then parse value.
     ImplicitMapValue { map_start_span: Span },
-    /// After implicit mapping value, emit MappingEnd.
+    /// After implicit mapping value, emit `MappingEnd`.
     ImplicitMapEnd { map_start_span: Span },
 }
 
@@ -117,7 +119,7 @@ enum ParseState {
         indent: IndentLevel,
         phase: BlockSeqPhase,
         start_span: Span,
-        /// Anchor/tag to attach to SequenceStart (only used in EmitStart phase).
+        /// Anchor/tag to attach to `SequenceStart` (only used in `EmitStart` phase).
         anchor: Option<(Cow<'static, str>, Span)>,
         tag: Option<(Cow<'static, str>, Span)>,
     },
@@ -126,7 +128,7 @@ enum ParseState {
         indent: IndentLevel,
         phase: BlockMapPhase,
         start_span: Span,
-        /// Anchor/tag to attach to MappingStart (only used in EmitStart phase).
+        /// Anchor/tag to attach to `MappingStart` (only used in `EmitStart` phase).
         anchor: Option<(Cow<'static, str>, Span)>,
         tag: Option<(Cow<'static, str>, Span)>,
     },
@@ -144,7 +146,7 @@ enum ParseState {
     EmitSeqEnd { span: Span },
     /// Emit `MappingEnd` for block mapping.
     EmitMapEnd { span: Span },
-    /// Emit `SequenceStart` (for complex key scenarios where MappingStart is emitted first).
+    /// Emit `SequenceStart` (for complex key scenarios where `MappingStart` is emitted first).
     EmitSeqStart {
         anchor: Option<(Cow<'static, str>, Span)>,
         tag: Option<(Cow<'static, str>, Span)>,
@@ -177,15 +179,20 @@ enum DocState {
     Done,
 }
 
-/// A streaming YAML emitter using an explicit state machine.
+/// A YAML event emitter using an explicit state machine.
 ///
-/// This is an alternative to the recursive descent `Parser`, designed
-/// for true streaming operation. It produces events one at a time
-/// via the `Iterator` interface.
+/// Processes a slice of tokens and produces YAML events via the `Iterator` interface.
+/// Uses an explicit state stack instead of recursion for parsing.
+///
+/// ## Architecture Note
+///
+/// The emitter requires a token slice (not an iterator) because YAML parsing
+/// fundamentally requires lookahead to resolve ambiguities. This matches the
+/// approach used by `LibYAML` and other production YAML parsers, which buffer
+/// tokens internally to support lookahead operations.
 #[derive(Debug)]
 pub struct Emitter<'tokens, 'input> {
-    /// Token slice (we still use slice access for now, but the state machine
-    /// design allows future migration to streaming token input).
+    /// Token slice. Requires slice access for lookahead operations (`peek_nth`).
     tokens: &'tokens [RichToken<'input>],
     /// Original input string.
     input: &'input str,
@@ -207,13 +214,24 @@ pub struct Emitter<'tokens, 'input> {
     emitted_stream_start: bool,
     /// Tag handles from directives.
     tag_handles: std::collections::HashMap<&'input str, &'input str>,
-    /// Last content span - used for MappingEnd/SequenceEnd to match batch parser behavior.
+    /// Last content span - used for `MappingEnd`/`SequenceEnd` to match batch parser behavior.
     /// Updated when emitting content events (scalars, aliases, nested collection ends).
     last_content_span: Option<Span>,
     /// Whether we've crossed a line boundary since the last time this flag was cleared.
     /// Set when consuming `LineStart` tokens. Used by `AfterValue` to determine if
     /// a nested structure crossed a line, even after those tokens were consumed.
     crossed_line_boundary: bool,
+    /// Indentation stack tracking active block structure levels.
+    /// Each entry is the indentation level of an active block structure.
+    /// Used to detect orphan indentation (content at levels not in the stack).
+    indent_stack: Vec<IndentLevel>,
+    /// Span of the last `LineStart` token that set `current_indent`.
+    /// Used for reporting `InvalidIndentation` errors at the line start position.
+    last_line_start_span: Span,
+    /// Stack of columns where each flow context started.
+    /// Used to validate that continuation lines are indented relative to the flow start.
+    /// Empty when not in flow context.
+    flow_context_columns: Vec<IndentLevel>,
 }
 
 impl<'tokens: 'input, 'input> Emitter<'tokens, 'input> {
@@ -234,6 +252,9 @@ impl<'tokens: 'input, 'input> Emitter<'tokens, 'input> {
             tag_handles: std::collections::HashMap::new(),
             last_content_span: None,
             crossed_line_boundary: false,
+            indent_stack: vec![0],                 // Start with base level 0
+            last_line_start_span: Span::new(0..0), // Default span at start
+            flow_context_columns: Vec::new(),
         }
     }
 
@@ -265,6 +286,7 @@ impl<'tokens: 'input, 'input> Emitter<'tokens, 'input> {
             // Track indent from LineStart tokens
             if let Token::LineStart(n) = &rt.token {
                 self.current_indent = *n;
+                self.last_line_start_span = rt.span;
                 // Mark that we crossed a line boundary - this persists until cleared
                 self.crossed_line_boundary = true;
             }
@@ -330,6 +352,20 @@ impl<'tokens: 'input, 'input> Emitter<'tokens, 'input> {
         usize_to_indent(col)
     }
 
+    /// Enter a flow collection context.
+    /// Tracks the column where the flow collection started (for `InvalidIndentationContext` errors).
+    fn enter_flow_collection(&mut self, start_pos: usize) {
+        self.flow_depth += 1;
+        let flow_start_column = self.column_of_position(start_pos);
+        self.flow_context_columns.push(flow_start_column);
+    }
+
+    /// Exit a flow collection context.
+    fn exit_flow_collection(&mut self) {
+        self.flow_depth = self.flow_depth.saturating_sub(1);
+        self.flow_context_columns.pop();
+    }
+
     fn error(&mut self, kind: ErrorKind, span: Span) {
         self.errors.push(ParseError {
             kind,
@@ -338,9 +374,25 @@ impl<'tokens: 'input, 'input> Emitter<'tokens, 'input> {
         });
     }
 
+    /// Report an error only if no error has already been reported for this span.
+    /// This prevents double-reporting when the same content is processed by multiple
+    /// error detection paths (e.g., orphaned properties detection and trailing content scan).
+    fn error_unless_span_has_error(&mut self, kind: ErrorKind, span: Span) {
+        // Check if any error already has this span
+        if !self.errors.iter().any(|err| err.span == span) {
+            self.error(kind, span);
+        }
+    }
+
     /// Check if a span contains a newline (used for multiline implicit key detection).
     /// If the key spans multiple lines, it cannot be an implicit key.
     fn check_multiline_implicit_key(&mut self, key_span: Span) {
+        // Multiline implicit keys are only an error in block context
+        // In flow context, multiline keys are allowed
+        if self.flow_depth > 0 {
+            return;
+        }
+
         // Get the key text from the input
         let start = key_span.start_usize();
         let end = key_span.end_usize().min(self.input.len());
@@ -363,6 +415,38 @@ impl<'tokens: 'input, 'input> Emitter<'tokens, 'input> {
         }
     }
 
+    /// Check if a flow collection used as an implicit key spans multiple lines.
+    /// This is called when a flow collection ends in block context.
+    fn check_multiline_flow_key(&mut self, start_span: Span, end_span: Span) {
+        // Check if there's a colon immediately following (implicit key indicator).
+        // If no colon is found immediately (only whitespace allowed), this is not an implicit key.
+        // This matches the batch parser's check_multiline_implicit_key which returns early
+        // if no colon is found.
+        let mut check_idx = 0;
+        let colon_span = loop {
+            match self.peek_nth(check_idx) {
+                Some((Token::Whitespace | Token::WhitespaceWithTabs, _)) => check_idx += 1,
+                Some((Token::Colon, span)) => break span,
+                _ => return, // No colon immediately - not an implicit key
+            }
+            if check_idx > 20 {
+                return;
+            }
+        };
+
+        // Check if the flow collection spans multiple lines
+        let start = start_span.start_usize();
+        let end = end_span.end_usize().min(self.input.len());
+        if start >= end {
+            return;
+        }
+        let key_text = &self.input[start..end];
+
+        if key_text.contains('\n') {
+            self.error(ErrorKind::MultilineImplicitKey, colon_span);
+        }
+    }
+
     /// Check for tabs used as indentation after a `LineStart` token.
     /// In block context, tabs used for indentation are invalid.
     fn check_tabs_as_indentation(&mut self) {
@@ -371,9 +455,19 @@ impl<'tokens: 'input, 'input> Emitter<'tokens, 'input> {
             return;
         }
 
-        // Check if current token is WhitespaceWithTabs
-        if let Some((Token::WhitespaceWithTabs, tab_span)) = self.peek() {
-            // Look ahead to see what follows the whitespace
+        // If there's an Indent token, it means indentation increased via spaces.
+        // Any whitespace (including tabs) AFTER the Indent is separation, not indentation.
+        // So tabs are only invalid if WhitespaceWithTabs appears IMMEDIATELY after LineStart
+        // (i.e., no Indent token in between).
+        if matches!(self.peek_nth(0), Some((Token::Indent(_), _))) {
+            // Indent token present - tabs after it are allowed (separation whitespace)
+            return;
+        }
+
+        // Check if current token is WhitespaceWithTabs (immediately after LineStart, no Indent)
+        if let Some((Token::WhitespaceWithTabs, tab_span)) = self.peek_nth(0) {
+            let tab_span = tab_span;
+            // Look ahead to see what follows the whitespace (starting after the tab)
             let mut look_ahead = 1;
             while let Some((tok, _)) = self.peek_nth(look_ahead) {
                 match tok {
@@ -396,6 +490,32 @@ impl<'tokens: 'input, 'input> Emitter<'tokens, 'input> {
             }
             // Content after tabs - report error
             self.error(ErrorKind::InvalidIndentation, tab_span);
+        }
+    }
+
+    /// Check for tabs at column 0 in flow context.
+    /// In flow context, tabs at the start of a line (column 0) are invalid (Y79Y-003),
+    /// but tabs after spaces are allowed (6HB6).
+    fn check_tabs_at_column_zero_in_flow(&mut self) {
+        // Only check if current token is WhitespaceWithTabs at column 0
+        if let Some((Token::WhitespaceWithTabs, tab_span)) = self.peek() {
+            let col = self.column_of_position(tab_span.start_usize());
+            if col == 0 {
+                // Look ahead to check it's not a blank line
+                let mut look_ahead = 1;
+                while let Some((tok, _)) = self.peek_nth(look_ahead) {
+                    match tok {
+                        Token::Whitespace | Token::WhitespaceWithTabs => look_ahead += 1,
+                        // Blank line or flow end - tabs allowed
+                        Token::LineStart(_) | Token::FlowMapEnd | Token::FlowSeqEnd => return,
+                        // Content at column 0 with leading tab - error
+                        _ => {
+                            self.error(ErrorKind::InvalidIndentation, tab_span);
+                            return;
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -442,6 +562,73 @@ impl<'tokens: 'input, 'input> Emitter<'tokens, 'input> {
         }
     }
 
+    /// Check for invalid content immediately after a flow collection in block context.
+    /// e.g., `{ y: z }in: valid` - `in:` is immediately after `}` with no space.
+    fn check_content_after_flow(&mut self, flow_end: usize) {
+        if let Some((tok, span)) = self.peek() {
+            let is_content = matches!(
+                tok,
+                Token::Plain(_)
+                    | Token::StringStart(_)
+                    | Token::Anchor(_)
+                    | Token::Alias(_)
+                    | Token::Tag(_)
+                    | Token::BlockSeqIndicator
+            );
+            if is_content && span.start_usize() == flow_end {
+                self.error(ErrorKind::ContentOnSameLine, span);
+            }
+        }
+    }
+
+    /// Check for trailing content at column 0 after a closed structure.
+    /// This is used for block sequences at the root level.
+    /// Content at the same indentation level after them is invalid.
+    fn check_trailing_content_at_root(&mut self, root_indent: IndentLevel) {
+        // Skip whitespace, newlines, and dedent tokens using peek-only
+        let mut peek_offset = 0;
+        while let Some((tok, _)) = self.peek_nth(peek_offset) {
+            match tok {
+                Token::Whitespace
+                | Token::WhitespaceWithTabs
+                | Token::Comment(_)
+                | Token::Dedent
+                | Token::LineStart(_) => {
+                    peek_offset += 1;
+                }
+                _ => break,
+            }
+        }
+
+        // Check if there's content at or below the root indentation
+        if let Some((tok, span)) = self.peek_nth(peek_offset) {
+            // Extra flow collection end tokens are always an error (unmatched brackets)
+            if matches!(tok, Token::FlowSeqEnd | Token::FlowMapEnd) {
+                self.error(ErrorKind::UnmatchedBracket, span);
+            } else {
+                let is_content = matches!(
+                    tok,
+                    Token::Plain(_)
+                        | Token::StringStart(_)
+                        | Token::Anchor(_)
+                        | Token::Alias(_)
+                        | Token::Tag(_)
+                        | Token::FlowSeqStart
+                        | Token::FlowMapStart
+                        | Token::BlockSeqIndicator
+                );
+
+                // Get the column of this token by its span position
+                let col = self.column_of_position(span.start_usize());
+
+                if is_content && col <= root_indent {
+                    // At document level, all trailing content is TrailingContent
+                    self.error(ErrorKind::TrailingContent, span);
+                }
+            }
+        }
+    }
+
     // ─────────────────────────────────────────────────────────────
     // Whitespace/newline skipping
     // ─────────────────────────────────────────────────────────────
@@ -475,16 +662,68 @@ impl<'tokens: 'input, 'input> Emitter<'tokens, 'input> {
         loop {
             match self.peek() {
                 Some((Token::Whitespace | Token::WhitespaceWithTabs, _)) => self.advance(),
-                Some((Token::LineStart(_), span)) => {
+                Some((Token::LineStart(indent), span)) => {
+                    let indent = *indent;
+                    let span = span;
                     crossed_line = true;
                     last_linestart_span = Some(span);
                     self.advance();
+
+                    // In flow context, check for invalid column 0 continuations.
+                    // Column 0 is only allowed if the outermost flow context started at column 0.
+                    if let Some(&outermost_flow_col) = self.flow_context_columns.first() {
+                        if indent == 0 && outermost_flow_col > 0 {
+                            // Check if there's actual content after this LineStart
+                            // Skip past Whitespace tokens (tabs used as indentation)
+                            // and check the actual column of the content token
+                            let mut peek_offset = 0;
+                            while let Some((tok, _)) = self.peek_nth(peek_offset) {
+                                if matches!(tok, Token::Whitespace | Token::WhitespaceWithTabs) {
+                                    peek_offset += 1;
+                                } else {
+                                    break;
+                                }
+                            }
+
+                            if let Some((tok, content_span)) = self.peek_nth(peek_offset) {
+                                let is_content = !matches!(
+                                    tok,
+                                    Token::LineStart(_)
+                                        | Token::FlowSeqEnd
+                                        | Token::FlowMapEnd
+                                        | Token::Dedent
+                                        | Token::DocEnd
+                                );
+                                // Check actual column of content token
+                                let content_col =
+                                    self.column_of_position(content_span.start_usize());
+                                if is_content && content_col == 0 {
+                                    self.error(
+                                        ErrorKind::InvalidIndentationContext {
+                                            expected: 1,
+                                            found: 0,
+                                        },
+                                        span,
+                                    );
+                                }
+                            }
+                        }
+                    }
+
                     // Check for tabs as indentation after crossing a line boundary
-                    self.check_tabs_as_indentation();
+                    // In flow context, only tabs at column 0 are invalid
+                    if self.flow_context_columns.is_empty() {
+                        self.check_tabs_as_indentation();
+                    } else {
+                        self.check_tabs_at_column_zero_in_flow();
+                    }
                 }
                 Some((Token::Indent(_), _)) => self.advance(),
                 Some((Token::Comment(_), _)) => self.advance(),
-                Some((Token::Dedent, _)) => self.advance(),
+                // NOTE: Do NOT consume Dedent tokens here!
+                // Block mapping/sequence handlers need to see them to know when to end.
+                // Each Dedent token represents one level of dedentation, so each nested
+                // structure should consume one Dedent when it ends.
                 _ => break,
             }
         }
@@ -633,11 +872,22 @@ impl<'tokens: 'input, 'input> Emitter<'tokens, 'input> {
 
         // Check for `...`
         let has_doc_end = matches!(self.peek(), Some((Token::DocEnd, _)));
-        let span = self.current_span();
-        if has_doc_end {
+        let span = if has_doc_end {
+            // Explicit document end: use the `...` token's span
+            let doc_end_span = self.current_span();
             self.advance();
             self.skip_ws_and_newlines();
-        }
+            doc_end_span
+        } else {
+            // Implicit document end: use the end position of the last content
+            // This matches the batch parser behavior and provides more accurate spans
+            if let Some(last_span) = self.last_content_span {
+                Span::from_usize_range(last_span.end_usize()..last_span.end_usize())
+            } else {
+                // No content in document, use current position
+                self.current_span()
+            }
+        };
 
         // Skip trailing dedents
         while matches!(self.peek(), Some((Token::Dedent, _))) {
@@ -669,21 +919,31 @@ impl<'tokens: 'input, 'input> Emitter<'tokens, 'input> {
 
             // Check for orphan content and emit error
             if let Some((token, span)) = self.peek() {
-                let is_content = matches!(
-                    token,
-                    Token::Plain(_)
-                        | Token::StringStart(_)
-                        | Token::Colon
-                        | Token::MappingKey
-                        | Token::BlockSeqIndicator
-                        | Token::Anchor(_)
-                        | Token::Tag(_)
-                        | Token::Alias(_)
-                        | Token::FlowMapStart
-                        | Token::FlowSeqStart
-                );
-                if is_content {
-                    self.error(ErrorKind::TrailingContent, span);
+                // Extra flow collection end tokens are always an error (unmatched brackets)
+                if matches!(token, Token::FlowSeqEnd | Token::FlowMapEnd) {
+                    self.error(ErrorKind::UnmatchedBracket, span);
+                } else {
+                    let is_content = matches!(
+                        token,
+                        Token::Plain(_)
+                            | Token::StringStart(_)
+                            | Token::Colon
+                            | Token::MappingKey
+                            | Token::BlockSeqIndicator
+                            | Token::Anchor(_)
+                            | Token::Tag(_)
+                            | Token::Alias(_)
+                            | Token::FlowMapStart
+                            | Token::FlowSeqStart
+                    );
+                    if is_content {
+                        // At document level, all trailing content is TrailingContent
+                        // (even anchors/tags - they're not OrphanedProperties because
+                        // they weren't collected as part of a value context)
+                        // Use error_unless_span_has_error to avoid double-reporting
+                        // spans that were already flagged as OrphanedProperties
+                        self.error_unless_span_has_error(ErrorKind::TrailingContent, span);
+                    }
                 }
             }
             self.advance();
@@ -853,10 +1113,12 @@ impl<'tokens: 'input, 'input> Emitter<'tokens, 'input> {
                 }
 
                 ParseState::EmitSeqEnd { span } => {
+                    self.pop_indent();
                     return Some(Event::SequenceEnd { span });
                 }
 
                 ParseState::EmitMapEnd { span } => {
+                    self.pop_indent();
                     return Some(Event::MappingEnd { span });
                 }
 
@@ -924,8 +1186,55 @@ impl<'tokens: 'input, 'input> Emitter<'tokens, 'input> {
         let skipped_crossed_line = self.skip_ws_and_newlines_returns_crossed_line();
         let initial_crossed_line = has_leading_linestart || skipped_crossed_line;
 
+        // Check if we crossed a line and landed at an invalid indentation level.
+        // The batch parser's advance_to_same_indent reports InvalidIndentation when
+        // content appears at indent < min_indent or at an orphan level.
+        // Check if the current position has content at an invalid indent.
+        if initial_crossed_line && self.current_indent < min_indent {
+            // Check if there's content (properties or values) at this invalid indent
+            if let Some((tok, span)) = self.peek() {
+                if matches!(tok, Token::Anchor(_) | Token::Tag(_)) {
+                    // Properties at invalid indent get both InvalidIndentation and OrphanedProperties
+                    self.error(ErrorKind::InvalidIndentation, span);
+                    self.error(ErrorKind::OrphanedProperties, span);
+                } else if matches!(tok, Token::Plain(_) | Token::StringStart(_)) {
+                    self.error(ErrorKind::InvalidIndentation, span);
+                }
+            }
+        }
+
         // Check for properties (anchor, tag) before the value
-        let (anchor, tag, prop_crossed_line) = self.collect_properties(anchor, tag);
+        // Use min_indent to prevent collecting properties that are at invalid indentation
+        let (anchor, tag, prop_crossed_line) =
+            self.collect_properties_with_min_indent(anchor, tag, min_indent);
+
+        // Check for orphaned properties: if we crossed a line boundary but stopped because
+        // of invalid indent, and the next content is a property, report OrphanedProperties.
+        // This handles cases like `key: &x\n!!map\n  a: b` where !!map is at invalid indent.
+        if prop_crossed_line {
+            if let Some((Token::LineStart(indent), _)) = self.peek() {
+                if *indent < min_indent {
+                    // Look for property tokens after the LineStart
+                    let mut lookahead = 1;
+                    if matches!(self.peek_nth(lookahead), Some((Token::Indent(_), _))) {
+                        lookahead += 1;
+                    }
+                    while let Some((Token::Anchor(_) | Token::Tag(_), span)) =
+                        self.peek_nth(lookahead)
+                    {
+                        self.error(ErrorKind::OrphanedProperties, span);
+                        lookahead += 1;
+                        // Skip whitespace between properties
+                        while matches!(
+                            self.peek_nth(lookahead),
+                            Some((Token::Whitespace | Token::WhitespaceWithTabs, _))
+                        ) {
+                            lookahead += 1;
+                        }
+                    }
+                }
+            }
+        }
 
         // Capture the indent where properties were collected (if any)
         let property_indent = (anchor.is_some() || tag.is_some()).then_some(self.current_indent);
@@ -1052,14 +1361,26 @@ impl<'tokens: 'input, 'input> Emitter<'tokens, 'input> {
                 }
             )
         });
+        // Look past Dedent tokens to find the actual content token.
+        // This handles bridging cases where properties on a higher-indented line
+        // should attach to a block collection on a lower-indented line.
+        let mut lookahead_for_indicator = 0;
+        while let Some((tok, _)) = self.peek_nth(lookahead_for_indicator) {
+            if matches!(tok, Token::Dedent | Token::Indent(_)) {
+                lookahead_for_indicator += 1;
+            } else {
+                break;
+            }
+        }
         let at_block_indicator = !in_sequence_entry
-            && matches!(
-                self.peek(),
-                Some((
-                    Token::BlockSeqIndicator | Token::MappingKey | Token::Colon,
-                    _
-                ))
-            );
+            && self
+                .peek_nth(lookahead_for_indicator)
+                .is_some_and(|(tok, _)| {
+                    matches!(
+                        tok,
+                        Token::BlockSeqIndicator | Token::MappingKey | Token::Colon
+                    )
+                });
         if crossed_line_boundary && self.current_indent < min_indent && !at_block_indicator {
             return Some(Event::Scalar {
                 style: ScalarStyle::Plain,
@@ -1081,6 +1402,23 @@ impl<'tokens: 'input, 'input> Emitter<'tokens, 'input> {
                     tag,
                     span: self.current_span(),
                 })
+            }
+
+            // Dedent token at the top level (before any block collection is started).
+            // This can happen when leading comments are at a higher indent than the content.
+            // E.g., `# Comment\n  # Indented comment\nkey: value`
+            // The Dedent from indent 2 -> 0 needs to be consumed so we can parse `key: value`.
+            Some((Token::Dedent, _)) => {
+                self.advance();
+                // Re-enter Value state to parse the actual value
+                self.state_stack.push(ParseState::Value {
+                    min_indent,
+                    anchor,
+                    tag,
+                    is_key,
+                    allow_implicit_mapping,
+                });
+                None
             }
 
             Some((Token::DocEnd | Token::DocStart, span)) => {
@@ -1141,7 +1479,9 @@ impl<'tokens: 'input, 'input> Emitter<'tokens, 'input> {
                     // Push BlockMap state in AfterKey phase (we already have the key)
                     self.state_stack.push(ParseState::BlockMap {
                         indent: map_indent,
-                        phase: BlockMapPhase::AfterKey,
+                        phase: BlockMapPhase::AfterKey {
+                            is_implicit_scalar_key: false, // Alias, not a plain scalar
+                        },
                         start_span: alias_span,
                         anchor: None,
                         tag: None,
@@ -1152,6 +1492,8 @@ impl<'tokens: 'input, 'input> Emitter<'tokens, 'input> {
                         span: alias_span,
                     });
 
+                    // Push indent level for orphan indent detection
+                    self.push_indent(map_indent);
                     // Emit MappingStart with outer anchor/tag
                     return Some(Event::MappingStart {
                         style: crate::event::CollectionStyle::Block,
@@ -1228,7 +1570,9 @@ impl<'tokens: 'input, 'input> Emitter<'tokens, 'input> {
                     // not the colon's column position
                     self.state_stack.push(ParseState::BlockMap {
                         indent: self.current_indent,
-                        phase: BlockMapPhase::AfterKey,
+                        phase: BlockMapPhase::AfterKey {
+                            is_implicit_scalar_key: false, // Null key with properties, not plain scalar
+                        },
                         start_span: span,
                         anchor: None,
                         tag: None,
@@ -1243,6 +1587,8 @@ impl<'tokens: 'input, 'input> Emitter<'tokens, 'input> {
                         span,
                         style: ScalarStyle::Plain,
                     });
+                    // Push indent level for orphan indent detection
+                    self.push_indent(self.current_indent);
                     Some(Event::MappingStart {
                         style: crate::event::CollectionStyle::Block,
                         anchor: None,
@@ -1271,12 +1617,14 @@ impl<'tokens: 'input, 'input> Emitter<'tokens, 'input> {
                     let map_indent = self.current_indent;
 
                     self.advance();
-                    self.flow_depth += 1;
+                    self.enter_flow_collection(span.start_usize());
 
                     // Push BlockMap state for after the key
                     self.state_stack.push(ParseState::BlockMap {
                         indent: map_indent,
-                        phase: BlockMapPhase::AfterKey,
+                        phase: BlockMapPhase::AfterKey {
+                            is_implicit_scalar_key: false, // Flow sequence key, not plain scalar
+                        },
                         start_span: span,
                         anchor: None,
                         tag: None,
@@ -1288,6 +1636,8 @@ impl<'tokens: 'input, 'input> Emitter<'tokens, 'input> {
                         start_span: span,
                     });
 
+                    // Push indent level for orphan indent detection
+                    self.push_indent(map_indent);
                     // Emit MappingStart with the properties
                     return Some(Event::MappingStart {
                         style: crate::event::CollectionStyle::Block,
@@ -1298,7 +1648,7 @@ impl<'tokens: 'input, 'input> Emitter<'tokens, 'input> {
                 }
 
                 self.advance();
-                self.flow_depth += 1;
+                self.enter_flow_collection(span.start_usize());
                 self.state_stack.push(ParseState::FlowSeq {
                     phase: FlowSeqPhase::BeforeEntry,
                     start_span: span,
@@ -1320,12 +1670,14 @@ impl<'tokens: 'input, 'input> Emitter<'tokens, 'input> {
                     let map_indent = self.current_indent;
 
                     self.advance();
-                    self.flow_depth += 1;
+                    self.enter_flow_collection(span.start_usize());
 
                     // Push BlockMap state for after the key
                     self.state_stack.push(ParseState::BlockMap {
                         indent: map_indent,
-                        phase: BlockMapPhase::AfterKey,
+                        phase: BlockMapPhase::AfterKey {
+                            is_implicit_scalar_key: false, // Flow mapping key, not plain scalar
+                        },
                         start_span: span,
                         anchor: None,
                         tag: None,
@@ -1337,6 +1689,8 @@ impl<'tokens: 'input, 'input> Emitter<'tokens, 'input> {
                         start_span: span,
                     });
 
+                    // Push indent level for orphan indent detection
+                    self.push_indent(map_indent);
                     // Emit outer block MappingStart with the properties
                     return Some(Event::MappingStart {
                         style: crate::event::CollectionStyle::Block,
@@ -1347,7 +1701,7 @@ impl<'tokens: 'input, 'input> Emitter<'tokens, 'input> {
                 }
 
                 self.advance();
-                self.flow_depth += 1;
+                self.enter_flow_collection(span.start_usize());
                 self.state_stack.push(ParseState::FlowMap {
                     phase: FlowMapPhase::BeforeKey,
                     start_span: span,
@@ -1460,12 +1814,14 @@ impl<'tokens: 'input, 'input> Emitter<'tokens, 'input> {
                             // Advance into the flow collection
                             let is_seq = matches!(self.peek(), Some((Token::FlowSeqStart, _)));
                             self.advance();
-                            self.flow_depth += 1;
+                            self.enter_flow_collection(span.start_usize());
 
                             // Push BlockMap state for after the key
                             self.state_stack.push(ParseState::BlockMap {
                                 indent: map_indent,
-                                phase: BlockMapPhase::AfterKey,
+                                phase: BlockMapPhase::AfterKey {
+                                    is_implicit_scalar_key: false, // Flow collection key
+                                },
                                 start_span: span,
                                 anchor: None,
                                 tag: None,
@@ -1488,10 +1844,11 @@ impl<'tokens: 'input, 'input> Emitter<'tokens, 'input> {
                                     phase: FlowMapPhase::BeforeKey,
                                     start_span: span,
                                 });
-                                // Emit map start with inner props via deferred state
-                                // For now, emit directly - TODO: add EmitMapStart state
+                                // Map start with inner props will be emitted directly below
                             }
 
+                            // Push indent level for orphan indent detection
+                            self.push_indent(map_indent);
                             // Emit MappingStart with outer props
                             return Some(Event::MappingStart {
                                 style: crate::event::CollectionStyle::Block,
@@ -1533,7 +1890,9 @@ impl<'tokens: 'input, 'input> Emitter<'tokens, 'input> {
 
                                 self.state_stack.push(ParseState::BlockMap {
                                     indent: map_indent,
-                                    phase: BlockMapPhase::AfterKey,
+                                    phase: BlockMapPhase::AfterKey {
+                                        is_implicit_scalar_key: true, // Plain scalar key
+                                    },
                                     start_span: span,
                                     anchor: None,
                                     tag: None,
@@ -1555,6 +1914,8 @@ impl<'tokens: 'input, 'input> Emitter<'tokens, 'input> {
                                 span // Fallback (shouldn't happen)
                             };
 
+                            // Push indent level for orphan indent detection
+                            self.push_indent(map_indent);
                             // Outer anchor/tag go on the MappingStart
                             return Some(Event::MappingStart {
                                 style: crate::event::CollectionStyle::Block,
@@ -1567,7 +1928,14 @@ impl<'tokens: 'input, 'input> Emitter<'tokens, 'input> {
                         // Outer properties that crossed a line boundary can only attach
                         // to collections, not scalars. So we use inner properties only.
                         // E.g., `&outer\n  &inner scalar` → &outer is lost, &inner on scalar
-                        self.parse_plain_scalar(inner_anchor, inner_tag, min_indent)
+                        let result = self.parse_plain_scalar(inner_anchor, inner_tag, min_indent);
+                        // If this is a mapping key, check for multiline implicit key error
+                        if is_key {
+                            if let Some(Event::Scalar { span, .. }) = &result {
+                                self.check_multiline_implicit_key(*span);
+                            }
+                        }
+                        result
                     }
                     Some((Token::BlockSeqIndicator, _)) => {
                         // Nested sequence; merge properties (outer takes precedence)
@@ -1590,7 +1958,7 @@ impl<'tokens: 'input, 'input> Emitter<'tokens, 'input> {
                         let merged_tag = outer_tag.or(inner_tag);
                         let span = span;
                         self.advance();
-                        self.flow_depth += 1;
+                        self.enter_flow_collection(span.start_usize());
                         self.state_stack.push(ParseState::FlowSeq {
                             phase: FlowSeqPhase::BeforeEntry,
                             start_span: span,
@@ -1608,7 +1976,7 @@ impl<'tokens: 'input, 'input> Emitter<'tokens, 'input> {
                         let merged_tag = outer_tag.or(inner_tag);
                         let span = span;
                         self.advance();
-                        self.flow_depth += 1;
+                        self.enter_flow_collection(span.start_usize());
                         self.state_stack.push(ParseState::FlowMap {
                             phase: FlowMapPhase::BeforeKey,
                             start_span: span,
@@ -1675,8 +2043,26 @@ impl<'tokens: 'input, 'input> Emitter<'tokens, 'input> {
     /// ```
     fn collect_properties(
         &mut self,
+        anchor: Option<(Cow<'static, str>, Span)>,
+        tag: Option<(Cow<'static, str>, Span)>,
+    ) -> (
+        Option<(Cow<'static, str>, Span)>,
+        Option<(Cow<'static, str>, Span)>,
+        bool,
+    ) {
+        // Delegate to the version with min_indent = 0 (no indent restriction)
+        self.collect_properties_with_min_indent(anchor, tag, 0)
+    }
+
+    /// Collect properties (anchor, tag) with a minimum indentation constraint.
+    ///
+    /// When `min_indent > 0`, properties on a new line at `indent < min_indent`
+    /// are NOT collected - they belong to a parent context.
+    fn collect_properties_with_min_indent(
+        &mut self,
         mut anchor: Option<(Cow<'static, str>, Span)>,
         mut tag: Option<(Cow<'static, str>, Span)>,
+        min_indent: IndentLevel,
     ) -> (
         Option<(Cow<'static, str>, Span)>,
         Option<(Cow<'static, str>, Span)>,
@@ -1686,10 +2072,19 @@ impl<'tokens: 'input, 'input> Emitter<'tokens, 'input> {
         loop {
             // Peek and extract info before any mutation
             enum PropAction {
-                Anchor { name: String, span: Span },
-                Tag { tag_str: String, span: Span },
+                Anchor {
+                    name: String,
+                    span: Span,
+                },
+                Tag {
+                    tag_str: String,
+                    span: Span,
+                },
                 Comment,
-                LineStart { should_continue: bool },
+                LineStart {
+                    next_indent: IndentLevel,
+                    should_continue: bool,
+                },
                 Break,
             }
 
@@ -1704,7 +2099,8 @@ impl<'tokens: 'input, 'input> Emitter<'tokens, 'input> {
                     span,
                 },
                 Some((Token::Comment(_), _)) if has_props => PropAction::Comment,
-                Some((Token::LineStart(_), _)) if has_props => PropAction::LineStart {
+                Some((Token::LineStart(indent), _)) if has_props => PropAction::LineStart {
+                    next_indent: *indent,
                     should_continue: self.should_continue_collecting_properties(),
                 },
                 _ => PropAction::Break,
@@ -1732,25 +2128,55 @@ impl<'tokens: 'input, 'input> Emitter<'tokens, 'input> {
                     }
 
                     // Expand tag handle
-                    let expanded = self.expand_tag(&tag_str);
+                    let expanded = self.expand_tag(&tag_str, span);
                     tag = Some((Cow::Owned(expanded), span));
                     self.advance();
+
+                    // Check for content immediately after tag (no space)
+                    // e.g., `!invalid{}tag` - the `{` is immediately after the tag
+                    let tag_looks_legitimate = !tag_str.contains('"') && !tag_str.contains('`');
+                    let tag_end = span.end_usize();
+                    if tag_looks_legitimate {
+                        if let Some((next_tok, next_span)) = self.peek() {
+                            let is_content = matches!(
+                                next_tok,
+                                Token::Plain(_)
+                                    | Token::StringStart(_)
+                                    | Token::FlowSeqStart
+                                    | Token::FlowMapStart
+                                    | Token::BlockSeqIndicator
+                            );
+                            if is_content && next_span.start_usize() == tag_end {
+                                self.error(ErrorKind::ContentOnSameLine, next_span);
+                            }
+                        }
+                    }
+
                     self.skip_ws();
                 }
                 PropAction::Comment => {
                     // Skip comment - the line boundary after it will be handled next iteration
                     self.advance();
                 }
-                PropAction::LineStart { should_continue } => {
+                PropAction::LineStart {
+                    next_indent,
+                    should_continue,
+                } => {
                     // We have collected at least one property and there's a line boundary.
                     // Check if the next line has more properties that we should collect.
                     //
                     // We should continue collecting if:
-                    // 1. Next line has properties that are NOT followed by implicit mapping key content
-                    // 2. Or next line has no properties (we'll stop naturally)
+                    // 1. The next line's indent is >= min_indent (valid for this context)
+                    // 2. AND the next line has properties that are NOT followed by implicit key
                     //
-                    // We should STOP if the next line has properties followed by an implicit key,
-                    // because then the first properties go on the parent mapping.
+                    // We should STOP if:
+                    // - The next line is at indent < min_indent (belongs to parent context)
+                    // - OR the next line has properties followed by an implicit key
+                    if next_indent < min_indent {
+                        // Content at lower indent belongs to parent - stop collecting
+                        crossed_line_boundary = true;
+                        break;
+                    }
                     if should_continue {
                         crossed_line_boundary = true;
                         self.advance(); // consume LineStart
@@ -1903,7 +2329,7 @@ impl<'tokens: 'input, 'input> Emitter<'tokens, 'input> {
         clippy::indexing_slicing,
         reason = "bang_pos is from find('!') so slicing up to it is safe"
     )]
-    fn expand_tag(&self, tag_str: &str) -> String {
+    fn expand_tag(&mut self, tag_str: &str, span: Span) -> String {
         /// Decode percent-encoded characters in a tag suffix.
         /// E.g., `tag%21` → `tag!` (since %21 is '!')
         fn percent_decode(input: &str) -> String {
@@ -1958,7 +2384,8 @@ impl<'tokens: 'input, 'input> Emitter<'tokens, 'input> {
                 let decoded_suffix = percent_decode(suffix);
                 return format!("{prefix}{decoded_suffix}");
             }
-            // Handle not declared - return unexpanded (could emit error)
+            // Handle not declared - emit error and return unexpanded
+            self.error(ErrorKind::UndefinedTagHandle, span);
             return format!("!{tag_str}");
         }
 
@@ -1987,6 +2414,8 @@ impl<'tokens: 'input, 'input> Emitter<'tokens, 'input> {
     ) -> Option<Event<'input>> {
         match phase {
             BlockSeqPhase::EmitStart => {
+                // Push indent level onto stack for orphan indent detection
+                self.push_indent(indent);
                 // Push state for first entry (anchor/tag already consumed)
                 self.state_stack.push(ParseState::BlockSeq {
                     indent,
@@ -2013,6 +2442,7 @@ impl<'tokens: 'input, 'input> Emitter<'tokens, 'input> {
                         let entry_indent = self.column_of_position(span.start_usize());
                         if entry_indent < indent {
                             // Dedented, end sequence
+                            self.pop_indent();
                             return Some(Event::SequenceEnd {
                                 span: self.collection_end_span(),
                             });
@@ -2043,6 +2473,12 @@ impl<'tokens: 'input, 'input> Emitter<'tokens, 'input> {
 
                     Some((Token::DocEnd | Token::DocStart, _)) | None => {
                         // End of sequence
+                        // Only check trailing content for root-level sequences (not nested)
+                        // A root-level sequence has indent_stack == [0, 0] (base + seq)
+                        if indent == 0 && self.indent_stack.len() == 2 {
+                            self.check_trailing_content_at_root(0);
+                        }
+                        self.pop_indent();
                         Some(Event::SequenceEnd {
                             span: self.collection_end_span(),
                         })
@@ -2050,6 +2486,15 @@ impl<'tokens: 'input, 'input> Emitter<'tokens, 'input> {
 
                     Some((Token::LineStart(n), _)) => {
                         if *n < indent {
+                            // Check for orphan indentation: n is not in the
+                            // parser's indent stack (between valid levels)
+                            if !self.is_valid_indent(*n) {
+                                self.report_invalid_indent();
+                            }
+                            if indent == 0 && self.indent_stack.len() == 2 {
+                                self.check_trailing_content_at_root(0);
+                            }
+                            self.pop_indent();
                             Some(Event::SequenceEnd {
                                 span: self.collection_end_span(),
                             })
@@ -2067,8 +2512,71 @@ impl<'tokens: 'input, 'input> Emitter<'tokens, 'input> {
                         }
                     }
 
+                    // Dedent token - only end if we're actually dedented below our indent
+                    Some((Token::Dedent, _span)) => {
+                        if self.current_indent < indent {
+                            // Check for orphan indentation: current_indent is not in the
+                            // parser's indent stack (between valid levels)
+                            if !self.is_valid_indent(self.current_indent) {
+                                self.report_invalid_indent();
+                            }
+                            // We're actually dedented - end the sequence
+                            if indent == 0 && self.indent_stack.len() == 2 {
+                                self.check_trailing_content_at_root(0);
+                            }
+                            self.advance();
+                            self.pop_indent();
+                            Some(Event::SequenceEnd {
+                                span: self.collection_end_span(),
+                            })
+                        } else {
+                            // Dedent from nested structure - consume and continue
+                            self.advance();
+                            self.state_stack.push(ParseState::BlockSeq {
+                                indent,
+                                phase: BlockSeqPhase::BeforeEntry,
+                                start_span,
+                                anchor: None,
+                                tag: None,
+                            });
+                            None
+                        }
+                    }
+
                     _ => {
-                        // No more entries
+                        // No more entries - check for trailing content at seq_indent level
+                        // Mimic batch parser's check_trailing_content logic in block.rs:137-162
+                        if let Some((tok, span)) = self.peek() {
+                            let col = self.column_of_position(span.start_usize());
+                            // Only check at seq_indent level, not at lower indents
+                            if col == indent {
+                                let is_unexpected_content = match tok {
+                                    Token::Plain(_) => {
+                                        // Check if this might be a mapping key (followed by colon)
+                                        // If so, it's a valid sibling mapping entry
+                                        let next = self.peek_nth(1);
+                                        !matches!(next, Some((Token::Colon, _)))
+                                    }
+                                    Token::StringStart(_) => {
+                                        // Quoted strings could be mapping keys
+                                        false
+                                    }
+                                    Token::Anchor(_) | Token::Alias(_) | Token::Tag(_) => {
+                                        // Could be followed by content that makes a mapping entry
+                                        false
+                                    }
+                                    _ => false,
+                                };
+                                if is_unexpected_content {
+                                    self.error(ErrorKind::TrailingContent, span);
+                                }
+                            }
+                        }
+                        // Root-level check
+                        if indent == 0 && self.indent_stack.len() == 2 {
+                            self.check_trailing_content_at_root(0);
+                        }
+                        self.pop_indent();
                         Some(Event::SequenceEnd {
                             span: self.collection_end_span(),
                         })
@@ -2104,6 +2612,8 @@ impl<'tokens: 'input, 'input> Emitter<'tokens, 'input> {
     ) -> Option<Event<'input>> {
         match phase {
             BlockMapPhase::EmitStart => {
+                // Push indent level onto stack for orphan indent detection
+                self.push_indent(indent);
                 self.state_stack.push(ParseState::BlockMap {
                     indent,
                     phase: BlockMapPhase::BeforeKey {
@@ -2127,11 +2637,14 @@ impl<'tokens: 'input, 'input> Emitter<'tokens, 'input> {
                 // Track if we cross a line boundary - in block context, new entries
                 // after the first one must be on a new line. Same-line content like
                 // `: c` after `a: b` is invalid.
-                let crossed_line = self.skip_ws_and_newlines_returns_crossed_line();
+                // Use specialized skip that reports InvalidIndentation for over-indented
+                // orphan content, matching batch parser's advance_to_same_indent behavior.
+                let crossed_line = self.skip_ws_and_newlines_for_mapping(indent);
 
                 // If we require a line boundary (subsequent entry after a value) and
                 // didn't cross one, end the mapping - we can't have same-line entries.
                 if require_line_boundary && !crossed_line {
+                    self.pop_indent();
                     return Some(Event::MappingEnd {
                         span: self.collection_end_span(),
                     });
@@ -2139,8 +2652,20 @@ impl<'tokens: 'input, 'input> Emitter<'tokens, 'input> {
 
                 // Check if we've moved to a lower indent level (mapping should end)
                 // This catches cases where skip_ws_and_newlines consumed a LineStart
-                // that would have triggered a dedent
+                // that would have triggered a dedent.
+                // We also need to consume the corresponding Dedent token so the outer
+                // mapping can continue at the new indent level.
                 if self.current_indent < indent {
+                    // Check for orphan indentation: current_indent is not in the
+                    // parser's indent stack (between valid levels)
+                    if !self.is_valid_indent(self.current_indent) {
+                        self.report_invalid_indent();
+                    }
+                    // Consume one Dedent token if present (one per indent level exited)
+                    if matches!(self.peek(), Some((Token::Dedent, _))) {
+                        self.advance();
+                    }
+                    self.pop_indent();
                     return Some(Event::MappingEnd {
                         span: self.collection_end_span(),
                     });
@@ -2153,7 +2678,9 @@ impl<'tokens: 'input, 'input> Emitter<'tokens, 'input> {
                         // Push AfterKey, then Value for key
                         self.state_stack.push(ParseState::BlockMap {
                             indent,
-                            phase: BlockMapPhase::AfterKey,
+                            phase: BlockMapPhase::AfterKey {
+                                is_implicit_scalar_key: false, // Explicit key (`?`)
+                            },
                             start_span,
                             anchor: None,
                             tag: None,
@@ -2175,7 +2702,9 @@ impl<'tokens: 'input, 'input> Emitter<'tokens, 'input> {
                         // Implicit null key
                         self.state_stack.push(ParseState::BlockMap {
                             indent,
-                            phase: BlockMapPhase::AfterKey,
+                            phase: BlockMapPhase::AfterKey {
+                                is_implicit_scalar_key: false, // Null key, not plain scalar
+                            },
                             start_span,
                             anchor: None,
                             tag: None,
@@ -2183,12 +2712,55 @@ impl<'tokens: 'input, 'input> Emitter<'tokens, 'input> {
                         Some(self.emit_null())
                     }
 
-                    Some((Token::DocEnd | Token::DocStart, _)) | None => Some(Event::MappingEnd {
-                        span: self.collection_end_span(),
-                    }),
+                    Some((Token::DocEnd | Token::DocStart, _)) | None => {
+                        self.pop_indent();
+                        Some(Event::MappingEnd {
+                            span: self.collection_end_span(),
+                        })
+                    }
 
-                    Some((Token::LineStart(n), _)) => {
+                    // Dedent token - but we only end if current_indent < our indent.
+                    // A Dedent at our level just means a nested structure ended; we continue.
+                    // E.g., for root mapping at indent 0: Dedent after inner mapping
+                    // (indent 2 → 0) doesn't end us - we consume it and continue.
+                    Some((Token::Dedent, _span)) => {
+                        if self.current_indent < indent {
+                            // Check for orphan indentation: current_indent is not in the
+                            // parser's indent stack (between valid levels)
+                            if !self.is_valid_indent(self.current_indent) {
+                                self.report_invalid_indent();
+                            }
+                            // We're actually dedented - end the mapping
+                            self.advance();
+                            self.pop_indent();
+                            Some(Event::MappingEnd {
+                                span: self.collection_end_span(),
+                            })
+                        } else {
+                            // Dedent from a nested structure - consume and continue
+                            self.advance();
+                            self.state_stack.push(ParseState::BlockMap {
+                                indent,
+                                phase: BlockMapPhase::BeforeKey {
+                                    // We've crossed lines (dedent implies line boundary)
+                                    require_line_boundary: false,
+                                },
+                                start_span,
+                                anchor: None,
+                                tag: None,
+                            });
+                            None
+                        }
+                    }
+
+                    Some((Token::LineStart(n), _span)) => {
                         if *n < indent {
+                            // Check for orphan indentation: n is not in the
+                            // parser's indent stack (between valid levels)
+                            if !self.is_valid_indent(*n) {
+                                self.report_invalid_indent();
+                            }
+                            self.pop_indent();
                             Some(Event::MappingEnd {
                                 span: self.collection_end_span(),
                             })
@@ -2209,6 +2781,28 @@ impl<'tokens: 'input, 'input> Emitter<'tokens, 'input> {
                     }
 
                     _ => {
+                        // Check for orphan indentation before trying to parse content.
+                        // If current_indent is greater than mapping indent but not a valid
+                        // level in the indent stack, we need to end this mapping.
+                        //
+                        // IMPORTANT: We should NOT report InvalidIndentation here.
+                        // The batch parser's advance_to_same_indent only reports this error
+                        // while actively iterating through LineStart tokens. If the LineStart
+                        // was already consumed by a nested structure (like a sequence), the
+                        // batch parser doesn't report the error from the outer mapping.
+                        //
+                        // For cases like DMG6 where the error IS reported, it comes from the
+                        // inner mapping's handling (BlockMap::BeforeKey seeing LineStart), not
+                        // from this catch-all branch.
+                        if self.current_indent > indent
+                            && !self.is_valid_indent(self.current_indent)
+                        {
+                            self.pop_indent();
+                            return Some(Event::MappingEnd {
+                                span: self.collection_end_span(),
+                            });
+                        }
+
                         // Check for implicit key (scalar followed by colon)
                         // At this point, if require_line_boundary was true and crossed_line
                         // was false, we would have already returned MappingEnd above.
@@ -2216,7 +2810,9 @@ impl<'tokens: 'input, 'input> Emitter<'tokens, 'input> {
                         if self.is_implicit_key() {
                             self.state_stack.push(ParseState::BlockMap {
                                 indent,
-                                phase: BlockMapPhase::AfterKey,
+                                phase: BlockMapPhase::AfterKey {
+                                    is_implicit_scalar_key: true, // Implicit key detected
+                                },
                                 start_span,
                                 anchor: None,
                                 tag: None,
@@ -2230,6 +2826,23 @@ impl<'tokens: 'input, 'input> Emitter<'tokens, 'input> {
                             });
                             None
                         } else {
+                            // Check if there's a scalar at THIS MAPPING'S indent level
+                            // that looks like a key but is missing a colon.
+                            // Only report MissingColon if we're at the mapping's indent,
+                            // not for scalars that are indented past this level.
+                            if self.current_indent == indent {
+                                if let Some(scalar_event) =
+                                    self.check_missing_colon_in_mapping_with_event()
+                                {
+                                    // Emit the scalar as an orphaned key, then end mapping
+                                    // Push MappingEnd onto stack so it's emitted after scalar
+                                    self.state_stack.push(ParseState::EmitMapEnd {
+                                        span: self.collection_end_span(),
+                                    });
+                                    return Some(scalar_event);
+                                }
+                            }
+                            self.pop_indent();
                             Some(Event::MappingEnd {
                                 span: self.collection_end_span(),
                             })
@@ -2238,13 +2851,20 @@ impl<'tokens: 'input, 'input> Emitter<'tokens, 'input> {
                 }
             }
 
-            BlockMapPhase::AfterKey => {
+            BlockMapPhase::AfterKey {
+                is_implicit_scalar_key,
+            } => {
                 // In block mappings, the colon can be on a following line after an explicit key
                 // e.g., `? [ key ]\n: value` - need to skip the newline to find the colon
 
-                // Track last LineStart span - for empty values, batch parser uses
-                // the LineStart span (newline position), not the next token position
-                let (_, last_linestart_span) = self.skip_ws_and_newlines_impl();
+                // IMPORTANT: Use `self.last_line_start_span` which is updated by `advance()`
+                // whenever ANY LineStart is consumed, including by nested structures like
+                // sequences. The return value of `skip_ws_and_newlines_impl()` only captures
+                // LineStarts consumed within that call, but the LineStart may have already
+                // been consumed by the nested structure before we reached AfterKey.
+                // Track if we've crossed a line boundary (for same-line detection).
+                let crossed_before = self.crossed_line_boundary;
+                self.skip_ws_and_newlines_impl();
 
                 // Expect colon
                 if matches!(self.peek(), Some((Token::Colon, _))) {
@@ -2252,6 +2872,16 @@ impl<'tokens: 'input, 'input> Emitter<'tokens, 'input> {
                     self.skip_ws();
                     // Check for tabs after block mapping indicator (colon)
                     self.check_tabs_after_block_indicator();
+
+                    // Check for block sequence indicator on same line as key - invalid in YAML
+                    // Block sequences must start on a new line after the colon.
+                    // This only applies to implicit scalar keys (like `key: - item`).
+                    // For explicit keys (`? key : - item`) or null keys (`: - item`), this is valid.
+                    if is_implicit_scalar_key {
+                        if let Some((Token::BlockSeqIndicator, span)) = self.peek() {
+                            self.error(ErrorKind::ContentOnSameLine, span);
+                        }
+                    }
 
                     // Reset crossed_line_boundary before parsing value.
                     // We only want to track line crossings DURING value parsing,
@@ -2286,8 +2916,16 @@ impl<'tokens: 'input, 'input> Emitter<'tokens, 'input> {
                         anchor: None,
                         tag: None,
                     });
-                    // Use LineStart span if we crossed a line, else current span
-                    let empty_span = last_linestart_span.unwrap_or_else(|| self.current_span());
+                    // Use the LineStart span if we've crossed a line boundary (either before
+                    // skip_ws_and_newlines_impl or during it). This correctly handles the case
+                    // where a nested structure (like sequence) already consumed the LineStart.
+                    let empty_span = if crossed_before || self.crossed_line_boundary {
+                        // last_line_start_span is updated by advance() whenever a LineStart
+                        // is consumed, so it reflects the most recent line break
+                        self.last_line_start_span
+                    } else {
+                        self.current_span()
+                    };
                     Some(Event::Scalar {
                         style: ScalarStyle::Plain,
                         value: Cow::Borrowed(""),
@@ -2299,24 +2937,26 @@ impl<'tokens: 'input, 'input> Emitter<'tokens, 'input> {
             }
 
             BlockMapPhase::AfterValue => {
-                // Check if we've crossed a line boundary since parsing started.
-                // This flag is set whenever we consume a LineStart token, including
-                // when nested structures (like inner mappings) consumed them.
+                // Determine if we need to require a line boundary for the next entry.
                 //
-                // If crossed_line_boundary is true, we've moved to a new line and
-                // subsequent entries are valid. If false, we're on the same line
-                // as the previous value (like `a: b: c`) and should prevent new entries.
-                let already_crossed = self.crossed_line_boundary;
-
-                // Reset the flag - we've consumed this information.
-                // The next BeforeKey will re-check via skip_ws_and_newlines.
-                self.crossed_line_boundary = false;
+                // `crossed_line_boundary` is set when ANY LineStart token is consumed,
+                // including by nested structures. It's reset only when we start parsing
+                // a new value (in AfterKey after finding a colon).
+                //
+                // IMPORTANT: We do NOT reset `crossed_line_boundary` here. If we did,
+                // nested structures would reset it before outer structures could see it.
+                // The flag remains true until the next value parsing begins.
+                //
+                // If crossed_line_boundary is true, we've moved to a new line during
+                // value parsing, so subsequent entries are valid (don't require new line).
+                // If false, we're still on the same line as the last key (like `a: b: c`),
+                // so we should prevent new entries by requiring a line boundary.
+                let require_line_boundary = !self.crossed_line_boundary;
 
                 self.state_stack.push(ParseState::BlockMap {
                     indent,
                     phase: BlockMapPhase::BeforeKey {
-                        // Only require line boundary if we haven't already crossed one
-                        require_line_boundary: !already_crossed,
+                        require_line_boundary,
                     },
                     start_span,
                     anchor: None,
@@ -2430,6 +3070,328 @@ impl<'tokens: 'input, 'input> Emitter<'tokens, 'input> {
         }
     }
 
+    /// Check if there's a scalar at the current position that looks like a mapping key
+    /// but is missing a colon. Reports `MissingColon` error if detected.
+    ///
+    /// This is called when `is_implicit_key()` returns false but we're at a scalar
+    /// that could have been intended as a key. Cases like:
+    /// ```yaml
+    /// foo:
+    ///   bar: baz
+    /// invalid    # <- scalar at mapping indent, but no colon
+    /// ```
+    /// Check if there's a scalar at the current position that looks like a mapping key
+    /// but is missing a colon. If found, reports `MissingColon` error and returns the
+    /// scalar event to emit (as an orphaned key for error recovery).
+    fn check_missing_colon_in_mapping_with_event(&mut self) -> Option<Event<'static>> {
+        // Check if current token is a scalar-like token at this position
+        match self.peek() {
+            Some((Token::Plain(text), span)) => {
+                // Plain scalar without a colon following - this is a MissingColon
+                let span = span;
+                let value: Cow<'static, str> = Cow::Owned(text.to_string());
+
+                // Also check for InvalidDirective: `%` at column 0
+                if text.starts_with('%') && self.column_of_position(span.start_usize()) == 0 {
+                    self.error(ErrorKind::InvalidDirective, span);
+                }
+
+                self.error(ErrorKind::MissingColon, span);
+                // Consume the plain scalar tokens
+                self.skip_plain_scalar_tokens();
+                Some(Event::Scalar {
+                    style: ScalarStyle::Plain,
+                    value,
+                    anchor: None,
+                    tag: None,
+                    span,
+                })
+            }
+            Some((Token::StringStart(_), span)) => {
+                // Quoted string without a colon following - this is a MissingColon
+                let span = span;
+                self.error(ErrorKind::MissingColon, span);
+                // Parse the quoted string to get its value
+                let (value, full_span) = self.parse_quoted_string_content();
+                Some(Event::Scalar {
+                    style: ScalarStyle::DoubleQuoted, // or SingleQuoted - doesn't matter for error recovery
+                    value,
+                    anchor: None,
+                    tag: None,
+                    span: full_span.unwrap_or(span),
+                })
+            }
+            Some((Token::Alias(name), span)) => {
+                // Alias without a colon following - this is a MissingColon
+                let span = span;
+                let alias_name = Cow::Owned((*name).to_owned());
+                self.error(ErrorKind::MissingColon, span);
+                // Skip the alias token
+                self.advance();
+                Some(Event::Alias {
+                    name: alias_name,
+                    span,
+                })
+            }
+            _ => None,
+        }
+    }
+
+    /// Parse a quoted string content, consuming tokens from `StringStart` through `StringEnd`.
+    /// Returns the assembled string value and the span covering the entire quoted string.
+    fn parse_quoted_string_content(&mut self) -> (Cow<'static, str>, Option<Span>) {
+        let start_span = self.current_span();
+        let mut content = String::new();
+
+        // Skip StringStart
+        if matches!(self.peek(), Some((Token::StringStart(_), _))) {
+            self.advance();
+        }
+
+        // Collect content until StringEnd
+        loop {
+            match self.peek() {
+                Some((Token::StringContent(text), _)) => {
+                    content.push_str(text);
+                    self.advance();
+                }
+                Some((Token::StringEnd(_), span)) => {
+                    let end_span = span;
+                    self.advance();
+                    let full_span =
+                        Span::from_usize_range(start_span.start_usize()..end_span.end_usize());
+                    return (Cow::Owned(content), Some(full_span));
+                }
+                None => break,
+                _ => {
+                    self.advance();
+                }
+            }
+        }
+        (Cow::Owned(content), None)
+    }
+
+    /// Check if an indentation level is valid (exists in the indent stack).
+    ///
+    /// Returns `true` if the indent is in the stack (matches an active block's level).
+    /// Returns `false` if the indent falls between existing stack entries (orphan).
+    ///
+    /// NOTE: This does NOT return true for `indent > top` because that case needs
+    /// to be handled differently. When starting a new nested block, we push BEFORE
+    /// checking. When checking continuation content, `indent > top` is orphan.
+    fn is_valid_indent(&self, indent: IndentLevel) -> bool {
+        // Only exact matches with stack entries are valid
+        self.indent_stack.contains(&indent)
+    }
+
+    /// Push an indentation level onto the stack when entering a block structure.
+    fn push_indent(&mut self, indent: IndentLevel) {
+        self.indent_stack.push(indent);
+    }
+
+    /// Pop an indentation level from the stack when exiting a block structure.
+    fn pop_indent(&mut self) {
+        if self.indent_stack.len() > 1 {
+            self.indent_stack.pop();
+        }
+    }
+
+    /// Report an `InvalidIndentation` error.
+    /// Note: The batch parser reports this error from each nested block level that
+    /// encounters the orphan indentation. For parity, we do the same - each block
+    /// that sees the invalid indent reports it.
+    /// Uses `last_line_start_span` to ensure consistent spans matching the batch parser.
+    fn report_invalid_indent(&mut self) {
+        self.error(ErrorKind::InvalidIndentation, self.last_line_start_span);
+    }
+
+    /// Check if there's content on the same line (without any `LineStart` before it).
+    /// Used by `AfterValue` to detect trailing content like `key: "val" trailing`.
+    /// Returns true if the next non-whitespace token is content without a `LineStart`.
+    fn has_content_without_line_boundary(&self) -> bool {
+        let mut i = 0;
+        while let Some((tok, _)) = self.peek_nth(i) {
+            match tok {
+                // Skip whitespace
+                Token::Whitespace | Token::WhitespaceWithTabs => i += 1,
+                // LineStart means we've moved to a new line - no same-line content
+                Token::LineStart(_) => return false,
+                // Content tokens on same line - this is trailing content
+                Token::Plain(_)
+                | Token::StringStart(_)
+                | Token::MappingKey
+                | Token::Colon
+                | Token::Anchor(_)
+                | Token::Tag(_)
+                | Token::Alias(_)
+                | Token::BlockSeqIndicator => return true,
+                // End tokens - no content
+                Token::DocEnd | Token::DocStart => return false,
+                // Other tokens (Dedent, Indent, Comment, etc.) - skip
+                _ => i += 1,
+            }
+        }
+        false
+    }
+
+    /// Check if there's actual content at the current orphan indentation level.
+    /// Used to determine whether to report `InvalidIndentation` when a mapping
+    /// encounters an over-indented line (indent > mapping's indent but orphan).
+    /// The batch parser's `advance_to_same_indent` only reports an error when
+    /// there's content tokens (`Plain`, `StringStart`, `MappingKey`, `Colon`, `Anchor`, `Tag`),
+    /// not for comments or empty lines.
+    fn has_content_at_orphan_level(&self) -> bool {
+        self.has_content_at_orphan_level_from(0)
+    }
+
+    /// Check if there's content at an orphan level, starting from peek offset `start_offset`.
+    fn has_content_at_orphan_level_from(&self, start_offset: usize) -> bool {
+        // Skip past any Dedent/Indent tokens from the given position
+        let mut i = start_offset;
+        while let Some((tok, _)) = self.peek_nth(i) {
+            if matches!(tok, Token::Dedent | Token::Indent(_)) {
+                i += 1;
+            } else {
+                break;
+            }
+        }
+        // Check if the next token is content that would trigger an error
+        if let Some((tok, _)) = self.peek_nth(i) {
+            matches!(
+                tok,
+                Token::Plain(_)
+                    | Token::StringStart(_)
+                    | Token::MappingKey
+                    | Token::Colon
+                    | Token::Anchor(_)
+                    | Token::Tag(_)
+            )
+        } else {
+            false
+        }
+    }
+
+    /// Skip whitespace and newlines for block mapping `BeforeKey` phase.
+    /// This mimics the batch parser's `advance_to_same_indent` by reporting
+    /// `InvalidIndentation` errors for over-indented content at orphan levels.
+    /// Returns whether a line boundary was crossed.
+    ///
+    /// IMPORTANT: Does NOT consume `LineStart(n)` when `n < mapping_indent`.
+    /// The caller should handle this case (end the mapping).
+    ///
+    /// Behavior for Comments:
+    /// - Comments that appear BEFORE a matching `LineStart(n)` (where `n >= mapping_indent`)
+    ///   are skipped. This handles inline comments on the same line as a value.
+    /// - After finding a matching `LineStart(n)`, we stop. If the next non-ws token is a
+    ///   Comment (standalone comment line), the caller will see it and end the mapping.
+    ///   This matches the batch parser's behavior where `parse_implicit_mapping_entry`
+    ///   fails when it sees a Comment.
+    fn skip_ws_and_newlines_for_mapping(&mut self, mapping_indent: IndentLevel) -> bool {
+        let mut crossed_line = false;
+        let mut found_matching_line_start = false;
+
+        loop {
+            match self.peek() {
+                Some((Token::Whitespace | Token::WhitespaceWithTabs, _)) => self.advance(),
+                Some((Token::LineStart(n), span)) => {
+                    let n = *n;
+                    let span = span;
+
+                    if n < mapping_indent {
+                        // Dedented below mapping - don't consume, let caller handle
+                        // Update current_indent so caller knows the level
+                        self.current_indent = n;
+                        self.last_line_start_span = span;
+
+                        // Check for orphan indentation BEFORE breaking.
+                        // The batch parser's advance_to_same_indent reports InvalidIndentation
+                        // when n < target_indent and n is not a valid indent level.
+                        // We need to do the same here, because the caller may not reach
+                        // the orphan check (e.g., if require_line_boundary causes early exit).
+                        if !self.is_valid_indent(n) && self.has_content_at_orphan_level_from(1) {
+                            self.error(ErrorKind::InvalidIndentation, span);
+                        }
+                        break;
+                    }
+
+                    crossed_line = true;
+                    self.last_line_start_span = span;
+                    self.current_indent = n;
+
+                    if n > mapping_indent && !self.is_valid_indent(n) {
+                        // Over-indented orphan line - check for content
+                        // Need to peek past Dedent/Indent tokens to see actual content
+                        let has_content = self.has_content_at_orphan_level_from(1);
+                        if has_content {
+                            // Report InvalidIndentation at the LineStart span
+                            self.error(ErrorKind::InvalidIndentation, span);
+                        }
+                    }
+
+                    self.advance();
+
+                    // Check for tabs as indentation after crossing a line boundary
+                    // This must be done after consuming LineStart but before consuming
+                    // the WhitespaceWithTabs, so we can detect invalid tab indentation.
+                    if self.flow_context_columns.is_empty() {
+                        self.check_tabs_as_indentation();
+                    }
+
+                    // After finding a LineStart at our indent level, we've "arrived"
+                    // at the next line. Skip Indent/Dedent tokens, but stop at Comments.
+                    if n == mapping_indent {
+                        found_matching_line_start = true;
+                    }
+                }
+                // Skip comments only if we haven't yet found a matching LineStart.
+                // After finding one, a standalone comment line should end the mapping.
+                Some((Token::Comment(_), _)) => {
+                    if found_matching_line_start {
+                        // Standalone comment after crossing to a valid line - stop here
+                        // so the mapping's BeforeKey sees it and ends the mapping.
+                        break;
+                    }
+                    // Inline comment before the next LineStart - skip it
+                    self.advance();
+                }
+                Some((Token::Indent(_) | Token::Dedent, _)) => self.advance(),
+                _ => break,
+            }
+        }
+        crossed_line
+    }
+
+    /// Skip tokens comprising a plain scalar (Plain + whitespace on same line).
+    fn skip_plain_scalar_tokens(&mut self) {
+        while let Some((tok, _)) = self.peek() {
+            match tok {
+                Token::Plain(_) | Token::Whitespace | Token::WhitespaceWithTabs => {
+                    self.advance();
+                }
+                _ => break,
+            }
+        }
+    }
+
+    /// Skip tokens comprising a quoted string (`StringStart` through `StringEnd`).
+    fn skip_quoted_string_tokens(&mut self) {
+        // Skip StringStart
+        if matches!(self.peek(), Some((Token::StringStart(_), _))) {
+            self.advance();
+        }
+        // Skip until StringEnd
+        loop {
+            let is_end = matches!(self.peek(), Some((Token::StringEnd(_), _)));
+            self.advance();
+            if is_end {
+                break;
+            }
+            if self.is_eof() {
+                break;
+            }
+        }
+    }
+
     /// Check if the current Plain token is followed by a Colon (making it a mapping key).
     ///
     /// This is used to stop plain scalar continuation when the next line
@@ -2455,7 +3417,7 @@ impl<'tokens: 'input, 'input> Emitter<'tokens, 'input> {
         false
     }
 
-    /// Check if the current FlowSeqStart token is part of a complex key pattern.
+    /// Check if the current `FlowSeqStart` token is part of a complex key pattern.
     ///
     /// This looks ahead through the flow sequence to find the closing `]`,
     /// then checks if it's followed by `:` (making it a mapping key).
@@ -2564,21 +3526,16 @@ impl<'tokens: 'input, 'input> Emitter<'tokens, 'input> {
         }
 
         // Skip properties (anchors/tags)
-        loop {
-            match self.peek_nth(i) {
-                Some((Token::Anchor(_) | Token::Tag(_), _)) => {
-                    i += 1;
-                    // Skip whitespace after property
-                    while let Some((tok, _)) = self.peek_nth(i) {
-                        match tok {
-                            Token::Whitespace | Token::WhitespaceWithTabs | Token::LineStart(_) => {
-                                i += 1
-                            }
-                            _ => break,
-                        }
+        while let Some((Token::Anchor(_) | Token::Tag(_), _)) = self.peek_nth(i) {
+            i += 1;
+            // Skip whitespace after property
+            while let Some((tok, _)) = self.peek_nth(i) {
+                match tok {
+                    Token::Whitespace | Token::WhitespaceWithTabs | Token::LineStart(_) => {
+                        i += 1;
                     }
+                    _ => break,
                 }
-                _ => break,
             }
         }
 
@@ -2738,7 +3695,7 @@ impl<'tokens: 'input, 'input> Emitter<'tokens, 'input> {
         }
     }
 
-    /// Skip indent-related tokens (Indent, Dedent, Whitespace, WhitespaceWithTabs).
+    /// Skip indent-related tokens (`Indent`, `Dedent`, `Whitespace`, `WhitespaceWithTabs`).
     fn skip_indent_tokens(&mut self) {
         while matches!(
             self.peek(),
@@ -2836,7 +3793,7 @@ impl<'tokens: 'input, 'input> Emitter<'tokens, 'input> {
         }
     }
 
-    /// Consume all tokens until LineStart, returning the text as a slice.
+    /// Consume all tokens until `LineStart`, returning the text as a slice.
     /// Used for treating anchor/tag tokens as plain text in scalar continuations.
     #[allow(
         clippy::string_slice,
@@ -2868,7 +3825,7 @@ impl<'tokens: 'input, 'input> Emitter<'tokens, 'input> {
     }
 
     /// Check if there's a valid continuation after a low-indent line (empty line case).
-    /// Looks ahead to see if there's a properly indented LineStart followed by content.
+    /// Looks ahead to see if there's a properly indented `LineStart` followed by content.
     fn has_continuation_after_low_indent(&self, min_indent: IndentLevel) -> bool {
         let mut i = 1; // Start after current token
         while let Some((tok, _)) = self.peek_nth(i) {
@@ -3014,19 +3971,29 @@ impl<'tokens: 'input, 'input> Emitter<'tokens, 'input> {
                 match self.peek() {
                     Some((Token::FlowSeqEnd, span)) => {
                         let span = span;
+                        let flow_end = span.end_usize();
                         self.advance();
-                        self.flow_depth = self.flow_depth.saturating_sub(1);
+                        self.exit_flow_collection();
+                        // Check for content immediately after flow collection in block context
+                        if self.flow_depth == 0 {
+                            self.check_content_after_flow(flow_end);
+                            // Check for multiline implicit key (flow collection spanning lines)
+                            self.check_multiline_flow_key(start_span, span);
+                        }
                         Some(Event::SequenceEnd { span })
                     }
 
-                    Some((Token::Comma, _)) => {
-                        // Empty entry
+                    Some((Token::Comma, comma_span)) => {
+                        // Consecutive comma - report MissingSeparator
+                        // (BeforeEntry is entered after `[` or after consuming a comma,
+                        // so seeing another comma means consecutive commas)
+                        self.error(ErrorKind::MissingSeparator, comma_span);
                         self.advance();
                         self.state_stack.push(ParseState::FlowSeq {
                             phase: FlowSeqPhase::BeforeEntry,
                             start_span,
                         });
-                        Some(self.emit_null())
+                        None // Don't emit null for consecutive commas
                     }
 
                     Some((Token::DocStart | Token::DocEnd, span)) => {
@@ -3046,7 +4013,7 @@ impl<'tokens: 'input, 'input> Emitter<'tokens, 'input> {
                     None => {
                         // Unterminated
                         self.error(ErrorKind::UnexpectedEof, start_span);
-                        self.flow_depth = self.flow_depth.saturating_sub(1);
+                        self.exit_flow_collection();
                         Some(Event::SequenceEnd {
                             span: self.current_span(),
                         })
@@ -3230,8 +4197,15 @@ impl<'tokens: 'input, 'input> Emitter<'tokens, 'input> {
 
                     Some((Token::FlowSeqEnd, span)) => {
                         let span = span;
+                        let flow_end = span.end_usize();
                         self.advance();
-                        self.flow_depth = self.flow_depth.saturating_sub(1);
+                        self.exit_flow_collection();
+                        // Check for content immediately after flow collection in block context
+                        if self.flow_depth == 0 {
+                            self.check_content_after_flow(flow_end);
+                            // Check for multiline implicit key (flow collection spanning lines)
+                            self.check_multiline_flow_key(start_span, span);
+                        }
                         Some(Event::SequenceEnd { span })
                     }
 
@@ -3250,7 +4224,7 @@ impl<'tokens: 'input, 'input> Emitter<'tokens, 'input> {
                     _ => {
                         // Missing comma or end
                         self.error(ErrorKind::UnexpectedEof, start_span);
-                        self.flow_depth = self.flow_depth.saturating_sub(1);
+                        self.exit_flow_collection();
                         Some(Event::SequenceEnd {
                             span: self.current_span(),
                         })
@@ -3285,20 +4259,29 @@ impl<'tokens: 'input, 'input> Emitter<'tokens, 'input> {
                 match self.peek() {
                     Some((Token::FlowMapEnd, span)) => {
                         let span = span;
+                        let flow_end = span.end_usize();
                         self.advance();
-                        self.flow_depth = self.flow_depth.saturating_sub(1);
+                        self.exit_flow_collection();
+                        // Check for content immediately after flow collection in block context
+                        if self.flow_depth == 0 {
+                            self.check_content_after_flow(flow_end);
+                            // Check for multiline implicit key (flow collection spanning lines)
+                            self.check_multiline_flow_key(start_span, span);
+                        }
                         Some(Event::MappingEnd { span })
                     }
 
-                    Some((Token::Comma, _)) => {
-                        // Empty entry - null key
+                    Some((Token::Comma, comma_span)) => {
+                        // Consecutive comma - report MissingSeparator
+                        // (BeforeKey is entered after `{` or after consuming a comma,
+                        // so seeing another comma means consecutive commas)
+                        self.error(ErrorKind::MissingSeparator, comma_span);
                         self.advance();
                         self.state_stack.push(ParseState::FlowMap {
                             phase: FlowMapPhase::BeforeKey,
                             start_span,
                         });
-                        // Emit null key and null value
-                        Some(self.emit_null())
+                        None // Don't emit null for consecutive commas
                     }
 
                     Some((Token::MappingKey, _)) => {
@@ -3343,7 +4326,7 @@ impl<'tokens: 'input, 'input> Emitter<'tokens, 'input> {
 
                     None => {
                         self.error(ErrorKind::UnexpectedEof, start_span);
-                        self.flow_depth = self.flow_depth.saturating_sub(1);
+                        self.exit_flow_collection();
                         Some(Event::MappingEnd {
                             span: self.current_span(),
                         })
@@ -3420,8 +4403,15 @@ impl<'tokens: 'input, 'input> Emitter<'tokens, 'input> {
 
                     Some((Token::FlowMapEnd, span)) => {
                         let span = span;
+                        let flow_end = span.end_usize();
                         self.advance();
-                        self.flow_depth = self.flow_depth.saturating_sub(1);
+                        self.exit_flow_collection();
+                        // Check for content immediately after flow collection in block context
+                        if self.flow_depth == 0 {
+                            self.check_content_after_flow(flow_end);
+                            // Check for multiline implicit key (flow collection spanning lines)
+                            self.check_multiline_flow_key(start_span, span);
+                        }
                         Some(Event::MappingEnd { span })
                     }
 
@@ -3439,7 +4429,7 @@ impl<'tokens: 'input, 'input> Emitter<'tokens, 'input> {
 
                     _ => {
                         self.error(ErrorKind::UnexpectedEof, start_span);
-                        self.flow_depth = self.flow_depth.saturating_sub(1);
+                        self.exit_flow_collection();
                         Some(Event::MappingEnd {
                             span: self.current_span(),
                         })
@@ -3533,7 +4523,9 @@ impl<'tokens: 'input, 'input> Emitter<'tokens, 'input> {
                 };
                 self.state_stack.push(ParseState::BlockMap {
                     indent: map_indent,
-                    phase: BlockMapPhase::AfterKey,
+                    phase: BlockMapPhase::AfterKey {
+                        is_implicit_scalar_key: true, // Plain scalar followed by colon
+                    },
                     start_span: span,
                     anchor: None,
                     tag: None,
@@ -3549,8 +4541,12 @@ impl<'tokens: 'input, 'input> Emitter<'tokens, 'input> {
                     span: k_span,
                     style,
                 });
+                // Push indent level for orphan indent detection
+                self.push_indent(map_indent);
                 k_span // Use full first key span for MappingStart
             } else {
+                // Fallback - shouldn't happen but use current_indent for stack consistency
+                self.push_indent(self.current_indent);
                 span // Fallback (shouldn't happen)
             };
 
@@ -3564,7 +4560,14 @@ impl<'tokens: 'input, 'input> Emitter<'tokens, 'input> {
         }
 
         // Not a mapping key, just parse as a scalar
-        self.parse_plain_scalar(anchor, tag, min_indent)
+        let result = self.parse_plain_scalar(anchor, tag, min_indent);
+        // If this is a mapping key, check for multiline implicit key error
+        if is_key {
+            if let Some(Event::Scalar { span, .. }) = &result {
+                self.check_multiline_implicit_key(*span);
+            }
+        }
+        result
     }
 
     /// Parse a plain scalar (potentially multiline).
@@ -3574,7 +4577,7 @@ impl<'tokens: 'input, 'input> Emitter<'tokens, 'input> {
     /// - Multiple consecutive newlines preserve (n-1) newlines
     ///
     /// `min_indent` specifies the minimum indentation for continuation lines.
-    /// Continuation lines must have indent >= min_indent to be considered part of the scalar.
+    /// Continuation lines must have indent >= `min_indent` to be considered part of the scalar.
     fn parse_plain_scalar(
         &mut self,
         anchor: Option<(Cow<'static, str>, Span)>,
@@ -3583,10 +4586,21 @@ impl<'tokens: 'input, 'input> Emitter<'tokens, 'input> {
     ) -> Option<Event<'input>> {
         match self.peek() {
             Some((Token::Plain(text), span)) => {
+                // Extract values before releasing the borrow
+                let starts_with_percent = text.starts_with('%');
+                let col = self.column_of_position(span.start_usize());
                 let mut content = (*text).to_string();
                 let start_span = span;
                 let mut end_span = span;
                 self.advance();
+
+                // Check for reserved indicator `%` at column 0 starting a plain scalar.
+                // Per YAML 1.2 spec production [22] c-indicator and [126] ns-plain-first,
+                // `%` is a c-indicator and cannot start a plain scalar.
+                // This is only an error at the START of a scalar, not in continuations.
+                if starts_with_percent && col == 0 {
+                    self.error(ErrorKind::InvalidDirective, start_span);
+                }
 
                 // Collect continuation lines for multiline plain scalars
                 let mut consecutive_newlines = 0;
@@ -3628,10 +4642,12 @@ impl<'tokens: 'input, 'input> Emitter<'tokens, 'input> {
                 } else {
                     // Block context: continuation based on indentation
                     // Use the min_indent passed from caller, not current_indent
+                    #[allow(clippy::while_let_loop, reason = "complex match with multiple arms")]
                     loop {
                         match self.peek() {
-                            Some((Token::LineStart(n), _)) => {
+                            Some((Token::LineStart(n), line_span)) => {
                                 let indent = *n;
+                                let line_span = line_span;
 
                                 // Check if this continues the scalar
                                 if indent >= min_indent {
@@ -3649,6 +4665,16 @@ impl<'tokens: 'input, 'input> Emitter<'tokens, 'input> {
                                         &mut consecutive_newlines,
                                         min_indent,
                                     ) {
+                                        // Not a continuation. Check for orphan indentation.
+                                        // The batch parser's advance_to_same_indent reports InvalidIndentation
+                                        // when encountering an indent level not in the stack, even if the
+                                        // indent is >= min_indent. This handles cases like EW3V where
+                                        // a line at indent 1 is seen while the stack is [0, 0].
+                                        if !self.is_valid_indent(indent)
+                                            && self.has_content_at_orphan_level_from(1)
+                                        {
+                                            self.error(ErrorKind::InvalidIndentation, line_span);
+                                        }
                                         break;
                                     }
                                 } else {
@@ -3686,7 +4712,7 @@ impl<'tokens: 'input, 'input> Emitter<'tokens, 'input> {
             }
 
             Some((Token::StringStart(quote_style), _)) => {
-                self.parse_quoted_scalar(anchor, tag, *quote_style)
+                self.parse_quoted_scalar(anchor, tag, *quote_style, min_indent)
             }
 
             _ => Some(self.emit_null()),
@@ -3694,11 +4720,13 @@ impl<'tokens: 'input, 'input> Emitter<'tokens, 'input> {
     }
 
     /// Parse a quoted scalar.
+    /// `min_indent` is used to validate that continuation lines have proper indentation.
     fn parse_quoted_scalar(
         &mut self,
         anchor: Option<(Cow<'static, str>, Span)>,
         tag: Option<(Cow<'static, str>, Span)>,
         quote_style: crate::lexer::QuoteStyle,
+        min_indent: IndentLevel,
     ) -> Option<Event<'input>> {
         let start_span = self.current_span();
         self.advance(); // consume StringStart
@@ -3725,12 +4753,30 @@ impl<'tokens: 'input, 'input> Emitter<'tokens, 'input> {
                     end_span = span;
                     self.advance();
                 }
-                Some((Token::LineStart(_), span)) => {
+                Some((Token::LineStart(indent), span)) => {
+                    let indent = *indent;
+                    let line_start_span = span;
+
+                    // Check for InvalidIndentationContext error:
+                    // If the next token is StringContent (a content line) and indent < min_indent,
+                    // report the error.
+                    let is_content_line =
+                        matches!(self.peek_nth(1), Some((Token::StringContent(_), _)));
+                    if is_content_line && indent < min_indent {
+                        self.error(
+                            ErrorKind::InvalidIndentationContext {
+                                expected: min_indent,
+                                found: indent,
+                            },
+                            line_start_span,
+                        );
+                    }
+
                     // Trim trailing spaces before newline
                     let trimmed_len = value.trim_end_matches(' ').len();
                     value.truncate(trimmed_len);
                     pending_newlines += 1;
-                    end_span = span;
+                    end_span = line_start_span;
                     self.advance();
                 }
                 Some((Token::StringEnd(_), span)) => {
@@ -3792,7 +4838,8 @@ impl<'tokens: 'input, 'input> Emitter<'tokens, 'input> {
         self.advance(); // consume header
 
         // Track lines with their types
-        #[derive(Clone, Copy, PartialEq)]
+        #[derive(Clone, Copy, PartialEq, Debug)]
+        #[allow(clippy::items_after_statements, reason = "local helper enum")]
         enum LineType {
             Normal,     // Regular content line
             Empty,      // No content on this line
@@ -3811,6 +4858,11 @@ impl<'tokens: 'input, 'input> Emitter<'tokens, 'input> {
         // Otherwise, auto-detect from first content line
         let mut content_indent: Option<usize> =
             explicit_indent.map(|ei| min_indent_usize.saturating_sub(1) + ei);
+
+        // Track empty lines before content for indentation validation.
+        // If an empty line has MORE indentation than the first content line,
+        // it's an InvalidIndentation error.
+        let mut empty_lines_before_content: Vec<(usize, Span)> = Vec::new();
 
         // Skip to first line of content
         while matches!(
@@ -3877,9 +4929,21 @@ impl<'tokens: 'input, 'input> Emitter<'tokens, 'input> {
                 break;
             }
 
+            // Track empty lines before content for indentation validation
+            if content_indent.is_none() && !has_content {
+                empty_lines_before_content.push((n, line_start_span));
+            }
+
             // Determine content indent from first non-empty line
             if content_indent.is_none() && has_content && n > 0 {
                 content_indent = Some(n);
+                // Validate preceding empty lines - they should not have MORE indentation
+                // than the first content line.
+                for (empty_indent, empty_span) in &empty_lines_before_content {
+                    if *empty_indent > n {
+                        self.error(ErrorKind::InvalidIndentation, *empty_span);
+                    }
+                }
             }
 
             // Check termination: lines with content at indent < content_indent terminate the block
@@ -3894,11 +4958,10 @@ impl<'tokens: 'input, 'input> Emitter<'tokens, 'input> {
                 break;
             }
 
-            end_span = line_start_span;
-
             // Collect content on this line
             let mut line_content = String::new();
             let line_type;
+            let mut line_end_span = line_start_span;
 
             // Check for extra indentation (more-indented)
             let extra_indent = content_indent.map(|ci| n.saturating_sub(ci)).unwrap_or(0);
@@ -3911,7 +4974,7 @@ impl<'tokens: 'input, 'input> Emitter<'tokens, 'input> {
                 match tok {
                     Token::Plain(text) => {
                         line_content.push_str(text);
-                        end_span = span;
+                        line_end_span = span;
                         self.advance();
                     }
                     Token::Whitespace => {
@@ -3929,7 +4992,7 @@ impl<'tokens: 'input, 'input> Emitter<'tokens, 'input> {
                             let ws = &self.input[span.start_usize()..span.end_usize()];
                             line_content.push_str(ws);
                         }
-                        end_span = span;
+                        line_end_span = span;
                         self.advance();
                     }
                     Token::Comment(text) => {
@@ -3938,41 +5001,41 @@ impl<'tokens: 'input, 'input> Emitter<'tokens, 'input> {
                         // reconstruct the original text including the #
                         line_content.push('#');
                         line_content.push_str(text);
-                        end_span = span;
+                        line_end_span = span;
                         self.advance();
                     }
                     // In block scalars, flow indicators are literal content, not structure.
                     // The lexer doesn't know we're in a block scalar context.
                     Token::FlowSeqStart => {
                         line_content.push('[');
-                        end_span = span;
+                        line_end_span = span;
                         self.advance();
                     }
                     Token::FlowSeqEnd => {
                         line_content.push(']');
-                        end_span = span;
+                        line_end_span = span;
                         self.advance();
                     }
                     Token::FlowMapStart => {
                         line_content.push('{');
-                        end_span = span;
+                        line_end_span = span;
                         self.advance();
                     }
                     Token::FlowMapEnd => {
                         line_content.push('}');
-                        end_span = span;
+                        line_end_span = span;
                         self.advance();
                     }
                     Token::Colon => {
                         // Colon is literal content in block scalars
                         line_content.push(':');
-                        end_span = span;
+                        line_end_span = span;
                         self.advance();
                     }
                     Token::Comma => {
                         // Comma is literal content in block scalars
                         line_content.push(',');
-                        end_span = span;
+                        line_end_span = span;
                         self.advance();
                     }
                     _ => break,
@@ -3981,12 +5044,12 @@ impl<'tokens: 'input, 'input> Emitter<'tokens, 'input> {
 
             // Recover trailing whitespace that the lexer didn't include in tokens.
             // The lexer creates Plain("foo") for "foo " (missing trailing space).
-            // If the next token is a LineStart, any gap between end_span.end and
+            // If the next token is a LineStart, any gap between line_end_span.end and
             // LineStart.start is trailing whitespace to preserve.
             #[allow(clippy::string_slice, reason = "Span positions are UTF-8 boundaries")]
             if !line_content.is_empty() {
                 if let Some((Token::LineStart(_), next_span)) = self.peek() {
-                    let end_pos = end_span.end_usize();
+                    let end_pos = line_end_span.end_usize();
                     let next_start = next_span.start_usize();
                     if next_start > end_pos {
                         // There's a gap - check if it's all whitespace
@@ -4012,8 +5075,19 @@ impl<'tokens: 'input, 'input> Emitter<'tokens, 'input> {
                 line_type = LineType::Normal;
             }
 
+            // Only update end_span if this line had actual content
+            // This matches the batch parser behavior where empty lines don't extend the span
+            if !line_content.is_empty() {
+                end_span = line_end_span;
+            }
+
             lines.push((line_content, line_type));
         }
+
+        // For empty block scalars (no actual content), use just the header span
+        // Otherwise, span from header start to end of last content
+        // A scalar is empty if lines is empty OR all lines are empty/whitespace-only
+        let is_empty_scalar = lines.is_empty() || lines.iter().all(|(line, _)| line.is_empty());
 
         // Build final content based on style
         let value = if is_literal {
@@ -4044,7 +5118,11 @@ impl<'tokens: 'input, 'input> Emitter<'tokens, 'input> {
             ScalarStyle::Folded
         };
 
-        let full_span = Span::from_usize_range(start_span.start_usize()..end_span.end_usize());
+        let full_span = if is_empty_scalar {
+            start_span
+        } else {
+            Span::from_usize_range(start_span.start_usize()..end_span.end_usize())
+        };
 
         Some(Event::Scalar {
             style,

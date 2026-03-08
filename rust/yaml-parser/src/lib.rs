@@ -37,16 +37,17 @@
 
 mod error;
 mod event;
-mod event_parser;
-mod lexer;
 mod parser;
+mod lexer;
+mod emitter;
 mod span;
 mod value;
 
 pub use error::{ErrorKind, ParseError};
 pub use event::{CollectionStyle, Event, ScalarStyle};
-pub use lexer::{RichToken, Token, tokenize_document};
-pub use parser::{Emitter, Stream, StreamingParser, parse_single_document, parse_tokens};
+pub use lexer::{Lexer, RichToken, Token, tokenize_document};
+pub use emitter::{Emitter, Stream};
+pub use parser::Parser;
 pub use span::{
     BytePosition, IndentLevel, Position, SourceMap, Span, Spanned, indent_to_usize, pos_to_usize,
     usize_to_indent, usize_to_pos,
@@ -59,9 +60,9 @@ pub use value::{Node, Properties, Value};
 /// even when errors are present. Each document in the stream is a separate
 /// `Spanned<Value>`.
 ///
-/// This function returns owned data (`Node<'static>`) for convenience. If you need
-/// zero-copy parsing to avoid allocations, use `parse_single_document` directly
-/// with your own token storage.
+/// This function returns owned data (`Node<'static>`) for convenience. The returned
+/// nodes can outlive the input string. For zero-copy parsing, use the lower-level
+/// API: [`tokenize_document`], [`Emitter`], and [`Parser`] directly.
 ///
 /// # Arguments
 ///
@@ -73,48 +74,36 @@ pub use value::{Node, Properties, Value};
 /// - `Stream<'static>` (Vec<Node<'static>>) - The parsed documents with owned data
 /// - `Vec<ParseError>` - Any errors encountered during parsing (from both lexer and parser)
 ///
-/// # Owned vs Zero-Copy
+/// # Architecture
 ///
-/// This function returns **owned data** (`Node<'static>`) for convenience and ease of use.
-/// All string data in the returned nodes is `Cow::Owned`, meaning there are no borrows
-/// from the input string. This allows the returned `Stream` to outlive the input.
+/// This function uses the event-based architecture:
+/// 1. Tokenize input with [`Lexer`]
+/// 2. Emit events with [`Emitter`]
+/// 3. Build AST with [`Parser`]
 ///
-/// ## Zero-Copy Alternative
+/// See `DESIGN_EVENT_LAYER.md` for details.
 ///
-/// For zero-copy parsing where nodes borrow directly from the input string (avoiding
-/// allocations for simple scalars), use [`parse_single_document`] with tokens from
-/// [`tokenize_document`]. This returns `Node<'input>` with `Cow::Borrowed`
-/// for scalars that don't require transformation.
+/// # Example
 ///
-/// See `test_zero_copy_parsing` in the test module for a usage example.
+/// ```
+/// # use yaml_parser::parse;
+/// let input = "key: value";
+/// let (nodes, errors) = parse(input);
+/// // nodes can outlive input
+/// drop(input);
+/// assert_eq!(nodes.len(), 1);
+/// ```
 pub fn parse(input: &str) -> (Stream<'static>, Vec<ParseError>) {
-    // Phase 3: Use event-based parsing exclusively
-    // The parser emits events, and EventParser reconstructs the AST from them.
-    // This is now the canonical path - see DESIGN_EVENT_LAYER.md
-    parse_via_events(input)
-}
-
-/// Parse YAML using the event-based architecture.
-///
-/// This function uses the [`EventParser`] to build AST from the events emitted
-/// by the parser. It has the same interface as [`parse`].
-///
-/// Note: The regular [`parse`] function also emits events now, so this function
-/// primarily exists for testing the [`EventParser`] reconstruction path.
-#[must_use]
-pub fn parse_via_events(input: &str) -> (Stream<'static>, Vec<ParseError>) {
-    use event_parser::EventParser;
-
-    // Get events from the parser
+    // Get events from the emitter
     let (events, mut all_errors) = emit_events(input);
 
-    // Parse events into AST using EventParser
-    let mut event_parser = EventParser::new(&events);
-    let nodes = event_parser.parse();
-    all_errors.extend(event_parser.take_errors());
+    // Parse events into AST using Parser
+    let mut parser = Parser::new(&events);
+    let nodes = parser.parse();
+    all_errors.extend(parser.take_errors());
 
     // Convert to owned
-    let all_docs: Stream<'static> = nodes.into_iter().map(|n| n.into_owned()).collect();
+    let all_docs: Stream<'static> = nodes.into_iter().map(value::Node::into_owned).collect();
 
     (all_docs, all_errors)
 }
@@ -130,6 +119,9 @@ pub fn parse_via_events(input: &str) -> (Stream<'static>, Vec<ParseError>) {
 /// The event stream follows the YAML Test Suite format:
 /// `StreamStart`, `DocumentStart`, content events, `DocumentEnd`, `StreamEnd`
 ///
+/// This function returns owned events (`Event<'static>`) for convenience. For
+/// zero-copy event processing, use [`tokenize_document`] and [`Emitter`] directly.
+///
 /// # Returns
 ///
 /// A tuple of:
@@ -137,25 +129,18 @@ pub fn parse_via_events(input: &str) -> (Stream<'static>, Vec<ParseError>) {
 /// - `Vec<ParseError>` - Any errors encountered during lexing/parsing
 #[must_use]
 pub fn emit_events(input: &str) -> (Vec<Event<'static>>, Vec<ParseError>) {
-    // Unified single-pass lexing: DocumentLexer handles directives, document
+    // Unified single-pass lexing: Lexer handles directives, document
     // markers, and content in a single pass over the input.
-    let lexer = lexer::DocumentLexer::new(input);
-    let tokens: Vec<lexer::RichToken<'_>> = lexer.collect();
+    let mut lexer = lexer::Lexer::new(input);
+    let tokens: Vec<lexer::RichToken<'_>> = lexer.by_ref().collect();
 
-    // Extract errors from tokens
-    let mut all_errors: Vec<ParseError> = tokens
-        .iter()
-        .filter_map(|rich_token| {
-            rich_token
-                .error
-                .clone()
-                .map(|kind| error::ParseError::new(kind, rich_token.span))
-        })
-        .collect();
+    // Collect errors from lexer
+    let mut all_errors = lexer.take_errors();
 
-    // Parse the token stream into events
-    let (events, parser_errors) = parser::parse_stream_from_tokens(&tokens, input);
-    all_errors.extend(parser_errors);
+    // Parse the token stream into events using the emitter
+    let mut emitter = emitter::Emitter::new(&tokens, input);
+    let events: Vec<Event<'_>> = emitter.by_ref().collect();
+    all_errors.extend(emitter.take_errors());
 
     // Convert to owned events
     let owned_events: Vec<Event<'static>> = events.into_iter().map(Event::into_owned).collect();

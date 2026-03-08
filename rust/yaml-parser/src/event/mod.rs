@@ -5,18 +5,18 @@
 //! YAML serialization tree events.
 //!
 //! This module defines the event types following the YAML 1.2 spec's
-//! "Serialization Tree" layer. Events are emitted by the Parser during
+//! "Serialization Tree" layer. Events are emitted by the `Emitter` during
 //! parsing and represent structural elements that preserve presentation details.
 //!
 //! # Architecture
 //!
 //! ```text
-//! Stream Lexer → Document Lexer → Parser (emits Events) → EventParser → AST
+//! Lexer → Emitter (emits Events) → Parser → AST
 //! ```
 //!
-//! The parser emits events as it parses, which can be:
+//! The `Emitter` emits events as it parses, which can be:
 //! - Used directly for streaming/SAX-style processing
-//! - Consumed by `EventParser` to build an AST
+//! - Consumed by `Parser` to build an AST
 //!
 //! # Zero-Copy Design
 //!
