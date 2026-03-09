@@ -9,11 +9,25 @@
 
 #![allow(clippy::indexing_slicing, reason = "panics are acceptable in tests")]
 #![allow(clippy::string_slice, reason = "test code with known-safe slicing")]
+#![allow(
+    clippy::tests_outside_test_module,
+    reason = "integration tests don't need cfg(test)"
+)]
+#![allow(clippy::expect_used, reason = "expect is acceptable in tests")]
+#![allow(
+    clippy::min_ident_chars,
+    reason = "single-char closure params are fine in tests"
+)]
+#![allow(clippy::panic, reason = "panic is acceptable in tests")]
+#![allow(
+    clippy::if_then_some_else_none,
+    reason = "explicit if/else is clearer in tests"
+)]
 
 use yaml_parser::{Event, ScalarStyle, Value, emit_events, parse};
 
 /// Helper to extract the text covered by a span from the input.
-fn extract_span_text<'a>(input: &'a str, start: usize, end: usize) -> &'a str {
+fn extract_span_text(input: &str, start: usize, end: usize) -> &str {
     &input[start..end]
 }
 

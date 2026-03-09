@@ -8,6 +8,32 @@
 //! but valid YAML constructs.
 
 #![allow(clippy::indexing_slicing, reason = "panics are acceptable in tests")]
+#![allow(
+    clippy::tests_outside_test_module,
+    reason = "integration tests don't need cfg(test)"
+)]
+#![allow(clippy::panic, reason = "panic is acceptable in tests")]
+#![allow(
+    clippy::min_ident_chars,
+    reason = "single-char closure params are fine in tests"
+)]
+#![allow(
+    clippy::uninlined_format_args,
+    reason = "explicit format args are clearer in tests"
+)]
+#![allow(
+    clippy::float_cmp,
+    reason = "exact float comparison is intentional in tests"
+)]
+#![allow(clippy::shadow_unrelated, reason = "shadowing is acceptable in tests")]
+#![allow(
+    clippy::collapsible_if,
+    reason = "nested if-let patterns are clearer in tests"
+)]
+#![allow(
+    clippy::format_push_string,
+    reason = "format! is clearer than write! in tests"
+)]
 
 use yaml_parser::{Value, parse};
 

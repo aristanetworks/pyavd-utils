@@ -19,6 +19,11 @@
     clippy::tests_outside_test_module,
     reason = "integration tests are in tests/ dir"
 )]
+#![allow(clippy::panic, reason = "panic is acceptable in tests")]
+#![allow(
+    clippy::integer_division_remainder_used,
+    reason = "modulo is fine in tests"
+)]
 
 use std::fs;
 use std::path::Path;
@@ -976,7 +981,7 @@ fn find_first_diff(a: &[Event], b: &[Event]) -> String {
     }
 }
 
-/// Find the first difference between two yaml_parser::Event sequences.
+/// Find the first difference between two `yaml_parser::Event` sequences.
 #[allow(dead_code, reason = "utility function for debugging test failures")]
 fn find_first_event_diff(a: &[yaml_parser::Event<'_>], b: &[yaml_parser::Event<'_>]) -> String {
     for (i, (ea, eb)) in a.iter().zip(b.iter()).enumerate() {

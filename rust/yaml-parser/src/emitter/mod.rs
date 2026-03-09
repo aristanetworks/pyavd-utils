@@ -170,7 +170,7 @@ mod tests {
 
         let alias_events: Vec<_> = events
             .iter()
-            .filter(|e| matches!(e, crate::Event::Alias { .. }))
+            .filter(|event| matches!(event, crate::Event::Alias { .. }))
             .collect();
         assert_eq!(
             alias_events.len(),
@@ -408,20 +408,20 @@ mod tests {
             assert!(
                 events
                     .iter()
-                    .any(|e| matches!(e, Event::SequenceStart { .. })),
+                    .any(|event| matches!(event, Event::SequenceStart { .. })),
                 "Should have SequenceStart: {events:?}"
             );
             assert!(
                 events
                     .iter()
-                    .any(|e| matches!(e, Event::SequenceEnd { .. })),
+                    .any(|event| matches!(event, Event::SequenceEnd { .. })),
                 "Should have SequenceEnd (auto-closed): {events:?}"
             );
             // Should report error
             assert!(
                 errors
                     .iter()
-                    .any(|e| matches!(e.kind, crate::error::ErrorKind::UnexpectedEof)),
+                    .any(|err| matches!(err.kind, crate::error::ErrorKind::UnexpectedEof)),
                 "Should report UnexpectedEof error: {errors:?}"
             );
         }
@@ -434,17 +434,19 @@ mod tests {
             assert!(
                 events
                     .iter()
-                    .any(|e| matches!(e, Event::MappingStart { .. })),
+                    .any(|event| matches!(event, Event::MappingStart { .. })),
                 "Should have MappingStart: {events:?}"
             );
             assert!(
-                events.iter().any(|e| matches!(e, Event::MappingEnd { .. })),
+                events
+                    .iter()
+                    .any(|event| matches!(event, Event::MappingEnd { .. })),
                 "Should have MappingEnd (auto-closed): {events:?}"
             );
             assert!(
                 errors
                     .iter()
-                    .any(|e| matches!(e.kind, crate::error::ErrorKind::UnexpectedEof)),
+                    .any(|err| matches!(err.kind, crate::error::ErrorKind::UnexpectedEof)),
                 "Should report UnexpectedEof error: {errors:?}"
             );
         }
@@ -457,11 +459,11 @@ mod tests {
             // Should produce SequenceStart and SequenceEnd (correct type despite mismatch)
             let seq_starts = events
                 .iter()
-                .filter(|e| matches!(e, Event::SequenceStart { .. }))
+                .filter(|event| matches!(event, Event::SequenceStart { .. }))
                 .count();
             let seq_ends = events
                 .iter()
-                .filter(|e| matches!(e, Event::SequenceEnd { .. }))
+                .filter(|event| matches!(event, Event::SequenceEnd { .. }))
                 .count();
             assert_eq!(seq_starts, 1, "Should have 1 SequenceStart: {events:?}");
             assert_eq!(seq_ends, 1, "Should have 1 SequenceEnd: {events:?}");

@@ -858,11 +858,14 @@ impl<'tokens, 'input> Emitter<'tokens, 'input> {
         // Scan for TagDirective tokens
         // We need to collect the directives first to avoid borrowing issues
         let mut directives: Vec<&'input str> = Vec::new();
-        let mut i = self.pos;
-        while i < self.tokens.len() {
-            match &self.tokens[i].token {
-                Token::TagDirective(Cow::Borrowed(s)) => {
-                    directives.push(s);
+        let mut idx = self.pos;
+        while idx < self.tokens.len() {
+            let Some(rich_token) = self.tokens.get(idx) else {
+                break;
+            };
+            match &rich_token.token {
+                Token::TagDirective(Cow::Borrowed(tag_str)) => {
+                    directives.push(tag_str);
                 }
                 Token::TagDirective(Cow::Owned(_)) => {
                     // This shouldn't happen - TagDirective should always be borrowed
@@ -871,7 +874,7 @@ impl<'tokens, 'input> Emitter<'tokens, 'input> {
                 Token::DocStart | Token::DocEnd => break,
                 _ => {}
             }
-            i += 1;
+            idx += 1;
         }
 
         // Now insert them
@@ -994,7 +997,7 @@ impl<'tokens, 'input> Emitter<'tokens, 'input> {
 // Iterator Implementation - The State Machine
 // ═══════════════════════════════════════════════════════════════════
 
-impl<'tokens, 'input> Iterator for Emitter<'tokens, 'input> {
+impl<'input> Iterator for Emitter<'_, 'input> {
     type Item = Event<'input>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -1075,7 +1078,7 @@ impl<'tokens, 'input> Iterator for Emitter<'tokens, 'input> {
     }
 }
 
-impl<'tokens, 'input> Emitter<'tokens, 'input> {
+impl<'input> Emitter<'_, 'input> {
     /// Process the state stack and return the next event, if any.
     ///
     /// Returns `None` when the stack is empty (document content complete).
@@ -1639,7 +1642,14 @@ impl<'tokens, 'input> Emitter<'tokens, 'input> {
                     let column = span
                         .start_usize()
                         .saturating_sub(self.last_line_start_span.end_usize());
-                    column as IndentLevel
+                    // YAML indentation is limited to reasonable values (< 65535)
+                    #[allow(
+                        clippy::cast_possible_truncation,
+                        clippy::as_conversions,
+                        reason = "YAML indentation is limited to reasonable values"
+                    )]
+                    let indent = column as IndentLevel;
+                    indent
                 } else {
                     // Regular notation: use the line's indent
                     self.current_indent
@@ -4783,12 +4793,14 @@ impl<'tokens, 'input> Emitter<'tokens, 'input> {
                                     let content_str = content
                                         .get_or_insert_with(|| first_line.clone().into_owned());
 
-                                    if !self.try_consume_plain_continuation(
+                                    if self.try_consume_plain_continuation(
                                         content_str,
                                         &mut end_span,
                                         &mut consecutive_newlines,
                                         min_indent,
                                     ) {
+                                        has_continuation = true;
+                                    } else {
                                         // Not a continuation. Check for orphan indentation.
                                         // The batch parser's advance_to_same_indent reports InvalidIndentation
                                         // when encountering an indent level not in the stack, even if the
@@ -4800,8 +4812,6 @@ impl<'tokens, 'input> Emitter<'tokens, 'input> {
                                             self.error(ErrorKind::InvalidIndentation, line_span);
                                         }
                                         break;
-                                    } else {
-                                        has_continuation = true;
                                     }
                                 } else {
                                     // Low indent - might be empty line, check for continuation
@@ -4927,7 +4937,8 @@ impl<'tokens, 'input> Emitter<'tokens, 'input> {
                     // This trims trailing spaces from the previous line
                     if needs_trim {
                         // Join all parts so far and trim trailing spaces
-                        let mut temp: String = parts.iter().map(|p| p.as_ref()).collect();
+                        let mut temp: String =
+                            parts.iter().map(std::convert::AsRef::as_ref).collect();
                         let trimmed_len = temp.trim_end_matches(' ').len();
                         temp.truncate(trimmed_len);
                         parts.clear();
@@ -4981,12 +4992,13 @@ impl<'tokens, 'input> Emitter<'tokens, 'input> {
                     // This handles trailing spaces on the last line before StringEnd
                     if needs_trim {
                         // Join all parts so far and trim trailing spaces
-                        let mut temp: String = parts.iter().map(|p| p.as_ref()).collect();
+                        let mut temp: String =
+                            parts.iter().map(std::convert::AsRef::as_ref).collect();
                         let trimmed_len = temp.trim_end_matches(' ').len();
                         temp.truncate(trimmed_len);
                         parts.clear();
                         parts.push(Cow::Owned(temp));
-                        needs_trim = false;
+                        // needs_trim is not read after this point, so no need to set to false
                     }
 
                     // Apply pending newlines at end (after trimming!)
@@ -5010,7 +5022,7 @@ impl<'tokens, 'input> Emitter<'tokens, 'input> {
         }
 
         // Join parts into final string
-        let value: String = parts.iter().map(|p| p.as_ref()).collect();
+        let value: String = parts.iter().map(std::convert::AsRef::as_ref).collect();
 
         let style = match quote_style {
             crate::lexer::QuoteStyle::Single => ScalarStyle::SingleQuoted,
@@ -5350,7 +5362,12 @@ impl<'tokens, 'input> Emitter<'tokens, 'input> {
             // Convert parts to strings
             let string_lines: Vec<String> = lines
                 .into_iter()
-                .map(|(parts, _)| parts.iter().map(|p| p.as_ref()).collect::<String>())
+                .map(|(parts, _)| {
+                    parts
+                        .iter()
+                        .map(std::convert::AsRef::as_ref)
+                        .collect::<String>()
+                })
                 .collect();
             self.join_folded_lines(&string_lines)
         };

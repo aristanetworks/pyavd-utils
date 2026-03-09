@@ -871,11 +871,15 @@ impl<'input> Lexer<'input> {
                     self.advance();
                 }
                 // Borrow from input: includes both ! characters
+                #[allow(
+                    clippy::string_slice,
+                    reason = "tag_start and byte_pos are valid UTF-8 boundaries"
+                )]
                 let tag_slice = &self.input[tag_start..self.byte_pos];
-                return (
+                (
                     Token::Tag(Cow::Borrowed(tag_slice)),
                     self.current_span(start),
-                );
+                )
             }
             Some('<') => {
                 // Verbatim tag !<uri>
@@ -891,7 +895,7 @@ impl<'input> Lexer<'input> {
                     tag.push(peek_ch);
                     self.advance();
                 }
-                return (Token::Tag(Cow::Owned(tag)), self.current_span(start));
+                (Token::Tag(Cow::Owned(tag)), self.current_span(start))
             }
             Some(ch) if Self::is_valid_tag_start_char(ch) => {
                 // Regular tag !name - can borrow the whole thing from input
@@ -902,30 +906,42 @@ impl<'input> Lexer<'input> {
                     self.advance();
                 }
                 // Borrow from input: includes the ! prefix
+                #[allow(
+                    clippy::string_slice,
+                    reason = "tag_start and byte_pos are valid UTF-8 boundaries"
+                )]
                 let tag_slice = &self.input[tag_start..self.byte_pos];
-                return (
+                (
                     Token::Tag(Cow::Borrowed(tag_slice)),
                     self.current_span(start),
-                );
+                )
             }
             // ! followed by whitespace, EOF, or flow indicator is the non-specific tag
             Some(ch) if ch.is_whitespace() || Self::is_flow_indicator(ch) => {
                 // Empty tag (non-specific tag `!`)
                 // Borrow the single '!' from input
+                #[allow(
+                    clippy::string_slice,
+                    reason = "tag_start and byte_pos are valid UTF-8 boundaries"
+                )]
                 let tag_slice = &self.input[tag_start..self.byte_pos];
-                return (
+                (
                     Token::Tag(Cow::Borrowed(tag_slice)),
                     self.current_span(start),
-                );
+                )
             }
             None => {
                 // ! at end of input is also a valid non-specific tag
                 // Borrow the single '!' from input
+                #[allow(
+                    clippy::string_slice,
+                    reason = "tag_start and byte_pos are valid UTF-8 boundaries"
+                )]
                 let tag_slice = &self.input[tag_start..self.byte_pos];
-                return (
+                (
                     Token::Tag(Cow::Borrowed(tag_slice)),
                     self.current_span(start),
-                );
+                )
             }
             _ => {
                 // `!` followed by non-tag character (like `!"#$%...`)
@@ -953,7 +969,7 @@ impl<'input> Lexer<'input> {
                     self.advance();
                 }
                 // Tag fallback to plain scalar requires owned string
-                return (Token::Plain(Cow::Owned(plain)), self.current_span(start));
+                (Token::Plain(Cow::Owned(plain)), self.current_span(start))
             }
         }
     }

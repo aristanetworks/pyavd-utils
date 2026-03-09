@@ -401,13 +401,29 @@ impl<'events, 'input> Parser<'events, 'input> {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::indexing_slicing, reason = "panics are acceptable in tests")]
+    #![allow(clippy::panic, reason = "panic is acceptable in tests")]
+    #![allow(
+        clippy::min_ident_chars,
+        reason = "single-char closure params are fine in tests"
+    )]
+    #![allow(clippy::type_complexity, reason = "complex types are fine in tests")]
+    #![allow(
+        clippy::approx_constant,
+        reason = "test values don't need to use consts"
+    )]
+
     use super::*;
 
     /// Parse input through the full event pipeline and return nodes.
     fn parse_via_events(input: &str) -> Vec<crate::value::Node<'static>> {
         let (events, _errors) = crate::emit_events(input);
         let mut parser = Parser::new(&events);
-        parser.parse().into_iter().map(|n| n.into_owned()).collect()
+        parser
+            .parse()
+            .into_iter()
+            .map(crate::value::Node::into_owned)
+            .collect()
     }
 
     /// Test that Parser produces identical output to the hybrid parser.
