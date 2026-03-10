@@ -6,8 +6,8 @@
 
 # YAML Parser Architecture Documentation
 
-**Version:** 0.0.2
-**Date:** 2026-03-08
+**Version:** 0.0.3
+**Date:** 2026-03-10
 **Status:** Production-ready, YAML 1.2 compliant
 **Dependencies:** Zero external dependencies
 
@@ -58,7 +58,7 @@ This is a YAML 1.2 parser written in Rust with the following key features:
 
 ## High-Level Architecture
 
-The parser uses a **two-layer architecture** with unified streaming tokenization:
+The parser uses a **three-layer architecture** with unified streaming tokenization and an explicit event layer:
 
 ```txt
 ┌─────────────────────────────────────────────────────────────┐
@@ -73,38 +73,41 @@ The parser uses a **two-layer architecture** with unified streaming tokenization
 │  - Tracks document boundaries (---, ...)                    │
 │  - Tracks flow depth (nested {}/[])                         │
 │  - Emits INDENT/DEDENT tokens                               │
-│  - Context-aware: ,[]{}  are delimiters in flow,            │
+│  - Context-aware: ,[]{} are delimiters in flow,             │
 │                   part of plain scalars in block            │
 │  - Phase tracking: DirectivePrologue vs InDocument          │
-│  - Inline error detection (attached to RichToken)           │
-│  - Implements Iterator<Item = RichToken> for streaming      │
-│  Output: Vec<RichToken> (or streamed via Iterator)          │
+│  - Inline error detection stored by the lexer (via          │
+│    `Lexer::take_errors`)                                   │
+│  - Implements Iterator<Item = RichToken<'input>> for        │
+│    streaming tokenization                                   │
+│  Output: Iterator<Item = RichToken<'input>>                 │
 └──────────────────────────┬──────────────────────────────────┘
                            │
                            ▼
 ┌─────────────────────────────────────────────────────────────┐
-│  Layer 2: Event-Based Parser (parser/mod.rs, block.rs,      │
-│                               flow.rs, scalar.rs)           │
-│  - Emits SAX-style events (StreamStart, DocumentStart,      │
-│    Scalar, MappingStart/End, SequenceStart/End, etc.)       │
-│  - Validates structure and indentation                      │
-│  - Validates tag handles from directive tokens              │
-│  - Detects orphan content and trailing errors               │
-│  Output: Vec<Event>                                         │
+│  Layer 2: Event Emitter (emitter::Emitter)                  │
+│  - Consumes an iterator of RichToken<'input> + &str         │
+│  - Emits YAML events (StreamStart, Scalar, MappingStart,    │
+│    SequenceStart, Alias, etc.)                              │
+│  - Handles YAML structure (indentation, flow vs block,      │
+│    complex keys, block scalars, properties)                 │
+│  - Performs structural validation and error recovery        │
+│  Output: Iterator<Item = Event<'input>>                     │
 └──────────────────────────┬──────────────────────────────────┘
                            │
                            ▼
 ┌─────────────────────────────────────────────────────────────┐
-│  Layer 3: Parser (parser/mod.rs)                            │
-│  - Reconstructs AST (Node tree) from event stream           │
-│  - Resolves anchors and aliases                             │
-│  - Handles nested structures via stack-based parsing        │
-│  Output: Vec<Node> (Stream)                                 │
+│  Layer 3: Event-to-AST Parser (parser::Parser)              │
+│  - Consumes &[Event<'input>]                                │
+│  - Reconstructs AST (Vec<Node<'input>>) from event stream   │
+│  - Applies scalar type inference                            │
+│  - Resolves anchors and validates aliases                   │
+│  Output: Vec<Node<'input>> (Stream<'input>)                 │
 └──────────────────────────┬──────────────────────────────────┘
                            │
                            ▼
 ┌─────────────────────────────────────────────────────────────┐
-│              Output: (Stream, Vec<ParseError>)              │
+│          Output: (Stream<'static>, Vec<ParseError>)         │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -116,9 +119,11 @@ The parser uses a **two-layer architecture** with unified streaming tokenization
 
 #### `lib.rs` - Public API
 
-- **Main entry point**: `parse(input: &str) -> (Stream, Vec<ParseError>)`
-- **Exports**: All public types and functions
-- **Module declarations**: `lexer`, `parser`, `error`, `span`, `value`
+- **Main entry points**:
+  - `parse(input: &str) -> (Stream<'static>, Vec<ParseError>)` – full parse to AST
+  - `emit_events(input: &str) -> (Vec<Event<'_>>, Vec<ParseError>)` – event-only API
+- **Exports**: Public types and functions from `lexer`, `emitter`, `event`, `parser`, `span`, `stream`, `value`, `error`
+- **Module declarations**: `lexer`, `emitter`, `event`, `parser`, `error`, `span`, `stream`, `value`
 
 #### `lexer/mod.rs` - Lexer Module Root
 
@@ -130,7 +135,7 @@ The parser uses a **two-layer architecture** with unified streaming tokenization
   ├── mod.rs           # Module root, re-exports public API
   ├── document.rs      # Unified streaming lexer (handles everything)
   ├── token.rs         # Token type definitions
-  └── rich_token.rs    # Token wrapper with span and optional error
+  └── rich_token.rs    # Token wrapper with span
   ```
 
 - **Re-exports**: `tokenize_document`, `DocumentLexer`, `RichToken`, `Token`, etc.
@@ -213,13 +218,13 @@ The parser uses a **two-layer architecture** with unified streaming tokenization
   }
   ```
 
-- **Design Decision (2026-02-24)**: Trivia attachment was **reverted**
-  - Comments remain as real `Token::Comment(_)` tokens in the stream
-  - Whitespace remains as real `Token::Whitespace` / `Token::WhitespaceWithTabs` tokens
-  - **Reason**: Comments have semantic meaning in YAML - they terminate plain scalars
-  - The parser needs to see comments directly to correctly parse multiline plain scalars
-  - `RichToken` structure is preserved for future IDE features
-  - IDE features can filter/group tokens as needed post-parsing
+- **Trivia Handling**:
+  - Comments are real `Token::Comment(_)` tokens in the stream
+  - Whitespace is represented as `Token::Whitespace` / `Token::WhitespaceWithTabs`
+  - Reason: comments and inline whitespace affect plain-scalar termination and must
+    be visible to the emitter for correct multiline/plain-scalar behavior
+  - `RichToken` keeps tokens + spans simple; higher-level tools can group/filter
+    tokens as needed for IDE-style features
 
 #### `value.rs` - AST Types
 
@@ -322,15 +327,25 @@ The parser uses a **two-layer architecture** with unified streaming tokenization
 
 #### `lexer/rich_token.rs`
 
-- **Purpose**: Token wrapper with span information and optional error
-- **Key Type**: `RichToken<'input>` - combines `Token<'input>` with `Span` and optional `ParseError`
+- **Purpose**: Token wrapper with span information.
+- **Key Type**: `RichToken<'input>` - combines `Token<'input>` with `Span`.
 - **Fields**:
-  - `token: Token<'input>` - The token variant
-  - `span: Span` - Source location
-  - `error: Option<ParseError>` - Lexer error attached to this token (if any)
-- **Usage**: The lexer produces `Vec<RichToken>` for the parser; errors are inline
+  - `token: Token<'input>` - The token variant.
+  - `span: Span` - Source location.
+- **Error Handling**: Errors during lexing are collected by the lexer itself
+  (`Lexer::take_errors`) rather than attached to individual `RichToken`s.
+- **Usage**: The lexer implements `Iterator<Item = RichToken<'input>>`. The
+  high-level `emit_events` API collects these into a `Vec<RichToken<'_>>`
+  before passing them to the emitter.
 
-### Layer 2: Event-Based Parser
+### Layer 2: Event Emitter
+
+> NOTE: The current implementation uses the `emitter` module as the second
+> layer between the lexer and the AST parser. The `parser/*` subsections
+> below describe an **older, token-based parser design** and are kept only as
+> historical reference. For the current code, see the description of the
+> `emitter` module in the high-level architecture and module structure
+> sections above.
 
 #### `parser/mod.rs`
 
@@ -727,8 +742,9 @@ pub enum Value<'input> {
 
 - **Separation of Concerns**: Each layer has a single responsibility
   - Unified lexer: Tokenizes entire stream (directives, markers, content)
-  - Event-based parser: Emits SAX-style events, validates structure
-  - Event parser: Reconstructs AST from events, resolves anchors
+  - Event emitter: Interprets tokens and emits YAML events, validates structure
+  - Event-to-AST parser: Reconstructs AST from events, infers scalar types,
+    resolves anchors and aliases
 - **Streaming Design**: `DocumentLexer` implements `Iterator<Item = RichToken>`
   - Enables lazy tokenization and potential streaming support
   - Simplifies document boundary handling (directives handled inline)
@@ -843,7 +859,13 @@ The parser is designed to **continue parsing after errors** and collect multiple
 
 ### Error Collection
 
-Errors are collected in `Parser.errors: Vec<ParseError>`:
+Errors are collected at **all three layers** and merged by the public APIs:
+
+- Lexer: collects lexing errors internally (`Lexer::take_errors`).
+- Emitter: collects structural/event-level errors (`Emitter::take_errors`).
+- Parser: collects AST-level errors (`Parser::take_errors`).
+
+All of these use the shared `ParseError` type:
 
 ```rust
 pub struct ParseError {
@@ -992,11 +1014,13 @@ The parser uses optimized type sizes to reduce memory footprint. This introduces
 
 ### Short-Term (Performance & Testing)
 
-1. **Plain Scalar Zero-Copy Optimization**
-   - Currently `scalar_to_value()` always allocates via `string.to_string()`
-   - For strings that don't need type coercion (most cases), could return `Cow::Borrowed(string)` directly
-   - Location: `parser/scalar.rs` in `parse_scalar_with_indent()` (Token::Plain branch)
-   - Potential impact: Reduced allocations for string-heavy documents
+1. **Block Scalar Pipeline Refinement (Lexer vs Emitter responsibilities)**
+   - **Current State**: Block scalar headers (`|`, `>`) are recognized in the lexer, but line collection, folding, and chomping are handled in the emitter's `parse_block_scalar` using lexer tokens (`LineStart`, `Indent`/`Dedent`, `Plain`, `Whitespace`, `Comment`, flow tokens).
+   - **Observation**: Recent optimizations made `parse_block_scalar` a streaming builder (single `String` plus small per-line scratch) and brought block-scalar throughput close to Saphyr while preserving the layered architecture.
+   - **Potential Future Direction**:
+     - Evaluate whether some block-scalar concerns (e.g., more precise comment vs content handling, or preclassification of block-scalar content lines) should move into the lexer to further simplify the emitter.
+     - Alternatively, factor the block-scalar builder logic into a shared helper that both the emitter and any future scanner-level implementation can reuse, so semantics remain consistent if responsibilities shift between layers.
+   - **Goal**: Preserve the current lexer+emitter layering while keeping the option open to move more block-scalar work into the lexer if we need additional performance headroom on scalar-heavy workloads.
 
 ### Short-Term (Feature Additions)
 

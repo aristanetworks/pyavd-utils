@@ -364,69 +364,96 @@ type, while keeping all existing tests passing after each step.
   it. Semantics unchanged (refactoring only).
   - Tests: `cargo test -p yaml-parser` ✅
   - Clippy: `cargo clippy -p yaml-parser --all-targets` ✅
-    - **2026-03-09:** Phase E2 started: split `parse_value` into two phases driven
-   by states.
-      - Added `ParseState::ValueAfterProperties { ctx, anchor, tag,
-     initial_crossed_line, prop_crossed_line, property_indent }`.
-      - `ParseState::Value` now performs only whitespace skipping, invalid-indent
-     checks, and property collection, then pushes `ValueAfterProperties`.
-      - New `Emitter::process_value_after_properties` hosts the former second half
-     of `parse_value`, including bridging vs empty-value decisions and the main
-     token dispatch. Existing helpers such as
-     `maybe_emit_empty_scalar_for_non_bridging_properties` are now used from
-     this state handler.
-      - Semantics remain unchanged; behaviour is validated by the test suite.
-      - Tests: `cargo test -p yaml-parser` ✅
-      - Clippy: `cargo clippy -p yaml-parser --all-targets` ✅
-    - **2026-03-09:** Phase E3 (alias part) started: moved alias value handling
-   into an explicit `AliasValue` state.
-      - Added `ParseState::AliasValue { ctx: ValueContext, name, span, anchor, tag,
-     crossed_line_after_properties }`.
-      - The alias match arm in `process_value_after_properties` now defers to this
-     state instead of calling a helper directly.
-      - New `Emitter::process_alias_value_state` implements the previous
-     `handle_alias_value` logic, driven by the state machine.
-      - Behaviour verified via the existing alias/anchor tests and full suite.
-      - Tests: `cargo test -p yaml-parser` ✅
-      - Clippy: `cargo clippy -p yaml-parser --all-targets` ✅
-    - **2026-03-09:** Phase E3 (flow collection part) started: moved flow
-   collection value handling into an explicit `FlowCollectionValue` state.
-      - Added `ParseState::FlowCollectionValue { ctx: ValueContext, is_map, span,
-     anchor, tag }`.
-      - The `FlowSeqStart` / `FlowMapStart` arms in `process_value_after_properties`
-     now defer to this state instead of calling `handle_flow_*_start_value`
-     helpers.
-      - New `Emitter::process_flow_collection_value_state` implements the
-     previous flow complex-key logic (including `is_flow_*_complex_key`) and
-     regular flow value handling, driven by the state machine.
-      - Behaviour verified via the existing flow and complex-key tests and full
-     suite.
-      - Tests: `cargo test -p yaml-parser` ✅
-      - Clippy: `cargo clippy -p yaml-parser --all-targets` ✅
-        - **2026-03-09:** Phase E4 (first step) started: centralized
-    `DocumentMarkerInFlow` handling in flow sequence/mapping states.
-          - Added tiny helpers `handle_doc_marker_in_flow_seq` and
-      `handle_doc_marker_in_flow_map` used from the `FlowSeq` and `FlowMap`
-      state handlers instead of inlined error+recovery code.
-          - Behaviour is unchanged: document markers inside flow still record
-      `DocumentMarkerInFlow`, consume the marker, and re-push the current flow
-      state to continue parsing.
-          - Tests: `cargo test -p yaml-parser` ✅
-          - Clippy: `cargo clippy -p yaml-parser --all-targets` ✅
-        - **2026-03-09:** Phase E4 (additional-properties state) started: moved
-    `handle_additional_properties_value` logic into an explicit
-    `AdditionalPropertiesValue` state.
-          - Added `ParseState::AdditionalPropertiesValue { ctx: ValueContext,
-      outer_anchor, outer_tag }`.
-          - The `Anchor` / `Tag` arm in `process_value_after_properties` now defers
-      to this state instead of calling the helper directly.
-          - New `Emitter::process_additional_properties_value_state` is the
-      state-driven form of the old helper and owns multi-layer property and
-      complex-key behaviour.
-          - Behaviour verified via existing complex-key/property tests and full
-      suite.
-          - Tests: `cargo test -p yaml-parser` ✅
-          - Clippy: `cargo clippy -p yaml-parser --all-targets` ✅
+
+- **2026-03-09:** Phase E2 started: split `parse_value` into two phases driven
+  by states.
+  - Added `ParseState::ValueAfterProperties { ctx, anchor, tag,
+    initial_crossed_line, prop_crossed_line, property_indent }`.
+  - `ParseState::Value` now performs only whitespace skipping, invalid-indent
+    checks, and property collection, then pushes `ValueAfterProperties`.
+  - New `Emitter::process_value_after_properties` hosts the former second half
+    of `parse_value`, including bridging vs empty-value decisions and the main
+    token dispatch. Existing helpers such as
+    `maybe_emit_empty_scalar_for_non_bridging_properties` are now used from
+    this state handler.
+  - Semantics remain unchanged; behaviour is validated by the test suite.
+  - Tests: `cargo test -p yaml-parser` ✅
+  - Clippy: `cargo clippy -p yaml-parser --all-targets` ✅
+
+- **2026-03-09:** Phase E3 (alias part) started: moved alias value handling
+  into an explicit `AliasValue` state.
+  - Added `ParseState::AliasValue { ctx: ValueContext, name, span, anchor, tag,
+    crossed_line_after_properties }`.
+  - The alias match arm in `process_value_after_properties` now defers to this
+    state instead of calling a helper directly.
+  - New `Emitter::process_alias_value_state` implements the previous
+    `handle_alias_value` logic, driven by the state machine.
+  - Behaviour verified via the existing alias/anchor tests and full suite.
+  - Tests: `cargo test -p yaml-parser` ✅
+  - Clippy: `cargo clippy -p yaml-parser --all-targets` ✅
+
+- **2026-03-09:** Phase E3 (flow collection part) started: moved flow
+  collection value handling into an explicit `FlowCollectionValue` state.
+  - Added `ParseState::FlowCollectionValue { ctx: ValueContext, is_map, span,
+    anchor, tag }`.
+  - The `FlowSeqStart` / `FlowMapStart` arms in `process_value_after_properties`
+    now defer to this state instead of calling `handle_flow_*_start_value`
+    helpers.
+  - New `Emitter::process_flow_collection_value_state` implements the
+    previous flow complex-key logic (including `is_flow_*_complex_key`) and
+    regular flow value handling, driven by the state machine.
+  - Behaviour verified via the existing flow and complex-key tests and full
+    suite.
+  - Tests: `cargo test -p yaml-parser` ✅
+  - Clippy: `cargo clippy -p yaml-parser --all-targets` ✅
+
+- **2026-03-09:** Phase E4 (first step) started: centralized
+  `DocumentMarkerInFlow` handling in flow sequence/mapping states.
+  - Added tiny helpers `handle_doc_marker_in_flow_seq` and
+    `handle_doc_marker_in_flow_map` used from the `FlowSeq` and `FlowMap`
+    state handlers instead of inlined error+recovery code.
+  - Behaviour is unchanged: document markers inside flow still record
+    `DocumentMarkerInFlow`, consume the marker, and re-push the current flow
+    state to continue parsing.
+  - Tests: `cargo test -p yaml-parser` ✅
+  - Clippy: `cargo clippy -p yaml-parser --all-targets` ✅
+
+- **2026-03-09:** Phase E4 (additional-properties state) started: moved
+  `handle_additional_properties_value` logic into an explicit
+  `AdditionalPropertiesValue` state.
+  - Added `ParseState::AdditionalPropertiesValue { ctx: ValueContext,
+    outer_anchor, outer_tag }`.
+  - The `Anchor` / `Tag` arm in `process_value_after_properties` now defers
+    to this state instead of calling the helper directly.
+  - New `Emitter::process_additional_properties_value_state` is the
+    state-driven form of the old helper and owns multi-layer property and
+    complex-key behaviour.
+  - Behaviour verified via existing complex-key/property tests and full
+    suite.
+  - Tests: `cargo test -p yaml-parser` ✅
+  - Clippy: `cargo clippy -p yaml-parser --all-targets` ✅
+
+- **2026-03-10:** Phase E4 (dedent-empty helper) started: extracted the
+  dedent-based empty-value decision from `process_value_after_properties`
+  into `maybe_emit_empty_due_to_dedent`.
+  - The new helper encapsulates the rules for when a dedent after crossing a
+    line means "this value is empty" versus when a block collection indicator
+    starts a nested value instead.
+  - Behaviour is unchanged; the helper is called from
+    `process_value_after_properties` after bridging decisions.
+  - Tests: `cargo test -p yaml-parser` ✅
+  - Clippy: `cargo clippy -p yaml-parser --all-targets` ✅
+
+- **2026-03-10:** Phase E4 (small property helpers) continued: introduced
+  `properties_belong_to_null_key` and `collect_additional_inner_properties`.
+  - `properties_belong_to_null_key` centralises the `props_for_key` logic
+    around implicit null keys (e.g. `!!null : a` and `-\n  !!null : a`).
+  - `collect_additional_inner_properties` owns the "third layer" property
+    merging for `AdditionalPropertiesValue` so the state handler reads more
+    declaratively.
+  - Behaviour validated by the full test suite.
+  - Tests: `cargo test -p yaml-parser` ✅
+  - Clippy: `cargo clippy -p yaml-parser --all-targets` ✅
 
 ### Phase 4: Parser Refactoring - Skipped ✅
 

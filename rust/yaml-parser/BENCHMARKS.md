@@ -6,7 +6,7 @@
 
 # Benchmark Report
 
-**Date:** 2026-03-04
+**Date:** 2026-03-10
 **Parser Version:** 0.0.2
 
 This document presents performance benchmarks comparing `yaml_parser` against
@@ -42,29 +42,29 @@ cargo bench -- scalar_types
 
 | Benchmark | yaml_parser | saphyr_marked | Comparison |
 | --------- | ----------- | ------------- | ---------- |
-| large_mapping | **26.8** | 20.0 | **+34% faster** ✓ |
-| nested_mapping | **23.9** | 16.0 | **+49% faster** ✓ |
-| large_sequence | **27.6** | 24.3 | **+14% faster** ✓ |
-| block_scalars | 70.0 | 69.7 | ~parity ✓ |
-| flow_collections | **57.5** | 15.6 | **+269% faster** ✓ |
-| anchors_aliases | **50.4** | 12.9 | **+290% faster** ✓ |
-| tags | **36.3** | 17.7 | **+105% faster** ✓ |
+| large_mapping | **27.4** | 21.4 | **+28% faster** ✓ |
+| nested_mapping | **22.0** | 16.9 | **+30% faster** ✓ |
+| large_sequence | 26.4 | 26.4 | ~parity ✓ |
+| block_scalars | **60.2** | 54.7 | **+10% faster** ✓ |
+| flow_collections | **30.1** | 16.3 | **+84% faster** ✓ |
+| anchors_aliases | **32.0** | 14.1 | **+127% faster** ✓ |
+| tags | **31.7** | 21.8 | **+45% faster** ✓ |
 
 ### Latency (µs, lower is better)
 
 | Benchmark | yaml_parser | saphyr_marked | Comparison |
 | --------- | ----------- | ------------- | ---------- |
-| small | **1.02** | 1.63 | **37% faster** ✓ |
-| medium | **45.7** | 75.8 | **40% faster** ✓ |
-| large | **152** | 182 | **16% faster** ✓ |
+| small | **1.43** | 1.56 | **8% faster** ✓ |
+| medium | **55.8** | 70.2 | **20% faster** ✓ |
+| large | **144** | 167 | **14% faster** ✓ |
 
 ### Scalar Types (µs, lower is better)
 
 | Benchmark | yaml_parser | saphyr_marked | Comparison |
 | --------- | ----------- | ------------- | ---------- |
-| plain | **2.46** | 3.27 | **25% faster** ✓ |
-| double_quoted | **2.91** | 3.67 | **21% faster** ✓ |
-| block_scalars | 21.5 | 21.6 | ~parity ✓ |
+| plain | 3.65 | **3.48** | saphyr ~5% faster ✓ |
+| double_quoted | **3.75** | 4.50 | **17% faster** ✓ |
+| block_scalars | 27.2 | **22.0** | saphyr ~23% faster ✓ |
 
 ## Test Data
 

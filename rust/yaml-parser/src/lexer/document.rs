@@ -1088,22 +1088,14 @@ impl<'input> Lexer<'input> {
         false
     }
 
-    /// Handle a newline within a quoted string.
+    /// Shared tail logic for handling a newline in quoted strings.
     ///
-    /// Emits the current content as a `StringContent` token (if non-empty),
-    /// consumes the newline and indentation, and emits a `LineStart` token.
-    /// Returns the new `content_start` position.
-    fn handle_quoted_newline(&mut self, content: &mut String, content_start: usize) -> usize {
-        // Emit current content before newline
-        if !content.is_empty() {
-            let content_span = Span::from_usize_range(content_start..self.byte_pos);
-            // Quoted strings always use Cow::Owned (escape processing)
-            self.pending_tokens.push_back(RichToken::new(
-                Token::StringContent(Cow::Owned(std::mem::take(content))),
-                content_span,
-            ));
-        }
-
+    /// Assumes any per-style content handling (such as trimming) has already
+    /// been applied and the current `content` flushed if needed.
+    ///
+    /// Consumes the newline and indentation, emits a `LineStart` token, and
+    /// returns the new `content_start` position.
+    fn finish_quoted_newline(&mut self) -> usize {
         // Consume newline
         let newline_start = self.byte_pos;
         let ch = self.advance().unwrap();
@@ -1139,6 +1131,26 @@ impl<'input> Lexer<'input> {
         self.byte_pos
     }
 
+    /// Handle a newline within a quoted string.
+    ///
+    /// Emits the current content as a `StringContent` token (if non-empty),
+    /// then delegates to `finish_quoted_newline` to consume the newline and
+    /// emit the corresponding `LineStart` token. Returns the new
+    /// `content_start` position.
+    fn handle_quoted_newline(&mut self, content: &mut String, content_start: usize) -> usize {
+        // Emit current content before newline
+        if !content.is_empty() {
+            let content_span = Span::from_usize_range(content_start..self.byte_pos);
+            // Quoted strings always use Cow::Owned (escape processing)
+            self.pending_tokens.push_back(RichToken::new(
+                Token::StringContent(Cow::Owned(std::mem::take(content))),
+                content_span,
+            ));
+        }
+
+        self.finish_quoted_newline()
+    }
+
     /// Handle newline in double-quoted strings, trimming trailing whitespace while preserving escaped content.
     ///
     /// `protected_len` is the content length that should not be trimmed (includes escaped characters).
@@ -1171,37 +1183,7 @@ impl<'input> Lexer<'input> {
             ));
         }
 
-        // Consume newline
-        let newline_start = self.byte_pos;
-        let ch = self.advance().unwrap();
-        if ch == '\r' && self.peek() == Some('\n') {
-            self.advance();
-        }
-
-        // Count indentation (spaces only per YAML spec s-indent)
-        let mut indent = 0;
-        while self.peek() == Some(' ') {
-            self.advance();
-            indent += 1;
-        }
-
-        // In flow folding, skip the entire "s-separate-in-line" prefix.
-        // This is "s-white+" which includes BOTH spaces and tabs (interleaved).
-        while matches!(self.peek(), Some(' ' | '\t')) {
-            self.advance();
-        }
-
-        // Check for forbidden document markers at column 0 (c-forbidden [206])
-        if indent == 0 {
-            self.check_forbidden_marker_in_quoted();
-        }
-
-        // Emit LineStart token
-        let line_span = Span::from_usize_range(newline_start..self.byte_pos);
-        self.pending_tokens
-            .push_back(RichToken::new(Token::LineStart(indent), line_span));
-
-        self.byte_pos
+        self.finish_quoted_newline()
     }
 
     /// Emit final string tokens after the main loop.

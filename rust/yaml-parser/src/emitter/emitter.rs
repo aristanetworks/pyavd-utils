@@ -60,6 +60,17 @@ type MaybeEmptyScalarDecision<'input> = (
     Option<(Cow<'input, str>, Span)>,
 );
 
+/// Line classification used when folding block scalars.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum LineType {
+    /// Regular content line
+    Normal,
+    /// No content on this line
+    Empty,
+    /// Line with extra indentation (preserve)
+    MoreIndent,
+}
+
 /// A YAML event emitter using an explicit state machine.
 ///
 /// Processes tokens and produces YAML events via the `Iterator` interface.
@@ -1258,6 +1269,200 @@ impl<'input> Emitter<'_, 'input> {
         (None, anchor, tag)
     }
 
+    /// Check if a dedent after crossing a line boundary indicates an empty
+    /// value (the dedented content belongs to a parent context).
+    ///
+    /// In block context, if we're at an indent < `ctx.min_indent` after crossing
+    /// a line, the value is empty. For example:
+    ///
+    /// ```yaml
+    /// key:
+    ///   value
+    /// ```
+    ///
+    /// has `min_indent = 1` for the value. But in:
+    ///
+    /// ```yaml
+    /// key:
+    /// next:
+    /// ```
+    ///
+    /// `next:` is at indent 0 < 1, so `key` has an empty value.
+    ///
+    /// EXCEPTION: Block collection indicators (-, ?, :) can appear at the key's
+    /// indent level to start a collection as the value. E.g.:
+    ///
+    /// ```yaml
+    /// key:
+    /// - item
+    /// ```
+    ///
+    /// Here `-` is at indent 0, same as `key`, but it's the value (a sequence).
+    ///
+    /// BUT NOT for sequence entries: a `-` at the sequence's indent is a
+    /// sibling entry, not a nested value. E.g.:
+    ///
+    /// ```yaml
+    /// - # Empty
+    /// - value
+    /// ```
+    ///
+    /// The second `-` is a sibling, so the first entry's value is empty.
+    fn maybe_emit_empty_due_to_dedent(
+        &mut self,
+        ctx: ValueContext,
+        crossed_line_after_properties: bool,
+        anchor: Option<&(Cow<'input, str>, Span)>,
+        tag: Option<&(Cow<'input, str>, Span)>,
+    ) -> Option<Event<'input>> {
+        let min_indent = ctx.min_indent;
+
+        // Only dedent-based emptiness if we crossed a line.
+        if !crossed_line_after_properties {
+            return None;
+        }
+
+        // If we haven't actually dedented below the minimum indent, there is no
+        // empty-value-to-parent decision to make. Early-return before any
+        // lookahead to keep the common non-dedent paths cheap (especially for
+        // block scalars and multi-line values that remain at the same indent).
+        if self.current_indent >= min_indent {
+            return None;
+        }
+
+        let in_sequence_entry = self.in_sequence_entry_context();
+
+        // Look past Dedent/Indent tokens to find the actual content token.
+        let mut lookahead_for_indicator = 0;
+        while let Some((tok, _)) = self.peek_nth(lookahead_for_indicator) {
+            if matches!(tok, Token::Dedent | Token::Indent(_)) {
+                lookahead_for_indicator += 1;
+            } else {
+                break;
+            }
+        }
+
+        let at_block_indicator = !in_sequence_entry
+            && self
+                .peek_nth(lookahead_for_indicator)
+                .is_some_and(|(tok, _)| {
+                    matches!(
+                        tok,
+                        Token::BlockSeqIndicator | Token::MappingKey | Token::Colon
+                    )
+                });
+
+        if self.current_indent < min_indent && !at_block_indicator {
+            return Some(Event::Scalar {
+                style: ScalarStyle::Plain,
+                value: Cow::Borrowed(""),
+                anchor: anchor.cloned(),
+                tag: tag.cloned(),
+                span: self.current_span(),
+            });
+        }
+
+        None
+    }
+
+    /// Merge additional "inner" properties that may appear after a line
+    /// boundary when processing `AdditionalPropertiesValue`.
+    ///
+    /// This handles patterns like:
+    ///
+    /// ```yaml
+    /// - &outer
+    ///   !!null
+    ///   &inner !!tag
+    ///   key: value
+    /// ```
+    ///
+    /// where `inner` properties can be defined on a later line and should
+    /// override earlier inner properties.
+    #[allow(
+        clippy::type_complexity,
+        reason = "Small internal helper returning two property option tuples"
+    )]
+    fn collect_additional_inner_properties(
+        &mut self,
+        mut inner_anchor: Option<(Cow<'input, str>, Span)>,
+        mut inner_tag: Option<(Cow<'input, str>, Span)>,
+    ) -> (
+        Option<(Cow<'input, str>, Span)>,
+        Option<(Cow<'input, str>, Span)>,
+    ) {
+        // Check for line boundary followed by more content (third layer of
+        // properties).
+        if matches!(self.peek(), Some((Token::LineStart(_), _))) {
+            // Peek ahead to see what's after the line boundary.
+            let mut peek_offset = 1;
+            // Skip past Indent/Dedent tokens.
+            while let Some((tok, _)) = self.peek_nth(peek_offset) {
+                if matches!(tok, Token::Indent(_) | Token::Dedent) {
+                    peek_offset += 1;
+                } else {
+                    break;
+                }
+            }
+
+            // Check if next content is more properties.
+            if let Some((tok, _)) = self.peek_nth(peek_offset) {
+                if matches!(tok, Token::Anchor(_) | Token::Tag(_)) {
+                    // More properties on next line - merge with inner.
+                    self.skip_ws_and_newlines();
+                    let (new_anchor, new_tag, _) = self.collect_properties(None, None);
+                    // Prefer newer properties (or keep inner if new is None).
+                    inner_anchor = new_anchor.or(inner_anchor);
+                    inner_tag = new_tag.or(inner_tag);
+                    self.skip_ws();
+
+                    // If we see LineStart again, skip it.
+                    if matches!(self.peek(), Some((Token::LineStart(_), _))) {
+                        self.skip_ws_and_newlines();
+                    }
+                } else {
+                    // Not more properties - skip to see actual content.
+                    self.skip_ws_and_newlines();
+                }
+            }
+        }
+
+        (inner_anchor, inner_tag)
+    }
+
+    /// Decide whether properties collected before a colon in a null-key mapping
+    /// (`: value`) belong to the implicit null key or the mapping itself.
+    ///
+    /// This encapsulates the `props_for_key` logic used for cases like:
+    ///
+    /// - `-\n  !!null : a` \\u2192 properties belong to the key
+    /// - `!!null : a` (at root) \\u2192 properties belong to the key
+    // (second properties_belong_to_null_key definition removed during refactor)
+
+    /// Decide whether properties collected before a colon in a null-key mapping
+    /// (`: value`) belong to the implicit null key or the mapping itself.
+    ///
+    /// This encapsulates the `props_for_key` logic used for cases like:
+    ///
+    /// - `-
+    ///      !!null : a` → properties belong to the key
+    /// - `!!null : a` (at root) → properties belong to the key
+    #[allow(
+        clippy::doc_lazy_continuation,
+        clippy::empty_line_after_doc_comments,
+        reason = "Doc layout here is not critical; helper is internal and documented inline"
+    )]
+    fn properties_belong_to_null_key(
+        &self,
+        prop_crossed_line: bool,
+        anchor: Option<&(Cow<'input, str>, Span)>,
+        tag: Option<&(Cow<'input, str>, Span)>,
+    ) -> bool {
+        !prop_crossed_line
+            && (anchor.is_some() || tag.is_some())
+            && matches!(self.peek(), Some((Token::Colon, _)))
+    }
+
     /// Common helper for creating a block mapping from a scalar key that has
     /// already been parsed.
     ///
@@ -1526,44 +1731,12 @@ impl<'input> Emitter<'_, 'input> {
         let is_key = matches!(ctx.kind, ValueKind::Key);
 
         // Collect the NEW properties at current position (don't pass outer ones
-        // since collect_properties would overwrite them).
-        let (mut inner_anchor, mut inner_tag, _crossed) = self.collect_properties(None, None);
+        // since collect_properties would overwrite them), then merge any
+        // additional properties that may appear after a line break.
+        let (inner_anchor, inner_tag, _crossed) = self.collect_properties(None, None);
         self.skip_ws();
-
-        // Check for line boundary followed by more content (third layer of props).
-        if matches!(self.peek(), Some((Token::LineStart(_), _))) {
-            // Peek ahead to see what's after the line boundary.
-            let mut peek_offset = 1;
-            // Skip past Indent/Dedent tokens.
-            while let Some((tok, _)) = self.peek_nth(peek_offset) {
-                if matches!(tok, Token::Indent(_) | Token::Dedent) {
-                    peek_offset += 1;
-                } else {
-                    break;
-                }
-            }
-
-            // Check if next content is more properties.
-            if let Some((tok, _)) = self.peek_nth(peek_offset) {
-                if matches!(tok, Token::Anchor(_) | Token::Tag(_)) {
-                    // More properties on next line - merge with inner.
-                    self.skip_ws_and_newlines();
-                    let (new_anchor, new_tag, _) = self.collect_properties(None, None);
-                    // Prefer newer properties (or keep inner if new is None).
-                    inner_anchor = new_anchor.or(inner_anchor);
-                    inner_tag = new_tag.or(inner_tag);
-                    self.skip_ws();
-
-                    // If we see LineStart again, skip it.
-                    if matches!(self.peek(), Some((Token::LineStart(_), _))) {
-                        self.skip_ws_and_newlines();
-                    }
-                } else {
-                    // Not more properties - skip to see actual content.
-                    self.skip_ws_and_newlines();
-                }
-            }
-        }
+        let (inner_anchor, inner_tag) =
+            self.collect_additional_inner_properties(inner_anchor, inner_tag);
 
         // Check if this is a complex key pattern (flow seq/map followed by :).
         // If we have separate outer and inner properties, and the value is a
@@ -1878,75 +2051,42 @@ impl<'input> Emitter<'_, 'input> {
 
         // Decide whether collected properties at a dedented indent should stay attached
         // to this value or result in an empty scalar before a parent context.
-        let (maybe_event, new_anchor, new_tag) = self
-            .maybe_emit_empty_scalar_for_non_bridging_properties(
-                min_indent,
-                anchor,
-                tag,
-                initial_crossed_line,
-                property_indent,
-            );
-        anchor = new_anchor;
-        tag = new_tag;
-        if let Some(event) = maybe_event {
-            return Some(event);
+        // This is only relevant when we actually have properties, which is encoded
+        // by `property_indent` being `Some(..)`. Skipping the helper entirely for
+        // the common "no properties" case avoids extra lookahead work on the hot
+        // plain-scalar path.
+        if property_indent.is_some() {
+            let (maybe_event, new_anchor, new_tag) = self
+                .maybe_emit_empty_scalar_for_non_bridging_properties(
+                    min_indent,
+                    anchor,
+                    tag,
+                    initial_crossed_line,
+                    property_indent,
+                );
+            anchor = new_anchor;
+            tag = new_tag;
+            if let Some(event) = maybe_event {
+                return Some(event);
+            }
         }
 
         // Skip any more whitespace/newlines after properties and record if we
         // cross additional line boundaries.
         crossed_line_after_properties |= self.skip_ws_and_newlines_returns_crossed_line();
 
-        // Check if we've crossed a line boundary and the content is dedented.
-        // In block context, if we're at an indent < min_indent after crossing a line,
-        // the value is empty (the dedented content belongs to a parent context).
-        // E.g., `key:\n  value` has min_indent=1 for value, but `key:\nnext:` means
-        // `next:` is at indent 0 < 1, so `key` has an empty value.
-        //
-        // EXCEPTION: Block collection indicators (-, ?, :) can appear at the key's
-        // indent level to start a collection as the value. E.g.:
-        // ```yaml
-        // key:
-        // - item
-        // ```
-        // Here `-` is at indent 0, same as `key`, but it's the value (a sequence).
-        //
-        // BUT NOT for sequence entries: a `-` at the sequence's indent is a SIBLING
-        // entry, not a nested value. E.g.:
-        // ```yaml
-        // - # Empty
-        // - value
-        // ```
-        // The second `-` is a sibling, so the first entry's value is empty.
-        let in_sequence_entry = self.in_sequence_entry_context();
-        // Look past Dedent tokens to find the actual content token.
-        // This handles bridging cases where properties on a higher-indented line
-        // should attach to a block collection on a lower-indented line.
-        let mut lookahead_for_indicator = 0;
-        while let Some((tok, _)) = self.peek_nth(lookahead_for_indicator) {
-            if matches!(tok, Token::Dedent | Token::Indent(_)) {
-                lookahead_for_indicator += 1;
-            } else {
-                break;
+        // Dedent-based empty value check. This is only meaningful when we've
+        // actually crossed a line boundary; avoid calling the helper at all on
+        // the very common single-line value paths.
+        if crossed_line_after_properties {
+            if let Some(event) = self.maybe_emit_empty_due_to_dedent(
+                ctx,
+                crossed_line_after_properties,
+                anchor.as_ref(),
+                tag.as_ref(),
+            ) {
+                return Some(event);
             }
-        }
-        let at_block_indicator = !in_sequence_entry
-            && self
-                .peek_nth(lookahead_for_indicator)
-                .is_some_and(|(tok, _)| {
-                    matches!(
-                        tok,
-                        Token::BlockSeqIndicator | Token::MappingKey | Token::Colon
-                    )
-                });
-        if crossed_line_after_properties && self.current_indent < min_indent && !at_block_indicator
-        {
-            return Some(Event::Scalar {
-                style: ScalarStyle::Plain,
-                value: Cow::Borrowed(""),
-                anchor,
-                tag,
-                span: self.current_span(),
-            });
         }
 
         // Dispatch based on current token
@@ -2126,9 +2266,11 @@ impl<'input> Emitter<'_, 'input> {
                 //   → tag belongs to the key (it's on the same line as the colon)
                 // - `!!null : a` (at root) → initial_crossed_line=false, prop_crossed_line=false
                 //   → tag belongs to the key
-                let props_for_key = !prop_crossed_line
-                    && (anchor.is_some() || tag.is_some())
-                    && matches!(self.peek(), Some((Token::Colon, _)));
+                let props_for_key = self.properties_belong_to_null_key(
+                    prop_crossed_line,
+                    anchor.as_ref(),
+                    tag.as_ref(),
+                );
 
                 if props_for_key {
                     // Properties belong to the implicit null key
@@ -5011,13 +5153,20 @@ impl<'input> Emitter<'_, 'input> {
                     // If we need to trim, do it BEFORE applying pending newlines
                     // This trims trailing spaces from the previous line
                     if needs_trim {
-                        // Join all parts so far and trim trailing spaces
-                        let mut temp: String =
-                            parts.iter().map(std::convert::AsRef::as_ref).collect();
-                        let trimmed_len = temp.trim_end_matches(' ').len();
-                        temp.truncate(trimmed_len);
-                        parts.clear();
-                        parts.push(Cow::Owned(temp));
+                        if let Some(last) = parts.last_mut() {
+                            match last {
+                                Cow::Borrowed(text) => {
+                                    let trimmed = text.trim_end_matches(' ');
+                                    if trimmed.len() != text.len() {
+                                        *last = Cow::Borrowed(trimmed);
+                                    }
+                                }
+                                Cow::Owned(text) => {
+                                    let new_len = text.trim_end_matches(' ').len();
+                                    text.truncate(new_len);
+                                }
+                            }
+                        }
                         needs_trim = false;
                     }
 
@@ -5066,13 +5215,20 @@ impl<'input> Emitter<'_, 'input> {
                     // If we need to trim, do it BEFORE applying pending newlines at end
                     // This handles trailing spaces on the last line before StringEnd
                     if needs_trim {
-                        // Join all parts so far and trim trailing spaces
-                        let mut temp: String =
-                            parts.iter().map(std::convert::AsRef::as_ref).collect();
-                        let trimmed_len = temp.trim_end_matches(' ').len();
-                        temp.truncate(trimmed_len);
-                        parts.clear();
-                        parts.push(Cow::Owned(temp));
+                        if let Some(last) = parts.last_mut() {
+                            match last {
+                                Cow::Borrowed(text) => {
+                                    let trimmed = text.trim_end_matches(' ');
+                                    if trimmed.len() != text.len() {
+                                        *last = Cow::Borrowed(trimmed);
+                                    }
+                                }
+                                Cow::Owned(text) => {
+                                    let new_len = text.trim_end_matches(' ').len();
+                                    text.truncate(new_len);
+                                }
+                            }
+                        }
                         // needs_trim is not read after this point, so no need to set to false
                     }
 
@@ -5135,19 +5291,17 @@ impl<'input> Emitter<'_, 'input> {
 
         let is_literal = matches!(self.peek(), Some((Token::LiteralBlockHeader(_), _)));
         self.advance(); // consume header
-
-        // Track lines with their types
-        #[derive(Clone, Copy, PartialEq, Debug)]
-        #[allow(clippy::items_after_statements, reason = "local helper enum")]
-        enum LineType {
-            Normal,     // Regular content line
-            Empty,      // No content on this line
-            MoreIndent, // Line with extra indentation (preserve)
-        }
-
-        // Use Vec of parts to avoid allocating until we need to join
-        let mut lines: Vec<(Vec<Cow<'input, str>>, LineType)> = Vec::new();
         let mut end_span = start_span;
+
+        // Streaming builder for the block scalar value. For literal style we
+        // append one newline per logical line. For folded style we track
+        // previous and last-content line types to implement YAML's folding
+        // rules (mirroring `join_folded_lines`).
+        let mut value = String::new();
+        let mut prev_type = LineType::Empty;
+        let mut last_content_type: Option<LineType> = None;
+        let mut scalar_has_any_part = false; // any non-empty line (including whitespace-only)
+        let mut had_any_line = false; // any logical line at all
 
         // Per YAML spec 8.1.1.1: content_indent = block_scalar_indent + explicit_indicator
         // The block_scalar_indent is min_indent - 1 (the parent block's indentation)
@@ -5281,8 +5435,15 @@ impl<'input> Emitter<'_, 'input> {
                 break;
             }
 
-            // Collect content on this line as parts (zero-copy where possible)
-            let mut line_parts: Vec<Cow<'input, str>> = Vec::new();
+            had_any_line = true;
+
+            // Collect content on this line as parts (zero-copy where possible).
+            // Use a small pre-allocation since typical lines have a handful of
+            // segments (plain + some whitespace/punctuation).
+            let mut line_parts: Vec<Cow<'input, str>> = Vec::with_capacity(4);
+            // Track whether this line has any non-whitespace content so we can
+            // classify purely-whitespace lines without re-scanning all parts.
+            let mut has_non_whitespace = false;
             let line_type;
             let mut line_end_span = line_start_span;
 
@@ -5297,6 +5458,9 @@ impl<'input> Emitter<'_, 'input> {
                 match tok {
                     Token::Plain(text) => {
                         line_parts.push(text.clone());
+                        // `Plain` tokens always contain some non-whitespace content;
+                        // the lexer emits dedicated whitespace tokens.
+                        has_non_whitespace = true;
                         line_end_span = span;
                         self.advance();
                     }
@@ -5323,6 +5487,7 @@ impl<'input> Emitter<'_, 'input> {
                         // The lexer incorrectly tokenizes it as a comment, so we need to
                         // reconstruct the original text including the #
                         line_parts.push(Cow::Owned(format!("#{text}")));
+                        has_non_whitespace = true;
                         line_end_span = span;
                         self.advance();
                     }
@@ -5330,33 +5495,39 @@ impl<'input> Emitter<'_, 'input> {
                     // The lexer doesn't know we're in a block scalar context.
                     Token::FlowSeqStart => {
                         line_parts.push(Cow::Borrowed("["));
+                        has_non_whitespace = true;
                         line_end_span = span;
                         self.advance();
                     }
                     Token::FlowSeqEnd => {
                         line_parts.push(Cow::Borrowed("]"));
+                        has_non_whitespace = true;
                         line_end_span = span;
                         self.advance();
                     }
                     Token::FlowMapStart => {
                         line_parts.push(Cow::Borrowed("{"));
+                        has_non_whitespace = true;
                         line_end_span = span;
                         self.advance();
                     }
                     Token::FlowMapEnd => {
                         line_parts.push(Cow::Borrowed("}"));
+                        has_non_whitespace = true;
                         line_end_span = span;
                         self.advance();
                     }
                     Token::Colon => {
                         // Colon is literal content in block scalars
                         line_parts.push(Cow::Borrowed(":"));
+                        has_non_whitespace = true;
                         line_end_span = span;
                         self.advance();
                     }
                     Token::Comma => {
                         // Comma is literal content in block scalars
                         line_parts.push(Cow::Borrowed(","));
+                        has_non_whitespace = true;
                         line_end_span = span;
                         self.advance();
                     }
@@ -5377,22 +5548,19 @@ impl<'input> Emitter<'_, 'input> {
                         // There's a gap - check if it's all whitespace
                         let trailing = &self.input[end_pos..next_start];
                         if trailing.chars().all(|ch| ch == ' ' || ch == '\t') {
+                            // This is guaranteed to be whitespace-only
                             line_parts.push(Cow::Borrowed(trailing));
                         }
                     }
                 }
             }
 
-            // Determine line type - need to check if all parts are whitespace
-            let is_all_whitespace = line_parts
-                .iter()
-                .all(|part| part.chars().all(|ch| ch == ' ' || ch == '\t'));
-
-            if line_parts.is_empty() || is_all_whitespace {
+            // Classify line type using the tracked non-whitespace flag.
+            if line_parts.is_empty() || !has_non_whitespace {
                 if line_parts.is_empty() {
                     line_type = LineType::Empty;
                 } else {
-                    // More-indented whitespace line
+                    // Whitespace-only line: treat as more-indented whitespace.
                     line_type = LineType::MoreIndent;
                 }
             } else if extra_indent > 0 {
@@ -5401,51 +5569,95 @@ impl<'input> Emitter<'_, 'input> {
                 line_type = LineType::Normal;
             }
 
-            // Only update end_span if this line had actual content
-            // This matches the batch parser behavior where empty lines don't extend the span
+            // Only update end_span if this line had actual content (including
+            // whitespace-only content). This matches the batch parser behavior
+            // where structurally empty lines don't extend the span.
             if !line_parts.is_empty() {
                 end_span = line_end_span;
+                scalar_has_any_part = true;
             }
 
-            lines.push((line_parts, line_type));
+            // Stream this line directly into the final value instead of
+            // accumulating all lines first.
+            if is_literal {
+                // Literal: preserve all newlines. Each logical line contributes
+                // exactly one newline, regardless of whether it has content.
+                for part in &line_parts {
+                    value.push_str(part);
+                }
+                value.push('\n');
+            } else {
+                // Folded: mirror `join_folded_lines` but operate per-line.
+                match line_type {
+                    LineType::Empty => {
+                        // Empty line contributes newline
+                        if prev_type == LineType::MoreIndent {
+                            value.push('\n'); // Line break after more-indented
+                        }
+                        value.push('\n');
+                    }
+                    LineType::MoreIndent => {
+                        // More-indented lines preserve the preceding newline, but we
+                        // need to be careful about Empty→MoreIndent transitions.
+                        if !value.is_empty() {
+                            match prev_type {
+                                LineType::Normal | LineType::MoreIndent => {
+                                    // Line break before more-indented is NOT folded
+                                    value.push('\n');
+                                }
+                                LineType::Empty => {
+                                    // Empty already added its newline. We only add
+                                    // another if we came from Normal context through
+                                    // Empty. MoreIndent→Empty→MoreIndent: no extra
+                                    // newline needed. Normal→Empty→MoreIndent: need
+                                    // extra newline.
+                                    if last_content_type == Some(LineType::Normal) {
+                                        value.push('\n');
+                                    }
+                                }
+                            }
+                        }
+                        for part in &line_parts {
+                            value.push_str(part);
+                        }
+                        last_content_type = Some(LineType::MoreIndent);
+                    }
+                    LineType::Normal => {
+                        if !value.is_empty() {
+                            match prev_type {
+                                LineType::Normal => {
+                                    value.push(' '); // Fold
+                                }
+                                LineType::MoreIndent => {
+                                    value.push('\n'); // Preserve
+                                }
+                                LineType::Empty => {
+                                    // Newlines already added
+                                }
+                            }
+                        }
+                        for part in &line_parts {
+                            value.push_str(part);
+                        }
+                        last_content_type = Some(LineType::Normal);
+                    }
+                }
+                prev_type = line_type;
+            }
+        }
+
+        // For folded scalars, mirror the final newline behaviour of
+        // `join_folded_lines`: add a trailing newline when there was at
+        // least one line and the last line was not Empty.
+        if !is_literal && had_any_line && prev_type != LineType::Empty {
+            value.push('\n');
         }
 
         // For empty block scalars (no actual content), use just the header span
         // Otherwise, span from header start to end of last content
-        // A scalar is empty if lines is empty OR all lines are empty/whitespace-only
-        let is_empty_scalar = lines.is_empty() || lines.iter().all(|(line, _)| line.is_empty());
-
-        // Build final content based on style
-        // Join parts into strings only when necessary
-        let value = if is_literal {
-            // Literal: preserve all newlines
-            let mut result = String::new();
-            for (i, (line_parts, _)) in lines.iter().enumerate() {
-                for part in line_parts {
-                    result.push_str(part);
-                }
-                if i + 1 < lines.len() {
-                    result.push('\n');
-                }
-            }
-            if !lines.is_empty() {
-                result.push('\n');
-            }
-            result
-        } else {
-            // Folded: fold normal lines, preserve empty/more-indented
-            // Convert parts to strings
-            let string_lines: Vec<String> = lines
-                .into_iter()
-                .map(|(parts, _)| {
-                    parts
-                        .iter()
-                        .map(std::convert::AsRef::as_ref)
-                        .collect::<String>()
-                })
-                .collect();
-            Self::join_folded_lines(&string_lines)
-        };
+        // A scalar is empty if no line contributed any parts at all (even
+        // whitespace-only lines).
+        let is_empty_scalar = !scalar_has_any_part;
 
         // Apply chomping
         let value = Self::apply_chomping(&value, &header);
@@ -5471,139 +5683,49 @@ impl<'input> Emitter<'_, 'input> {
         })
     }
 
-    /// Join lines for folded block scalar with proper folding rules.
-    fn join_folded_lines(lines: &[String]) -> String {
-        #[derive(Clone, Copy, PartialEq)]
-        enum LineType {
-            Normal,
-            Empty,
-            MoreIndent,
-        }
-
-        // YAML 1.2 folding rules:
-        // - Normal → Normal: fold (space)
-        // - Empty: preserve newline
-        // - MoreIndent: preserve newlines before/after
-
-        if lines.is_empty() {
-            return String::new();
-        }
-
-        let mut result = String::new();
-
-        // Classify each line by type
-        let typed_lines: Vec<(&str, LineType)> = lines
-            .iter()
-            .map(|line| {
-                let line_str = line.as_str();
-                let line_type = if line_str.is_empty() {
-                    LineType::Empty
-                } else if line_str.starts_with(' ') || line_str.starts_with('\t') {
-                    LineType::MoreIndent
-                } else {
-                    LineType::Normal
-                };
-                (line_str, line_type)
-            })
-            .collect();
-
-        let mut prev_type = LineType::Empty; // Start as if preceded by empty
-        // Track the last non-empty line type to handle Empty→MoreIndent correctly.
-        // When transitioning Empty→MoreIndent, we only add an extra newline if we
-        // came from a Normal context (Normal→Empty→MoreIndent), not from MoreIndent
-        // context (MoreIndent→Empty→MoreIndent).
-        let mut last_content_type: Option<LineType> = None;
-
-        for (content, line_type) in typed_lines {
-            match line_type {
-                LineType::Empty => {
-                    // Empty line contributes newline
-                    if prev_type == LineType::MoreIndent {
-                        result.push('\n'); // Line break after more-indented
-                    }
-                    result.push('\n');
-                }
-                LineType::MoreIndent => {
-                    // More-indented lines preserve the preceding newline, but we need
-                    // to be careful about Empty→MoreIndent transitions
-                    if !result.is_empty() {
-                        match prev_type {
-                            LineType::Normal | LineType::MoreIndent => {
-                                // Line break before more-indented is NOT folded
-                                result.push('\n');
-                            }
-                            LineType::Empty => {
-                                // Empty already added its newline. We only add another
-                                // if we came from Normal context through Empty.
-                                // MoreIndent→Empty→MoreIndent: no extra newline needed
-                                // Normal→Empty→MoreIndent: need extra newline
-                                if last_content_type == Some(LineType::Normal) {
-                                    result.push('\n');
-                                }
-                            }
-                        }
-                    }
-                    result.push_str(content);
-                    last_content_type = Some(LineType::MoreIndent);
-                }
-                LineType::Normal => {
-                    if !result.is_empty() {
-                        match prev_type {
-                            LineType::Normal => {
-                                result.push(' '); // Fold
-                            }
-                            LineType::MoreIndent => {
-                                result.push('\n'); // Preserve
-                            }
-                            LineType::Empty => {
-                                // Newlines already added
-                            }
-                        }
-                    }
-                    result.push_str(content);
-                    last_content_type = Some(LineType::Normal);
-                }
-            }
-            prev_type = line_type;
-        }
-
-        // Add final newline
-        if !lines.is_empty() && prev_type != LineType::Empty {
-            result.push('\n');
-        }
-
-        result
-    }
+    // `join_folded_lines` logic is now inlined into `parse_block_scalar` for
+    // a streaming implementation; helper removed.
 
     /// Apply chomping indicator to block scalar value.
     /// Matches the batch parser's logic in scalar.rs `apply_chomping()`.
     fn apply_chomping(value: &str, header: &crate::lexer::BlockScalarHeader) -> String {
         use crate::lexer::Chomping;
 
-        let mut result = String::from(value);
-
         match header.chomping {
             Chomping::Strip => {
-                // Remove all trailing newlines
-                let trimmed_len = result.trim_end_matches('\n').len();
-                result.truncate(trimmed_len);
+                // Strip: remove all trailing newlines.
+                // Work on the borrowed input first, then allocate exactly once.
+                let trimmed = value.trim_end_matches('\n');
+                trimmed.to_owned()
             }
             Chomping::Clip => {
-                // Keep exactly one trailing newline, but only if there's actual content
-                let trimmed_len = result.trim_end_matches('\n').len();
-                result.truncate(trimmed_len);
-                if !result.is_empty() {
+                // Clip: ensure at most one trailing newline, and only if there's
+                // actual content. This matches the intended YAML semantics.
+                if value.is_empty() {
+                    return String::new();
+                }
+
+                if value.ends_with('\n') {
+                    // Has at least one trailing newline: keep exactly one.
+                    let trimmed = value.trim_end_matches('\n');
+                    let mut result = String::with_capacity(trimmed.len() + 1);
+                    result.push_str(trimmed);
                     result.push('\n');
+                    result
+                } else {
+                    // No trailing newline yet: add exactly one.
+                    let mut result = String::with_capacity(value.len() + 1);
+                    result.push_str(value);
+                    result.push('\n');
+                    result
                 }
             }
             Chomping::Keep => {
-                // Ensure at least one trailing newline if content exists
-                if !result.is_empty() && !result.ends_with('\n') {
-                    result.push('\n');
-                }
+                // Keep: the builder for block scalars already preserves all
+                // trailing newlines and ensures at least one when there is
+                // content, so we can return the value unchanged.
+                value.to_owned()
             }
         }
-
-        result
     }
 }
