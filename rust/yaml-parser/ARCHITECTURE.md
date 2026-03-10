@@ -67,7 +67,7 @@ The parser uses a **three-layer architecture** with unified streaming tokenizati
                            │
                            ▼
 ┌─────────────────────────────────────────────────────────────┐
-│  Layer 1: Unified Lexer (lexer/document.rs)                 │
+│  Layer 1: Unified Lexer (lexer::Lexer)                      │
 │  - Tokenizes entire YAML stream (single + multi-document)   │
 │  - Handles directives (%YAML, %TAG) inline                  │
 │  - Tracks document boundaries (---, ...)                    │
@@ -77,7 +77,7 @@ The parser uses a **three-layer architecture** with unified streaming tokenizati
 │                   part of plain scalars in block            │
 │  - Phase tracking: DirectivePrologue vs InDocument          │
 │  - Inline error detection stored by the lexer (via          │
-│    `Lexer::take_errors`)                                   │
+│    `Lexer::take_errors`)                                    │
 │  - Implements Iterator<Item = RichToken<'input>> for        │
 │    streaming tokenization                                   │
 │  Output: Iterator<Item = RichToken<'input>>                 │
@@ -136,13 +136,12 @@ The parser uses a **three-layer architecture** with unified streaming tokenizati
 
   ```txt
   src/lexer/
-  ├── mod.rs           # Module root, re-exports public API
-  ├── document.rs      # Unified streaming lexer (handles everything)
+  ├── mod.rs           # Module root, unified streaming lexer (handles everything)
   ├── token.rs         # Token type definitions
   └── rich_token.rs    # Token wrapper with span
   ```
 
-- **Re-exports**: `tokenize_document`, `DocumentLexer`, `RichToken`, `Token`, etc.
+- **Exports**: `Lexer<'input>`, `RichToken<'input>`, `Token<'input>`, and related types.
 
 #### `span.rs` - Source Location Tracking
 
@@ -270,7 +269,7 @@ The parser uses a **three-layer architecture** with unified streaming tokenizati
 
 ### Layer 1: Unified Lexer
 
-#### `lexer/document.rs`
+#### `lexer/mod.rs`
 
 - **Purpose**: Unified streaming lexer that tokenizes the entire YAML stream (including directives, document boundaries, and content)
 - **Key Types**:
@@ -298,7 +297,7 @@ The parser uses a **three-layer architecture** with unified streaming tokenizati
   - In **flow context**: `,[]{}` are delimiters
 - **INDENT/DEDENT Tokens**: Python-style indentation tracking
   - Emitted after `LineStart` in block context
-  - Used by parser to determine block structure boundaries
+  - Used by the emitter to determine block structure boundaries when producing events
 - **Modular Token Lexing**: The main `next_token()` method delegates to helper methods:
   - `try_lex_directive()` - Directives (`%YAML`, `%TAG`, reserved)
   - `try_lex_document_marker()` - Document start/end markers (`---`, `...`)
@@ -314,7 +313,6 @@ The parser uses a **three-layer architecture** with unified streaming tokenizati
 - **Shared Helpers for Quoted Strings**:
   - `handle_quoted_newline()` - Shared newline handling for both quote styles
   - `finalize_quoted_string()` - Shared end-of-string handling
-- **Inline Error Attachment**: Errors are attached to `RichToken.error` rather than collected separately
 
 #### `lexer/token.rs`
 
@@ -345,108 +343,7 @@ The parser uses a **three-layer architecture** with unified streaming tokenizati
 ### Layer 2: Event Emitter
 
 > NOTE: The current implementation uses the `emitter` module as the second
-> layer between the lexer and the AST parser. The `parser/*` subsections
-> below describe an **older, token-based parser design** and are kept only as
-> historical reference. For the current code, see the description of the
-> `emitter` module in the high-level architecture and module structure
-> sections above.
-
-#### `parser/mod.rs`
-
-- **Purpose**: Main parser orchestration
-- **Key Types**:
-  - `Parser<'tokens, 'input>`: Main parser state with two lifetimes for zero-copy
-  - `NodeProperties<'input>`: Temporary storage for anchor/tag before value
-  - `Stream<'input>`: Type alias for `Vec<Node<'input>>`
-- **Parser State**:
-  - `tokens`: Reference to token slice (`&'tokens [RichToken<'input>]`)
-  - `input`: Reference to input string (`&'input str`)
-  - `pos`: Current position in token stream
-  - `errors`: Collected errors
-  - `anchors`: Map of anchor names to nodes
-  - `flow_depth`: Current flow nesting
-  - `flow_context_columns`: Stack of flow collection start columns
-  - `indent_stack`: Stack of indentation levels
-- **Shared Helper Methods**:
-  - `parse_mapping_value()`: Parse value after `:` in any mapping context
-  - `tag_handles`: Map of tag prefixes (from %TAG directives)
-- **Main Functions**:
-  - `parse_tokens()`: Entry point
-  - `parse_single_document()`: Parse one document with zero-copy support
-  - `parse_value()`: Dispatch to appropriate parser
-  - `collect_node_properties()`: Collect anchor/tag before value
-- **Helper Methods**:
-  - `handle_flow_collection_as_value()`: Flow mapping/sequence as value
-  - `handle_anchor_in_value()`: Anchor property handling
-  - `handle_tag_in_value()`: Tag property handling
-- **Error Methods**:
-  - `error()`: Basic error reporting with specific `ErrorKind`
-  - `error_expected()`: Error with expected tokens list
-- **Validation**:
-  - Indentation rules (uses `InvalidIndentation`, `InvalidIndentationContext`)
-  - Flow context column tracking
-  - Anchor/alias resolution (`DuplicateAnchor`, `UndefinedAlias`)
-  - Tag handle validation (`UndefinedTagHandle`)
-
-#### `parser/scalar.rs`
-
-- **Purpose**: Parse all scalar types
-- **Functions**:
-  - `parse_scalar()`: Dispatch to appropriate scalar parser
-  - `parse_quoted_string()`: Single and double quoted
-  - `parse_block_scalar()`: Literal (`|`) and folded (`>`)
-  - `parse_plain_multiline()`: Multiline plain scalars
-  - `consume_plain_scalar_continuations()`: Handle multiline plain scalar folding
-- **Helper Methods** (for implicit mappings starting from scalar):
-  - `advance_to_same_indent()`: Skip to next line at target indent level
-  - `parse_implicit_mapping_entry()`: Parse a single key: value entry
-  - `parse_mapping_key_or_alias()`: Parse key that can be scalar or alias
-- **Helper Methods** (for plain scalar continuation logic):
-  - `extract_scalar_content()`: Convert Node value to String
-  - `skip_to_content_position()`: Skip whitespace tokens to find content
-  - `is_mapping_key_at_position()`: Lookahead for mapping key pattern
-  - `handle_low_indent_continuation()`: Handle empty lines and tab-indented content
-  - `consume_line_as_text()`: Consume tokens until LineStart
-  - `append_folded_separator()`: Handle space/newline folding
-  - `finalize_multiline_scalar()`: Build final multiline node
-- **Error Handling**: Emits `ContentOnSameLine`, `UnexpectedColon` for specific errors
-- **Complexity**: Multiline string handling with indentation validation
-
-#### `parser/flow.rs`
-
-- **Purpose**: Parse flow collections
-- **Functions**:
-  - `parse_flow_mapping()`: `{ key: value, ... }`
-  - `parse_flow_sequence()`: `[ item, ... ]`
-- **Helper Methods**:
-  - `enter_flow_collection()` / `exit_flow_collection()`: Depth tracking
-  - `handle_flow_comma()`: Consecutive comma detection
-  - `handle_flow_entry_end()`: Entry delimiter handling
-- **Error Handling**: Emits `MissingSeparator` for missing commas
-- **Features**:
-  - Tracks flow context columns for indentation validation
-  - Handles nested flow collections
-  - Validates continuation line indentation
-
-#### `parser/block.rs`
-
-- **Purpose**: Parse block structures
-- **Functions**:
-  - `parse_block_sequence()`: Block sequences with `-`
-  - `parse_block_mapping()`: Block mappings with `key: value`
-  - `parse_block_mapping_with_tagged_null_key()`: Mapping where first key is null with properties
-- **Shared Helper Methods**:
-  - `build_mapping_node()`: Create the final mapping node
-  - `parse_mapping_key()`: Parse explicit or implicit key
-  - `find_colon_after_explicit_key()`: Lookahead for `:` after explicit key
-  - `parse_mapping_value()`: Parse value after `:`
-  - `skip_to_next_mapping_entry()`: Skip tokens until next entry
-  - `is_mapping_entry_token()`: Check if token can start a new entry
-  - `parse_tagged_null_mapping_entry()`: Parse entry in tagged-null-key mapping
-  - `parse_propertied_key_entry()`: Parse entry where key has properties
-- **Key Feature**: Uses INDENT/DEDENT tokens to determine structure boundaries
-- **Error Handling**: Emits `TrailingContent`, `MultilineImplicitKey` for specific errors
-- **Complexity**: Handles complex indentation rules
+> layer between the lexer and the AST parser.
 
 ### Layer 3: Event Parser
 
@@ -686,8 +583,8 @@ The `Token` enum (defined in `token.rs`) has 20+ variants:
 - `Whitespace` - Inline whitespace (spaces only)
 - `WhitespaceWithTabs` - Inline whitespace containing at least one tab
 - `Comment(String)` - `# comment`
-- `Indent(usize)` - INDENT token (emitted by context lexer)
-- `Dedent` - DEDENT token (emitted by context lexer)
+- `Indent(usize)` - INDENT token (emitted by the lexer)
+- `Dedent` - DEDENT token (emitted by the lexer)
 
 **Note on Whitespace Tokens**: The `Whitespace` / `WhitespaceWithTabs` split enables O(1) tab detection in the parser. YAML forbids tabs for indentation but allows them for separation. The parser checks for `WhitespaceWithTabs` after `LineStart` to detect invalid tab indentation.
 
@@ -726,8 +623,8 @@ pub enum Value<'input> {
 
 **Zero-Copy API:**
 
-- `parse(input) -> (Vec<Node<'static>>, ...)` - Convenience API, returns owned data
-- `parse_single_document(tokens, input, ...) -> (Option<Node<'input>>, ...)` - Zero-copy API
+- `parse(input: &str) -> (Stream<'static>, Vec<ParseError>)` - Convenience API, returns owned data
+- `emit_events(input: &str) -> (Vec<Event<'_>>, Vec<ParseError>)` - Event-level API that borrows from the input
 - `Node::into_owned()` / `Value::into_owned()` - Convert borrowed to owned
 
 **Design Note:** Mappings use `Vec<(Node, Node)>` instead of `HashMap` because:
@@ -749,7 +646,7 @@ pub enum Value<'input> {
   - Event emitter: Interprets tokens and emits YAML events, validates structure
   - Event-to-AST parser: Reconstructs AST from events, infers scalar types,
     resolves anchors and aliases
-- **Streaming Design**: `DocumentLexer` implements `Iterator<Item = RichToken>`
+- **Streaming Design**: `Lexer<'input>` implements `Iterator<Item = RichToken<'input>>`
   - Enables lazy tokenization and potential streaming support
   - Simplifies document boundary handling (directives handled inline)
 - **Phase Tracking**: `LexerPhase` (DirectivePrologue vs InDocument) determines valid tokens
@@ -758,10 +655,8 @@ pub enum Value<'input> {
 - **Testability**: Each layer can be tested independently
 - **Maintainability**: Single lexer pass reduces complexity
 
-**Previous Design (removed):** Two-pass lexer with separate `StreamLexer`
-
-- **Removed because**: The separate pre-processing pass added complexity without benefits
-- The unified lexer handles directives and document markers inline
+**Previous Design (removed):** Earlier revisions experimented with a separate stream-level pass, but
+the current design uses a single unified lexer that handles directives and document markers inline.
 
 ### 2. INDENT/DEDENT Tokens
 
@@ -774,12 +669,12 @@ pub enum Value<'input> {
 
 **How it works:**
 
-1. Document lexer maintains an `indent_stack`
+1. The lexer maintains an `indent_stack`
 2. After each `LineStart(n)` token in block context:
    - If `n > current_indent`: Emit `Indent(n)`, push to stack
    - If `n < current_indent`: Emit `Dedent` for each popped level
    - If `n == current_indent`: No change
-3. Parser uses `Dedent` to know when to stop parsing a block collection
+3. The emitter uses `Dedent` to know when to stop a block collection when emitting events
 
 ### 3. Context-Aware Lexing
 
@@ -800,7 +695,7 @@ plain: hello, world
 flow: [hello, world]
 ```
 
-The context lexer tracks `flow_depth` to determine which interpretation to use.
+The lexer tracks `flow_depth` to determine which interpretation to use.
 
 ### 4. Node Properties Architecture
 
@@ -887,10 +782,11 @@ where needed (e.g., `InvalidIndentationContext { expected: u16, found: u16 }`).
 
 ### Recovery Strategies
 
-1. **Invalid Tokens**: Lexer produces `Token::Invalid` for unrecognized input
-2. **Invalid Nodes**: Parser produces `Value::Invalid` for unparsable structures
-3. **Continue Parsing**: After an error, parser skips to next valid token and continues
-4. **Partial Collections**: Collections with errors still include valid elements
+1. **Lexer-level errors**: When the lexer encounters invalid input, it records a `ParseError`
+   and attempts to continue tokenizing from the next safe point.
+2. **Invalid Nodes**: The parser produces `Value::Invalid` for unparsable structures.
+3. **Continue Parsing**: After an error, the parser skips to the next reasonable boundary and continues.
+4. **Partial Collections**: Collections with errors still include valid elements.
 
 ### Example
 
@@ -939,11 +835,11 @@ The test runner (`run_test_suite()`) parses these events and compares them to th
 
 ### Unit Tests
 
-Each module has unit tests for specific functionality:
+Each layer has unit tests for specific functionality:
 
-- Stream lexer tests: Document splitting, directive extraction
-- Document lexer tests: Tokenization, flow depth tracking, INDENT/DEDENT
-- Parser tests: AST building, error recovery, anchor resolution
+- Lexer tests: tokenization, flow depth tracking, INDENT/DEDENT
+- Emitter tests: event generation, structural validation, block scalar handling
+- Parser tests: AST building from events, error recovery, anchor resolution
 
 ### Test Organization
 
@@ -973,9 +869,9 @@ See `BENCHMARKS.md` for detailed performance data and instructions.
 
 ### 2. Memory Usage
 
-- Main `parse()` API returns owned data for convenience
-- Use `parse_single_document()` for zero-copy parsing when needed
-- Could use arena allocation for even better performance
+- Main `parse()` API returns owned `Node<'static>` values for convenience
+- Use `emit_events()` when you only need the event stream and want to borrow from the input
+- Arena allocation could provide additional performance wins for very large documents
 
 ### 3. Memory Optimization Trade-offs
 
@@ -1028,31 +924,9 @@ The parser uses optimized type sizes to reduce memory footprint. This introduces
 
 ### Short-Term (Feature Additions)
 
-1. **Schema Validation**
-   - Support for YAML schemas
-   - Type validation
-
-2. **Pretty Printing**
+1. **Pretty Printing**
    - Format YAML output
    - Preserve comments and formatting
-
-### Long-Term (Major Changes)
-
-1. **True Streaming AST Builder**
-   - **Current State**: The `Emitter` already implements `Iterator<Item = Event>` using a state machine. The `Parser` consumes all events into a `Vec<Event>` before building the AST.
-   - **Goal**: Make the `Parser` streaming-capable so it can build AST nodes incrementally as events arrive
-   - **Benefits**:
-     - Process large files without buffering all events in memory
-     - Enable lazy evaluation and early termination
-     - Better memory efficiency for streaming applications
-   - **Challenges**:
-     - Handle incomplete documents gracefully
-     - Maintain anchor/alias resolution across streaming boundaries
-     - Preserve error recovery capabilities
-
-2. **YAML 1.3 Support**
-   - When YAML 1.3 spec is finalized
-   - Backward compatibility with 1.2
 
 ---
 
@@ -1077,9 +951,9 @@ This YAML parser achieves **full YAML 1.2 compliance** through a carefully desig
 
 - **Zero dependencies**: Self-contained crate with custom `Span` implementation
 - **Zero-copy parsing**: `Cow<'input, str>` throughout for minimal allocations
-- **Streaming-ready lexer**: `Lexer` implements `Iterator<Item = RichToken>` for lazy tokenization
-- **Actionable errors**: 27 error kinds with specific suggestions (no generic fallback errors)
-- **Inline error attachment**: Lexer errors attached directly to tokens via `RichToken.error`
+- **Streaming-ready lexer**: `Lexer<'input>` implements `Iterator<Item = RichToken<'input>>` for lazy tokenization
+- **Actionable errors**: Rich `ErrorKind` variants with specific suggestions (no generic fallback errors)
+- **Structured error collection**: Lexer, emitter, and parser all report `ParseError` values that are merged by `emit_events`/`parse`.
 - **High performance**: Faster than saphyr in most benchmarks while always providing spans
 
 The architecture achieves both **correctness** and **performance**, making it suitable for IDE integration and user-facing tools where helpful error messages are crucial, as well as for high-throughput parsing scenarios.
