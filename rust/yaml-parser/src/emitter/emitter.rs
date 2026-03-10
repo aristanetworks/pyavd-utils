@@ -947,18 +947,6 @@ impl<'input> Iterator for Emitter<'_, 'input> {
     reason = "Complex state machine with value dispatch logic"
 )]
 #[allow(
-    clippy::match_same_arms,
-    reason = "Match arms that look identical have different semantic meaning in the state machine"
-)]
-#[allow(
-    clippy::shadow_reuse,
-    reason = "Shadowing is used intentionally to refine types (e.g., anchor/tag from parameters)"
-)]
-#[allow(
-    clippy::collapsible_if,
-    reason = "Nested if-let patterns are clearer than collapsed && chains for complex conditions"
-)]
-#[allow(
     clippy::unnecessary_wraps,
     reason = "Return type consistency - these methods are called from the same dispatch logic that requires Option"
 )]
@@ -1568,27 +1556,24 @@ impl<'input> Emitter<'_, 'input> {
         // Check for orphaned properties: if we crossed a line boundary but stopped because
         // of invalid indent, and the next content is a property, report OrphanedProperties.
         // This handles cases like `key: &x\n!!map\n  a: b` where !!map is at invalid indent.
-        if prop_crossed_line {
-            if let Some((Token::LineStart(indent), _)) = self.peek() {
-                if *indent < min_indent {
-                    // Look for property tokens after the LineStart
-                    let mut lookahead = 1;
-                    if matches!(self.peek_nth(lookahead), Some((Token::Indent(_), _))) {
-                        lookahead += 1;
-                    }
-                    while let Some((Token::Anchor(_) | Token::Tag(_), span)) =
-                        self.peek_nth(lookahead)
-                    {
-                        self.error(ErrorKind::OrphanedProperties, span);
-                        lookahead += 1;
-                        // Skip whitespace between properties
-                        while matches!(
-                            self.peek_nth(lookahead),
-                            Some((Token::Whitespace | Token::WhitespaceWithTabs, _))
-                        ) {
-                            lookahead += 1;
-                        }
-                    }
+        if prop_crossed_line
+            && let Some((Token::LineStart(indent), _)) = self.peek()
+            && *indent < min_indent
+        {
+            // Look for property tokens after the LineStart
+            let mut lookahead = 1;
+            if matches!(self.peek_nth(lookahead), Some((Token::Indent(_), _))) {
+                lookahead += 1;
+            }
+            while let Some((Token::Anchor(_) | Token::Tag(_), span)) = self.peek_nth(lookahead) {
+                self.error(ErrorKind::OrphanedProperties, span);
+                lookahead += 1;
+                // Skip whitespace between properties
+                while matches!(
+                    self.peek_nth(lookahead),
+                    Some((Token::Whitespace | Token::WhitespaceWithTabs, _))
+                ) {
+                    lookahead += 1;
                 }
             }
         }
@@ -1701,69 +1686,68 @@ impl<'input> Emitter<'_, 'input> {
         // Collect the NEW properties at current position (don't pass outer ones
         // since collect_properties would overwrite them), then merge any
         // additional properties that may appear after a line break.
-        let (inner_anchor, inner_tag, _crossed) = self.collect_properties(None, None);
-        self.skip_ws();
-        let (inner_anchor, inner_tag) =
-            self.collect_additional_inner_properties(inner_anchor, inner_tag);
-
+        let (inner_anchor, inner_tag) = {
+            let (inner_anchor, inner_tag, _crossed) = self.collect_properties(None, None);
+            self.skip_ws();
+            self.collect_additional_inner_properties(inner_anchor, inner_tag)
+        };
         // Check if this is a complex key pattern (flow seq/map followed by :).
         // If we have separate outer and inner properties, and the value is a
         // flow collection that's a key, emit MappingStart with outer props.
-        if inner_anchor.is_some() || inner_tag.is_some() {
-            if let Some((Token::FlowSeqStart | Token::FlowMapStart, _)) = self.peek() {
-                if self.is_flow_seq_complex_key() {
-                    // This is a block mapping with a complex key.
-                    let span = self.current_span();
-                    let map_indent = self.current_indent;
+        if (inner_anchor.is_some() || inner_tag.is_some())
+            && let Some((Token::FlowSeqStart | Token::FlowMapStart, _)) = self.peek()
+            && self.is_flow_seq_complex_key()
+        {
+            // This is a block mapping with a complex key.
+            let span = self.current_span();
+            let map_indent = self.current_indent;
 
-                    // Advance into the flow collection.
-                    let is_seq = matches!(self.peek(), Some((Token::FlowSeqStart, _)));
-                    self.advance();
-                    self.enter_flow_collection(span.start_usize());
+            // Advance into the flow collection.
+            let is_seq = matches!(self.peek(), Some((Token::FlowSeqStart, _)));
+            self.advance();
+            self.enter_flow_collection(span.start_usize());
 
-                    // Push BlockMap state for after the key.
-                    self.state_stack.push(ParseState::BlockMap {
-                        indent: map_indent,
-                        phase: BlockMapPhase::AfterKey {
-                            is_implicit_scalar_key: false, // Flow collection key
-                        },
-                        start_span: span,
-                        anchor: None,
-                        tag: None,
-                    });
+            // Push BlockMap state for after the key.
+            self.state_stack.push(ParseState::BlockMap {
+                indent: map_indent,
+                phase: BlockMapPhase::AfterKey {
+                    is_implicit_scalar_key: false, // Flow collection key
+                },
+                start_span: span,
+                anchor: None,
+                tag: None,
+            });
 
-                    // Push flow collection to parse key content.
-                    if is_seq {
-                        self.state_stack.push(ParseState::FlowSeq {
-                            phase: FlowSeqPhase::BeforeEntry,
-                            start_span: span,
-                        });
-                        // Emit seq start with inner props (via EmitSeqStart).
-                        self.state_stack.push(ParseState::EmitSeqStart {
-                            anchor: inner_anchor,
-                            tag: inner_tag,
-                            span,
-                        });
-                    } else {
-                        self.state_stack.push(ParseState::FlowMap {
-                            phase: FlowMapPhase::BeforeKey,
-                            start_span: span,
-                        });
-                        // Map start with inner props will be emitted directly
-                        // by FlowMap handling.
-                    }
-
-                    // Push indent level for orphan indent detection.
-                    self.push_indent(map_indent);
-                    // Emit MappingStart with outer props.
-                    return Some(Event::MappingStart {
-                        style: crate::event::CollectionStyle::Block,
-                        anchor: outer_anchor,
-                        tag: outer_tag,
-                        span,
-                    });
-                }
+            // Push flow collection to parse key content.
+            if is_seq {
+                self.state_stack.push(ParseState::FlowSeq {
+                    phase: FlowSeqPhase::BeforeEntry,
+                    start_span: span,
+                });
+                // Emit seq start with inner props (via EmitSeqStart).
+                self.state_stack.push(ParseState::EmitSeqStart {
+                    anchor: inner_anchor,
+                    tag: inner_tag,
+                    span,
+                });
+            } else {
+                self.state_stack.push(ParseState::FlowMap {
+                    phase: FlowMapPhase::BeforeKey,
+                    start_span: span,
+                });
+                // Map start with inner props will be emitted directly
+                // by FlowMap handling.
             }
+
+            // Push indent level for orphan indent detection.
+            self.push_indent(map_indent);
+            // Emit MappingStart with outer props.
+            return Some(Event::MappingStart {
+                style: crate::event::CollectionStyle::Block,
+                anchor: outer_anchor,
+                tag: outer_tag,
+                span,
+            });
         }
 
         // Now determine what kind of value follows.
@@ -1797,10 +1781,8 @@ impl<'input> Emitter<'_, 'input> {
                 // E.g., `&outer\n  &inner scalar` → &outer is lost, &inner on scalar.
                 let result = self.parse_plain_scalar(inner_anchor, inner_tag, min_indent);
                 // If this is a mapping key, check for multiline implicit key error.
-                if is_key {
-                    if let Some(Event::Scalar { span, .. }) = &result {
-                        self.check_multiline_implicit_key(*span);
-                    }
+                if is_key && let Some(Event::Scalar { span, .. }) = &result {
+                    self.check_multiline_implicit_key(*span);
                 }
                 result
             }
@@ -1962,20 +1944,21 @@ impl<'input> Emitter<'_, 'input> {
 
         // Check for properties (anchor, tag) before the value
         // Use min_indent to prevent collecting properties that are at invalid indentation
-        let (anchor, tag, prop_crossed_line) =
+        let (valid_anchor, valid_tag, prop_crossed_line) =
             self.collect_properties_with_min_indent(anchor, tag, min_indent);
 
         self.report_orphaned_properties_after_invalid_indent(min_indent, prop_crossed_line);
 
         // Capture the indent where properties were collected (if any)
-        let property_indent = (anchor.is_some() || tag.is_some()).then_some(self.current_indent);
+        let property_indent =
+            (valid_anchor.is_some() || valid_tag.is_some()).then_some(self.current_indent);
 
         // Hand off to the `ValueAfterProperties` state, which will perform the
         // main dispatch, bridging decisions, and empty-value handling.
         self.state_stack.push(ParseState::ValueAfterProperties {
             ctx,
-            anchor,
-            tag,
+            anchor: valid_anchor,
+            tag: valid_tag,
             initial_crossed_line,
             prop_crossed_line,
             property_indent,
@@ -2044,15 +2027,15 @@ impl<'input> Emitter<'_, 'input> {
         // Dedent-based empty value check. This is only meaningful when we've
         // actually crossed a line boundary; avoid calling the helper at all on
         // the very common single-line value paths.
-        if crossed_line_after_properties {
-            if let Some(event) = self.maybe_emit_empty_due_to_dedent(
+        if crossed_line_after_properties
+            && let Some(event) = self.maybe_emit_empty_due_to_dedent(
                 ctx,
                 crossed_line_after_properties,
                 anchor.as_ref(),
                 tag.as_ref(),
-            ) {
-                return Some(event);
-            }
+            )
+        {
+            return Some(event);
         }
 
         // Dispatch based on current token
@@ -2447,19 +2430,17 @@ impl<'input> Emitter<'_, 'input> {
                     // Check for content immediately after tag (no space)
                     // e.g., `!invalid{}tag` - the `{` is immediately after the tag
                     let tag_end = span.end_usize();
-                    if tag_looks_legitimate {
-                        if let Some((next_tok, next_span)) = self.peek() {
-                            let is_content = matches!(
-                                next_tok,
-                                Token::Plain(_)
-                                    | Token::StringStart(_)
-                                    | Token::FlowSeqStart
-                                    | Token::FlowMapStart
-                                    | Token::BlockSeqIndicator
-                            );
-                            if is_content && next_span.start_usize() == tag_end {
-                                self.error(ErrorKind::ContentOnSameLine, next_span);
-                            }
+                    if tag_looks_legitimate && let Some((next_tok, next_span)) = self.peek() {
+                        let is_content = matches!(
+                            next_tok,
+                            Token::Plain(_)
+                                | Token::StringStart(_)
+                                | Token::FlowSeqStart
+                                | Token::FlowMapStart
+                                | Token::BlockSeqIndicator
+                        );
+                        if is_content && next_span.start_usize() == tag_end {
+                            self.error(ErrorKind::ContentOnSameLine, next_span);
                         }
                     }
 
@@ -2555,10 +2536,6 @@ impl<'input> Emitter<'_, 'input> {
         // If it's LineStart, this line is "property-only" - continue collecting.
         // If it's content, check if that content is an implicit key (followed by colon).
         match self.peek_nth(idx) {
-            Some((Token::LineStart(_), _)) => {
-                // Property-only line - continue collecting
-                true
-            }
             Some((Token::FlowSeqStart | Token::FlowMapStart, _)) => {
                 // Flow collection - check if it's a complex key
                 // Look for matching close bracket, then colon
@@ -2574,6 +2551,7 @@ impl<'input> Emitter<'_, 'input> {
                 !is_key
             }
             _ => {
+                // Property-only line - continue collecting
                 // Other content (quoted string, etc.) - continue collecting
                 // These cases generally don't form implicit keys in this context
                 true
@@ -2659,11 +2637,11 @@ impl<'input> Emitter<'_, 'input> {
                 if ch == '%' {
                     // Try to read two hex digits
                     let hex: String = chars.by_ref().take(2).collect();
-                    if hex.len() == 2 {
-                        if let Ok(byte) = u8::from_str_radix(&hex, 16) {
-                            result.push(char::from(byte));
-                            continue;
-                        }
+                    if hex.len() == 2
+                        && let Ok(byte) = u8::from_str_radix(&hex, 16)
+                    {
+                        result.push(char::from(byte));
+                        continue;
                     }
                     // Failed to decode, keep as-is
                     result.push('%');
@@ -2705,21 +2683,20 @@ impl<'input> Emitter<'_, 'input> {
             clippy::string_slice,
             reason = "Slicing at positions returned by find('!'), which are guaranteed UTF-8 boundaries"
         )]
-        if let Some(first_bang) = tag_str.find('!') {
-            if let Some(second_bang) = tag_str[first_bang + 1..].find('!') {
-                let second_bang_pos = first_bang + 1 + second_bang;
-                let handle = &tag_str[0..=second_bang_pos]; // e.g., "!yaml!"
-                let suffix = &tag_str[second_bang_pos + 1..];
-                // Look up handle using as_str() since HashMap keys are &str
-                if let Some(prefix) = self.tag_handles.get(handle) {
-                    let decoded_suffix =
-                        percent_decode(suffix).unwrap_or_else(|| suffix.to_owned());
-                    return Cow::Owned(format!("{prefix}{decoded_suffix}"));
-                }
-                // Handle not declared - emit error and return unexpanded
-                self.error(ErrorKind::UndefinedTagHandle, span);
-                return tag_cow; // Return as-is
+        if let Some(first_bang) = tag_str.find('!')
+            && let Some(second_bang) = tag_str[first_bang + 1..].find('!')
+        {
+            let second_bang_pos = first_bang + 1 + second_bang;
+            let handle = &tag_str[0..=second_bang_pos]; // e.g., "!yaml!"
+            let suffix = &tag_str[second_bang_pos + 1..];
+            // Look up handle using as_str() since HashMap keys are &str
+            if let Some(prefix) = self.tag_handles.get(handle) {
+                let decoded_suffix = percent_decode(suffix).unwrap_or_else(|| suffix.to_owned());
+                return Cow::Owned(format!("{prefix}{decoded_suffix}"));
             }
+            // Handle not declared - emit error and return unexpanded
+            self.error(ErrorKind::UndefinedTagHandle, span);
+            return tag_cow; // Return as-is
         }
 
         // Primary handle: !type
@@ -2898,14 +2875,6 @@ impl<'input> Emitter<'_, 'input> {
                                         // If so, it's a valid sibling mapping entry
                                         let next = self.peek_nth(1);
                                         !matches!(next, Some((Token::Colon, _)))
-                                    }
-                                    Token::StringStart(_) => {
-                                        // Quoted strings could be mapping keys
-                                        false
-                                    }
-                                    Token::Anchor(_) | Token::Alias(_) | Token::Tag(_) => {
-                                        // Could be followed by content that makes a mapping entry
-                                        false
                                     }
                                     _ => false,
                                 };
@@ -3187,17 +3156,16 @@ impl<'input> Emitter<'_, 'input> {
                             // that looks like a key but is missing a colon.
                             // Only report MissingColon if we're at the mapping's indent,
                             // not for scalars that are indented past this level.
-                            if self.current_indent == indent {
-                                if let Some(scalar_event) =
+                            if self.current_indent == indent
+                                && let Some(scalar_event) =
                                     self.check_missing_colon_in_mapping_with_event()
-                                {
-                                    // Emit the scalar as an orphaned key, then end mapping
-                                    // Push MappingEnd onto stack so it's emitted after scalar
-                                    self.state_stack.push(ParseState::EmitMapEnd {
-                                        span: self.collection_end_span(),
-                                    });
-                                    return Some(scalar_event);
-                                }
+                            {
+                                // Emit the scalar as an orphaned key, then end mapping
+                                // Push MappingEnd onto stack so it's emitted after scalar
+                                self.state_stack.push(ParseState::EmitMapEnd {
+                                    span: self.collection_end_span(),
+                                });
+                                return Some(scalar_event);
                             }
                             self.pop_indent();
                             Some(Event::MappingEnd {
@@ -3243,10 +3211,10 @@ impl<'input> Emitter<'_, 'input> {
                     // Block sequences must start on a new line after the colon.
                     // This only applies to implicit scalar keys (like `key: - item`).
                     // For explicit keys (`? key : - item`) or null keys (`: - item`), this is valid.
-                    if is_implicit_scalar_key {
-                        if let Some((Token::BlockSeqIndicator, span)) = self.peek() {
-                            self.error(ErrorKind::ContentOnSameLine, span);
-                        }
+                    if is_implicit_scalar_key
+                        && let Some((Token::BlockSeqIndicator, span)) = self.peek()
+                    {
+                        self.error(ErrorKind::ContentOnSameLine, span);
                     }
 
                     // Reset crossed_line_boundary before parsing value.
@@ -3372,8 +3340,11 @@ impl<'input> Emitter<'_, 'input> {
                 while let Some((tok, _)) = self.peek_nth(i) {
                     match tok {
                         Token::Colon => return true,
-                        Token::LineStart(_) | Token::DocEnd | Token::DocStart => return false,
-                        Token::FlowSeqStart | Token::FlowMapStart => return false,
+                        Token::LineStart(_)
+                        | Token::DocEnd
+                        | Token::DocStart
+                        | Token::FlowSeqStart
+                        | Token::FlowMapStart => return false,
                         _ => i += 1,
                     }
                     if i > 30 {
@@ -3416,9 +3387,6 @@ impl<'input> Emitter<'_, 'input> {
                 // Check if followed by colon
                 matches!(self.peek_nth(i), Some((Token::Colon, _)))
             }
-
-            // Flow collections as keys - not implicit keys in block context
-            Some((Token::FlowSeqStart | Token::FlowMapStart, _)) => false,
 
             // Alias as key - check if followed by colon
             Some((Token::Alias(_), _)) => {
@@ -3614,7 +3582,6 @@ impl<'input> Emitter<'_, 'input> {
 
         loop {
             match self.peek() {
-                Some((Token::Whitespace | Token::WhitespaceWithTabs, _)) => self.advance(),
                 Some((Token::LineStart(n), span)) => {
                     let n = *n;
 
@@ -3675,7 +3642,13 @@ impl<'input> Emitter<'_, 'input> {
                     // Inline comment before the next LineStart - skip it
                     self.advance();
                 }
-                Some((Token::Indent(_) | Token::Dedent, _)) => self.advance(),
+                Some((
+                    Token::Whitespace
+                    | Token::WhitespaceWithTabs
+                    | Token::Indent(_)
+                    | Token::Dedent,
+                    _,
+                )) => self.advance(),
                 _ => break,
             }
         }
@@ -3857,12 +3830,12 @@ impl<'input> Emitter<'_, 'input> {
                     }
 
                     // Check for continuation: LineStart followed by Plain
-                    if let Some((Token::LineStart(_), _)) = self.peek_nth(i) {
-                        if let Some((Token::Plain(_), _)) = self.peek_nth(i + 1) {
-                            // This is a continuation line
-                            i += 2; // Skip LineStart + Plain
-                            continue;
-                        }
+                    if let Some((Token::LineStart(_), _)) = self.peek_nth(i)
+                        && let Some((Token::Plain(_), _)) = self.peek_nth(i + 1)
+                    {
+                        // This is a continuation line
+                        i += 2; // Skip LineStart + Plain
+                        continue;
                     }
                     break;
                 }
@@ -3973,9 +3946,6 @@ impl<'input> Emitter<'_, 'input> {
                 }
                 matches!(self.peek_nth(i), Some((Token::Colon, _)))
             }
-
-            // Delimiters mean no entry
-            Some((Token::Comma | Token::FlowSeqEnd | Token::FlowMapEnd, _)) => false,
 
             // Alias followed by colon
             Some((Token::Alias(_), _)) => {
@@ -4194,9 +4164,11 @@ impl<'input> Emitter<'_, 'input> {
         // LineStart can appear between properties and key (multiline properties)
         while let Some((tok, _)) = self.peek_nth(i) {
             match tok {
-                Token::Anchor(_) | Token::Tag(_) => i += 1,
-                Token::Whitespace | Token::WhitespaceWithTabs => i += 1,
-                Token::LineStart(_) => i += 1,
+                Token::Anchor(_)
+                | Token::Tag(_)
+                | Token::Whitespace
+                | Token::WhitespaceWithTabs
+                | Token::LineStart(_) => i += 1,
                 _ => break,
             }
         }
@@ -4862,10 +4834,8 @@ impl<'input> Emitter<'_, 'input> {
         // Not a mapping key, just parse as a scalar
         let result = self.parse_plain_scalar(anchor, tag, min_indent);
         // If this is a mapping key, check for multiline implicit key error
-        if is_key {
-            if let Some(Event::Scalar { span, .. }) = &result {
-                self.check_multiline_implicit_key(*span);
-            }
+        if is_key && let Some(Event::Scalar { span, .. }) = &result {
+            self.check_multiline_implicit_key(*span);
         }
         result
     }
@@ -5171,23 +5141,21 @@ impl<'input> Emitter<'_, 'input> {
                 Some((Token::StringEnd(_), span)) => {
                     // If we need to trim, do it BEFORE applying pending newlines at end
                     // This handles trailing spaces on the last line before StringEnd
-                    if needs_trim {
-                        if let Some(last) = parts.last_mut() {
-                            match last {
-                                Cow::Borrowed(text) => {
-                                    let trimmed = text.trim_end_matches(' ');
-                                    if trimmed.len() != text.len() {
-                                        *last = Cow::Borrowed(trimmed);
-                                    }
-                                }
-                                Cow::Owned(text) => {
-                                    let new_len = text.trim_end_matches(' ').len();
-                                    text.truncate(new_len);
+                    if needs_trim && let Some(last) = parts.last_mut() {
+                        match last {
+                            Cow::Borrowed(text) => {
+                                let trimmed = text.trim_end_matches(' ');
+                                if trimmed.len() != text.len() {
+                                    *last = Cow::Borrowed(trimmed);
                                 }
                             }
+                            Cow::Owned(text) => {
+                                let new_len = text.trim_end_matches(' ').len();
+                                text.truncate(new_len);
+                            }
                         }
-                        // needs_trim is not read after this point, so no need to set to false
                     }
+                    // needs_trim is not read after this point, so no need to set to false
 
                     // Apply pending newlines at end (after trimming!)
                     if pending_newlines == 1 {
@@ -5241,8 +5209,9 @@ impl<'input> Emitter<'_, 'input> {
         tag: Option<(Cow<'input, str>, Span)>,
     ) -> Option<Event<'input>> {
         let (header, start_span) = match self.peek() {
-            Some((Token::LiteralBlockHeader(hdr), span)) => (hdr.clone(), span),
-            Some((Token::FoldedBlockHeader(hdr), span)) => (hdr.clone(), span),
+            Some((Token::LiteralBlockHeader(hdr) | Token::FoldedBlockHeader(hdr), span)) => {
+                (hdr.clone(), span)
+            }
             _ => return Some(self.emit_null()),
         };
 
@@ -5496,17 +5465,17 @@ impl<'input> Emitter<'_, 'input> {
             // If the next token is a LineStart, any gap between line_end_span.end and
             // LineStart.start is trailing whitespace to preserve.
             #[allow(clippy::string_slice, reason = "Span positions are UTF-8 boundaries")]
-            if !line_parts.is_empty() {
-                if let Some((Token::LineStart(_), next_span)) = self.peek() {
-                    let end_pos = line_end_span.end_usize();
-                    let next_start = next_span.start_usize();
-                    if next_start > end_pos {
-                        // There's a gap - check if it's all whitespace
-                        let trailing = &self.input[end_pos..next_start];
-                        if trailing.chars().all(|ch| ch == ' ' || ch == '\t') {
-                            // This is guaranteed to be whitespace-only
-                            line_parts.push(Cow::Borrowed(trailing));
-                        }
+            if !line_parts.is_empty()
+                && let Some((Token::LineStart(_), next_span)) = self.peek()
+            {
+                let end_pos = line_end_span.end_usize();
+                let next_start = next_span.start_usize();
+                if next_start > end_pos {
+                    // There's a gap - check if it's all whitespace
+                    let trailing = &self.input[end_pos..next_start];
+                    if trailing.chars().all(|ch| ch == ' ' || ch == '\t') {
+                        // This is guaranteed to be whitespace-only
+                        line_parts.push(Cow::Borrowed(trailing));
                     }
                 }
             }
@@ -5615,7 +5584,7 @@ impl<'input> Emitter<'_, 'input> {
         let is_empty_scalar = !scalar_has_any_part;
 
         // Apply chomping
-        let value = Self::apply_chomping(&value, &header);
+        let chomped_value = Self::apply_chomping(&value, &header);
 
         let style = if is_literal {
             ScalarStyle::Literal
@@ -5631,7 +5600,7 @@ impl<'input> Emitter<'_, 'input> {
 
         Some(Event::Scalar {
             style,
-            value: Cow::Owned(value),
+            value: Cow::Owned(chomped_value),
             anchor,
             tag,
             span: full_span,
