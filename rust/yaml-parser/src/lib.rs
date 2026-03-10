@@ -41,9 +41,10 @@ mod event;
 mod lexer;
 mod parser;
 mod span;
+mod stream;
 mod value;
 
-pub use emitter::{Emitter, Stream};
+pub use emitter::Emitter;
 pub use error::{ErrorKind, ParseError};
 pub use event::{CollectionStyle, Event, ScalarStyle};
 pub use lexer::{Lexer, RichToken, Token, tokenize_document};
@@ -52,6 +53,7 @@ pub use span::{
     BytePosition, IndentLevel, Position, SourceMap, Span, Spanned, indent_to_usize, pos_to_usize,
     usize_to_indent, usize_to_pos,
 };
+pub use stream::Stream;
 pub use value::{Node, Properties, Value};
 
 /// Parse YAML input and return the parsed documents and any errors encountered.

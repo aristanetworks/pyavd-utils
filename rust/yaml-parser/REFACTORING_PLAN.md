@@ -270,19 +270,163 @@ src/
 
 **Result**: Cleaner module structure, easier to navigate. Event types are now in a single, focused file similar to other supporting modules like `error.rs`, `span.rs`, and `value.rs`.
 
-### Phase 3: Emitter Refactoring - Deferred ⏸️
+### Phase 3: Emitter Refactoring - Detailed Value/State Plan (2026-03)
 
-**Decision**: Deferring emitter refactoring due to high complexity and risk.
+This section refines the original "Phase 3: Emitter Refactoring" into a more
+focused, incremental plan centered on **value parsing and state management**
+rather than immediately splitting files. The goal is to move complexity from
+helper-heavy logic into explicit `ParseState` variants and a `ValueContext`
+type, while keeping all existing tests passing after each step.
 
-**Rationale**:
+#### Target Architecture
 
-- The emitter is 5,511 lines with highly integrated state management
-- Splitting it into 14 modules requires deep analysis of state dependencies
-- Risk of introducing subtle bugs in the event generation logic
-- The current file, while large, is working correctly with 100% test suite compliance
-- Better to defer this until there's a specific need or more time for careful analysis
+- `ParseState::Value` holds a `ValueContext` struct describing what kind of
+  value we are parsing (key, mapping value, sequence entry, top-level value)
+  and its indentation constraints.
+- Subtle behaviors (bridging vs empty value, complex keys, alias/flow
+  collections as keys, property dedent handling) are modeled via dedicated
+  micro-states (e.g. `PendingProperties`) rather than large helper
+  functions.
+- Error/recovery behavior is encoded per state + token, ideally in small,
+  clearly named handlers.
 
-**Recommendation**: Consider this phase for future work when there's dedicated time for thorough testing and validation.
+#### Phases
+
+**Phase E1: Introduce `ValueContext` (no behavior change)**
+
+- Define:
+  - `enum ValueKind { Key, MappingValue, SeqEntryValue, TopLevelValue }`
+  - `struct ValueContext { min_indent: IndentLevel, kind: ValueKind,
+    allow_implicit_mapping: bool }`
+- Update `ParseState::Value` to store a `ValueContext` instead of separate
+  fields.
+- Adapt the main emitter loop to construct/pass `ValueContext` into
+  `parse_value` and related helpers (initially via simple field mapping).
+- Keep all parsing behavior identical; this phase is purely structural.
+- **Tests:** `cargo test -p yaml-parser` and
+  `cargo clippy -p yaml-parser --all-targets`.
+
+**Phase E2: `PendingProperties` state for bridging vs empty value**
+
+- Introduce a new state:
+  - `ParseState::PendingProperties { ctx: ValueContext, anchor, tag,
+    initial_crossed_line, property_indent }`.
+- Refactor current logic in
+  `maybe_emit_empty_scalar_for_non_bridging_properties` so that:
+  - Cases that must emit an empty scalar still do so directly.
+  - In "bridging possible" cases, instead of returning `(None, anchor, tag)`,
+    we push `PendingProperties` and return `None`.
+- Add a `process_pending_properties` handler that:
+  - Either emits an empty scalar and pops, or
+  - Transitions to a normal `Value` state with finalized `anchor/tag` and
+    re-enters `parse_value`.
+- This phase is still behavior-preserving; the same decisions happen, but are
+  now explicitly state-driven.
+- **Tests:** `cargo test -p yaml-parser` after the refactor.
+
+### Phase E3: Alias/flow complex-key handling as states
+
+- Introduce dedicated states for cases currently handled by helpers such as
+  `handle_alias_value` and `handle_flow_*_value`, for example:
+  - `ParseState::AliasValue { ctx: ValueContext, alias_name, span, anchor,
+    tag, crossed_line_info }`
+  - `ParseState::FlowCollectionValue { ctx: ValueContext, is_map, span,
+    anchor, tag }`
+- Move the complex-key vs plain-value decision logic into these state
+  handlers, keeping semantics identical.
+- Ensure all complex-key edge cases (aliases, flow sequences/mappings used as
+  keys) remain covered by existing tests.
+- **Tests:** `cargo test -p yaml-parser`.
+
+### Phase E4: Error/recovery specialization
+
+- For each major error behavior (e.g. `InvalidIndentation`,
+  `DocumentMarkerInFlow`, `TrailingContent`, `OrphanedProperties`):
+  - Identify which states and tokens can produce it.
+  - Either:
+    - Move logic into tiny `handle_*` helpers used from state handlers, or
+    - Introduce explicit recovery states if multi-step corrections are
+      needed.
+- Aim for each state arm in the main loop to be small and to clearly describe
+  both normal and error transitions.
+- **Tests:** `cargo test -p yaml-parser` and
+  `cargo clippy -p yaml-parser --all-targets` at the end of the phase.
+
+#### Execution Log (Emitter Value/State Refactor)
+
+- **2026-03-09:** Plan written down in `REFACTORING_PLAN.md` under
+  "Phase 3: Emitter Refactoring - Detailed Value/State Plan". No code changes
+  specific to this plan yet; emitter helpers were previously cleaned up and
+  tests/clippy are passing.
+- **2026-03-09:** Phase E1 started: introduced `ValueKind` and `ValueContext`
+  in `states.rs`, changed `ParseState::Value` to hold a `ValueContext`, and
+  updated `Emitter::parse_value` and all `ParseState::Value` push sites to use
+  it. Semantics unchanged (refactoring only).
+  - Tests: `cargo test -p yaml-parser` ✅
+  - Clippy: `cargo clippy -p yaml-parser --all-targets` ✅
+    - **2026-03-09:** Phase E2 started: split `parse_value` into two phases driven
+   by states.
+      - Added `ParseState::ValueAfterProperties { ctx, anchor, tag,
+     initial_crossed_line, prop_crossed_line, property_indent }`.
+      - `ParseState::Value` now performs only whitespace skipping, invalid-indent
+     checks, and property collection, then pushes `ValueAfterProperties`.
+      - New `Emitter::process_value_after_properties` hosts the former second half
+     of `parse_value`, including bridging vs empty-value decisions and the main
+     token dispatch. Existing helpers such as
+     `maybe_emit_empty_scalar_for_non_bridging_properties` are now used from
+     this state handler.
+      - Semantics remain unchanged; behaviour is validated by the test suite.
+      - Tests: `cargo test -p yaml-parser` ✅
+      - Clippy: `cargo clippy -p yaml-parser --all-targets` ✅
+    - **2026-03-09:** Phase E3 (alias part) started: moved alias value handling
+   into an explicit `AliasValue` state.
+      - Added `ParseState::AliasValue { ctx: ValueContext, name, span, anchor, tag,
+     crossed_line_after_properties }`.
+      - The alias match arm in `process_value_after_properties` now defers to this
+     state instead of calling a helper directly.
+      - New `Emitter::process_alias_value_state` implements the previous
+     `handle_alias_value` logic, driven by the state machine.
+      - Behaviour verified via the existing alias/anchor tests and full suite.
+      - Tests: `cargo test -p yaml-parser` ✅
+      - Clippy: `cargo clippy -p yaml-parser --all-targets` ✅
+    - **2026-03-09:** Phase E3 (flow collection part) started: moved flow
+   collection value handling into an explicit `FlowCollectionValue` state.
+      - Added `ParseState::FlowCollectionValue { ctx: ValueContext, is_map, span,
+     anchor, tag }`.
+      - The `FlowSeqStart` / `FlowMapStart` arms in `process_value_after_properties`
+     now defer to this state instead of calling `handle_flow_*_start_value`
+     helpers.
+      - New `Emitter::process_flow_collection_value_state` implements the
+     previous flow complex-key logic (including `is_flow_*_complex_key`) and
+     regular flow value handling, driven by the state machine.
+      - Behaviour verified via the existing flow and complex-key tests and full
+     suite.
+      - Tests: `cargo test -p yaml-parser` ✅
+      - Clippy: `cargo clippy -p yaml-parser --all-targets` ✅
+        - **2026-03-09:** Phase E4 (first step) started: centralized
+    `DocumentMarkerInFlow` handling in flow sequence/mapping states.
+          - Added tiny helpers `handle_doc_marker_in_flow_seq` and
+      `handle_doc_marker_in_flow_map` used from the `FlowSeq` and `FlowMap`
+      state handlers instead of inlined error+recovery code.
+          - Behaviour is unchanged: document markers inside flow still record
+      `DocumentMarkerInFlow`, consume the marker, and re-push the current flow
+      state to continue parsing.
+          - Tests: `cargo test -p yaml-parser` ✅
+          - Clippy: `cargo clippy -p yaml-parser --all-targets` ✅
+        - **2026-03-09:** Phase E4 (additional-properties state) started: moved
+    `handle_additional_properties_value` logic into an explicit
+    `AdditionalPropertiesValue` state.
+          - Added `ParseState::AdditionalPropertiesValue { ctx: ValueContext,
+      outer_anchor, outer_tag }`.
+          - The `Anchor` / `Tag` arm in `process_value_after_properties` now defers
+      to this state instead of calling the helper directly.
+          - New `Emitter::process_additional_properties_value_state` is the
+      state-driven form of the old helper and owns multi-layer property and
+      complex-key behaviour.
+          - Behaviour verified via existing complex-key/property tests and full
+      suite.
+          - Tests: `cargo test -p yaml-parser` ✅
+          - Clippy: `cargo clippy -p yaml-parser --all-targets` ✅
 
 ### Phase 4: Parser Refactoring - Skipped ✅
 
@@ -377,3 +521,79 @@ src/
 1. **Monitor File Growth**: If emitter or lexer grow significantly, revisit refactoring
 2. **Focus on Functionality**: Prioritize features over structure refactoring
 3. **Test Coverage**: Maintain 100% YAML 1.2 compliance as primary goal
+
+## Incremental Emitter/Lexer Cleanup Plan (2026-03)
+
+While large-scale splitting of `emitter/emitter.rs` and `lexer/document.rs` has been
+deferred, there are smaller, safer refactors that improve readability and structure
+without changing behavior.
+
+### Goals
+
+- Reduce local complexity in the emitter and lexer without introducing new modules
+  immediately.
+- Isolate reusable low-level concerns (token navigation, indentation checks) so later
+  structural refactors are easier.
+- Keep every step test-driven and behavior-preserving.
+
+### Emitter: Incremental Steps
+
+1. **Introduce a reusable token cursor abstraction**
+   - Extract token navigation logic (`peek`, `peek_nth`, `is_eof`, `current_span`) into a
+     small helper type that encapsulates access to `RichToken` slices.
+   - Keep the external `Emitter` API identical (methods like `peek()` remain), but
+     delegate their implementation to the cursor helper.
+   - No behavior change; purely internal factoring.
+
+2. **Separate document lifecycle helpers**
+   - Group `prepare_document`, `finish_document`, `consume_trailing_content`, and
+     `populate_tag_handles` behind a focused "document context" boundary (initially just
+     via helper methods in the same file, later movable to a dedicated module).
+   - Clarify ownership of directive/tag-handle logic vs indentation/content logic.
+
+3. **Factor block vs flow collection processing**
+   - Logically separate block and flow code paths inside `process_state_stack` and the
+     related `process_block_seq`, `process_block_map`, `process_flow_seq`, and
+     `process_flow_map` helpers.
+   - Initial step is to ensure each helper is self-contained and uses small, typed
+     parameters instead of relying on wide `self` state.
+
+4. **Extract indentation/tab validation helpers**
+   - Keep indentation semantics centralized (e.g., `check_tabs_as_indentation`,
+     `check_tabs_at_column_zero_in_flow`, `check_tabs_after_block_indicator`,
+     `check_trailing_content_at_root`, `check_content_after_flow`).
+   - Make these helpers operate on simple inputs (token kind, spans, current
+     indent/flow-depth) so they can later be moved into a smaller "indent validator"
+     unit without touching parsing logic.
+
+5. **Shrink `parse_value` by splitting sub-responsibilities**
+   - Break out distinct concerns into helpers:
+     - Pre-value layout/indent checks.
+     - Property collection and orphan-property detection.
+     - Determining implicit vs explicit mapping behavior.
+     - Dispatching into block/flow/scalar parsing.
+   - Target: `parse_value` becomes a thin orchestrator that calls 3–5 small helpers.
+
+### Lexer: Small-Scope Improvements
+
+1. **Add focused submodules only where cohesion is obvious**
+   - Candidates: quoted string handling, block scalar headers, and directive parsing.
+   - Move only well-isolated helpers (e.g., `consume_single_quoted`,
+     `consume_double_quoted`, `consume_block_header`, `try_lex_directive`) into
+     dedicated submodules, leaving the core `Lexer` state in `document.rs`.
+
+2. **Group related state flags into small structs/enums**
+   - Example: `LexerPhase` for directive prologue vs in-document is already an enum;
+     a similar grouping can be applied to quoted-string state or directive tracking
+     (e.g., an internal `DirectiveState` type).
+
+3. **Tighten and de-duplicate docs**
+   - Ensure internal comments and public docs reflect current naming (`Lexer` vs
+     `DocumentLexer`, file paths, etc.).
+
+### Execution Notes
+
+- Each step should be implemented as a small, behavior-preserving change followed by
+  running the full test suite (`cargo test -p yaml-parser`).
+- The emitter cursor abstraction (step 1) is the first concrete change and forms the
+  basis for later splitting work if/when that becomes desirable.

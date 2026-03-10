@@ -11,20 +11,14 @@
 //! The `Emitter` is validated against the YAML Test Suite to ensure
 //! correct event sequences for all inputs.
 
-// This module is work-in-progress. Allow dead code during development.
-#![allow(dead_code, reason = "WIP: Emitter is under active development")]
+// Structural lints that are intentional design decisions for the emitter state machine
 #![allow(
-    clippy::map_unwrap_or,
     clippy::match_same_arms,
+    reason = "Match arms that look identical have different semantic meaning in the state machine"
+)]
+#![allow(
     clippy::collapsible_if,
-    clippy::too_many_lines,
-    clippy::shadow_reuse,
-    clippy::redundant_locals,
-    clippy::unnecessary_wraps,
-    clippy::type_complexity,
-    clippy::unused_self,
-    clippy::string_slice,
-    reason = "WIP: These will be addressed as the emitter matures"
+    reason = "Nested if-let patterns are clearer than collapsed && chains for complex conditions"
 )]
 
 use std::borrow::Cow;
@@ -35,149 +29,36 @@ use crate::event::{Event, ScalarStyle};
 use crate::lexer::{RichToken, Token};
 use crate::span::{IndentLevel, Span, usize_to_indent};
 
-/// Phase within a block sequence.
-#[derive(Debug, Clone, Copy)]
-enum BlockSeqPhase {
-    /// Emit `SequenceStart`, then transition to `BeforeEntry`.
-    EmitStart,
-    /// Before parsing an entry - check for `-` indicator.
-    BeforeEntry,
-    /// After parsing entry value - check for next entry or end.
-    AfterEntry,
-}
+use super::cursor::TokenCursor;
+use super::states::{
+    BlockMapPhase, BlockSeqPhase, DocState, FlowMapPhase, FlowSeqPhase, ParseState, ValueContext,
+    ValueKind,
+};
 
-/// Phase within a block mapping.
-#[derive(Debug, Clone, Copy)]
-enum BlockMapPhase {
-    /// Emit `MappingStart`, then transition to `BeforeKey`.
-    EmitStart,
-    /// Before parsing a key.
-    /// `require_line_boundary`: If true, a new entry requires a line boundary.
-    /// This is set to true after processing a key-value pair to prevent
-    /// same-line entries like `a: b: c`.
-    BeforeKey { require_line_boundary: bool },
-    /// After key, expect `:` and value.
-    /// `is_implicit_scalar_key`: If true, the key was an implicit scalar (like `key:`).
-    /// Block sequences on the same line as such keys are invalid (`key: - item`).
-    AfterKey { is_implicit_scalar_key: bool },
-    /// After value, check for next pair or end.
-    AfterValue,
-}
-
-/// Phase within a flow sequence.
-#[derive(Debug, Clone, Copy)]
-enum FlowSeqPhase {
-    /// Emit `SequenceStart`, then transition to `BeforeEntry`.
-    EmitStart,
-    /// Before parsing an entry.
-    BeforeEntry,
-    /// After entry, expect `,` or `]`.
-    AfterEntry,
-    /// Emit empty key scalar for implicit mapping with empty key (e.g., `[ : value ]`).
-    ImplicitMapEmptyKey { map_start_span: Span },
-    /// After implicit mapping key, expect `:` then parse value.
-    ImplicitMapValue { map_start_span: Span },
-    /// After implicit mapping value, emit `MappingEnd`.
-    ImplicitMapEnd { map_start_span: Span },
-}
-
-/// Phase within a flow mapping.
-#[derive(Debug, Clone, Copy)]
-enum FlowMapPhase {
-    /// Emit `MappingStart`, then transition to `BeforeKey`.
-    EmitStart,
-    /// Before parsing a key.
-    BeforeKey,
-    /// After key, expect `:`.
-    AfterKey,
-    /// After value, expect `,` or `}`.
-    AfterValue,
-}
-
-/// A parsing state on the stack.
+/// Type alias for property collection return type:
+/// `(anchor, tag, crossed_property_line_boundary)`.
 ///
-/// Each variant represents a construct being parsed and its current phase.
-/// The stack replaces the call stack from recursive descent parsing.
-#[derive(Debug, Clone)]
-enum ParseState<'input> {
-    /// Parse any value at a given minimum indent.
-    Value {
-        min_indent: IndentLevel,
-        /// Collected properties (anchor, tag) to apply to this value.
-        anchor: Option<(Cow<'input, str>, Span)>,
-        tag: Option<(Cow<'input, str>, Span)>,
-        /// Whether this value is being parsed as a mapping key.
-        /// If true, don't detect implicit mappings (avoid infinite nesting).
-        is_key: bool,
-        /// Whether this value position allows implicit nested mappings.
-        /// Set to `false` when parsing a value immediately after `:` on the same line.
-        /// Nested implicit mappings require a line break and indentation.
-        allow_implicit_mapping: bool,
-    },
-    /// Block sequence parsing.
-    BlockSeq {
-        indent: IndentLevel,
-        phase: BlockSeqPhase,
-        start_span: Span,
-        /// Anchor/tag to attach to `SequenceStart` (only used in `EmitStart` phase).
-        anchor: Option<(Cow<'input, str>, Span)>,
-        tag: Option<(Cow<'input, str>, Span)>,
-    },
-    /// Block mapping parsing.
-    BlockMap {
-        indent: IndentLevel,
-        phase: BlockMapPhase,
-        start_span: Span,
-        /// Anchor/tag to attach to `MappingStart` (only used in `EmitStart` phase).
-        anchor: Option<(Cow<'input, str>, Span)>,
-        tag: Option<(Cow<'input, str>, Span)>,
-    },
-    /// Flow sequence parsing.
-    FlowSeq {
-        phase: FlowSeqPhase,
-        start_span: Span,
-    },
-    /// Flow mapping parsing.
-    FlowMap {
-        phase: FlowMapPhase,
-        start_span: Span,
-    },
-    /// Emit `SequenceEnd` for block sequence.
-    EmitSeqEnd { span: Span },
-    /// Emit `MappingEnd` for block mapping.
-    EmitMapEnd { span: Span },
-    /// Emit `SequenceStart` (for complex key scenarios where `MappingStart` is emitted first).
-    EmitSeqStart {
-        anchor: Option<(Cow<'input, str>, Span)>,
-        tag: Option<(Cow<'input, str>, Span)>,
-        span: Span,
-    },
-    /// Emit a scalar event (used for deferred key emission).
-    EmitScalar {
-        value: Cow<'input, str>,
-        anchor: Option<(Cow<'input, str>, Span)>,
-        tag: Option<(Cow<'input, str>, Span)>,
-        span: Span,
-        style: ScalarStyle,
-    },
-    /// Emit an alias event (used for deferred key emission when alias is a mapping key).
-    EmitAlias { name: Cow<'input, str>, span: Span },
-}
+/// The boolean is `true` if a `LineStart` token was encountered while
+/// collecting properties (i.e. properties span multiple lines).
+type PropertyCollection<'input> = (
+    Option<(Cow<'input, str>, Span)>,
+    Option<(Cow<'input, str>, Span)>,
+    bool,
+);
 
-/// Document-level state.
-#[derive(Debug, Clone)]
-enum DocState {
-    /// Ready to start a new document.
-    Ready,
-    /// About to emit `DocumentStart`.
-    EmitDocStart { explicit: bool, span: Span },
-    /// Parsing document content.
-    Content,
-    /// About to emit `DocumentEnd`.
-    EmitDocEnd { explicit: bool, span: Span },
-    /// Stream ended.
-    Done,
-}
+/// Type alias for the result of deciding whether collected properties at a
+/// dedented indent should emit an empty scalar or "bridge" to a collection.
+///
+/// `(maybe_event, anchor, tag)` where:
+/// - `maybe_event` is `Some(Event)` when an empty scalar should be emitted and
+///   callers should return early from `parse_value`.
+/// - `anchor` and `tag` are the (possibly updated) properties to continue with
+///   when `maybe_event` is `None`.
+type MaybeEmptyScalarDecision<'input> = (
+    Option<Event<'input>>,
+    Option<(Cow<'input, str>, Span)>,
+    Option<(Cow<'input, str>, Span)>,
+);
 
 /// A YAML event emitter using an explicit state machine.
 ///
@@ -192,8 +73,13 @@ enum DocState {
 /// lookahead operations.
 #[derive(Debug)]
 pub struct Emitter<'tokens, 'input> {
-    /// Token slice. Requires random access for lookahead operations (`peek_nth`).
+    /// Token cursor wrapper. Provides read-only access helpers over the token slice.
+    ///
+    /// NOTE: The raw slice is still stored separately during the initial refactor
+    /// to avoid touching all direct `tokens` usages at once. Over time, new code
+    /// should go through the cursor, and direct slice access can be phased out.
     tokens: &'tokens [RichToken<'input>],
+    cursor: TokenCursor<'tokens, 'input>,
     /// Original input string.
     input: &'input str,
     /// Current position in tokens.
@@ -243,6 +129,7 @@ impl<'tokens, 'input> Emitter<'tokens, 'input> {
     pub fn new(tokens: &'tokens [RichToken<'input>], input: &'input str) -> Self {
         Self {
             tokens,
+            cursor: TokenCursor::new(tokens),
             input,
             pos: 0,
             current_indent: 0,
@@ -277,11 +164,11 @@ impl<'tokens, 'input> Emitter<'tokens, 'input> {
     // ─────────────────────────────────────────────────────────────
 
     fn peek(&self) -> Option<(&Token<'input>, Span)> {
-        self.tokens.get(self.pos).map(|rt| (&rt.token, rt.span))
+        self.cursor.peek(self.pos)
     }
 
     fn peek_nth(&self, n: usize) -> Option<(&Token<'input>, Span)> {
-        self.tokens.get(self.pos + n).map(|rt| (&rt.token, rt.span))
+        self.cursor.peek_nth(self.pos, n)
     }
 
     fn advance(&mut self) {
@@ -298,22 +185,11 @@ impl<'tokens, 'input> Emitter<'tokens, 'input> {
     }
 
     fn is_eof(&self) -> bool {
-        self.pos >= self.tokens.len()
+        self.cursor.is_eof(self.pos)
     }
 
     fn current_span(&self) -> Span {
-        self.tokens
-            .get(self.pos)
-            .map(|rt| rt.span)
-            .unwrap_or_else(|| {
-                // At EOF, return span at end of last token.
-                // NOTE: This differs from batch parser which returns 0..0 for EOF.
-                // The emitter behavior is more correct as it provides actual position info.
-                self.tokens
-                    .last()
-                    .map(|rt| Span::from_usize_range(rt.span.end_usize()..rt.span.end_usize()))
-                    .unwrap_or_else(|| Span::from_usize_range(0..0))
-            })
+        self.cursor.current_span(self.pos)
     }
 
     /// Get span for collection end events (MappingEnd/SequenceEnd).
@@ -323,21 +199,16 @@ impl<'tokens, 'input> Emitter<'tokens, 'input> {
     fn collection_end_span(&self) -> Span {
         if let Some(span) = self.last_content_span {
             // Use end position of last content as a point span
-            Span::from_usize_range(span.end_usize()..span.end_usize())
+            Span::new(span.end..span.end)
         } else if self.pos > 0 {
             // Fallback: use end of previous token
-            self.tokens
-                .get(self.pos - 1)
-                .map(|rt| Span::from_usize_range(rt.span.end_usize()..rt.span.end_usize()))
-                .unwrap_or_else(|| self.current_span())
+            self.tokens.get(self.pos - 1).map_or_else(
+                || self.current_span(),
+                |rt| Span::from_usize_range(rt.span.end_usize()..rt.span.end_usize()),
+            )
         } else {
             self.current_span()
         }
-    }
-
-    /// Update the last content span after emitting content.
-    fn set_last_content_span(&mut self, span: Span) {
-        self.last_content_span = Some(span);
     }
 
     /// Get the column (0-based) of a byte position by looking back to the last newline.
@@ -402,6 +273,7 @@ impl<'tokens, 'input> Emitter<'tokens, 'input> {
         if start >= end {
             return;
         }
+        #[allow(clippy::string_slice, reason = "Span positions are UTF-8 boundaries")]
         let key_text = &self.input[start..end];
 
         // Check if the key text contains a newline
@@ -443,6 +315,7 @@ impl<'tokens, 'input> Emitter<'tokens, 'input> {
         if start >= end {
             return;
         }
+        #[allow(clippy::string_slice, reason = "Span positions are UTF-8 boundaries")]
         let key_text = &self.input[start..end];
 
         if key_text.contains('\n') {
@@ -469,7 +342,6 @@ impl<'tokens, 'input> Emitter<'tokens, 'input> {
 
         // Check if current token is WhitespaceWithTabs (immediately after LineStart, no Indent)
         if let Some((Token::WhitespaceWithTabs, tab_span)) = self.peek_nth(0) {
-            let tab_span = tab_span;
             // Look ahead to see what follows the whitespace (starting after the tab)
             let mut look_ahead = 1;
             while let Some((tok, _)) = self.peek_nth(look_ahead) {
@@ -667,7 +539,6 @@ impl<'tokens, 'input> Emitter<'tokens, 'input> {
                 Some((Token::Whitespace | Token::WhitespaceWithTabs, _)) => self.advance(),
                 Some((Token::LineStart(indent), span)) => {
                     let indent = *indent;
-                    let span = span;
                     crossed_line = true;
                     last_linestart_span = Some(span);
                     self.advance();
@@ -737,6 +608,18 @@ impl<'tokens, 'input> Emitter<'tokens, 'input> {
     // Document-level handling
     // ─────────────────────────────────────────────────────────────
 
+    /// Reset per-document state such as anchors and tag handles.
+    ///
+    /// This is called when starting to prepare a new document and keeps
+    /// all document-lifecycle initialization in one place.
+    fn reset_document_state(&mut self) {
+        // Clear anchors from the previous document
+        self.anchors.clear();
+        // Recompute tag handles based on any directives at the start of
+        // the upcoming document.
+        self.populate_tag_handles();
+    }
+
     /// Prepare for the next document. Returns `Some((explicit, span))` if a
     /// document should start, or `None` if at EOF.
     fn prepare_document(&mut self) -> Option<(bool, Span)> {
@@ -756,11 +639,8 @@ impl<'tokens, 'input> Emitter<'tokens, 'input> {
             return None;
         }
 
-        // Reset document state
-        self.anchors.clear();
-
-        // Populate tag handles from directive tokens
-        self.populate_tag_handles();
+        // Reset document-level state (anchors, tag handles, etc.).
+        self.reset_document_state();
 
         // Track directives for "directive without document" error
         let mut has_directive = false;
@@ -1024,13 +904,15 @@ impl<'input> Iterator for Emitter<'_, 'input> {
                         explicit: *explicit,
                         span: *span,
                     };
-                    // Push initial value parse state
+                    // Push initial value parse state (top-level document value)
                     self.state_stack.push(ParseState::Value {
-                        min_indent: 0,
+                        ctx: ValueContext {
+                            min_indent: 0,
+                            kind: ValueKind::TopLevelValue,
+                            allow_implicit_mapping: true, // Document root allows implicit mappings
+                        },
                         anchor: None,
                         tag: None,
-                        is_key: false,
-                        allow_implicit_mapping: true, // Document root allows implicit mappings
                     });
                     self.doc_state = DocState::Content;
                     return Some(event);
@@ -1078,6 +960,26 @@ impl<'input> Iterator for Emitter<'_, 'input> {
     }
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "Complex state machine with value dispatch logic"
+)]
+#[allow(
+    clippy::match_same_arms,
+    reason = "Match arms that look identical have different semantic meaning in the state machine"
+)]
+#[allow(
+    clippy::shadow_reuse,
+    reason = "Shadowing is used intentionally to refine types (e.g., anchor/tag from parameters)"
+)]
+#[allow(
+    clippy::collapsible_if,
+    reason = "Nested if-let patterns are clearer than collapsed && chains for complex conditions"
+)]
+#[allow(
+    clippy::unnecessary_wraps,
+    reason = "Return type consistency - these methods are called from the same dispatch logic that requires Option"
+)]
 impl<'input> Emitter<'_, 'input> {
     /// Process the state stack and return the next event, if any.
     ///
@@ -1087,15 +989,72 @@ impl<'input> Emitter<'_, 'input> {
             let state = self.state_stack.pop()?;
 
             match state {
-                ParseState::Value {
-                    min_indent,
+                ParseState::Value { ctx, anchor, tag } => {
+                    if let Some(event) = self.parse_value(ctx, anchor, tag) {
+                        return Some(event);
+                    }
+                    // No value produced, continue with next state
+                }
+                ParseState::ValueAfterProperties {
+                    ctx,
                     anchor,
                     tag,
-                    is_key,
-                    allow_implicit_mapping,
+                    initial_crossed_line,
+                    prop_crossed_line,
+                    property_indent,
+                } => {
+                    if let Some(event) = self.process_value_after_properties(
+                        ctx,
+                        anchor,
+                        tag,
+                        initial_crossed_line,
+                        prop_crossed_line,
+                        property_indent,
+                    ) {
+                        return Some(event);
+                    }
+                    // No value produced, continue with next state
+                }
+                ParseState::AliasValue {
+                    name,
+                    span,
+                    anchor,
+                    tag,
+                    crossed_line_after_properties,
+                    ..
+                } => {
+                    if let Some(event) = self.process_alias_value_state(
+                        name,
+                        span,
+                        anchor,
+                        tag,
+                        crossed_line_after_properties,
+                    ) {
+                        return Some(event);
+                    }
+                    // No value produced, continue with next state
+                }
+                ParseState::AdditionalPropertiesValue {
+                    ctx,
+                    outer_anchor,
+                    outer_tag,
                 } => {
                     if let Some(event) =
-                        self.parse_value(min_indent, anchor, tag, is_key, allow_implicit_mapping)
+                        self.process_additional_properties_value_state(ctx, outer_anchor, outer_tag)
+                    {
+                        return Some(event);
+                    }
+                    // No value produced, continue with next state
+                }
+                ParseState::FlowCollectionValue {
+                    is_map,
+                    span,
+                    anchor,
+                    tag,
+                    ..
+                } => {
+                    if let Some(event) =
+                        self.process_flow_collection_value_state(is_map, span, anchor, tag)
                     {
                         return Some(event);
                     }
@@ -1142,11 +1101,6 @@ impl<'input> Emitter<'_, 'input> {
                     }
                 }
 
-                ParseState::EmitSeqEnd { span } => {
-                    self.pop_indent();
-                    return Some(Event::SequenceEnd { span });
-                }
-
                 ParseState::EmitMapEnd { span } => {
                     self.pop_indent();
                     return Some(Event::MappingEnd { span });
@@ -1185,41 +1139,201 @@ impl<'input> Emitter<'_, 'input> {
     }
 
     // ─────────────────────────────────────────────────────────────
-    // Value parsing - the dispatch point
+    // Value parsing helpers and dispatch
     // ─────────────────────────────────────────────────────────────
 
-    /// Parse any value. Returns the first event for this value.
+    /// Return true if we're currently in the context of a block sequence entry
+    /// after having parsed a `-` indicator.
+    fn in_sequence_entry_context(&self) -> bool {
+        self.state_stack.last().is_some_and(|state| {
+            matches!(
+                state,
+                ParseState::BlockSeq {
+                    phase: BlockSeqPhase::AfterEntry,
+                    ..
+                }
+            )
+        })
+    }
+
+    /// Decide whether collected properties at a dedented indent should result in
+    /// an empty scalar value instead of "bridging" to a block collection.
     ///
-    /// This is the main dispatch point that determines what kind of value
-    /// we're looking at and either emits an event directly or pushes states.
+    /// This encapsulates the bridging rules used by `parse_value`:
+    /// - For sequence entries, never bridge: `- !!str\n-` means `!!str` applies
+    ///   to an empty scalar and the second `-` is a sibling entry.
+    /// - For mapping values, only bridge when the dedented content is at the
+    ///   parent collection's indent and the next content is a block collection
+    ///   indicator (`-` or `?`).
     ///
-    /// If `is_key` is true, this value is being parsed as a mapping key and
-    /// we should NOT detect implicit mappings (to avoid infinite nesting).
-    ///
-    /// If `allow_implicit_mapping` is false, don't create nested implicit mappings
-    /// even if a colon follows. This is used when parsing values immediately after
-    /// a colon on the same line (YAML requires a line break for nested implicit mappings).
-    #[allow(clippy::too_many_lines, reason = "Complex value dispatch logic")]
-    fn parse_value(
+    /// Returns a `MaybeEmptyScalarDecision<'input>`: `(maybe_event, anchor, tag)`.
+    /// When `maybe_event` is `Some`, callers should return early from
+    /// `parse_value` and ignore the updated `anchor` and `tag` values.
+    fn maybe_emit_empty_scalar_for_non_bridging_properties(
         &mut self,
         min_indent: IndentLevel,
         anchor: Option<(Cow<'input, str>, Span)>,
         tag: Option<(Cow<'input, str>, Span)>,
-        is_key: bool,
-        allow_implicit_mapping: bool,
-    ) -> Option<Event<'input>> {
-        // Track if we see a LineStart before value content
-        // IMPORTANT: We must always call skip_ws_and_newlines_returns_crossed_line() to consume
-        // the LineStart token, even if we detect it with matches!. Otherwise, collect_properties
-        // won't see the anchor/tag tokens that follow.
-        let has_leading_linestart = matches!(self.peek(), Some((Token::LineStart(_), _)));
-        let skipped_crossed_line = self.skip_ws_and_newlines_returns_crossed_line();
-        let initial_crossed_line = has_leading_linestart || skipped_crossed_line;
+        initial_crossed_line: bool,
+        property_indent: Option<IndentLevel>,
+    ) -> MaybeEmptyScalarDecision<'input> {
+        // No properties collected – nothing to decide.
+        if anchor.is_none() && tag.is_none() {
+            return (None, anchor, tag);
+        }
 
-        // Check if we crossed a line and landed at an invalid indentation level.
-        // The batch parser's advance_to_same_indent reports InvalidIndentation when
-        // content appears at indent < min_indent or at an orphan level.
-        // Check if the current position has content at an invalid indent.
+        // Only care about the case where the next token is a LineStart at a
+        // dedented level (< min_indent). Otherwise, we leave the properties
+        // attached to the upcoming value.
+        let Some((Token::LineStart(next_indent), _)) = self.peek() else {
+            return (None, anchor, tag);
+        };
+        if *next_indent >= min_indent {
+            return (None, anchor, tag);
+        }
+
+        // Check if we're in a sequence entry context.
+        let in_sequence_entry = self.in_sequence_entry_context();
+
+        // Check if the dedented line is too far outside the current context.
+        let too_dedented = *next_indent < min_indent.saturating_sub(1);
+
+        // Check if properties were collected at an invalid (dedented) indent.
+        // Properties are invalid if:
+        // 1. We crossed a line BEFORE collecting them (`initial_crossed_line`)
+        //    meaning they're on a separate line from the key
+        // 2. AND the indent of that line is < min_indent
+        // E.g., `seq:\n&anchor\n- a` where &anchor is at indent 0 < min_indent 1
+        // But `seq: !!seq\n- a` is valid - the tag is inline with the key
+        // (initial_crossed_line=false, prop_crossed_line=true means we crossed
+        // AFTER collecting, not before).
+        let properties_at_invalid_indent =
+            initial_crossed_line && property_indent.is_some_and(|prop_ind| prop_ind < min_indent);
+
+        // Even if not too dedented, we should NOT bridge to a sibling mapping key.
+        // Look ahead past the LineStart and Dedent tokens to see what follows.
+        // Only bridge if the next content token is a block collection indicator (- or ?).
+        let mut lookahead_for_indicator = 1;
+        while let Some((tok, _)) = self.peek_nth(lookahead_for_indicator) {
+            if matches!(tok, Token::Dedent | Token::Indent(_)) {
+                lookahead_for_indicator += 1;
+            } else {
+                break;
+            }
+        }
+
+        let can_bridge = !in_sequence_entry
+            && !too_dedented
+            && !properties_at_invalid_indent
+            && self
+                .peek_nth(lookahead_for_indicator)
+                .is_some_and(|(token, _)| {
+                    matches!(token, Token::BlockSeqIndicator | Token::MappingKey)
+                });
+
+        if !can_bridge {
+            // Can't bridge - emit empty scalar.
+            // If properties were collected at an invalid indent (below min_indent),
+            // drop them. This matches the batch parser's behavior for cases like:
+            // `seq:\n&anchor\n- a` where &anchor is at indent 0 < min_indent 1
+            let (event_anchor, event_tag) = if properties_at_invalid_indent {
+                (None, None) // Drop properties collected at invalid indent
+            } else {
+                (anchor, tag)
+            };
+            return (
+                Some(Event::Scalar {
+                    style: ScalarStyle::Plain,
+                    value: Cow::Borrowed(""),
+                    anchor: event_anchor,
+                    tag: event_tag,
+                    span: self.current_span(),
+                }),
+                None,
+                None,
+            );
+        }
+
+        // Bridging to block collection at valid dedent level.
+        (None, anchor, tag)
+    }
+
+    /// Common helper for creating a block mapping from a scalar key that has
+    /// already been parsed.
+    ///
+    /// This sets up the `BlockMap` and `EmitScalar` states and returns the
+    /// `MappingStart` event. The `start_span` is the span of the indicator that
+    /// triggered implicit mapping detection (used as `start_span` for
+    /// `BlockMap`), while the returned event's span is the full key span
+    /// (matching the batch parser behavior).
+    fn build_block_mapping_from_scalar_key(
+        &mut self,
+        map_indent: IndentLevel,
+        start_span: Span,
+        map_anchor: Option<(Cow<'input, str>, Span)>,
+        map_tag: Option<(Cow<'input, str>, Span)>,
+        key_event: Option<Event<'input>>,
+    ) -> Event<'input> {
+        if let Some(Event::Scalar {
+            value,
+            anchor: k_anchor,
+            tag: k_tag,
+            span: k_span,
+            style,
+        }) = key_event
+        {
+            // Check for multiline implicit key error.
+            self.check_multiline_implicit_key(k_span);
+
+            // Stack setup: emit the key first, then parse the value after colon.
+            self.state_stack.push(ParseState::BlockMap {
+                indent: map_indent,
+                phase: BlockMapPhase::AfterKey {
+                    is_implicit_scalar_key: true, // Plain scalar key
+                },
+                start_span,
+                anchor: None,
+                tag: None,
+            });
+            self.state_stack.push(ParseState::EmitScalar {
+                value,
+                anchor: k_anchor,
+                tag: k_tag,
+                span: k_span,
+                style,
+            });
+            // Push indent level for orphan indent detection.
+            self.push_indent(map_indent);
+
+            Event::MappingStart {
+                style: crate::event::CollectionStyle::Block,
+                anchor: map_anchor,
+                tag: map_tag,
+                span: k_span, // Use full key span for MappingStart
+            }
+        } else {
+            // Fallback - shouldn't happen, but keep stack consistent.
+            self.push_indent(map_indent);
+            Event::MappingStart {
+                style: crate::event::CollectionStyle::Block,
+                anchor: map_anchor,
+                tag: map_tag,
+                span: start_span,
+            }
+        }
+    }
+
+    /// Handle invalid indentation after crossing a line boundary at the start of a value.
+    ///
+    /// This mirrors the batch parser's `advance_to_same_indent` behaviour: when we cross
+    /// a line and land at `indent < min_indent`, we may need to report
+    /// `InvalidIndentation` and/or `OrphanedProperties` errors for properties or
+    /// scalar-like content at that position.
+    fn handle_invalid_indent_after_line_cross(
+        &mut self,
+        min_indent: IndentLevel,
+        initial_crossed_line: bool,
+    ) {
         if initial_crossed_line && self.current_indent < min_indent {
             // Check if there's content (properties or values) at this invalid indent
             if let Some((tok, span)) = self.peek() {
@@ -1262,12 +1376,22 @@ impl<'input> Emitter<'_, 'input> {
                 }
             }
         }
+    }
 
-        // Check for properties (anchor, tag) before the value
-        // Use min_indent to prevent collecting properties that are at invalid indentation
-        let (anchor, tag, prop_crossed_line) =
-            self.collect_properties_with_min_indent(anchor, tag, min_indent);
+    /// Return true if a block sequence at the given `indent` is at the
+    /// root level. Root-level sequences have `indent_stack == [0, 0]`
+    /// (base + sequence level).
+    fn is_root_level_sequence(&self, indent: IndentLevel) -> bool {
+        indent == 0 && self.indent_stack.len() == 2
+    }
 
+    /// Report orphaned properties when property collection crossed a line boundary and
+    /// landed at an invalid indent level for the current value.
+    fn report_orphaned_properties_after_invalid_indent(
+        &mut self,
+        min_indent: IndentLevel,
+        prop_crossed_line: bool,
+    ) {
         // Check for orphaned properties: if we crossed a line boundary but stopped because
         // of invalid indent, and the next content is a property, report OrphanedProperties.
         // This handles cases like `key: &x\n!!map\n  a: b` where !!map is at invalid indent.
@@ -1295,101 +1419,482 @@ impl<'input> Emitter<'_, 'input> {
                 }
             }
         }
+    }
 
-        // Capture the indent where properties were collected (if any)
-        let property_indent = (anchor.is_some() || tag.is_some()).then_some(self.current_indent);
+    /// Handle a flow sequence start token as a value, including the case where
+    /// the flow sequence acts as a complex mapping key in block context.
+    /// Handle a flow collection start token (`[` or `{`) as a value, including
+    /// the case where the flow collection acts as a complex mapping key in
+    /// block context.
+    fn process_flow_collection_value_state(
+        &mut self,
+        is_map: bool,
+        span: Span,
+        anchor: Option<(Cow<'input, str>, Span)>,
+        tag: Option<(Cow<'input, str>, Span)>,
+    ) -> Option<Event<'input>> {
+        // In block context, check if this flow collection is a complex key.
+        let is_complex_key = if is_map {
+            self.flow_depth == 0 && self.is_flow_map_complex_key()
+        } else {
+            self.flow_depth == 0 && self.is_flow_seq_complex_key()
+        };
+        if is_complex_key {
+            // This is a block mapping with a flow collection as key.
+            let map_indent = self.current_indent;
 
-        // Track line crossing from either initial skip or property collection
-        let mut crossed_line_boundary = initial_crossed_line || prop_crossed_line;
+            self.advance();
+            self.enter_flow_collection(span.start_usize());
 
-        // If we crossed a line boundary, implicit mappings are now allowed
-        // (even if they weren't before, a line break resets the context)
-        let allow_implicit_mapping = allow_implicit_mapping || crossed_line_boundary;
+            // Push BlockMap state for after the key.
+            self.state_stack.push(ParseState::BlockMap {
+                indent: map_indent,
+                phase: BlockMapPhase::AfterKey {
+                    is_implicit_scalar_key: false, // Flow collection key, not plain scalar
+                },
+                start_span: span,
+                anchor: None,
+                tag: None,
+            });
 
-        // IMPORTANT: If we collected properties and the next line is dedented,
-        // we need to decide if the properties apply to an empty scalar or should
-        // "bridge" to a block collection on the next line.
-        //
-        // Bridging rules:
-        // 1. For SEQUENCE ENTRIES: Never bridge. `- !!str\n-` means !!str is for an
-        //    empty scalar, and the second `-` is a sibling entry.
-        // 2. For MAPPING VALUES: Only bridge if:
-        //    - The dedented content is at the parent collection's indent (min_indent - 1)
-        //    - AND the next content is a block collection indicator (- or ?)
-        //    E.g., `key: !!seq\n- item` bridges because `-` starts a sequence value.
-        //    But `a: &anchor\nb:` does NOT bridge because `b:` is a sibling key.
-        if anchor.is_some() || tag.is_some() {
-            if let Some((Token::LineStart(next_indent), _)) = self.peek() {
-                if *next_indent < min_indent {
-                    // Check if we're in a sequence entry context
-                    let in_sequence_entry = self.state_stack.last().is_some_and(|state| {
-                        matches!(
-                            state,
-                            ParseState::BlockSeq {
-                                phase: BlockSeqPhase::AfterEntry,
-                                ..
-                            }
-                        )
-                    });
+            // Push flow collection state with EmitStart phase to emit
+            // SequenceStart/MappingStart next.
+            if is_map {
+                self.state_stack.push(ParseState::FlowMap {
+                    phase: FlowMapPhase::EmitStart,
+                    start_span: span,
+                });
+            } else {
+                self.state_stack.push(ParseState::FlowSeq {
+                    phase: FlowSeqPhase::EmitStart,
+                    start_span: span,
+                });
+            }
 
-                    // Check if the dedented line is too far outside the current context.
-                    let too_dedented = *next_indent < min_indent.saturating_sub(1);
+            // Push indent level for orphan indent detection.
+            self.push_indent(map_indent);
+            // Emit MappingStart with the properties.
+            return Some(Event::MappingStart {
+                style: crate::event::CollectionStyle::Block,
+                anchor,
+                tag,
+                span,
+            });
+        }
 
-                    // Check if properties were collected at an invalid (dedented) indent.
-                    // Properties are invalid if:
-                    // 1. We crossed a line BEFORE collecting them (`initial_crossed_line`)
-                    //    meaning they're on a separate line from the key
-                    // 2. AND the indent of that line is < min_indent
-                    // E.g., `seq:\n&anchor\n- a` where &anchor is at indent 0 < min_indent 1
-                    // But `seq: !!seq\n- a` is valid - the tag is inline with the key
-                    // (initial_crossed_line=false, prop_crossed_line=true means we crossed
-                    // AFTER collecting, not before).
-                    let properties_at_invalid_indent = initial_crossed_line
-                        && property_indent.is_some_and(|prop_ind| prop_ind < min_indent);
+        // Not a complex key: treat as regular flow collection value.
+        self.advance();
+        self.enter_flow_collection(span.start_usize());
+        if is_map {
+            self.state_stack.push(ParseState::FlowMap {
+                phase: FlowMapPhase::BeforeKey,
+                start_span: span,
+            });
+            Some(Event::MappingStart {
+                style: crate::event::CollectionStyle::Flow,
+                anchor,
+                tag,
+                span,
+            })
+        } else {
+            self.state_stack.push(ParseState::FlowSeq {
+                phase: FlowSeqPhase::BeforeEntry,
+                start_span: span,
+            });
+            Some(Event::SequenceStart {
+                style: crate::event::CollectionStyle::Flow,
+                anchor,
+                tag,
+                span,
+            })
+        }
+    }
 
-                    // Even if not too dedented, we should NOT bridge to a sibling mapping key.
-                    // Look ahead past the LineStart and Dedent tokens to see what follows.
-                    // Only bridge if the next content token is a block collection indicator (- or ?).
-                    let mut lookahead_idx = 1;
-                    while let Some((tok, _)) = self.peek_nth(lookahead_idx) {
-                        if matches!(tok, Token::Dedent | Token::Indent(_)) {
-                            lookahead_idx += 1;
-                        } else {
-                            break;
-                        }
+    /// Continue parsing after encountering additional properties (anchor/tag)
+    /// that appear after a line boundary before a value, including complex
+    /// key patterns.
+    ///
+    /// This is the state-driven version of the old
+    /// `handle_additional_properties_value` helper.
+    fn process_additional_properties_value_state(
+        &mut self,
+        ctx: ValueContext,
+        outer_anchor: Option<(Cow<'input, str>, Span)>,
+        outer_tag: Option<(Cow<'input, str>, Span)>,
+    ) -> Option<Event<'input>> {
+        let min_indent = ctx.min_indent;
+        let is_key = matches!(ctx.kind, ValueKind::Key);
+
+        // Collect the NEW properties at current position (don't pass outer ones
+        // since collect_properties would overwrite them).
+        let (mut inner_anchor, mut inner_tag, _crossed) = self.collect_properties(None, None);
+        self.skip_ws();
+
+        // Check for line boundary followed by more content (third layer of props).
+        if matches!(self.peek(), Some((Token::LineStart(_), _))) {
+            // Peek ahead to see what's after the line boundary.
+            let mut peek_offset = 1;
+            // Skip past Indent/Dedent tokens.
+            while let Some((tok, _)) = self.peek_nth(peek_offset) {
+                if matches!(tok, Token::Indent(_) | Token::Dedent) {
+                    peek_offset += 1;
+                } else {
+                    break;
+                }
+            }
+
+            // Check if next content is more properties.
+            if let Some((tok, _)) = self.peek_nth(peek_offset) {
+                if matches!(tok, Token::Anchor(_) | Token::Tag(_)) {
+                    // More properties on next line - merge with inner.
+                    self.skip_ws_and_newlines();
+                    let (new_anchor, new_tag, _) = self.collect_properties(None, None);
+                    // Prefer newer properties (or keep inner if new is None).
+                    inner_anchor = new_anchor.or(inner_anchor);
+                    inner_tag = new_tag.or(inner_tag);
+                    self.skip_ws();
+
+                    // If we see LineStart again, skip it.
+                    if matches!(self.peek(), Some((Token::LineStart(_), _))) {
+                        self.skip_ws_and_newlines();
                     }
-                    let can_bridge = !in_sequence_entry
-                        && !too_dedented
-                        && !properties_at_invalid_indent
-                        && self.peek_nth(lookahead_idx).is_some_and(|(token, _)| {
-                            matches!(token, Token::BlockSeqIndicator | Token::MappingKey)
-                        });
-
-                    if !can_bridge {
-                        // Can't bridge - emit empty scalar.
-                        // If properties were collected at an invalid indent (below min_indent),
-                        // drop them. This matches the batch parser's behavior for cases like:
-                        // `seq:\n&anchor\n- a` where &anchor is at indent 0 < min_indent 1
-                        let (anchor, tag) = if properties_at_invalid_indent {
-                            (None, None) // Drop properties collected at invalid indent
-                        } else {
-                            (anchor, tag)
-                        };
-                        return Some(Event::Scalar {
-                            style: ScalarStyle::Plain,
-                            value: Cow::Borrowed(""),
-                            anchor,
-                            tag,
-                            span: self.current_span(),
-                        });
-                    }
-                    // Bridging to block collection at valid dedent level
+                } else {
+                    // Not more properties - skip to see actual content.
+                    self.skip_ws_and_newlines();
                 }
             }
         }
 
-        // Skip any more whitespace/newlines after properties
-        crossed_line_boundary |= self.skip_ws_and_newlines_returns_crossed_line();
+        // Check if this is a complex key pattern (flow seq/map followed by :).
+        // If we have separate outer and inner properties, and the value is a
+        // flow collection that's a key, emit MappingStart with outer props.
+        if inner_anchor.is_some() || inner_tag.is_some() {
+            if let Some((Token::FlowSeqStart | Token::FlowMapStart, _)) = self.peek() {
+                if self.is_flow_seq_complex_key() {
+                    // This is a block mapping with a complex key.
+                    let span = self.current_span();
+                    let map_indent = self.current_indent;
+
+                    // Advance into the flow collection.
+                    let is_seq = matches!(self.peek(), Some((Token::FlowSeqStart, _)));
+                    self.advance();
+                    self.enter_flow_collection(span.start_usize());
+
+                    // Push BlockMap state for after the key.
+                    self.state_stack.push(ParseState::BlockMap {
+                        indent: map_indent,
+                        phase: BlockMapPhase::AfterKey {
+                            is_implicit_scalar_key: false, // Flow collection key
+                        },
+                        start_span: span,
+                        anchor: None,
+                        tag: None,
+                    });
+
+                    // Push flow collection to parse key content.
+                    if is_seq {
+                        self.state_stack.push(ParseState::FlowSeq {
+                            phase: FlowSeqPhase::BeforeEntry,
+                            start_span: span,
+                        });
+                        // Emit seq start with inner props (via EmitSeqStart).
+                        self.state_stack.push(ParseState::EmitSeqStart {
+                            anchor: inner_anchor,
+                            tag: inner_tag,
+                            span,
+                        });
+                    } else {
+                        self.state_stack.push(ParseState::FlowMap {
+                            phase: FlowMapPhase::BeforeKey,
+                            start_span: span,
+                        });
+                        // Map start with inner props will be emitted directly
+                        // by FlowMap handling.
+                    }
+
+                    // Push indent level for orphan indent detection.
+                    self.push_indent(map_indent);
+                    // Emit MappingStart with outer props.
+                    return Some(Event::MappingStart {
+                        style: crate::event::CollectionStyle::Block,
+                        anchor: outer_anchor,
+                        tag: outer_tag,
+                        span,
+                    });
+                }
+            }
+        }
+
+        // Now determine what kind of value follows.
+        match self.peek() {
+            Some((Token::Plain(_) | Token::StringStart(_), _)) => {
+                // Check if it's an implicit mapping (scalar followed by colon).
+                if !is_key && self.flow_depth == 0 && self.is_implicit_key() {
+                    // It's a nested mapping.
+                    // Property ownership:
+                    // - outer properties (before line boundary) -> MappingStart
+                    // - inner properties (same line as key) -> key scalar
+                    let span = self.current_span();
+                    let map_indent = self.current_indent;
+
+                    // Parse the first key WITH inner properties.
+                    let key_event = self.parse_plain_scalar(inner_anchor, inner_tag, min_indent);
+
+                    // Build the mapping from the parsed key and outer properties.
+                    let mapping_start = self.build_block_mapping_from_scalar_key(
+                        map_indent,
+                        span,
+                        outer_anchor,
+                        outer_tag,
+                        key_event,
+                    );
+                    return Some(mapping_start);
+                }
+                // Not an implicit mapping, just a scalar with properties.
+                // Outer properties that crossed a line boundary can only attach
+                // to collections, not scalars. So we use inner properties only.
+                // E.g., `&outer\n  &inner scalar` → &outer is lost, &inner on scalar.
+                let result = self.parse_plain_scalar(inner_anchor, inner_tag, min_indent);
+                // If this is a mapping key, check for multiline implicit key error.
+                if is_key {
+                    if let Some(Event::Scalar { span, .. }) = &result {
+                        self.check_multiline_implicit_key(*span);
+                    }
+                }
+                result
+            }
+            Some((Token::BlockSeqIndicator, _)) => {
+                // Nested sequence; merge properties (outer takes precedence).
+                let merged_anchor = outer_anchor.or(inner_anchor);
+                let merged_tag = outer_tag.or(inner_tag);
+                let span = self.current_span();
+                let seq_indent = self.column_of_position(span.start_usize());
+                self.state_stack.push(ParseState::BlockSeq {
+                    indent: seq_indent,
+                    phase: BlockSeqPhase::EmitStart,
+                    start_span: span,
+                    anchor: merged_anchor,
+                    tag: merged_tag,
+                });
+                self.process_state_stack()
+            }
+            Some((Token::FlowSeqStart, span)) => {
+                // Flow sequence; merge properties (outer takes precedence).
+                let merged_anchor = outer_anchor.or(inner_anchor);
+                let merged_tag = outer_tag.or(inner_tag);
+                self.advance();
+                self.enter_flow_collection(span.start_usize());
+                self.state_stack.push(ParseState::FlowSeq {
+                    phase: FlowSeqPhase::BeforeEntry,
+                    start_span: span,
+                });
+                Some(Event::SequenceStart {
+                    style: crate::event::CollectionStyle::Flow,
+                    anchor: merged_anchor,
+                    tag: merged_tag,
+                    span,
+                })
+            }
+            Some((Token::FlowMapStart, span)) => {
+                // Flow mapping; merge properties (outer takes precedence).
+                let merged_anchor = outer_anchor.or(inner_anchor);
+                let merged_tag = outer_tag.or(inner_tag);
+                self.advance();
+                self.enter_flow_collection(span.start_usize());
+                self.state_stack.push(ParseState::FlowMap {
+                    phase: FlowMapPhase::BeforeKey,
+                    start_span: span,
+                });
+                Some(Event::MappingStart {
+                    style: crate::event::CollectionStyle::Flow,
+                    anchor: merged_anchor,
+                    tag: merged_tag,
+                    span,
+                })
+            }
+            _ => {
+                // Emit scalar with merged properties (outer takes precedence).
+                let merged_anchor = outer_anchor.or(inner_anchor);
+                let merged_tag = outer_tag.or(inner_tag);
+                Some(Event::Scalar {
+                    style: ScalarStyle::Plain,
+                    value: Cow::Borrowed(""),
+                    anchor: merged_anchor,
+                    tag: merged_tag,
+                    span: self.current_span(),
+                })
+            }
+        }
+    }
+
+    /// Handle an alias token as a value, including error reporting and the
+    /// special case where the alias acts as a mapping key.
+    ///
+    /// This logic is driven from the `AliasValue` parse state, which
+    /// centralises how aliases behave in different contexts.
+    fn process_alias_value_state(
+        &mut self,
+        alias_name: Cow<'input, str>,
+        alias_span: Span,
+        anchor: Option<(Cow<'input, str>, Span)>,
+        tag: Option<(Cow<'input, str>, Span)>,
+        crossed_line_boundary: bool,
+    ) -> Option<Event<'input>> {
+        // Advance past the alias token and skip any immediate whitespace.
+        self.advance();
+        self.skip_ws();
+
+        // Error: Properties (anchor/tag) on alias are invalid when on the same line.
+        if (anchor.is_some() || tag.is_some()) && !crossed_line_boundary {
+            self.error(ErrorKind::PropertiesOnAlias, alias_span);
+        }
+
+        // Error: Undefined alias name.
+        if !self.anchors.contains(alias_name.as_ref()) {
+            self.error(ErrorKind::UndefinedAlias, alias_span);
+        }
+
+        // Check if alias is a mapping key (followed by colon) after crossing line boundary.
+        // This can create a nested mapping even without outer anchor/tag.
+        if crossed_line_boundary && matches!(self.peek(), Some((Token::Colon, _))) {
+            let map_indent = self.current_indent;
+
+            // Push BlockMap state in AfterKey phase (we already have the key).
+            self.state_stack.push(ParseState::BlockMap {
+                indent: map_indent,
+                phase: BlockMapPhase::AfterKey {
+                    is_implicit_scalar_key: false, // Alias, not a plain scalar
+                },
+                start_span: alias_span,
+                anchor: None,
+                tag: None,
+            });
+            // The alias itself will be emitted as the key.
+            self.state_stack.push(ParseState::EmitAlias {
+                name: alias_name,
+                span: alias_span,
+            });
+
+            // Push indent level for orphan indent detection.
+            self.push_indent(map_indent);
+            // Emit MappingStart with any outer anchor/tag.
+            return Some(Event::MappingStart {
+                style: crate::event::CollectionStyle::Block,
+                anchor,
+                tag,
+                span: alias_span,
+            });
+        }
+
+        // Not a mapping key: emit the alias as a simple value.
+        Some(Event::Alias {
+            name: alias_name,
+            span: alias_span,
+        })
+    }
+
+    /// Parse any value. Returns the first event for this value.
+    ///
+    /// This is the first phase of value parsing, responsible for whitespace
+    /// skipping, indentation validation, and property collection. After
+    /// properties have been collected, control is transferred to
+    /// `ValueAfterProperties`, which performs the main dispatch and
+    /// bridging/empty-value decisions.
+    fn parse_value(
+        &mut self,
+        ctx: ValueContext,
+        anchor: Option<(Cow<'input, str>, Span)>,
+        tag: Option<(Cow<'input, str>, Span)>,
+    ) -> Option<Event<'input>> {
+        let min_indent = ctx.min_indent;
+
+        // Track if we see a LineStart before value content
+        // IMPORTANT: We must always call skip_ws_and_newlines_returns_crossed_line() to consume
+        // the LineStart token, even if we detect it with matches!. Otherwise, collect_properties
+        // won't see the anchor/tag tokens that follow.
+        let has_leading_linestart = matches!(self.peek(), Some((Token::LineStart(_), _)));
+        let skipped_crossed_line = self.skip_ws_and_newlines_returns_crossed_line();
+        let initial_crossed_line = has_leading_linestart || skipped_crossed_line;
+
+        // Check if we crossed a line and landed at an invalid indentation level.
+        // The batch parser's advance_to_same_indent reports InvalidIndentation when
+        // content appears at indent < min_indent or at an orphan level.
+        self.handle_invalid_indent_after_line_cross(min_indent, initial_crossed_line);
+
+        // Check for properties (anchor, tag) before the value
+        // Use min_indent to prevent collecting properties that are at invalid indentation
+        let (anchor, tag, prop_crossed_line) =
+            self.collect_properties_with_min_indent(anchor, tag, min_indent);
+
+        self.report_orphaned_properties_after_invalid_indent(min_indent, prop_crossed_line);
+
+        // Capture the indent where properties were collected (if any)
+        let property_indent = (anchor.is_some() || tag.is_some()).then_some(self.current_indent);
+
+        // Hand off to the `ValueAfterProperties` state, which will perform the
+        // main dispatch, bridging decisions, and empty-value handling.
+        self.state_stack.push(ParseState::ValueAfterProperties {
+            ctx,
+            anchor,
+            tag,
+            initial_crossed_line,
+            prop_crossed_line,
+            property_indent,
+        });
+        None
+    }
+
+    /// Continue parsing a value after properties have been collected.
+    ///
+    /// This function hosts the main dispatch logic that was previously the
+    /// second half of `parse_value`, including:
+    /// - Deciding whether properties at a dedented indent should bridge to a
+    ///   block collection or emit an empty scalar.
+    /// - Handling dedented empty values.
+    /// - Dispatching to scalars, block/flow collections, aliases, and
+    ///   additional property handling.
+    #[allow(clippy::too_many_lines, reason = "Complex value dispatch logic")]
+    fn process_value_after_properties(
+        &mut self,
+        ctx: ValueContext,
+        mut anchor: Option<(Cow<'input, str>, Span)>,
+        mut tag: Option<(Cow<'input, str>, Span)>,
+        initial_crossed_line: bool,
+        prop_crossed_line: bool,
+        property_indent: Option<IndentLevel>,
+    ) -> Option<Event<'input>> {
+        let min_indent = ctx.min_indent;
+        let is_key = matches!(ctx.kind, ValueKind::Key);
+        let mut allow_implicit_mapping = ctx.allow_implicit_mapping;
+
+        // Track line crossing from either initial skip or property collection.
+        // This is local to value parsing and distinct from the emitter-wide
+        // `crossed_line_boundary` flag used by block mappings.
+        let mut crossed_line_after_properties = initial_crossed_line || prop_crossed_line;
+
+        // If we crossed a line boundary, implicit mappings are now allowed
+        // (even if they weren't before, a line break resets the context).
+        allow_implicit_mapping = allow_implicit_mapping || crossed_line_after_properties;
+
+        // Decide whether collected properties at a dedented indent should stay attached
+        // to this value or result in an empty scalar before a parent context.
+        let (maybe_event, new_anchor, new_tag) = self
+            .maybe_emit_empty_scalar_for_non_bridging_properties(
+                min_indent,
+                anchor,
+                tag,
+                initial_crossed_line,
+                property_indent,
+            );
+        anchor = new_anchor;
+        tag = new_tag;
+        if let Some(event) = maybe_event {
+            return Some(event);
+        }
+
+        // Skip any more whitespace/newlines after properties and record if we
+        // cross additional line boundaries.
+        crossed_line_after_properties |= self.skip_ws_and_newlines_returns_crossed_line();
 
         // Check if we've crossed a line boundary and the content is dedented.
         // In block context, if we're at an indent < min_indent after crossing a line,
@@ -1412,15 +1917,7 @@ impl<'input> Emitter<'_, 'input> {
         // - value
         // ```
         // The second `-` is a sibling, so the first entry's value is empty.
-        let in_sequence_entry = self.state_stack.last().is_some_and(|state| {
-            matches!(
-                state,
-                ParseState::BlockSeq {
-                    phase: BlockSeqPhase::AfterEntry,
-                    ..
-                }
-            )
-        });
+        let in_sequence_entry = self.in_sequence_entry_context();
         // Look past Dedent tokens to find the actual content token.
         // This handles bridging cases where properties on a higher-indented line
         // should attach to a block collection on a lower-indented line.
@@ -1441,7 +1938,8 @@ impl<'input> Emitter<'_, 'input> {
                         Token::BlockSeqIndicator | Token::MappingKey | Token::Colon
                     )
                 });
-        if crossed_line_boundary && self.current_indent < min_indent && !at_block_indicator {
+        if crossed_line_after_properties && self.current_indent < min_indent && !at_block_indicator
+        {
             return Some(Event::Scalar {
                 style: ScalarStyle::Plain,
                 value: Cow::Borrowed(""),
@@ -1472,11 +1970,13 @@ impl<'input> Emitter<'_, 'input> {
                 self.advance();
                 // Re-enter Value state to parse the actual value
                 self.state_stack.push(ParseState::Value {
-                    min_indent,
+                    ctx: ValueContext {
+                        min_indent,
+                        kind: ctx.kind,
+                        allow_implicit_mapping,
+                    },
                     anchor,
                     tag,
-                    is_key,
-                    allow_implicit_mapping,
                 });
                 None
             }
@@ -1486,16 +1986,17 @@ impl<'input> Emitter<'_, 'input> {
                     // Document markers inside flow context are invalid.
                     // Report error and continue - the flow state machine will handle them.
                     // Don't emit a null here; let the caller re-dispatch.
-                    let span = span;
                     self.error(ErrorKind::DocumentMarkerInFlow, span);
                     self.advance();
                     // Re-enter Value state to parse the actual value
                     self.state_stack.push(ParseState::Value {
-                        min_indent,
+                        ctx: ValueContext {
+                            min_indent,
+                            kind: ctx.kind,
+                            allow_implicit_mapping,
+                        },
                         anchor,
                         tag,
-                        is_key,
-                        allow_implicit_mapping, // Preserve the flag
                     });
                     None
                 } else {
@@ -1511,62 +2012,19 @@ impl<'input> Emitter<'_, 'input> {
             }
 
             Some((Token::Alias(name), span)) => {
-                // Copy values before advancing (to avoid borrow issues)
-                let alias_name_str = *name;
+                // Defer alias handling to the `AliasValue` state so that
+                // complex-key behaviour is driven by the state machine.
+                let alias_name = Cow::Borrowed(*name);
                 let alias_span = span;
-                self.advance();
-                self.skip_ws();
-
-                // Error: Properties (anchor/tag) on alias are invalid
-                if (anchor.is_some() || tag.is_some()) && !crossed_line_boundary {
-                    self.error(ErrorKind::PropertiesOnAlias, alias_span);
-                }
-
-                // Error: Undefined alias
-                if !self.anchors.contains(alias_name_str) {
-                    self.error(ErrorKind::UndefinedAlias, alias_span);
-                }
-
-                let alias_name = Cow::Borrowed(alias_name_str);
-
-                // Check if alias is a mapping key (followed by colon) after crossing line boundary
-                // This can create a nested mapping even without outer anchor/tag
-                if crossed_line_boundary && matches!(self.peek(), Some((Token::Colon, _))) {
-                    // Alias is a mapping key - create a nested mapping
-                    // The outer anchor/tag (if any) go on the MappingStart
-                    let map_indent = self.current_indent;
-
-                    // Push BlockMap state in AfterKey phase (we already have the key)
-                    self.state_stack.push(ParseState::BlockMap {
-                        indent: map_indent,
-                        phase: BlockMapPhase::AfterKey {
-                            is_implicit_scalar_key: false, // Alias, not a plain scalar
-                        },
-                        start_span: alias_span,
-                        anchor: None,
-                        tag: None,
-                    });
-                    // Push the alias as the key to emit
-                    self.state_stack.push(ParseState::EmitAlias {
-                        name: alias_name,
-                        span: alias_span,
-                    });
-
-                    // Push indent level for orphan indent detection
-                    self.push_indent(map_indent);
-                    // Emit MappingStart with outer anchor/tag
-                    return Some(Event::MappingStart {
-                        style: crate::event::CollectionStyle::Block,
-                        anchor,
-                        tag,
-                        span: alias_span,
-                    });
-                }
-                // Not a mapping key, just emit the alias
-                Some(Event::Alias {
+                self.state_stack.push(ParseState::AliasValue {
+                    ctx,
                     name: alias_name,
                     span: alias_span,
-                })
+                    anchor,
+                    tag,
+                    crossed_line_after_properties,
+                });
+                None
             }
 
             Some((Token::BlockSeqIndicator, _)) => {
@@ -1717,108 +2175,26 @@ impl<'input> Emitter<'_, 'input> {
 
             Some((Token::FlowSeqStart, _)) => {
                 let span = self.current_span();
-
-                // In block context, check if this flow sequence is a complex key
-                if self.flow_depth == 0 && self.is_flow_seq_complex_key() {
-                    // This is a block mapping with a flow sequence as key
-                    let map_indent = self.current_indent;
-
-                    self.advance();
-                    self.enter_flow_collection(span.start_usize());
-
-                    // Push BlockMap state for after the key
-                    self.state_stack.push(ParseState::BlockMap {
-                        indent: map_indent,
-                        phase: BlockMapPhase::AfterKey {
-                            is_implicit_scalar_key: false, // Flow sequence key, not plain scalar
-                        },
-                        start_span: span,
-                        anchor: None,
-                        tag: None,
-                    });
-
-                    // Push FlowSeq state with EmitStart phase to emit SequenceStart next
-                    self.state_stack.push(ParseState::FlowSeq {
-                        phase: FlowSeqPhase::EmitStart,
-                        start_span: span,
-                    });
-
-                    // Push indent level for orphan indent detection
-                    self.push_indent(map_indent);
-                    // Emit MappingStart with the properties
-                    return Some(Event::MappingStart {
-                        style: crate::event::CollectionStyle::Block,
-                        anchor,
-                        tag,
-                        span,
-                    });
-                }
-
-                self.advance();
-                self.enter_flow_collection(span.start_usize());
-                self.state_stack.push(ParseState::FlowSeq {
-                    phase: FlowSeqPhase::BeforeEntry,
-                    start_span: span,
-                });
-                Some(Event::SequenceStart {
-                    style: crate::event::CollectionStyle::Flow,
+                self.state_stack.push(ParseState::FlowCollectionValue {
+                    ctx,
+                    is_map: false,
+                    span,
                     anchor,
                     tag,
-                    span,
-                })
+                });
+                None
             }
 
             Some((Token::FlowMapStart, _)) => {
                 let span = self.current_span();
-
-                // In block context, check if this flow mapping is a complex key
-                if self.flow_depth == 0 && self.is_flow_map_complex_key() {
-                    // This is a block mapping with a flow mapping as key
-                    let map_indent = self.current_indent;
-
-                    self.advance();
-                    self.enter_flow_collection(span.start_usize());
-
-                    // Push BlockMap state for after the key
-                    self.state_stack.push(ParseState::BlockMap {
-                        indent: map_indent,
-                        phase: BlockMapPhase::AfterKey {
-                            is_implicit_scalar_key: false, // Flow mapping key, not plain scalar
-                        },
-                        start_span: span,
-                        anchor: None,
-                        tag: None,
-                    });
-
-                    // Push FlowMap state with EmitStart phase to emit MappingStart next
-                    self.state_stack.push(ParseState::FlowMap {
-                        phase: FlowMapPhase::EmitStart,
-                        start_span: span,
-                    });
-
-                    // Push indent level for orphan indent detection
-                    self.push_indent(map_indent);
-                    // Emit outer block MappingStart with the properties
-                    return Some(Event::MappingStart {
-                        style: crate::event::CollectionStyle::Block,
-                        anchor,
-                        tag,
-                        span,
-                    });
-                }
-
-                self.advance();
-                self.enter_flow_collection(span.start_usize());
-                self.state_stack.push(ParseState::FlowMap {
-                    phase: FlowMapPhase::BeforeKey,
-                    start_span: span,
-                });
-                Some(Event::MappingStart {
-                    style: crate::event::CollectionStyle::Flow,
+                self.state_stack.push(ParseState::FlowCollectionValue {
+                    ctx,
+                    is_map: true,
+                    span,
                     anchor,
                     tag,
-                    span,
-                })
+                });
+                None
             }
 
             Some((Token::LiteralBlockHeader(_) | Token::FoldedBlockHeader(_), _)) => {
@@ -1850,259 +2226,17 @@ impl<'input> Emitter<'_, 'input> {
             }
 
             Some((Token::Anchor(_) | Token::Tag(_), _)) => {
-                // More properties after line boundary - indicates nested structure
-                // Properties may span multiple lines (e.g., `&anchor\n!!str\nvalue`)
-                //
-                // Important distinction for complex key patterns (6BFJ):
-                // `&mapping\n&key [...]: value`
-                // Here `&mapping` belongs to the outer block mapping, `&key` to the sequence key
-                //
-                // Strategy: Collect properties, but track if we cross a line boundary to more
-                // properties + complex key pattern. If so, outer props go on mapping.
-
-                // The `anchor` and `tag` params already contain properties collected
-                // BEFORE we entered this match arm. So they are the "outer" properties.
-                // Now we're seeing MORE properties after a line boundary.
-                let outer_anchor = anchor;
-                let outer_tag = tag;
-
-                // Collect the NEW properties at current position (don't pass outer ones
-                // since collect_properties would overwrite them)
-                let (mut inner_anchor, mut inner_tag, _crossed) =
-                    self.collect_properties(None, None);
-                self.skip_ws();
-
-                // Check for line boundary followed by more content (third layer of props)
-                if matches!(self.peek(), Some((Token::LineStart(_), _))) {
-                    // Peek ahead to see what's after the line boundary
-                    let mut peek_offset = 1;
-                    // Skip past Indent/Dedent tokens
-                    while let Some((tok, _)) = self.peek_nth(peek_offset) {
-                        if matches!(tok, Token::Indent(_) | Token::Dedent) {
-                            peek_offset += 1;
-                        } else {
-                            break;
-                        }
-                    }
-
-                    // Check if next content is more properties
-                    if let Some((tok, _)) = self.peek_nth(peek_offset) {
-                        if matches!(tok, Token::Anchor(_) | Token::Tag(_)) {
-                            // More properties on next line - merge with inner
-                            self.skip_ws_and_newlines();
-                            let (new_anchor, new_tag, _) = self.collect_properties(None, None);
-                            // Prefer newer properties (or keep inner if new is None)
-                            inner_anchor = new_anchor.or(inner_anchor);
-                            inner_tag = new_tag.or(inner_tag);
-                            self.skip_ws();
-
-                            // If we see LineStart again, skip it
-                            if matches!(self.peek(), Some((Token::LineStart(_), _))) {
-                                self.skip_ws_and_newlines();
-                            }
-                        } else {
-                            // Not more properties - skip to see actual content
-                            self.skip_ws_and_newlines();
-                        }
-                    }
-                }
-
-                // Check if this is a complex key pattern (flow seq/map followed by :)
-                // If we have separate outer and inner properties, and the value is a
-                // flow collection that's a key, emit MappingStart with outer props
-                if inner_anchor.is_some() || inner_tag.is_some() {
-                    // We have two layers of properties - check for complex key
-                    if let Some((Token::FlowSeqStart | Token::FlowMapStart, _)) = self.peek() {
-                        if self.is_flow_seq_complex_key() {
-                            // This is a block mapping with a complex key
-                            let span = self.current_span();
-                            let map_indent = self.current_indent;
-
-                            // Advance into the flow collection
-                            let is_seq = matches!(self.peek(), Some((Token::FlowSeqStart, _)));
-                            self.advance();
-                            self.enter_flow_collection(span.start_usize());
-
-                            // Push BlockMap state for after the key
-                            self.state_stack.push(ParseState::BlockMap {
-                                indent: map_indent,
-                                phase: BlockMapPhase::AfterKey {
-                                    is_implicit_scalar_key: false, // Flow collection key
-                                },
-                                start_span: span,
-                                anchor: None,
-                                tag: None,
-                            });
-
-                            // Push flow collection to parse key content
-                            if is_seq {
-                                self.state_stack.push(ParseState::FlowSeq {
-                                    phase: FlowSeqPhase::BeforeEntry,
-                                    start_span: span,
-                                });
-                                // Emit seq start with inner props (will be emitted via state)
-                                self.state_stack.push(ParseState::EmitSeqStart {
-                                    anchor: inner_anchor,
-                                    tag: inner_tag,
-                                    span,
-                                });
-                            } else {
-                                self.state_stack.push(ParseState::FlowMap {
-                                    phase: FlowMapPhase::BeforeKey,
-                                    start_span: span,
-                                });
-                                // Map start with inner props will be emitted directly below
-                            }
-
-                            // Push indent level for orphan indent detection
-                            self.push_indent(map_indent);
-                            // Emit MappingStart with outer props
-                            return Some(Event::MappingStart {
-                                style: crate::event::CollectionStyle::Block,
-                                anchor: outer_anchor,
-                                tag: outer_tag,
-                                span,
-                            });
-                        }
-                    }
-                }
-
-                // Now determine what kind of value follows
-                match self.peek() {
-                    Some((Token::Plain(_) | Token::StringStart(_), _)) => {
-                        // Check if it's an implicit mapping (scalar followed by colon)
-                        if !is_key && self.flow_depth == 0 && self.is_implicit_key() {
-                            // It's a nested mapping
-                            // Property ownership:
-                            // - outer properties (before line boundary) -> MappingStart
-                            // - inner properties (same line as key) -> key scalar
-                            let span = self.current_span();
-                            let map_indent = self.current_indent;
-
-                            // Parse the first key WITH inner properties
-                            let key_event =
-                                self.parse_plain_scalar(inner_anchor, inner_tag, min_indent);
-
-                            // Use the full first key span for MappingStart (matches batch parser)
-                            let map_start_span = if let Some(Event::Scalar {
-                                value,
-                                anchor: k_anchor,
-                                tag: k_tag,
-                                span: k_span,
-                                style,
-                            }) = key_event
-                            {
-                                // Check for multiline implicit key error
-                                self.check_multiline_implicit_key(k_span);
-
-                                self.state_stack.push(ParseState::BlockMap {
-                                    indent: map_indent,
-                                    phase: BlockMapPhase::AfterKey {
-                                        is_implicit_scalar_key: true, // Plain scalar key
-                                    },
-                                    start_span: span,
-                                    anchor: None,
-                                    tag: None,
-                                });
-                                self.state_stack.push(ParseState::EmitScalar {
-                                    value,
-                                    anchor: k_anchor,
-                                    tag: k_tag,
-                                    span: k_span,
-                                    style,
-                                });
-                                k_span // Use full key span for MappingStart
-                            } else {
-                                span // Fallback (shouldn't happen)
-                            };
-
-                            // Push indent level for orphan indent detection
-                            self.push_indent(map_indent);
-                            // Outer anchor/tag go on the MappingStart
-                            return Some(Event::MappingStart {
-                                style: crate::event::CollectionStyle::Block,
-                                anchor: outer_anchor,
-                                tag: outer_tag,
-                                span: map_start_span,
-                            });
-                        }
-                        // Not an implicit mapping, just a scalar with properties.
-                        // Outer properties that crossed a line boundary can only attach
-                        // to collections, not scalars. So we use inner properties only.
-                        // E.g., `&outer\n  &inner scalar` → &outer is lost, &inner on scalar
-                        let result = self.parse_plain_scalar(inner_anchor, inner_tag, min_indent);
-                        // If this is a mapping key, check for multiline implicit key error
-                        if is_key {
-                            if let Some(Event::Scalar { span, .. }) = &result {
-                                self.check_multiline_implicit_key(*span);
-                            }
-                        }
-                        result
-                    }
-                    Some((Token::BlockSeqIndicator, _)) => {
-                        // Nested sequence; merge properties (outer takes precedence)
-                        let merged_anchor = outer_anchor.or(inner_anchor);
-                        let merged_tag = outer_tag.or(inner_tag);
-                        let span = self.current_span();
-                        let seq_indent = self.column_of_position(span.start_usize());
-                        self.state_stack.push(ParseState::BlockSeq {
-                            indent: seq_indent,
-                            phase: BlockSeqPhase::EmitStart,
-                            start_span: span,
-                            anchor: merged_anchor,
-                            tag: merged_tag,
-                        });
-                        self.process_state_stack()
-                    }
-                    Some((Token::FlowSeqStart, span)) => {
-                        // Flow sequence; merge properties (outer takes precedence)
-                        let merged_anchor = outer_anchor.or(inner_anchor);
-                        let merged_tag = outer_tag.or(inner_tag);
-                        let span = span;
-                        self.advance();
-                        self.enter_flow_collection(span.start_usize());
-                        self.state_stack.push(ParseState::FlowSeq {
-                            phase: FlowSeqPhase::BeforeEntry,
-                            start_span: span,
-                        });
-                        Some(Event::SequenceStart {
-                            style: crate::event::CollectionStyle::Flow,
-                            anchor: merged_anchor,
-                            tag: merged_tag,
-                            span,
-                        })
-                    }
-                    Some((Token::FlowMapStart, span)) => {
-                        // Flow mapping; merge properties (outer takes precedence)
-                        let merged_anchor = outer_anchor.or(inner_anchor);
-                        let merged_tag = outer_tag.or(inner_tag);
-                        let span = span;
-                        self.advance();
-                        self.enter_flow_collection(span.start_usize());
-                        self.state_stack.push(ParseState::FlowMap {
-                            phase: FlowMapPhase::BeforeKey,
-                            start_span: span,
-                        });
-                        Some(Event::MappingStart {
-                            style: crate::event::CollectionStyle::Flow,
-                            anchor: merged_anchor,
-                            tag: merged_tag,
-                            span,
-                        })
-                    }
-                    _ => {
-                        // Emit scalar with merged properties (outer takes precedence)
-                        let merged_anchor = outer_anchor.or(inner_anchor);
-                        let merged_tag = outer_tag.or(inner_tag);
-                        Some(Event::Scalar {
-                            style: ScalarStyle::Plain,
-                            value: Cow::Borrowed(""),
-                            anchor: merged_anchor,
-                            tag: merged_tag,
-                            span: self.current_span(),
-                        })
-                    }
-                }
+                // More properties after line boundary - indicates nested structure.
+                // Properties may span multiple lines (e.g., `&anchor\n!!str\nvalue`).
+                // Defer to the `AdditionalPropertiesValue` state so complex
+                // key behaviour is driven by the state machine.
+                self.state_stack
+                    .push(ParseState::AdditionalPropertiesValue {
+                        ctx,
+                        outer_anchor: anchor,
+                        outer_tag: tag,
+                    });
+                None
             }
 
             _ => {
@@ -2147,11 +2281,7 @@ impl<'input> Emitter<'_, 'input> {
         &mut self,
         anchor: Option<(Cow<'input, str>, Span)>,
         tag: Option<(Cow<'input, str>, Span)>,
-    ) -> (
-        Option<(Cow<'input, str>, Span)>,
-        Option<(Cow<'input, str>, Span)>,
-        bool,
-    ) {
+    ) -> PropertyCollection<'input> {
         // Delegate to the version with min_indent = 0 (no indent restriction)
         self.collect_properties_with_min_indent(anchor, tag, 0)
     }
@@ -2165,12 +2295,11 @@ impl<'input> Emitter<'_, 'input> {
         mut anchor: Option<(Cow<'input, str>, Span)>,
         mut tag: Option<(Cow<'input, str>, Span)>,
         min_indent: IndentLevel,
-    ) -> (
-        Option<(Cow<'input, str>, Span)>,
-        Option<(Cow<'input, str>, Span)>,
-        bool,
-    ) {
-        let mut crossed_line_boundary = false;
+    ) -> PropertyCollection<'input> {
+        // Track whether we crossed a line boundary while collecting properties.
+        // This is local to property collection and distinct from the emitter-wide
+        // `crossed_line_boundary` flag used by block mappings.
+        let mut crossed_property_line_boundary = false;
         loop {
             let has_props = anchor.is_some() || tag.is_some();
 
@@ -2178,7 +2307,6 @@ impl<'input> Emitter<'_, 'input> {
                 Some((Token::Anchor(name_ref), span)) => {
                     // Extract data we need before any mutations
                     let name_str = *name_ref;
-                    let span = span;
 
                     // Error: Duplicate anchor on same node
                     if anchor.is_some() {
@@ -2197,7 +2325,6 @@ impl<'input> Emitter<'_, 'input> {
                     let tag_str = tag_cow.as_ref();
                     let tag_looks_legitimate = !tag_str.contains('"') && !tag_str.contains('`');
                     let tag_cow_clone = tag_cow.clone(); // Clone the Cow (cheap if Borrowed)
-                    let span = span;
 
                     // Error: Duplicate tag on same node
                     if tag.is_some() {
@@ -2253,11 +2380,11 @@ impl<'input> Emitter<'_, 'input> {
                     // - OR the next line has properties followed by an implicit key
                     if next_indent < min_indent {
                         // Content at lower indent belongs to parent - stop collecting
-                        crossed_line_boundary = true;
+                        crossed_property_line_boundary = true;
                         break;
                     }
                     if should_continue {
-                        crossed_line_boundary = true;
+                        crossed_property_line_boundary = true;
                         self.advance(); // consume LineStart
                         // Skip Indent token if present after LineStart
                         if matches!(self.peek(), Some((Token::Indent(_), _))) {
@@ -2265,7 +2392,7 @@ impl<'input> Emitter<'_, 'input> {
                         }
                     } else {
                         // Stop - record that we saw a line boundary
-                        crossed_line_boundary = true;
+                        crossed_property_line_boundary = true;
                         break;
                     }
                 }
@@ -2273,7 +2400,7 @@ impl<'input> Emitter<'_, 'input> {
                 _ => break,
             }
         }
-        (anchor, tag, crossed_line_boundary)
+        (anchor, tag, crossed_property_line_boundary)
     }
 
     /// Check if we should continue collecting properties across a line boundary.
@@ -2466,6 +2593,10 @@ impl<'input> Emitter<'_, 'input> {
         }
 
         // Named handle: !name!suffix
+        #[allow(
+            clippy::string_slice,
+            reason = "Slicing at positions returned by find('!'), which are guaranteed UTF-8 boundaries"
+        )]
         if let Some(first_bang) = tag_str.find('!') {
             if let Some(second_bang) = tag_str[first_bang + 1..].find('!') {
                 let second_bang_pos = first_bang + 1 + second_bang;
@@ -2565,11 +2696,13 @@ impl<'input> Emitter<'_, 'input> {
                             tag: None,
                         });
                         self.state_stack.push(ParseState::Value {
-                            min_indent: entry_indent + 1,
+                            ctx: ValueContext {
+                                min_indent: entry_indent + 1,
+                                kind: ValueKind::SeqEntryValue,
+                                allow_implicit_mapping: true, // Sequence entries allow implicit mappings
+                            },
                             anchor: None,
                             tag: None,
-                            is_key: false,                // Sequence entry is a value
-                            allow_implicit_mapping: true, // Sequence entries allow implicit mappings
                         });
                         None // Continue processing
                     }
@@ -2577,8 +2710,7 @@ impl<'input> Emitter<'_, 'input> {
                     Some((Token::DocEnd | Token::DocStart, _)) | None => {
                         // End of sequence
                         // Only check trailing content for root-level sequences (not nested)
-                        // A root-level sequence has indent_stack == [0, 0] (base + seq)
-                        if indent == 0 && self.indent_stack.len() == 2 {
+                        if self.is_root_level_sequence(indent) {
                             self.check_trailing_content_at_root(0);
                         }
                         self.pop_indent();
@@ -2594,7 +2726,7 @@ impl<'input> Emitter<'_, 'input> {
                             if !self.is_valid_indent(*n) {
                                 self.report_invalid_indent();
                             }
-                            if indent == 0 && self.indent_stack.len() == 2 {
+                            if self.is_root_level_sequence(indent) {
                                 self.check_trailing_content_at_root(0);
                             }
                             self.pop_indent();
@@ -2624,7 +2756,7 @@ impl<'input> Emitter<'_, 'input> {
                                 self.report_invalid_indent();
                             }
                             // We're actually dedented - end the sequence
-                            if indent == 0 && self.indent_stack.len() == 2 {
+                            if self.is_root_level_sequence(indent) {
                                 self.check_trailing_content_at_root(0);
                             }
                             self.advance();
@@ -2676,7 +2808,7 @@ impl<'input> Emitter<'_, 'input> {
                             }
                         }
                         // Root-level check
-                        if indent == 0 && self.indent_stack.len() == 2 {
+                        if self.is_root_level_sequence(indent) {
                             self.check_trailing_content_at_root(0);
                         }
                         self.pop_indent();
@@ -2800,15 +2932,16 @@ impl<'input> Emitter<'_, 'input> {
                             anchor: None,
                             tag: None,
                         });
-                        // Use is_key: false because the VALUE after an explicit `?` can be
-                        // any node, including a mapping. The `is_key: true` flag is only for
-                        // implicit key scalars to prevent infinite nesting detection.
+                        // Use kind: MappingValue because the VALUE after an explicit `?`
+                        // can be any node, including a mapping.
                         self.state_stack.push(ParseState::Value {
-                            min_indent: indent + 1,
+                            ctx: ValueContext {
+                                min_indent: indent + 1,
+                                kind: ValueKind::MappingValue,
+                                allow_implicit_mapping: true, // Explicit key value on new line
+                            },
                             anchor: None,
                             tag: None,
-                            is_key: false, // Explicit key value can be any node
-                            allow_implicit_mapping: true, // Explicit key value on new line
                         });
                         None
                     }
@@ -2933,11 +3066,13 @@ impl<'input> Emitter<'_, 'input> {
                                 tag: None,
                             });
                             self.state_stack.push(ParseState::Value {
-                                min_indent: indent,
+                                ctx: ValueContext {
+                                    min_indent: indent,
+                                    kind: ValueKind::Key, // This is a mapping key
+                                    allow_implicit_mapping: true, // Keys can be implicit mappings if on new line
+                                },
                                 anchor: None,
                                 tag: None,
-                                is_key: true,                 // This is a mapping key
-                                allow_implicit_mapping: true, // Keys can be implicit mappings if on new line
                             });
                             None
                         } else {
@@ -3021,16 +3156,18 @@ impl<'input> Emitter<'_, 'input> {
                         tag: None,
                     });
                     self.state_stack.push(ParseState::Value {
-                        min_indent: indent + 1,
+                        ctx: ValueContext {
+                            min_indent: indent + 1,
+                            kind: ValueKind::MappingValue,
+                            // CRITICAL: For implicit scalar keys, don't allow nested implicit mappings
+                            // on the same line. `a: b: c` should NOT create nested mappings - need a line break.
+                            // But for explicit keys (`? key : value`), allow implicit mappings even on
+                            // the same line, because the explicit indicators make the structure unambiguous.
+                            // The allow_implicit_mapping will become true if parse_value crosses a line.
+                            allow_implicit_mapping: !is_implicit_scalar_key,
+                        },
                         anchor: None,
                         tag: None,
-                        is_key: false, // This is the value after colon
-                        // CRITICAL: For implicit scalar keys, don't allow nested implicit mappings
-                        // on the same line. `a: b: c` should NOT create nested mappings - need a line break.
-                        // But for explicit keys (`? key : value`), allow implicit mappings even on
-                        // the same line, because the explicit indicators make the structure unambiguous.
-                        // The allow_implicit_mapping will become true if parse_value crosses a line.
-                        allow_implicit_mapping: !is_implicit_scalar_key,
                     });
                     None
                 } else {
@@ -3214,7 +3351,6 @@ impl<'input> Emitter<'_, 'input> {
         match self.peek() {
             Some((Token::Plain(text), span)) => {
                 // Plain scalar without a colon following - this is a MissingColon
-                let span = span;
                 let value: Cow<'input, str> = text.clone(); // Clone the Cow (cheap if Borrowed)
 
                 // Also check for InvalidDirective: `%` at column 0
@@ -3235,7 +3371,6 @@ impl<'input> Emitter<'_, 'input> {
             }
             Some((Token::StringStart(_), span)) => {
                 // Quoted string without a colon following - this is a MissingColon
-                let span = span;
                 self.error(ErrorKind::MissingColon, span);
                 // Parse the quoted string to get its value
                 let (value, full_span) = self.parse_quoted_string_content();
@@ -3249,7 +3384,6 @@ impl<'input> Emitter<'_, 'input> {
             }
             Some((Token::Alias(name), span)) => {
                 // Alias without a colon following - this is a MissingColon
-                let span = span;
                 let alias_name = Cow::Borrowed(*name); // Borrow directly from input
                 self.error(ErrorKind::MissingColon, span);
                 // Skip the alias token
@@ -3331,45 +3465,6 @@ impl<'input> Emitter<'_, 'input> {
         self.error(ErrorKind::InvalidIndentation, self.last_line_start_span);
     }
 
-    /// Check if there's content on the same line (without any `LineStart` before it).
-    /// Used by `AfterValue` to detect trailing content like `key: "val" trailing`.
-    /// Returns true if the next non-whitespace token is content without a `LineStart`.
-    fn has_content_without_line_boundary(&self) -> bool {
-        let mut i = 0;
-        while let Some((tok, _)) = self.peek_nth(i) {
-            match tok {
-                // Skip whitespace
-                Token::Whitespace | Token::WhitespaceWithTabs => i += 1,
-                // LineStart means we've moved to a new line - no same-line content
-                Token::LineStart(_) => return false,
-                // Content tokens on same line - this is trailing content
-                Token::Plain(_)
-                | Token::StringStart(_)
-                | Token::MappingKey
-                | Token::Colon
-                | Token::Anchor(_)
-                | Token::Tag(_)
-                | Token::Alias(_)
-                | Token::BlockSeqIndicator => return true,
-                // End tokens - no content
-                Token::DocEnd | Token::DocStart => return false,
-                // Other tokens (Dedent, Indent, Comment, etc.) - skip
-                _ => i += 1,
-            }
-        }
-        false
-    }
-
-    /// Check if there's actual content at the current orphan indentation level.
-    /// Used to determine whether to report `InvalidIndentation` when a mapping
-    /// encounters an over-indented line (indent > mapping's indent but orphan).
-    /// The batch parser's `advance_to_same_indent` only reports an error when
-    /// there's content tokens (`Plain`, `StringStart`, `MappingKey`, `Colon`, `Anchor`, `Tag`),
-    /// not for comments or empty lines.
-    fn has_content_at_orphan_level(&self) -> bool {
-        self.has_content_at_orphan_level_from(0)
-    }
-
     /// Check if there's content at an orphan level, starting from peek offset `start_offset`.
     fn has_content_at_orphan_level_from(&self, start_offset: usize) -> bool {
         // Skip past any Dedent/Indent tokens from the given position
@@ -3421,7 +3516,6 @@ impl<'input> Emitter<'_, 'input> {
                 Some((Token::Whitespace | Token::WhitespaceWithTabs, _)) => self.advance(),
                 Some((Token::LineStart(n), span)) => {
                     let n = *n;
-                    let span = span;
 
                     if n < mapping_indent {
                         // Dedented below mapping - don't consume, let caller handle
@@ -3496,25 +3590,6 @@ impl<'input> Emitter<'_, 'input> {
                     self.advance();
                 }
                 _ => break,
-            }
-        }
-    }
-
-    /// Skip tokens comprising a quoted string (`StringStart` through `StringEnd`).
-    fn skip_quoted_string_tokens(&mut self) {
-        // Skip StringStart
-        if matches!(self.peek(), Some((Token::StringStart(_), _))) {
-            self.advance();
-        }
-        // Skip until StringEnd
-        loop {
-            let is_end = matches!(self.peek(), Some((Token::StringEnd(_), _)));
-            self.advance();
-            if is_end {
-                break;
-            }
-            if self.is_eof() {
-                break;
             }
         }
     }
@@ -4077,6 +4152,26 @@ impl<'input> Emitter<'_, 'input> {
     // Flow Sequence
     // ─────────────────────────────────────────────────────────────
 
+    /// Handle `---` / `...` inside a flow sequence phase.
+    ///
+    /// This is a tiny helper used by the individual `FlowSeqPhase` arms so the
+    /// error and recovery behaviour for `DocumentMarkerInFlow` is centralized:
+    /// - Record the error
+    /// - Consume the marker token
+    /// - Re-push the current `FlowSeq` state to continue parsing.
+    fn handle_doc_marker_in_flow_seq(
+        &mut self,
+        start_span: Span,
+        doc_span: Span,
+        phase: FlowSeqPhase,
+    ) -> Option<Event<'input>> {
+        self.error(ErrorKind::DocumentMarkerInFlow, doc_span);
+        self.advance();
+        self.state_stack
+            .push(ParseState::FlowSeq { phase, start_span });
+        None
+    }
+
     fn process_flow_seq(&mut self, phase: FlowSeqPhase, start_span: Span) -> Option<Event<'input>> {
         match phase {
             FlowSeqPhase::EmitStart => {
@@ -4097,7 +4192,6 @@ impl<'input> Emitter<'_, 'input> {
 
                 match self.peek() {
                     Some((Token::FlowSeqEnd, span)) => {
-                        let span = span;
                         let flow_end = span.end_usize();
                         self.advance();
                         self.exit_flow_collection();
@@ -4124,17 +4218,15 @@ impl<'input> Emitter<'_, 'input> {
                     }
 
                     Some((Token::DocStart | Token::DocEnd, span)) => {
-                        // Document markers inside flow context are invalid (already reported
-                        // by lexer as DocumentMarkerInFlow). Ignore them and continue parsing.
-                        let span = span;
-                        self.error(ErrorKind::DocumentMarkerInFlow, span);
-                        self.advance();
-                        // Re-push state to continue parsing
-                        self.state_stack.push(ParseState::FlowSeq {
-                            phase: FlowSeqPhase::BeforeEntry,
+                        // Document markers inside flow context are invalid
+                        // (already reported by lexer as DocumentMarkerInFlow).
+                        // Use a tiny helper to keep error+recovery behaviour
+                        // consistent across `FlowSeq` phases.
+                        self.handle_doc_marker_in_flow_seq(
                             start_span,
-                        });
-                        None
+                            span,
+                            FlowSeqPhase::BeforeEntry,
+                        )
                     }
 
                     None => {
@@ -4161,7 +4253,7 @@ impl<'input> Emitter<'_, 'input> {
                         });
                         // 2. Emit MappingEnd after value
                         self.state_stack.push(ParseState::FlowSeq {
-                            phase: FlowSeqPhase::ImplicitMapEnd { map_start_span },
+                            phase: FlowSeqPhase::ImplicitMapEnd,
                             start_span,
                         });
                         // 3. Parse the value (after we see colon)
@@ -4171,11 +4263,13 @@ impl<'input> Emitter<'_, 'input> {
                         });
                         // 4. Parse the key
                         self.state_stack.push(ParseState::Value {
-                            min_indent: 0,
+                            ctx: ValueContext {
+                                min_indent: 0,
+                                kind: ValueKind::Key,
+                                allow_implicit_mapping: true, // Flow context - doesn't affect block mappings
+                            },
                             anchor: None,
                             tag: None,
-                            is_key: true,
-                            allow_implicit_mapping: true, // Flow context - doesn't affect block mappings
                         });
 
                         // Emit MappingStart for the explicit mapping (flow style)
@@ -4201,7 +4295,7 @@ impl<'input> Emitter<'_, 'input> {
                             });
                             // 2. Emit MappingEnd after value
                             self.state_stack.push(ParseState::FlowSeq {
-                                phase: FlowSeqPhase::ImplicitMapEnd { map_start_span },
+                                phase: FlowSeqPhase::ImplicitMapEnd,
                                 start_span,
                             });
                             // 3. Parse the value (after we see colon)
@@ -4221,11 +4315,13 @@ impl<'input> Emitter<'_, 'input> {
                             } else {
                                 // 4. Parse the key (non-empty)
                                 self.state_stack.push(ParseState::Value {
-                                    min_indent: 0,
+                                    ctx: ValueContext {
+                                        min_indent: 0,
+                                        kind: ValueKind::Key, // This is the key of the implicit mapping
+                                        allow_implicit_mapping: true, // Flow context
+                                    },
                                     anchor: None,
                                     tag: None,
-                                    is_key: true, // This is the key of the implicit mapping
-                                    allow_implicit_mapping: true, // Flow context
                                 });
                             }
 
@@ -4243,11 +4339,13 @@ impl<'input> Emitter<'_, 'input> {
                                 start_span,
                             });
                             self.state_stack.push(ParseState::Value {
-                                min_indent: 0,
+                                ctx: ValueContext {
+                                    min_indent: 0,
+                                    kind: ValueKind::SeqEntryValue, // Sequence entry is a value
+                                    allow_implicit_mapping: true,   // Flow context
+                                },
                                 anchor: None,
                                 tag: None,
-                                is_key: false, // Sequence entry is a value
-                                allow_implicit_mapping: true, // Flow context
                             });
                             None
                         }
@@ -4281,11 +4379,13 @@ impl<'input> Emitter<'_, 'input> {
                     } else {
                         // Parse the value
                         self.state_stack.push(ParseState::Value {
-                            min_indent: 0,
+                            ctx: ValueContext {
+                                min_indent: 0,
+                                kind: ValueKind::MappingValue,
+                                allow_implicit_mapping: true, // Flow context
+                            },
                             anchor: None,
                             tag: None,
-                            is_key: false,
-                            allow_implicit_mapping: true, // Flow context
                         });
                         None
                     }
@@ -4302,7 +4402,7 @@ impl<'input> Emitter<'_, 'input> {
                 }
             }
 
-            FlowSeqPhase::ImplicitMapEnd { .. } => {
+            FlowSeqPhase::ImplicitMapEnd => {
                 // After the value, emit MappingEnd
                 Some(Event::MappingEnd {
                     span: self.collection_end_span(),
@@ -4323,7 +4423,6 @@ impl<'input> Emitter<'_, 'input> {
                     }
 
                     Some((Token::FlowSeqEnd, span)) => {
-                        let span = span;
                         let flow_end = span.end_usize();
                         self.advance();
                         self.exit_flow_collection();
@@ -4338,14 +4437,11 @@ impl<'input> Emitter<'_, 'input> {
 
                     Some((Token::DocStart | Token::DocEnd, span)) => {
                         // Document markers inside flow context - ignore and continue
-                        let span = span;
-                        self.error(ErrorKind::DocumentMarkerInFlow, span);
-                        self.advance();
-                        self.state_stack.push(ParseState::FlowSeq {
-                            phase: FlowSeqPhase::AfterEntry,
+                        self.handle_doc_marker_in_flow_seq(
                             start_span,
-                        });
-                        None
+                            span,
+                            FlowSeqPhase::AfterEntry,
+                        )
                     }
 
                     _ => {
@@ -4364,6 +4460,25 @@ impl<'input> Emitter<'_, 'input> {
     // ─────────────────────────────────────────────────────────────
     // Flow Mapping
     // ─────────────────────────────────────────────────────────────
+
+    /// Handle `---` / `...` inside a flow mapping phase.
+    ///
+    /// Centralizes the `DocumentMarkerInFlow` behaviour for `FlowMap` states:
+    /// - Record the error
+    /// - Consume the marker token
+    /// - Re-push the current `FlowMap` state to continue parsing.
+    fn handle_doc_marker_in_flow_map(
+        &mut self,
+        start_span: Span,
+        doc_span: Span,
+        phase: FlowMapPhase,
+    ) -> Option<Event<'input>> {
+        self.error(ErrorKind::DocumentMarkerInFlow, doc_span);
+        self.advance();
+        self.state_stack
+            .push(ParseState::FlowMap { phase, start_span });
+        None
+    }
 
     fn process_flow_map(&mut self, phase: FlowMapPhase, start_span: Span) -> Option<Event<'input>> {
         match phase {
@@ -4385,7 +4500,6 @@ impl<'input> Emitter<'_, 'input> {
 
                 match self.peek() {
                     Some((Token::FlowMapEnd, span)) => {
-                        let span = span;
                         let flow_end = span.end_usize();
                         self.advance();
                         self.exit_flow_collection();
@@ -4419,11 +4533,13 @@ impl<'input> Emitter<'_, 'input> {
                             start_span,
                         });
                         self.state_stack.push(ParseState::Value {
-                            min_indent: 0,
+                            ctx: ValueContext {
+                                min_indent: 0,
+                                kind: ValueKind::Key,         // Flow mapping key
+                                allow_implicit_mapping: true, // Flow context
+                            },
                             anchor: None,
                             tag: None,
-                            is_key: true,                 // Flow mapping key
-                            allow_implicit_mapping: true, // Flow context
                         });
                         None
                     }
@@ -4439,16 +4555,12 @@ impl<'input> Emitter<'_, 'input> {
 
                     Some((Token::DocStart | Token::DocEnd, span)) => {
                         // Document markers inside flow context are invalid.
-                        // Ignore them and continue parsing.
-                        let span = span;
-                        self.error(ErrorKind::DocumentMarkerInFlow, span);
-                        self.advance();
-                        // Re-push state to continue parsing
-                        self.state_stack.push(ParseState::FlowMap {
-                            phase: FlowMapPhase::BeforeKey,
+                        // Ignore them and continue parsing via a tiny helper.
+                        self.handle_doc_marker_in_flow_map(
                             start_span,
-                        });
-                        None
+                            span,
+                            FlowMapPhase::BeforeKey,
+                        )
                     }
 
                     None => {
@@ -4466,11 +4578,13 @@ impl<'input> Emitter<'_, 'input> {
                             start_span,
                         });
                         self.state_stack.push(ParseState::Value {
-                            min_indent: 0,
+                            ctx: ValueContext {
+                                min_indent: 0,
+                                kind: ValueKind::Key,         // Flow mapping key
+                                allow_implicit_mapping: true, // Flow context
+                            },
                             anchor: None,
                             tag: None,
-                            is_key: true,                 // Flow mapping key
-                            allow_implicit_mapping: true, // Flow context
                         });
                         None
                     }
@@ -4497,11 +4611,13 @@ impl<'input> Emitter<'_, 'input> {
                             start_span,
                         });
                         self.state_stack.push(ParseState::Value {
-                            min_indent: 0,
+                            ctx: ValueContext {
+                                min_indent: 0,
+                                kind: ValueKind::MappingValue, // Flow mapping value
+                                allow_implicit_mapping: true,  // Flow context
+                            },
                             anchor: None,
                             tag: None,
-                            is_key: false,                // Flow mapping value
-                            allow_implicit_mapping: true, // Flow context
                         });
                         None
                     }
@@ -4529,7 +4645,6 @@ impl<'input> Emitter<'_, 'input> {
                     }
 
                     Some((Token::FlowMapEnd, span)) => {
-                        let span = span;
                         let flow_end = span.end_usize();
                         self.advance();
                         self.exit_flow_collection();
@@ -4544,14 +4659,11 @@ impl<'input> Emitter<'_, 'input> {
 
                     Some((Token::DocStart | Token::DocEnd, span)) => {
                         // Document markers inside flow context - ignore and continue
-                        let span = span;
-                        self.error(ErrorKind::DocumentMarkerInFlow, span);
-                        self.advance();
-                        self.state_stack.push(ParseState::FlowMap {
-                            phase: FlowMapPhase::AfterValue,
+                        self.handle_doc_marker_in_flow_map(
                             start_span,
-                        });
-                        None
+                            span,
+                            FlowMapPhase::AfterValue,
+                        )
                     }
 
                     _ => {
@@ -4619,67 +4731,33 @@ impl<'input> Emitter<'_, 'input> {
             // Parse the key scalar with its properties
             let key_event = self.parse_plain_scalar(key_anchor, key_tag, min_indent);
 
-            // Stack setup: (top to bottom)
-            // 1. EmitScalar - emit the key we just parsed
-            // 2. AfterKey - consume colon and parse value
-            // MappingStart is returned immediately
-            // Use full first key span for MappingStart to match batch parser behavior
-            let map_start_span = if let Some(Event::Scalar {
-                value,
-                anchor: k_anchor,
-                tag: k_tag,
-                span: k_span,
-                style,
-            }) = key_event
-            {
-                // Check for multiline implicit key error
-                self.check_multiline_implicit_key(k_span);
-                // Determine mapping indent based on context:
-                // - If there are properties (anchor or tag), use current_indent because
-                //   the mapping's indent is the line's indent (e.g., `&a a: b` at root = indent 0)
-                // - Otherwise (no properties, e.g., `- key: value`), use key's column position
-                //   because that's where continuation lines need to align
-                let has_properties = map_anchor.is_some()
-                    || map_tag.is_some()
-                    || k_anchor.is_some()
-                    || k_tag.is_some();
-                let map_indent = if crossed_line_boundary || has_properties {
-                    self.current_indent
-                } else {
-                    self.column_of_position(k_span.start_usize())
-                };
-                self.state_stack.push(ParseState::BlockMap {
-                    indent: map_indent,
-                    phase: BlockMapPhase::AfterKey {
-                        is_implicit_scalar_key: true, // Plain scalar followed by colon
-                    },
-                    start_span: span,
-                    anchor: None,
-                    tag: None,
-                });
-                self.state_stack.push(ParseState::EmitScalar {
-                    value,
-                    anchor: k_anchor,
-                    tag: k_tag,
-                    span: k_span,
-                    style,
-                });
-                // Push indent level for orphan indent detection
-                self.push_indent(map_indent);
-                k_span // Use full first key span for MappingStart
+            // Determine mapping indent based on context:
+            // - If there are properties (anchor or tag), use current_indent because
+            //   the mapping's indent is the line's indent (e.g., `&a a: b` at root = indent 0)
+            // - Otherwise (no properties, e.g., `- key: value`), use key's column position
+            //   because that's where continuation lines need to align
+            let has_properties = map_anchor.is_some()
+                || map_tag.is_some()
+                || matches!(
+                    key_event,
+                    Some(Event::Scalar {
+                        anchor: Some(_),
+                        ..
+                    })
+                )
+                || matches!(key_event, Some(Event::Scalar { tag: Some(_), .. }));
+            let map_indent = if crossed_line_boundary || has_properties {
+                self.current_indent
+            } else if let Some(Event::Scalar { span: k_span, .. }) = key_event {
+                self.column_of_position(k_span.start_usize())
             } else {
-                // Fallback - shouldn't happen but use current_indent for stack consistency
-                self.push_indent(self.current_indent);
-                span // Fallback (shouldn't happen)
+                self.current_indent
             };
 
-            // Emit MappingStart with anchor/tag if they belong to the mapping
-            return Some(Event::MappingStart {
-                style: crate::event::CollectionStyle::Block,
-                anchor: map_anchor,
-                tag: map_tag,
-                span: map_start_span,
-            });
+            let mapping_start = self.build_block_mapping_from_scalar_key(
+                map_indent, span, map_anchor, map_tag, key_event,
+            );
+            return Some(mapping_start);
         }
 
         // Not a mapping key, just parse as a scalar
@@ -4777,7 +4855,6 @@ impl<'input> Emitter<'_, 'input> {
                         match self.peek() {
                             Some((Token::LineStart(n), line_span)) => {
                                 let indent = *n;
-                                let line_span = line_span;
 
                                 // Check if this continues the scalar
                                 if indent >= min_indent {
@@ -4879,7 +4956,6 @@ impl<'input> Emitter<'_, 'input> {
         let (single_token_value, first_content) =
             if let Some((Token::StringContent(content), content_span)) = self.peek() {
                 let content_cow = content.clone();
-                let content_span = content_span;
                 self.advance();
 
                 // Check if next is StringEnd
@@ -4896,7 +4972,6 @@ impl<'input> Emitter<'_, 'input> {
         if let Some((content_cow, content_span)) = single_token_value {
             // Fast path: single content token, zero-copy!
             let end_span = if let Some((Token::StringEnd(_), span)) = self.peek() {
-                let span = span;
                 self.advance();
                 span
             } else {
@@ -5212,7 +5287,7 @@ impl<'input> Emitter<'_, 'input> {
             let mut line_end_span = line_start_span;
 
             // Check for extra indentation (more-indented)
-            let extra_indent = content_indent.map(|ci| n.saturating_sub(ci)).unwrap_or(0);
+            let extra_indent = content_indent.map_or(0, |ci| n.saturating_sub(ci));
             if extra_indent > 0 {
                 // Add extra spaces for more-indented lines
                 line_parts.push(Cow::Owned(" ".repeat(extra_indent)));
@@ -5369,11 +5444,11 @@ impl<'input> Emitter<'_, 'input> {
                         .collect::<String>()
                 })
                 .collect();
-            self.join_folded_lines(&string_lines)
+            Self::join_folded_lines(&string_lines)
         };
 
         // Apply chomping
-        let value = self.apply_chomping(&value, &header);
+        let value = Self::apply_chomping(&value, &header);
 
         let style = if is_literal {
             ScalarStyle::Literal
@@ -5397,7 +5472,7 @@ impl<'input> Emitter<'_, 'input> {
     }
 
     /// Join lines for folded block scalar with proper folding rules.
-    fn join_folded_lines(&self, lines: &[String]) -> String {
+    fn join_folded_lines(lines: &[String]) -> String {
         #[derive(Clone, Copy, PartialEq)]
         enum LineType {
             Normal,
@@ -5502,7 +5577,7 @@ impl<'input> Emitter<'_, 'input> {
 
     /// Apply chomping indicator to block scalar value.
     /// Matches the batch parser's logic in scalar.rs `apply_chomping()`.
-    fn apply_chomping(&self, value: &str, header: &crate::lexer::BlockScalarHeader) -> String {
+    fn apply_chomping(value: &str, header: &crate::lexer::BlockScalarHeader) -> String {
         use crate::lexer::Chomping;
 
         let mut result = String::from(value);

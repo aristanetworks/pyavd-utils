@@ -414,6 +414,136 @@ mod tests {
     )]
 
     use super::*;
+    use crate::{Stream, error::ParseError};
+
+    /// Use the standard parse function for tests.
+    fn parse(input: &str) -> (Stream<'static>, Vec<ParseError>) {
+        let (nodes, errors) = crate::parse(input);
+        (nodes.into_iter().map(Node::into_owned).collect(), errors)
+    }
+
+    #[test]
+    fn test_parse_simple_scalar() {
+        let (docs, errors) = parse("hello");
+        assert!(errors.is_empty());
+        assert_eq!(docs.len(), 1);
+        assert!(matches!(&docs.first().unwrap().value, Value::String(string) if string == "hello"));
+    }
+
+    #[test]
+    fn test_parse_simple_mapping() {
+        let (docs, errors) = parse("key: value");
+        assert!(errors.is_empty());
+        assert_eq!(docs.len(), 1);
+        let value = &docs.first().unwrap().value;
+        assert!(matches!(value, Value::Mapping(_)));
+        if let Value::Mapping(pairs) = value {
+            assert_eq!(pairs.len(), 1);
+            let pair = pairs.first().unwrap();
+            assert!(matches!(&pair.0.value, Value::String(string) if string == "key"));
+            assert!(matches!(&pair.1.value, Value::String(string) if string == "value"));
+        }
+    }
+
+    #[test]
+    fn test_parse_flow_mapping() {
+        let (docs, errors) = parse("{a: 1, b: 2}");
+        assert!(errors.is_empty());
+        assert_eq!(docs.len(), 1);
+        let value = &docs.first().unwrap().value;
+        assert!(matches!(value, Value::Mapping(_)));
+        if let Value::Mapping(pairs) = value {
+            assert_eq!(pairs.len(), 2);
+        }
+    }
+
+    #[test]
+    fn test_parse_flow_sequence() {
+        let (docs, errors) = parse("[1, 2, 3]");
+        assert!(errors.is_empty());
+        assert_eq!(docs.len(), 1);
+        let value = &docs.first().unwrap().value;
+        assert!(matches!(value, Value::Sequence(_)));
+        if let Value::Sequence(items) = value {
+            assert_eq!(items.len(), 3);
+        }
+    }
+
+    #[test]
+    fn test_parse_block_sequence() {
+        let (docs, errors) = parse("- a\n- b\n- c");
+        assert!(errors.is_empty());
+        assert_eq!(docs.len(), 1);
+        let value = &docs.first().unwrap().value;
+        assert!(matches!(value, Value::Sequence(_)));
+        if let Value::Sequence(items) = value {
+            assert_eq!(items.len(), 3);
+        }
+    }
+
+    #[test]
+    fn test_parse_null_values() {
+        let (docs, errors) = parse("~");
+        assert!(errors.is_empty());
+        assert_eq!(docs.len(), 1);
+        assert!(matches!(&docs.first().unwrap().value, Value::Null));
+    }
+
+    #[test]
+    fn test_parse_boolean_values() {
+        let (docs, errors) = parse("true");
+        assert!(errors.is_empty());
+        assert!(matches!(&docs.first().unwrap().value, Value::Bool(true)));
+    }
+
+    #[test]
+    fn test_parse_number_values() {
+        let (docs, errors) = parse("42");
+        assert!(errors.is_empty());
+        assert!(matches!(&docs.first().unwrap().value, Value::Int(42)));
+
+        let (docs_, errors_) = parse("3.45");
+        assert!(errors_.is_empty());
+        assert_eq!(docs_.len(), 1);
+        assert_eq!(docs_.first().unwrap().value, Value::Float(3.45));
+    }
+
+    #[test]
+    fn test_parse_multi_document() {
+        let (docs, _) = parse("---\na\n---\nb");
+        assert!(docs.len() >= 2);
+    }
+
+    #[test]
+    fn test_parse_anchor_alias() {
+        let (docs, errors) = parse("a: &anchor 1\nb: *anchor");
+        assert!(errors.is_empty(), "errors: {errors:?}");
+        assert_eq!(docs.len(), 1);
+        let value = &docs.first().unwrap().value;
+        assert!(matches!(&docs.first().unwrap().value, Value::Mapping(_)));
+        if let Value::Mapping(pairs) = value {
+            assert_eq!(pairs.len(), 2, "expected 2 pairs but got {pairs:?}");
+            // Check first pair's value has anchor
+            let first_value = &pairs.first().unwrap().1;
+            assert_eq!(
+                first_value.anchor(),
+                Some("anchor"),
+                "First value should have anchor 'anchor'"
+            );
+            let alias_value = &pairs.last().unwrap().1.value;
+            assert!(
+                matches!(alias_value, Value::Alias(name) if name.as_ref() == "anchor"),
+                "Expected Alias(\"anchor\"), got {alias_value:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_multiline_quoted_key_error() {
+        let input = "\"c\n d\": 1";
+        let (_, errors) = parse(input);
+        assert!(!errors.is_empty());
+    }
 
     /// Parse input through the full event pipeline and return nodes.
     fn parse_via_events(input: &str) -> Vec<crate::value::Node<'static>> {
@@ -482,8 +612,8 @@ mod tests {
         let mut failures = Vec::new();
 
         for input in test_cases {
-            let (hybrid_nodes, hybrid_errors) = crate::parse(input);
-            let (via_events_nodes, via_events_errors) = crate::parse(input);
+            let (hybrid_nodes, _hybrid_errors) = crate::parse(input);
+            let via_events_nodes = parse_via_events(input);
 
             // Compare node counts
             if hybrid_nodes.len() != via_events_nodes.len() {
@@ -506,14 +636,9 @@ mod tests {
                 }
             }
 
-            // Compare error counts (not exact errors, as span offsets may differ in event path)
-            if hybrid_errors.len() != via_events_errors.len() {
-                failures.push(format!(
-                    "Input: {input:?}\n  Error count mismatch: hybrid={}, via_events={}",
-                    hybrid_errors.len(),
-                    via_events_errors.len()
-                ));
-            }
+            // We rely on the shared implementation of `parse` and the event-based
+            // pipeline to keep error reporting behaviour aligned; this test
+            // focuses on node equivalence.
         }
 
         if !failures.is_empty() {

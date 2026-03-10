@@ -15,7 +15,7 @@ use super::token::Token;
 /// The lifetime `'input` refers to the input string being tokenized.
 ///
 /// Errors during lexing are collected internally by the lexer and retrieved
-/// via [`DocumentLexer::take_errors`](super::document::DocumentLexer::take_errors).
+/// via [`Lexer::take_errors`](super::document::Lexer::take_errors).
 #[derive(Debug, Clone, PartialEq)]
 pub struct RichToken<'input> {
     /// The actual token.
