@@ -11,16 +11,6 @@
 //! The `Emitter` is validated against the YAML Test Suite to ensure
 //! correct event sequences for all inputs.
 
-// Structural lints that are intentional design decisions for the emitter state machine
-#![allow(
-    clippy::match_same_arms,
-    reason = "Match arms that look identical have different semantic meaning in the state machine"
-)]
-#![allow(
-    clippy::collapsible_if,
-    reason = "Nested if-let patterns are clearer than collapsed && chains for complex conditions"
-)]
-
 use std::borrow::Cow;
 use std::collections::HashSet;
 
@@ -111,7 +101,9 @@ pub struct Emitter<'tokens, 'input> {
     emitted_stream_start: bool,
     /// Tag handles from directives.
     tag_handles: std::collections::HashMap<&'input str, &'input str>,
-    /// Last content span - used for `MappingEnd`/`SequenceEnd` to match batch parser behavior.
+    /// Last content span - used for `MappingEnd`/`SequenceEnd` to produce
+    /// intuitive end spans based on the last piece of content rather than the
+    /// next structural token.
     /// Updated when emitting content events (scalars, aliases, nested collection ends).
     last_content_span: Option<Span>,
     /// Whether we've crossed a line boundary since the last time this flag was cleared.
@@ -159,12 +151,6 @@ impl<'tokens, 'input> Emitter<'tokens, 'input> {
         }
     }
 
-    /// Get collected errors.
-    #[must_use]
-    pub fn errors(&self) -> &[ParseError] {
-        &self.errors
-    }
-
     /// Take collected errors.
     pub fn take_errors(&mut self) -> Vec<ParseError> {
         std::mem::take(&mut self.errors)
@@ -205,8 +191,8 @@ impl<'tokens, 'input> Emitter<'tokens, 'input> {
 
     /// Get span for collection end events (MappingEnd/SequenceEnd).
     /// Uses the last content span if available, otherwise falls back to current span.
-    /// This matches the batch parser behavior where end spans point to the end of
-    /// the last content rather than the next token (like a newline or dedent).
+    /// End spans point to the end of the last content rather than the next token
+    /// (like a newline or dedent).
     fn collection_end_span(&self) -> Span {
         if let Some(span) = self.last_content_span {
             // Use end position of last content as a point span
@@ -306,8 +292,6 @@ impl<'tokens, 'input> Emitter<'tokens, 'input> {
     fn check_multiline_flow_key(&mut self, start_span: Span, end_span: Span) {
         // Check if there's a colon immediately following (implicit key indicator).
         // If no colon is found immediately (only whitespace allowed), this is not an implicit key.
-        // This matches the batch parser's check_multiline_implicit_key which returns early
-        // if no colon is found.
         let mut check_idx = 0;
         let colon_span = loop {
             match self.peek_nth(check_idx) {
@@ -547,7 +531,6 @@ impl<'tokens, 'input> Emitter<'tokens, 'input> {
         let mut last_linestart_span = None;
         loop {
             match self.peek() {
-                Some((Token::Whitespace | Token::WhitespaceWithTabs, _)) => self.advance(),
                 Some((Token::LineStart(indent), span)) => {
                     let indent = *indent;
                     crossed_line = true;
@@ -556,41 +539,41 @@ impl<'tokens, 'input> Emitter<'tokens, 'input> {
 
                     // In flow context, check for invalid column 0 continuations.
                     // Column 0 is only allowed if the outermost flow context started at column 0.
-                    if let Some(&outermost_flow_col) = self.flow_context_columns.first() {
-                        if indent == 0 && outermost_flow_col > 0 {
-                            // Check if there's actual content after this LineStart
-                            // Skip past Whitespace tokens (tabs used as indentation)
-                            // and check the actual column of the content token
-                            let mut peek_offset = 0;
-                            while let Some((tok, _)) = self.peek_nth(peek_offset) {
-                                if matches!(tok, Token::Whitespace | Token::WhitespaceWithTabs) {
-                                    peek_offset += 1;
-                                } else {
-                                    break;
-                                }
+                    if let Some(&outermost_flow_col) = self.flow_context_columns.first()
+                        && indent == 0
+                        && outermost_flow_col > 0
+                    {
+                        // Check if there's actual content after this LineStart
+                        // Skip past Whitespace tokens (tabs used as indentation)
+                        // and check the actual column of the content token
+                        let mut peek_offset = 0;
+                        while let Some((tok, _)) = self.peek_nth(peek_offset) {
+                            if matches!(tok, Token::Whitespace | Token::WhitespaceWithTabs) {
+                                peek_offset += 1;
+                            } else {
+                                break;
                             }
+                        }
 
-                            if let Some((tok, content_span)) = self.peek_nth(peek_offset) {
-                                let is_content = !matches!(
-                                    tok,
-                                    Token::LineStart(_)
-                                        | Token::FlowSeqEnd
-                                        | Token::FlowMapEnd
-                                        | Token::Dedent
-                                        | Token::DocEnd
+                        if let Some((tok, content_span)) = self.peek_nth(peek_offset) {
+                            let is_content = !matches!(
+                                tok,
+                                Token::LineStart(_)
+                                    | Token::FlowSeqEnd
+                                    | Token::FlowMapEnd
+                                    | Token::Dedent
+                                    | Token::DocEnd
+                            );
+                            // Check actual column of content token
+                            let content_col = self.column_of_position(content_span.start_usize());
+                            if is_content && content_col == 0 {
+                                self.error(
+                                    ErrorKind::InvalidIndentationContext {
+                                        expected: 1,
+                                        found: 0,
+                                    },
+                                    span,
                                 );
-                                // Check actual column of content token
-                                let content_col =
-                                    self.column_of_position(content_span.start_usize());
-                                if is_content && content_col == 0 {
-                                    self.error(
-                                        ErrorKind::InvalidIndentationContext {
-                                            expected: 1,
-                                            found: 0,
-                                        },
-                                        span,
-                                    );
-                                }
                             }
                         }
                     }
@@ -603,8 +586,13 @@ impl<'tokens, 'input> Emitter<'tokens, 'input> {
                         self.check_tabs_at_column_zero_in_flow();
                     }
                 }
-                Some((Token::Indent(_), _)) => self.advance(),
-                Some((Token::Comment(_), _)) => self.advance(),
+                Some((
+                    Token::Whitespace
+                    | Token::WhitespaceWithTabs
+                    | Token::Indent(_)
+                    | Token::Comment(_),
+                    _,
+                )) => self.advance(),
                 // NOTE: Do NOT consume Dedent tokens here!
                 // Block mapping/sequence handlers need to see them to know when to end.
                 // Each Dedent token represents one level of dedentation, so each nested
@@ -660,7 +648,7 @@ impl<'tokens, 'input> Emitter<'tokens, 'input> {
         // Skip directive tokens
         while let Some((tok, span)) = self.peek() {
             match tok {
-                Token::YamlDirective(_) | Token::TagDirective(_) | Token::ReservedDirective(_) => {
+                Token::YamlDirective(_) | Token::TagDirective(..) | Token::ReservedDirective(_) => {
                     if !has_directive {
                         first_directive_span = span;
                     }
@@ -711,10 +699,8 @@ impl<'tokens, 'input> Emitter<'tokens, 'input> {
             self.skip_ws_and_newlines();
 
             // Block mapping on start line error
-            if content_on_line && !self.is_eof() {
-                if self.check_block_mapping_on_start_line() {
-                    self.error(ErrorKind::ContentOnSameLine, self.current_span());
-                }
+            if content_on_line && !self.is_eof() && self.check_block_mapping_on_start_line() {
+                self.error(ErrorKind::ContentOnSameLine, self.current_span());
             }
         }
 
@@ -728,8 +714,7 @@ impl<'tokens, 'input> Emitter<'tokens, 'input> {
         while let Some((tok, _)) = self.peek_nth(i) {
             match tok {
                 Token::LineStart(_) => return false,
-                Token::Colon => return true,
-                Token::MappingKey => return true,
+                Token::Colon | Token::MappingKey => return true,
                 _ => i += 1,
             }
             if i > 10 {
@@ -746,33 +731,20 @@ impl<'tokens, 'input> Emitter<'tokens, 'input> {
         self.tag_handles.insert("!", "!");
         self.tag_handles.insert("!!", "tag:yaml.org,2002:");
 
-        // Scan for TagDirective tokens
-        // We need to collect the directives first to avoid borrowing issues
-        let mut directives: Vec<&'input str> = Vec::new();
+        // Scan for TagDirective tokens and insert their handle/prefix pairs.
         let mut idx = self.pos;
         while idx < self.tokens.len() {
             let Some(rich_token) = self.tokens.get(idx) else {
                 break;
             };
             match &rich_token.token {
-                Token::TagDirective(Cow::Borrowed(tag_str)) => {
-                    directives.push(tag_str);
-                }
-                Token::TagDirective(Cow::Owned(_)) => {
-                    // This shouldn't happen - TagDirective should always be borrowed
-                    // Skip it for now
+                Token::TagDirective(handle, prefix) => {
+                    self.tag_handles.insert(handle, prefix);
                 }
                 Token::DocStart | Token::DocEnd => break,
                 _ => {}
             }
             idx += 1;
-        }
-
-        // Now insert them
-        for directive in directives {
-            if let Some((handle, prefix)) = directive.split_once(' ') {
-                self.tag_handles.insert(handle, prefix);
-            }
         }
     }
 
@@ -801,7 +773,6 @@ impl<'tokens, 'input> Emitter<'tokens, 'input> {
             doc_end_span
         } else {
             // Implicit document end: use the end position of the last content
-            // This matches the batch parser behavior and provides more accurate spans
             if let Some(last_span) = self.last_content_span {
                 Span::from_usize_range(last_span.end_usize()..last_span.end_usize())
             } else {
@@ -831,7 +802,7 @@ impl<'tokens, 'input> Emitter<'tokens, 'input> {
             if matches!(
                 self.peek(),
                 Some((
-                    Token::YamlDirective(_) | Token::TagDirective(_) | Token::ReservedDirective(_),
+                    Token::YamlDirective(_) | Token::TagDirective(..) | Token::ReservedDirective(_),
                     _
                 ))
             ) {
@@ -1245,8 +1216,8 @@ impl<'input> Emitter<'_, 'input> {
         if !can_bridge {
             // Can't bridge - emit empty scalar.
             // If properties were collected at an invalid indent (below min_indent),
-            // drop them. This matches the batch parser's behavior for cases like:
-            // `seq:\n&anchor\n- a` where &anchor is at indent 0 < min_indent 1
+            // drop them (e.g. `seq:\n&anchor\n- a` where &anchor is at indent 0
+            // < min_indent 1).
             let (event_anchor, event_tag) = if properties_at_invalid_indent {
                 (None, None) // Drop properties collected at invalid indent
             } else {
@@ -1469,8 +1440,7 @@ impl<'input> Emitter<'_, 'input> {
     /// This sets up the `BlockMap` and `EmitScalar` states and returns the
     /// `MappingStart` event. The `start_span` is the span of the indicator that
     /// triggered implicit mapping detection (used as `start_span` for
-    /// `BlockMap`), while the returned event's span is the full key span
-    /// (matching the batch parser behavior).
+    /// `BlockMap`), while the returned event's span is the full key span.
     fn build_block_mapping_from_scalar_key(
         &mut self,
         map_indent: IndentLevel,
@@ -1529,9 +1499,7 @@ impl<'input> Emitter<'_, 'input> {
     }
 
     /// Handle invalid indentation after crossing a line boundary at the start of a value.
-    ///
-    /// This mirrors the batch parser's `advance_to_same_indent` behaviour: when we cross
-    /// a line and land at `indent < min_indent`, we may need to report
+    /// When we cross a line and land at `indent < min_indent`, we may need to report
     /// `InvalidIndentation` and/or `OrphanedProperties` errors for properties or
     /// scalar-like content at that position.
     fn handle_invalid_indent_after_line_cross(
@@ -1990,8 +1958,6 @@ impl<'input> Emitter<'_, 'input> {
         let initial_crossed_line = has_leading_linestart || skipped_crossed_line;
 
         // Check if we crossed a line and landed at an invalid indentation level.
-        // The batch parser's advance_to_same_indent reports InvalidIndentation when
-        // content appears at indent < min_indent or at an orphan level.
         self.handle_invalid_indent_after_line_cross(min_indent, initial_crossed_line);
 
         // Check for properties (anchor, tag) before the value
@@ -2922,7 +2888,6 @@ impl<'input> Emitter<'_, 'input> {
 
                     _ => {
                         // No more entries - check for trailing content at seq_indent level
-                        // Mimic batch parser's check_trailing_content logic in block.rs:137-162
                         if let Some((tok, span)) = self.peek() {
                             let col = self.column_of_position(span.start_usize());
                             // Only check at seq_indent level, not at lower indents
@@ -3019,7 +2984,7 @@ impl<'input> Emitter<'_, 'input> {
                 // after the first one must be on a new line. Same-line content like
                 // `: c` after `a: b` is invalid.
                 // Use specialized skip that reports InvalidIndentation for over-indented
-                // orphan content, matching batch parser's advance_to_same_indent behavior.
+                // orphan content.
                 let crossed_line = self.skip_ws_and_newlines_for_mapping(indent);
 
                 // If we require a line boundary (subsequent entry after a value) and
@@ -3175,11 +3140,11 @@ impl<'input> Emitter<'_, 'input> {
                         // If current_indent is greater than mapping indent but not a valid
                         // level in the indent stack, we need to end this mapping.
                         //
-                        // IMPORTANT: We should NOT report InvalidIndentation here.
-                        // The batch parser's advance_to_same_indent only reports this error
-                        // while actively iterating through LineStart tokens. If the LineStart
-                        // was already consumed by a nested structure (like a sequence), the
-                        // batch parser doesn't report the error from the outer mapping.
+                        // IMPORTANT: We should NOT report InvalidIndentation here. That error
+                        // is only emitted while actively iterating through LineStart tokens at
+                        // this block level. If the LineStart was already consumed by a nested
+                        // structure (like a sequence), we don't report the error from the
+                        // outer mapping.
                         //
                         // For cases like DMG6 where the error IS reported, it comes from the
                         // inner mapping's handling (BlockMap::BeforeKey seeing LineStart), not
@@ -3599,10 +3564,7 @@ impl<'input> Emitter<'_, 'input> {
     }
 
     /// Report an `InvalidIndentation` error.
-    /// Note: The batch parser reports this error from each nested block level that
-    /// encounters the orphan indentation. For parity, we do the same - each block
-    /// that sees the invalid indent reports it.
-    /// Uses `last_line_start_span` to ensure consistent spans matching the batch parser.
+    /// Uses `last_line_start_span` so that spans are consistent across nested blocks.
     fn report_invalid_indent(&mut self) {
         self.error(ErrorKind::InvalidIndentation, self.last_line_start_span);
     }
@@ -3635,8 +3597,7 @@ impl<'input> Emitter<'_, 'input> {
     }
 
     /// Skip whitespace and newlines for block mapping `BeforeKey` phase.
-    /// This mimics the batch parser's `advance_to_same_indent` by reporting
-    /// `InvalidIndentation` errors for over-indented content at orphan levels.
+    /// Reports `InvalidIndentation` errors for over-indented content at orphan levels.
     /// Returns whether a line boundary was crossed.
     ///
     /// IMPORTANT: Does NOT consume `LineStart(n)` when `n < mapping_indent`.
@@ -3647,8 +3608,6 @@ impl<'input> Emitter<'_, 'input> {
     ///   are skipped. This handles inline comments on the same line as a value.
     /// - After finding a matching `LineStart(n)`, we stop. If the next non-ws token is a
     ///   Comment (standalone comment line), the caller will see it and end the mapping.
-    ///   This matches the batch parser's behavior where `parse_implicit_mapping_entry`
-    ///   fails when it sees a Comment.
     fn skip_ws_and_newlines_for_mapping(&mut self, mapping_indent: IndentLevel) -> bool {
         let mut crossed_line = false;
         let mut found_matching_line_start = false;
@@ -3667,10 +3626,9 @@ impl<'input> Emitter<'_, 'input> {
                         self.last_line_start_span = span;
 
                         // Check for orphan indentation BEFORE breaking.
-                        // The batch parser's advance_to_same_indent reports InvalidIndentation
-                        // when n < target_indent and n is not a valid indent level.
-                        // We need to do the same here, because the caller may not reach
-                        // the orphan check (e.g., if require_line_boundary causes early exit).
+                        // When `n < target_indent` and `n` is not a valid indent level we
+                        // still need to report `InvalidIndentation`, even if the caller
+                        // exits early (e.g., because `require_line_boundary` is set).
                         if !self.is_valid_indent(n) && self.has_content_at_orphan_level_from(1) {
                             self.error(ErrorKind::InvalidIndentation, span);
                         }
@@ -3739,8 +3697,7 @@ impl<'input> Emitter<'_, 'input> {
     /// Check if the current Plain token is followed by a Colon (making it a mapping key).
     ///
     /// This is used to stop plain scalar continuation when the next line
-    /// looks like a mapping key (`key: value`). Mirrors the batch parser's
-    /// `is_mapping_key_at_position` logic.
+    /// looks like a mapping key (`key: value`).
     fn is_plain_followed_by_colon(&self) -> bool {
         // Current token should be Plain - skip it, then look for Colon
         if !matches!(self.peek(), Some((Token::Plain(_), _))) {
@@ -5021,10 +4978,10 @@ impl<'input> Emitter<'_, 'input> {
                                         has_continuation = true;
                                     } else {
                                         // Not a continuation. Check for orphan indentation.
-                                        // The batch parser's advance_to_same_indent reports InvalidIndentation
-                                        // when encountering an indent level not in the stack, even if the
-                                        // indent is >= min_indent. This handles cases like EW3V where
-                                        // a line at indent 1 is seen while the stack is [0, 0].
+                                        // We report `InvalidIndentation` when encountering an
+                                        // indent level not in the stack, even if the indent is
+                                        // >= min_indent. This handles cases like EW3V where a line
+                                        // at indent 1 is seen while the stack is [0, 0].
                                         if !self.is_valid_indent(indent)
                                             && self.has_content_at_orphan_level_from(1)
                                         {
@@ -5304,8 +5261,7 @@ impl<'input> Emitter<'_, 'input> {
         let mut had_any_line = false; // any logical line at all
 
         // Per YAML spec 8.1.1.1: content_indent = block_scalar_indent + explicit_indicator
-        // The block_scalar_indent is min_indent - 1 (the parent block's indentation)
-        // This matches the batch parser's logic in scalar.rs line 676-678.
+        // The block_scalar_indent is min_indent - 1 (the parent block's indentation).
         let explicit_indent: Option<usize> = header.indent.map(usize::from);
         let min_indent_usize = usize::from(min_indent);
         // When explicit indicator is present, calculate content_indent from it
@@ -5570,8 +5526,7 @@ impl<'input> Emitter<'_, 'input> {
             }
 
             // Only update end_span if this line had actual content (including
-            // whitespace-only content). This matches the batch parser behavior
-            // where structurally empty lines don't extend the span.
+            // whitespace-only content). Structurally empty lines don't extend the span.
             if !line_parts.is_empty() {
                 end_span = line_end_span;
                 scalar_has_any_part = true;
@@ -5687,7 +5642,6 @@ impl<'input> Emitter<'_, 'input> {
     // a streaming implementation; helper removed.
 
     /// Apply chomping indicator to block scalar value.
-    /// Matches the batch parser's logic in scalar.rs `apply_chomping()`.
     fn apply_chomping(value: &str, header: &crate::lexer::BlockScalarHeader) -> String {
         use crate::lexer::Chomping;
 

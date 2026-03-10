@@ -962,9 +962,10 @@ fn compare_events_with_context(
     ))
 }
 
-// NOTE: streaming_parser_equivalence test removed because it compared the batch parser
-// with StreamingParser. Since we've removed the batch parser and promoted the Emitter
-// to be the primary parser, this test is no longer relevant.
+// NOTE: streaming_parser_equivalence test removed because it compared an older
+// parser implementation with StreamingParser. Since we've removed that legacy
+// implementation and promoted the Emitter to be the primary parser, this test
+// is no longer relevant.
 
 /// Find the first difference between two event sequences.
 #[allow(dead_code, reason = "utility function for debugging test failures")]
@@ -1053,8 +1054,8 @@ fn library_events_to_test_events(events: &[yaml_parser::Event<'_>]) -> Vec<Event
 /// Tests where the emitter produces intentionally different (more correct) spans.
 /// These are whitelisted to differ only in spans, not structure.
 ///
-/// Emitter span improvements over batch parser:
-/// - `DocumentEnd`: emitter returns actual EOF position, batch returns 0..0
+/// Emitter span improvements over the previous parser implementation:
+/// - `DocumentEnd`: emitter returns actual EOF position, previous parser returned 0..0
 /// - `MappingStart`/`End`: emitter uses more precise span boundaries
 /// - Block scalar end spans: emitter tracks actual content end
 #[allow(dead_code, reason = "kept for future span comparison testing")]
@@ -1063,5 +1064,6 @@ const SPAN_DIFF_WHITELIST: &[&str] = &[
 ];
 
 // NOTE: emitter_equivalence, debug_3alj, and debug_26dv tests removed because they
-// compared the batch parser with the Emitter. Since we've removed the batch parser
-// and promoted the Emitter to be the primary parser, these tests are no longer relevant.
+// compared a legacy parser with the Emitter. Since we've removed that older
+// implementation and promoted the Emitter to be the primary parser, these
+// tests are no longer relevant.

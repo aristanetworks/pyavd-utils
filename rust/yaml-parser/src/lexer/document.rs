@@ -134,12 +134,6 @@ impl<'input> Lexer<'input> {
         }
     }
 
-    /// Get collected errors (read-only).
-    #[must_use]
-    pub fn errors(&self) -> &[ParseError] {
-        &self.errors
-    }
-
     /// Take collected errors.
     pub fn take_errors(&mut self) -> Vec<ParseError> {
         std::mem::take(&mut self.errors)
@@ -245,7 +239,7 @@ impl<'input> Lexer<'input> {
             | Token::Indent(_)
             | Token::Dedent
             | Token::YamlDirective(_)
-            | Token::TagDirective(_)
+            | Token::TagDirective(..)
             | Token::ReservedDirective(_) => {
                 // Don't change prev_was_json_like
                 // These are separators/structure tokens that allow comments to follow
@@ -276,7 +270,7 @@ impl<'input> Lexer<'input> {
                         self.first_directive_span = None;
                     }
                     Token::YamlDirective(_)
-                    | Token::TagDirective(_)
+                    | Token::TagDirective(..)
                     | Token::ReservedDirective(_)
                     | Token::Comment(_)
                     | Token::Whitespace
@@ -508,7 +502,25 @@ impl<'input> Lexer<'input> {
                 }
                 Token::YamlDirective(Cow::Borrowed(value))
             }
-            "TAG" => Token::TagDirective(Cow::Borrowed(value)),
+            "TAG" => {
+                // `%TAG` directive: expects exactly two whitespace-separated parameters:
+                // a tag handle (e.g. `!e!`) and a tag prefix (e.g. `tag:example,2000:`).
+                let mut parts = value.split_whitespace();
+                let handle = parts.next();
+                let prefix = parts.next();
+                let extra = parts.next();
+
+                if let (Some(handle_str), Some(prefix_str), None) = (handle, prefix, extra) {
+                    Token::TagDirective(handle_str, prefix_str)
+                } else {
+                    // Malformed TAG directive (wrong number of parameters).
+                    // Report an error and treat it as a reserved/unknown directive
+                    // so that it doesn't affect tag handle resolution.
+                    self.add_error(ErrorKind::InvalidDirective, span);
+                    let full_content = &self.input[name_start..self.byte_pos].trim_end();
+                    Token::ReservedDirective(Cow::Borrowed(full_content))
+                }
+            }
             _ => {
                 // Reserved directive: include the name in the value
                 let full_content = &self.input[name_start..self.byte_pos].trim_end();
@@ -1580,7 +1592,8 @@ impl<'input> Iterator for Lexer<'input> {
 /// Errors are collected internally by the lexer and returned separately.
 ///
 /// For streaming usage, iterate directly over `Lexer::new(input)`.
-pub fn tokenize_document(input: &str) -> (Vec<RichToken<'_>>, Vec<ParseError>) {
+#[cfg(test)]
+pub(crate) fn tokenize_document(input: &str) -> (Vec<RichToken<'_>>, Vec<ParseError>) {
     let mut lexer = Lexer::new(input);
     let tokens: Vec<RichToken<'_>> = lexer.by_ref().collect();
     let errors = lexer.take_errors();
@@ -1890,7 +1903,9 @@ mod tests {
             "Should have YAML directive"
         );
         assert!(
-            tokens.iter().any(|t| matches!(t, Token::TagDirective(_))),
+            tokens
+                .iter()
+                .any(|token| matches!(token, Token::TagDirective(..))),
             "Should have TAG directive after ..."
         );
         assert_eq!(

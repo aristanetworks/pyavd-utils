@@ -17,7 +17,11 @@ mod document;
 mod rich_token;
 mod token;
 
-// Re-export main types and functions
-pub use document::{Lexer, tokenize_document};
+// Re-export main types
+pub use document::Lexer;
+
+// Test-only helper for unit tests; not part of the public API surface.
+#[cfg(test)]
+pub(crate) use document::tokenize_document;
 pub use rich_token::RichToken;
 pub use token::{BlockScalarHeader, Chomping, QuoteStyle, Token};

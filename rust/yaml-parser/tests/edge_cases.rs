@@ -7,32 +7,14 @@
 //! This module tests corner cases, boundary conditions, and unusual
 //! but valid YAML constructs.
 
-#![allow(clippy::indexing_slicing, reason = "panics are acceptable in tests")]
 #![allow(
     clippy::tests_outside_test_module,
-    reason = "integration tests don't need cfg(test)"
-)]
-#![allow(clippy::panic, reason = "panic is acceptable in tests")]
-#![allow(
-    clippy::min_ident_chars,
-    reason = "single-char closure params are fine in tests"
+    reason = "integration tests in tests/ are top-level by design"
 )]
 #![allow(
-    clippy::uninlined_format_args,
-    reason = "explicit format args are clearer in tests"
-)]
-#![allow(
-    clippy::float_cmp,
-    reason = "exact float comparison is intentional in tests"
-)]
-#![allow(clippy::shadow_unrelated, reason = "shadowing is acceptable in tests")]
-#![allow(
-    clippy::collapsible_if,
-    reason = "nested if-let patterns are clearer in tests"
-)]
-#![allow(
-    clippy::format_push_string,
-    reason = "format! is clearer than write! in tests"
+    clippy::expect_used,
+    reason = "expect() in tests provides precise failure messages for invariants \
+              like 'exactly one document' and makes assertions more readable"
 )]
 
 use yaml_parser::{Value, parse};
@@ -71,7 +53,8 @@ fn test_comments_only() {
 fn test_single_null() {
     let (docs, _) = parse("~");
     assert_eq!(docs.len(), 1);
-    assert!(matches!(docs[0].value, Value::Null));
+    let doc = docs.first().expect("expected exactly one document");
+    assert!(matches!(doc.value, Value::Null));
 }
 
 #[test]
@@ -80,11 +63,11 @@ fn test_explicit_null_variants() {
 
     for input in inputs {
         let (docs, _) = parse(input);
-        assert_eq!(docs.len(), 1, "Input {:?} should produce 1 document", input);
+        assert_eq!(docs.len(), 1, "Input {input:?} should produce 1 document",);
+        let doc = docs.first().expect("expected exactly one document");
         assert!(
-            matches!(docs[0].value, Value::Null),
-            "Input {:?} should be null",
-            input
+            matches!(doc.value, Value::Null),
+            "Input {input:?} should be null",
         );
     }
 
@@ -101,20 +84,20 @@ fn test_bool_variants() {
     for input in true_inputs {
         let (docs, _) = parse(input);
         assert_eq!(docs.len(), 1);
+        let doc = docs.first().expect("expected exactly one document");
         assert!(
-            matches!(docs[0].value, Value::Bool(true)),
-            "Input {:?} should be true",
-            input
+            matches!(doc.value, Value::Bool(true)),
+            "Input {input:?} should be true",
         );
     }
 
     for input in false_inputs {
         let (docs, _) = parse(input);
         assert_eq!(docs.len(), 1);
+        let doc = docs.first().expect("expected exactly one document");
         assert!(
-            matches!(docs[0].value, Value::Bool(false)),
-            "Input {:?} should be false",
-            input
+            matches!(doc.value, Value::Bool(false)),
+            "Input {input:?} should be false",
         );
     }
 }
@@ -132,19 +115,13 @@ fn test_integer_edge_cases() {
 
     for (input, expected) in test_cases {
         let (docs, _) = parse(input);
-        assert_eq!(docs.len(), 1, "Input {:?} should produce 1 document", input);
-        if let Value::Int(val) = docs[0].value {
-            assert_eq!(
-                val, expected,
-                "Input {:?} should parse to {}",
-                input, expected
-            );
-        } else {
-            panic!(
-                "Input {:?} should be an integer, got {:?}",
-                input, docs[0].value
-            );
-        }
+        assert_eq!(docs.len(), 1, "Input {input:?} should produce 1 document",);
+        let doc = docs.first().expect("expected exactly one document");
+        assert!(
+            matches!(doc.value, Value::Int(val) if val == expected),
+            "Input {input:?} should parse to {expected}, got {:?}",
+            doc.value,
+        );
     }
 }
 
@@ -161,75 +138,98 @@ fn test_float_edge_cases() {
 
     for (input, expected) in test_cases {
         let (docs, _) = parse(input);
-        assert_eq!(docs.len(), 1, "Input {:?} should produce 1 document", input);
-        if let Value::Float(val) = docs[0].value {
-            assert_eq!(
-                val, expected,
-                "Input {:?} should parse to {}",
-                input, expected
-            );
-        } else {
-            panic!(
-                "Input {:?} should be a float, got {:?}",
-                input, docs[0].value
-            );
-        }
+        assert_eq!(docs.len(), 1, "Input {input:?} should produce 1 document",);
+        let doc = docs.first().expect("expected exactly one document");
+        assert!(
+            matches!(doc.value, Value::Float(val) if val.to_bits() == expected.to_bits()),
+            "Input {input:?} should parse to {expected}, got {:?}",
+            doc.value,
+        );
     }
 }
 
 #[test]
 fn test_special_float_values() {
-    let (docs, _) = parse(".inf");
-    assert!(matches!(docs[0].value, Value::Float(f) if f.is_infinite() && f.is_sign_positive()));
+    {
+        let (docs, _) = parse(".inf");
+        let doc = docs.first().expect("expected .inf document");
+        assert!(matches!(
+            doc.value,
+            Value::Float(float) if float.is_infinite() && float.is_sign_positive()
+        ));
+    }
 
-    let (docs, _) = parse("-.inf");
-    assert!(matches!(docs[0].value, Value::Float(f) if f.is_infinite() && f.is_sign_negative()));
+    {
+        let (docs, _) = parse("-.inf");
+        let doc = docs.first().expect("expected -.inf document");
+        assert!(matches!(
+            doc.value,
+            Value::Float(float) if float.is_infinite() && float.is_sign_negative()
+        ));
+    }
 
-    let (docs, _) = parse(".nan");
-    assert!(matches!(docs[0].value, Value::Float(f) if f.is_nan()));
+    {
+        let (docs, _) = parse(".nan");
+        let doc = docs.first().expect("expected .nan document");
+        assert!(matches!(doc.value, Value::Float(float) if float.is_nan()));
+    }
 }
 
 #[test]
 fn test_empty_sequence() {
     let (docs, _) = parse("[]");
     assert_eq!(docs.len(), 1);
-    if let Value::Sequence(items) = &docs[0].value {
-        assert_eq!(items.len(), 0, "Empty sequence should have no items");
-    } else {
-        panic!("Expected sequence");
-    }
+    let doc = docs.first().expect("expected exactly one document");
+    assert!(
+        matches!(&doc.value, Value::Sequence(items) if items.is_empty()),
+        "Empty sequence should have no items, got {:?}",
+        doc.value,
+    );
 }
 
 #[test]
 fn test_empty_mapping() {
     let (docs, _) = parse("{}");
     assert_eq!(docs.len(), 1);
-    if let Value::Mapping(pairs) = &docs[0].value {
-        assert_eq!(pairs.len(), 0, "Empty mapping should have no pairs");
-    } else {
-        panic!("Expected mapping");
-    }
+    let doc = docs.first().expect("expected exactly one document");
+    assert!(
+        matches!(&doc.value, Value::Mapping(pairs) if pairs.is_empty()),
+        "Empty mapping should have no pairs, got {:?}",
+        doc.value,
+    );
 }
 
 #[test]
 fn test_nested_empty_collections() {
     let (docs, _) = parse("[[[]]]");
     assert_eq!(docs.len(), 1);
-    if let Value::Sequence(outer) = &docs[0].value {
-        assert_eq!(outer.len(), 1);
-        if let Value::Sequence(middle) = &outer[0].value {
-            assert_eq!(middle.len(), 1);
-            if let Value::Sequence(inner) = &middle[0].value {
-                assert_eq!(inner.len(), 0, "Innermost sequence should be empty");
-            } else {
-                panic!("Expected innermost sequence");
-            }
-        } else {
-            panic!("Expected middle sequence");
-        }
-    } else {
-        panic!("Expected outer sequence");
+    let doc = docs.first().expect("expected exactly one document");
+
+    let outer = match &doc.value {
+        Value::Sequence(items) => Some(items),
+        _ => None,
     }
+    .expect("expected outer sequence");
+
+    assert_eq!(outer.len(), 1);
+    let middle_node = outer.first().expect("expected middle sequence node");
+
+    let middle = match &middle_node.value {
+        Value::Sequence(items) => Some(items),
+        _ => None,
+    }
+    .expect("expected middle sequence");
+
+    assert_eq!(middle.len(), 1);
+    let inner_node = middle.first().expect("expected inner sequence node");
+
+    let inner = match &inner_node.value {
+        Value::Sequence(items) => Some(items),
+        _ => None,
+    }
+    .expect("expected inner sequence");
+
+    assert_eq!(inner.len(), 0, "Innermost sequence should be empty");
 }
 
 #[test]
@@ -256,21 +256,27 @@ fn test_unicode_scalars() {
 
     for (input, expected_value) in test_cases {
         let (docs, _) = parse(input);
-        assert_eq!(docs.len(), 1, "Input {:?} should produce 1 document", input);
-        if let Value::Mapping(pairs) = &docs[0].value {
-            if let Value::String(s) = &pairs[0].1.value {
-                assert_eq!(
-                    s.as_ref(),
-                    expected_value,
-                    "Unicode value mismatch for {:?}",
-                    input
-                );
-            } else {
-                panic!("Expected string value");
-            }
-        } else {
-            panic!("Expected mapping");
+        assert_eq!(docs.len(), 1, "Input {input:?} should produce 1 document",);
+        let doc = docs.first().expect("expected exactly one document");
+
+        let pairs = match &doc.value {
+            Value::Mapping(pairs) => Some(pairs),
+            _ => None,
         }
+        .expect("Expected mapping");
+
+        let (_, value_node) = pairs.first().expect("Expected at least one mapping pair");
+
+        let string_value = match &value_node.value {
+            Value::String(string_value) => Some(string_value.as_ref()),
+            _ => None,
+        }
+        .expect("Expected string value");
+
+        assert_eq!(
+            string_value, expected_value,
+            "Unicode value mismatch for {input:?}",
+        );
     }
 }
 
@@ -286,46 +292,74 @@ fn test_escape_sequences() {
 
     for (input, expected) in test_cases {
         let (docs, _) = parse(input);
-        assert_eq!(docs.len(), 1, "Input {:?} should produce 1 document", input);
-        if let Value::String(s) = &docs[0].value {
-            assert_eq!(
-                s.as_ref(),
-                expected,
-                "Escape sequence mismatch for {:?}",
-                input
-            );
-        } else {
-            panic!("Expected string value for {:?}", input);
+        assert_eq!(docs.len(), 1, "Input {input:?} should produce 1 document",);
+        let doc = docs.first().expect("expected exactly one document");
+
+        let string_value = match &doc.value {
+            Value::String(string_value) => Some(string_value.as_ref()),
+            _ => None,
         }
+        .expect("Expected string value");
+
+        assert_eq!(
+            string_value, expected,
+            "Escape sequence mismatch for {input:?}",
+        );
     }
 }
 
 #[test]
 fn test_block_scalar_chomping() {
     // Strip chomping (-)
-    let input = "text: |-\n  content\n  \n";
-    let (docs, _) = parse(input);
-    if let Value::Mapping(pairs) = &docs[0].value {
-        if let Value::String(s) = &pairs[0].1.value {
-            assert_eq!(
-                s.as_ref(),
-                "content",
-                "Strip chomping should remove trailing newlines"
-            );
+    let input_strip = "text: |-\n  content\n  \n";
+    {
+        let (docs, _) = parse(input_strip);
+        let doc = docs.first().expect("expected exactly one document");
+
+        let pairs = match &doc.value {
+            Value::Mapping(pairs) => Some(pairs),
+            _ => None,
         }
+        .expect("expected mapping");
+
+        let (_, value_node) = pairs.first().expect("expected mapping pair");
+
+        let string_value = match &value_node.value {
+            Value::String(string_value) => Some(string_value.as_ref()),
+            _ => None,
+        }
+        .expect("expected string value");
+
+        assert_eq!(
+            string_value, "content",
+            "Strip chomping should remove trailing newlines",
+        );
     }
 
     // Keep chomping (+)
-    let input = "text: |+\n  content\n  \n";
-    let (docs, _) = parse(input);
-    if let Value::Mapping(pairs) = &docs[0].value {
-        if let Value::String(s) = &pairs[0].1.value {
-            assert_eq!(
-                s.as_ref(),
-                "content\n\n",
-                "Keep chomping should preserve trailing newlines"
-            );
+    let input_keep = "text: |+\n  content\n  \n";
+    {
+        let (docs, _) = parse(input_keep);
+        let doc = docs.first().expect("expected exactly one document");
+
+        let pairs = match &doc.value {
+            Value::Mapping(pairs) => Some(pairs),
+            _ => None,
         }
+        .expect("expected mapping");
+
+        let (_, value_node) = pairs.first().expect("expected mapping pair");
+
+        let string_value = match &value_node.value {
+            Value::String(string_value) => Some(string_value.as_ref()),
+            _ => None,
+        }
+        .expect("expected string value");
+
+        assert_eq!(
+            string_value, "content\n\n",
+            "Keep chomping should preserve trailing newlines",
+        );
     }
 }
 
@@ -334,15 +368,32 @@ fn test_multiple_documents() {
     let input = "---\ndoc1\n---\ndoc2\n---\ndoc3";
     let (docs, _) = parse(input);
     assert_eq!(docs.len(), 3, "Should parse 3 documents");
-
-    if let Value::String(s) = &docs[0].value {
-        assert_eq!(s.as_ref(), "doc1");
+    {
+        let doc = docs.first().expect("expected first document");
+        let value1 = match &doc.value {
+            Value::String(string) => Some(string.as_ref()),
+            _ => None,
+        }
+        .expect("expected string in first document");
+        assert_eq!(value1, "doc1");
     }
-    if let Value::String(s) = &docs[1].value {
-        assert_eq!(s.as_ref(), "doc2");
+    {
+        let doc = docs.get(1).expect("expected second document");
+        let value2 = match &doc.value {
+            Value::String(string) => Some(string.as_ref()),
+            _ => None,
+        }
+        .expect("expected string in second document");
+        assert_eq!(value2, "doc2");
     }
-    if let Value::String(s) = &docs[2].value {
-        assert_eq!(s.as_ref(), "doc3");
+    {
+        let doc = docs.get(2).expect("expected third document");
+        let value3 = match &doc.value {
+            Value::String(string) => Some(string.as_ref()),
+            _ => None,
+        }
+        .expect("expected string in third document");
+        assert_eq!(value3, "doc3");
     }
 }
 
@@ -371,23 +422,33 @@ fn test_mixed_flow_and_block() {
     let (docs, _) = parse(input);
     assert_eq!(docs.len(), 1);
 
-    if let Value::Mapping(pairs) = &docs[0].value {
-        assert_eq!(pairs.len(), 2);
+    let doc = docs.first().expect("expected exactly one document");
 
-        // First pair: block sequence
-        if let Value::Sequence(items) = &pairs[0].1.value {
-            assert_eq!(items.len(), 2);
-        } else {
-            panic!("Expected block sequence");
-        }
-
-        // Second pair: flow sequence
-        if let Value::Sequence(items) = &pairs[1].1.value {
-            assert_eq!(items.len(), 3);
-        } else {
-            panic!("Expected flow sequence");
-        }
+    let pairs = match &doc.value {
+        Value::Mapping(pairs) => Some(pairs),
+        _ => None,
     }
+    .expect("expected mapping");
+
+    assert_eq!(pairs.len(), 2);
+
+    // First pair: block sequence
+    let (_, first_value) = pairs.first().expect("expected first mapping pair");
+    let first_items = match &first_value.value {
+        Value::Sequence(items) => Some(items),
+        _ => None,
+    }
+    .expect("expected block sequence");
+    assert_eq!(first_items.len(), 2);
+
+    // Second pair: flow sequence
+    let (_, second_value) = pairs.get(1).expect("expected second mapping pair");
+    let second_items = match &second_value.value {
+        Value::Sequence(items) => Some(items),
+        _ => None,
+    }
+    .expect("expected flow sequence");
+    assert_eq!(second_items.len(), 3);
 }
 
 #[test]
@@ -397,11 +458,18 @@ fn test_complex_keys() {
     let (docs, _) = parse(input);
     assert_eq!(docs.len(), 1);
 
-    if let Value::Mapping(pairs) = &docs[0].value {
-        if let Value::String(key) = &pairs[0].0.value {
-            assert_eq!(key.as_ref(), "complex key");
-        }
+    let doc = docs.first().expect("expected exactly one document");
+
+    let pairs = match &doc.value {
+        Value::Mapping(pairs) => Some(pairs),
+        _ => None,
     }
+    .expect("expected mapping");
+
+    assert_eq!(pairs.len(), 1);
+    let (key, value) = pairs.first().expect("expected exactly one pair");
+    assert_eq!(key.value, Value::String("complex key".into()));
+    assert_eq!(value.value, Value::String("value".into()));
 }
 
 #[test]
@@ -411,11 +479,13 @@ fn test_anchor_before_tag() {
     assert_eq!(docs.len(), 1);
 
     // Should have both anchor and tag
-    assert!(docs[0].properties.is_some());
-    if let Some(props) = &docs[0].properties {
-        assert!(props.anchor.is_some());
-        assert!(props.tag.is_some());
-    }
+    let doc = docs.first().expect("expected exactly one document");
+    let props = doc
+        .properties
+        .as_ref()
+        .expect("expected anchor and tag properties");
+    assert!(props.anchor.is_some());
+    assert!(props.tag.is_some());
 }
 
 #[test]
@@ -425,27 +495,41 @@ fn test_tag_before_anchor() {
     assert_eq!(docs.len(), 1);
 
     // Should have both tag and anchor
-    assert!(docs[0].properties.is_some());
-    if let Some(props) = &docs[0].properties {
-        assert!(props.anchor.is_some());
-        assert!(props.tag.is_some());
-    }
+    let doc = docs.first().expect("expected exactly one document");
+    let props = doc
+        .properties
+        .as_ref()
+        .expect("expected tag and anchor properties");
+    assert!(props.anchor.is_some());
+    assert!(props.tag.is_some());
 }
 
 #[test]
 fn test_very_long_line() {
     // Test with a 1000-character line
     let long_value = "x".repeat(1000);
-    let input = format!("key: {}", long_value);
+    let input = format!("key: {long_value}");
     let (docs, errors) = parse(&input);
     assert_eq!(docs.len(), 1);
     assert_eq!(errors.len(), 0, "Long lines should parse without errors");
 
-    if let Value::Mapping(pairs) = &docs[0].value {
-        if let Value::String(s) = &pairs[0].1.value {
-            assert_eq!(s.len(), 1000);
-        }
+    let doc = docs.first().expect("expected exactly one document");
+
+    let pairs = match &doc.value {
+        Value::Mapping(pairs) => Some(pairs),
+        _ => None,
     }
+    .expect("expected mapping");
+
+    let (_, value_node) = pairs.first().expect("expected mapping pair");
+
+    let string_value = match &value_node.value {
+        Value::String(string_value) => Some(string_value),
+        _ => None,
+    }
+    .expect("expected string value");
+
+    assert_eq!(string_value.len(), 1000);
 }
 
 #[test]
@@ -453,7 +537,8 @@ fn test_many_items_in_sequence() {
     // Test with 100 items
     let mut input = String::new();
     for i in 0..100 {
-        input.push_str(&format!("- item{}\n", i));
+        use std::fmt::Write as _;
+        let _ = writeln!(input, "- item{i}");
     }
 
     let (docs, errors) = parse(&input);
@@ -464,9 +549,15 @@ fn test_many_items_in_sequence() {
         "Large sequences should parse without errors"
     );
 
-    if let Value::Sequence(items) = &docs[0].value {
-        assert_eq!(items.len(), 100);
+    let doc = docs.first().expect("expected exactly one document");
+
+    let items = match &doc.value {
+        Value::Sequence(items) => Some(items),
+        _ => None,
     }
+    .expect("expected sequence");
+
+    assert_eq!(items.len(), 100);
 }
 
 #[test]
@@ -474,7 +565,8 @@ fn test_many_pairs_in_mapping() {
     // Test with 100 key-value pairs
     let mut input = String::new();
     for i in 0..100 {
-        input.push_str(&format!("key{}: value{}\n", i, i));
+        use std::fmt::Write as _;
+        let _ = writeln!(input, "key{i}: value{i}");
     }
 
     let (docs, errors) = parse(&input);
@@ -485,7 +577,13 @@ fn test_many_pairs_in_mapping() {
         "Large mappings should parse without errors"
     );
 
-    if let Value::Mapping(pairs) = &docs[0].value {
-        assert_eq!(pairs.len(), 100);
+    let doc = docs.first().expect("expected exactly one document");
+
+    let pairs = match &doc.value {
+        Value::Mapping(pairs) => Some(pairs),
+        _ => None,
     }
+    .expect("expected mapping");
+
+    assert_eq!(pairs.len(), 100);
 }

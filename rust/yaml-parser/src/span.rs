@@ -50,17 +50,6 @@ pub const fn usize_to_pos(val: usize) -> BytePosition {
 /// Uses `u16` for memory efficiency. Maximum indentation level is 65,535.
 pub type IndentLevel = u16;
 
-/// Convert an `IndentLevel` to `usize` for array indexing and comparisons.
-#[must_use]
-#[inline]
-#[allow(
-    clippy::as_conversions,
-    reason = "safe widening conversion from u16 to usize"
-)]
-pub const fn indent_to_usize(level: IndentLevel) -> usize {
-    level as usize
-}
-
 /// Convert a `usize` to `IndentLevel`, saturating at `IndentLevel::MAX`.
 #[must_use]
 #[inline]

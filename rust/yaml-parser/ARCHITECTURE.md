@@ -121,8 +121,12 @@ The parser uses a **three-layer architecture** with unified streaming tokenizati
 
 - **Main entry points**:
   - `parse(input: &str) -> (Stream<'static>, Vec<ParseError>)` – full parse to AST
-  - `emit_events(input: &str) -> (Vec<Event<'_>>, Vec<ParseError>)` – event-only API
-- **Exports**: Public types and functions from `lexer`, `emitter`, `event`, `parser`, `span`, `stream`, `value`, `error`
+  - `emit_events(input: &str) -> (Vec<Event<'_>>, Vec<ParseError>)` – event-only API for tests/tooling
+- **Exports**: Public high-level API (`parse`, `emit_events`) plus core types:
+  - AST: `Node`, `Value`, `Properties`, `Stream`
+  - Errors: `ParseError`, `ErrorKind`
+  - Spans: `Span`, `Spanned`, `Position`, `SourceMap`
+  - Events: `Event`, `ScalarStyle`, `CollectionStyle`
 - **Module declarations**: `lexer`, `emitter`, `event`, `parser`, `error`, `span`, `stream`, `value`
 
 #### `lexer/mod.rs` - Lexer Module Root
@@ -953,7 +957,7 @@ Following user preference:
 
 ## Known Limitations
 
-See `TECHNICAL_DEBT.md` for comprehensive documentation. Key limitations:
+Key limitations:
 
 ### 1. Performance
 
@@ -1056,7 +1060,8 @@ The parser uses optimized type sizes to reduce memory footprint. This introduces
 
 - **YAML 1.2 Specification**: https://yaml.org/spec/1.2/spec.html
 - **YAML Test Suite**: https://github.com/yaml/yaml-test-suite
-- **Technical Debt Documentation**: See `TECHNICAL_DEBT.md` in this directory
+  - Internal technical debt is tracked in the issue tracker rather than in a
+    separate document in this crate.
 
 ---
 

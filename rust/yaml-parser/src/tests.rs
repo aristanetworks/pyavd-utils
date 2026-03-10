@@ -8,10 +8,6 @@
 //! error recovery, and edge cases.
 
 // Allow these pedantic lints in test code where they add noise without benefit
-#![allow(
-    clippy::min_ident_chars,
-    reason = "single-char names are fine in tests"
-)]
 #![allow(clippy::indexing_slicing, reason = "panics are acceptable in tests")]
 #![allow(
     clippy::approx_constant,
@@ -20,6 +16,10 @@
 #![allow(
     clippy::as_conversions,
     reason = "pointer conversions are fine in tests"
+)]
+#![allow(
+    clippy::expect_used,
+    reason = "expect() in tests provides precise failure messages for structural invariants"
 )]
 
 use super::*;
@@ -45,10 +45,14 @@ fn test_simple_mapping() {
     assert!(errors.is_empty());
     assert_eq!(docs.len(), 1);
     let doc = docs.first().unwrap();
-    assert!(matches!(&doc.value, Value::Mapping(_)));
-    if let Value::Mapping(pairs) = &doc.value {
-        assert_eq!(pairs.len(), 1);
+
+    let pairs = match &doc.value {
+        Value::Mapping(pairs) => Some(pairs),
+        _ => None,
     }
+    .expect("expected mapping");
+
+    assert_eq!(pairs.len(), 1);
 }
 
 #[test]
@@ -144,10 +148,14 @@ mod error_recovery {
 
         // Should still produce partial output
         assert_eq!(docs.len(), 1, "Should produce 1 document");
-        if let Value::Sequence(items) = &docs.first().unwrap().value {
-            // Should have recovered some items
-            assert!(!items.is_empty(), "Should recover some items");
+        let items = match &docs.first().unwrap().value {
+            Value::Sequence(items) => Some(items),
+            _ => None,
         }
+        .expect("expected sequence");
+
+        // Should have recovered some items
+        assert!(!items.is_empty(), "Should recover some items");
     }
 
     /// Test that parser reports error but still produces partial output for
@@ -165,10 +173,14 @@ mod error_recovery {
 
         // Should still produce partial output
         assert_eq!(docs.len(), 1, "Should produce 1 document");
-        if let Value::Mapping(pairs) = &docs.first().unwrap().value {
-            // Should have recovered some pairs
-            assert!(!pairs.is_empty(), "Should recover some pairs");
+        let pairs = match &docs.first().unwrap().value {
+            Value::Mapping(pairs) => Some(pairs),
+            _ => None,
         }
+        .expect("expected mapping");
+
+        // Should have recovered some pairs
+        assert!(!pairs.is_empty(), "Should recover some pairs");
     }
 
     /// Test recovery from invalid escape sequence in double-quoted string.
@@ -225,10 +237,14 @@ mod error_recovery {
 
         // Should still produce sequence
         assert_eq!(docs.len(), 1, "Should produce 1 document");
-        if let Value::Sequence(items) = &docs.first().unwrap().value {
-            // Should have some items despite error
-            assert!(!items.is_empty(), "Should have some items");
+        let items = match &docs.first().unwrap().value {
+            Value::Sequence(items) => Some(items),
+            _ => None,
         }
+        .expect("expected sequence");
+
+        // Should have some items despite error
+        assert!(!items.is_empty(), "Should have some items");
     }
 
     /// Test that parser recovers from invalid items in flow mapping
@@ -243,10 +259,14 @@ mod error_recovery {
 
         // Should still produce mapping
         assert_eq!(docs.len(), 1, "Should produce 1 document");
-        if let Value::Mapping(pairs) = &docs.first().unwrap().value {
-            // Should have some pairs despite error
-            assert!(!pairs.is_empty(), "Should have some pairs");
+        let pairs = match &docs.first().unwrap().value {
+            Value::Mapping(pairs) => Some(pairs),
+            _ => None,
         }
+        .expect("expected mapping");
+
+        // Should have some pairs despite error
+        assert!(!pairs.is_empty(), "Should have some pairs");
     }
 
     /// Test that parser handles duplicate anchors with error.
@@ -303,9 +323,13 @@ mod error_recovery {
 
         // First document should be fully parsed
         assert!(!docs.is_empty(), "Should have at least 1 document");
-        if let Value::Mapping(pairs) = &docs.first().unwrap().value {
-            assert_eq!(pairs.len(), 1, "First doc should have 1 mapping pair");
+        let pairs = match &docs.first().unwrap().value {
+            Value::Mapping(pairs) => Some(pairs),
+            _ => None,
         }
+        .expect("expected mapping in first document");
+
+        assert_eq!(pairs.len(), 1, "First doc should have 1 mapping pair");
     }
 
     /// Test that multiple errors can be collected from a single document.
@@ -336,9 +360,13 @@ mod error_recovery {
 
         // Should still produce mapping with both pairs
         assert_eq!(docs.len(), 1, "Should produce 1 document");
-        if let Value::Mapping(pairs) = &docs.first().unwrap().value {
-            assert_eq!(pairs.len(), 2, "Should have both mapping pairs");
+        let pairs = match &docs.first().unwrap().value {
+            Value::Mapping(pairs) => Some(pairs),
+            _ => None,
         }
+        .expect("expected mapping");
+
+        assert_eq!(pairs.len(), 2, "Should have both mapping pairs");
     }
 
     /// Test that parser handles missing colon after key.
@@ -419,8 +447,8 @@ fn test_zero_copy_parsing() {
 
     let input = "key: value";
 
-    // Tokenize the document
-    let (tokens, lexer_errors) = tokenize_document(input);
+    // Tokenize the document using the internal lexer API
+    let (tokens, lexer_errors) = crate::lexer::tokenize_document(input);
     assert!(lexer_errors.is_empty());
 
     // Parse to events using the Emitter - events lifetime is tied to input
@@ -438,19 +466,28 @@ fn test_zero_copy_parsing() {
     let node = &nodes[0];
 
     // Verify it's a mapping with the expected content
-    assert!(matches!(&node.value, Value::Mapping(pairs) if pairs.len() == 1));
+    let pairs = match &node.value {
+        Value::Mapping(pairs) => Some(pairs),
+        _ => None,
+    }
+    .expect("expected mapping");
+    assert_eq!(pairs.len(), 1);
 
     // Extract and verify key/value using pattern matching
-    if let Value::Mapping(pairs) = &node.value
-        && let Some((key, val)) = pairs.first()
-    {
-        if let Value::String(key_str) = &key.value {
-            assert_eq!(key_str, "key");
-        }
-        if let Value::String(val_str) = &val.value {
-            assert_eq!(val_str, "value");
-        }
+    let (key, val) = pairs.first().expect("expected mapping pair");
+    let key_str = match &key.value {
+        Value::String(string_value) => Some(string_value.as_ref()),
+        _ => None,
     }
+    .expect("expected string key");
+    let val_str = match &val.value {
+        Value::String(string_value) => Some(string_value.as_ref()),
+        _ => None,
+    }
+    .expect("expected string value");
+
+    assert_eq!(key_str, "key");
+    assert_eq!(val_str, "value");
 
     // Convert to owned when needed (e.g., to outlive the input)
     let owned_node: Node<'static> = node.clone().into_owned();
@@ -458,11 +495,6 @@ fn test_zero_copy_parsing() {
 }
 
 #[test]
-#[allow(
-    clippy::indexing_slicing,
-    clippy::unreachable,
-    reason = "Test code with assertions"
-)]
 fn test_block_scalar_chomping() {
     use crate::value::Value;
 
@@ -471,12 +503,21 @@ fn test_block_scalar_chomping() {
         let (nodes, errors) = crate::parse(input);
         assert!(errors.is_empty(), "Unexpected errors: {errors:?}");
         assert_eq!(nodes.len(), 1);
-        if let Value::Sequence(seq) = &nodes[0].value
-            && let Value::String(str_val) = &seq[0].value
-        {
-            return str_val.to_string();
+
+        let seq = match &nodes.first().unwrap().value {
+            Value::Sequence(seq) => Some(seq),
+            _ => None,
         }
-        unreachable!("Expected sequence with string")
+        .expect("expected sequence with string scalar");
+
+        let first = seq.first().expect("expected at least one sequence item");
+        let str_val = match &first.value {
+            Value::String(string_value) => Some(string_value),
+            _ => None,
+        }
+        .expect("expected string scalar");
+
+        str_val.to_string()
     }
 
     // JEF9-00: Empty lines with keep chomping
@@ -494,15 +535,22 @@ fn test_block_scalar_chomping() {
     // keep: preserve all trailing newlines
     let (nodes, errors) = crate::parse("keep: |+\n  text\n");
     assert!(errors.is_empty());
-    if let Value::Mapping(map) = &nodes[0].value
-        && let Value::String(str_val) = &map[0].1.value
-    {
-        assert_eq!(
-            str_val.as_ref(),
-            "text\n",
-            "keep chomping should have one newline"
-        );
+    let map = match &nodes.first().unwrap().value {
+        Value::Mapping(map) => Some(map),
+        _ => None,
     }
+    .expect("expected mapping");
+    let (_, value_node) = map.first().expect("expected mapping pair");
+    let str_val = match &value_node.value {
+        Value::String(string_value) => Some(string_value),
+        _ => None,
+    }
+    .expect("expected string value");
+    assert_eq!(
+        str_val.as_ref(),
+        "text\n",
+        "keep chomping should have one newline"
+    );
 }
 
 #[test]
@@ -515,12 +563,9 @@ fn test_emit_events_zero_copy() {
     // Find the scalar events and verify they point to the input string
     let scalar_events: Vec<_> = events
         .iter()
-        .filter_map(|e| {
-            if let Event::Scalar { value, .. } = e {
-                Some(value)
-            } else {
-                None
-            }
+        .filter_map(|event| match event {
+            Event::Scalar { value, .. } => Some(value),
+            _ => None,
         })
         .collect();
 
@@ -532,12 +577,15 @@ fn test_emit_events_zero_copy() {
     let input_end = input_start + input.len();
 
     for scalar in scalar_events {
-        if let std::borrow::Cow::Borrowed(s) = scalar {
-            let scalar_ptr = s.as_ptr() as usize;
-            assert!(
-                scalar_ptr >= input_start && scalar_ptr < input_end,
-                "Scalar should borrow from input (zero-copy)"
-            );
+        let borrowed = match scalar {
+            std::borrow::Cow::Borrowed(borrowed) => Some(borrowed),
+            std::borrow::Cow::Owned(_) => None,
         }
+        .expect("Scalar should borrow from input (zero-copy)");
+        let scalar_ptr = borrowed.as_ptr() as usize;
+        assert!(
+            scalar_ptr >= input_start && scalar_ptr < input_end,
+            "Scalar should borrow from input (zero-copy)"
+        );
     }
 }

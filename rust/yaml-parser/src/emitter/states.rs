@@ -4,7 +4,7 @@
 
 use std::borrow::Cow;
 
-use crate::{IndentLevel, ScalarStyle, Span};
+use crate::{ScalarStyle, Span, span::IndentLevel};
 
 /// Kind of value being parsed.
 ///

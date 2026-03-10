@@ -136,9 +136,9 @@ pub enum Token<'input> {
     /// `%YAML` directive
     #[display("%YAML {_0}")]
     YamlDirective(Cow<'input, str>),
-    /// `%TAG` directive
-    #[display("%TAG {_0}")]
-    TagDirective(Cow<'input, str>),
+    /// `%TAG` directive: `handle` and `prefix`, both borrowed from the input
+    #[display("%TAG {_0} {_1}")]
+    TagDirective(&'input str, &'input str),
     /// Reserved/unknown directive (e.g., `%FOO`)
     #[display("%{_0}")]
     ReservedDirective(Cow<'input, str>),
@@ -164,8 +164,4 @@ pub enum Token<'input> {
     /// Indentation decreased by one level (emitted when indent < stack.top, one per level popped)
     #[display("DEDENT")]
     Dedent,
-
-    /// Invalid token (for error recovery)
-    #[display("<invalid>")]
-    Invalid,
 }

@@ -14,15 +14,6 @@
     reason = "integration tests don't need cfg(test)"
 )]
 #![allow(clippy::expect_used, reason = "expect is acceptable in tests")]
-#![allow(
-    clippy::min_ident_chars,
-    reason = "single-char closure params are fine in tests"
-)]
-#![allow(clippy::panic, reason = "panic is acceptable in tests")]
-#![allow(
-    clippy::if_then_some_else_none,
-    reason = "explicit if/else is clearer in tests"
-)]
 
 use yaml_parser::{Event, ScalarStyle, Value, emit_events, parse};
 
@@ -39,12 +30,9 @@ fn test_scalar_spans_plain() {
     // Find the scalar event
     let scalar = events
         .iter()
-        .find_map(|e| {
-            if let Event::Scalar { value, span, .. } = e {
-                Some((value, span))
-            } else {
-                None
-            }
+        .find_map(|event| match event {
+            Event::Scalar { value, span, .. } => Some((value, span)),
+            _ => None,
         })
         .expect("Should have scalar event");
 
@@ -60,15 +48,11 @@ fn test_scalar_spans_quoted() {
 
     let scalar = events
         .iter()
-        .find_map(|e| {
-            if let Event::Scalar {
+        .find_map(|event| match event {
+            Event::Scalar {
                 value, span, style, ..
-            } = e
-            {
-                Some((value, span, style))
-            } else {
-                None
-            }
+            } => Some((value, span, style)),
+            _ => None,
         })
         .expect("Should have scalar event");
 
@@ -90,19 +74,11 @@ fn test_scalar_spans_block_literal() {
 
     let scalar = events
         .iter()
-        .find_map(|e| {
-            if let Event::Scalar {
+        .find_map(|event| match event {
+            Event::Scalar {
                 value, span, style, ..
-            } = e
-            {
-                if *style == ScalarStyle::Literal {
-                    Some((value, span))
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
+            } if *style == ScalarStyle::Literal => Some((value, span)),
+            _ => None,
         })
         .expect("Should have literal scalar event");
 
@@ -136,27 +112,29 @@ fn test_sequence_spans() {
     assert_eq!(docs.len(), 1);
     let doc = &docs[0];
 
-    if let Value::Sequence(items) = &doc.value {
-        assert_eq!(items.len(), 2);
-
-        // First item span
-        let item1_text = extract_span_text(
-            input,
-            items[0].span.start_usize(),
-            items[0].span.end_usize(),
-        );
-        assert_eq!(item1_text, "item1");
-
-        // Second item span
-        let item2_text = extract_span_text(
-            input,
-            items[1].span.start_usize(),
-            items[1].span.end_usize(),
-        );
-        assert_eq!(item2_text, "item2");
-    } else {
-        panic!("Expected sequence");
+    let items = match &doc.value {
+        Value::Sequence(items) => Some(items),
+        _ => None,
     }
+    .expect("Expected sequence");
+
+    assert_eq!(items.len(), 2);
+
+    // First item span
+    let item1_text = extract_span_text(
+        input,
+        items[0].span.start_usize(),
+        items[0].span.end_usize(),
+    );
+    assert_eq!(item1_text, "item1");
+
+    // Second item span
+    let item2_text = extract_span_text(
+        input,
+        items[1].span.start_usize(),
+        items[1].span.end_usize(),
+    );
+    assert_eq!(item2_text, "item2");
 }
 
 #[test]
@@ -167,36 +145,38 @@ fn test_nested_structure_spans() {
     assert_eq!(docs.len(), 1);
     let doc = &docs[0];
 
-    if let Value::Mapping(pairs) = &doc.value {
-        assert_eq!(pairs.len(), 1);
-        let (key, value) = &pairs[0];
-
-        // Key span
-        let key_text = extract_span_text(input, key.span.start_usize(), key.span.end_usize());
-        assert_eq!(key_text, "outer");
-
-        // Value is a nested mapping
-        if let Value::Mapping(inner_pairs) = &value.value {
-            let (inner_key, inner_value) = &inner_pairs[0];
-            let inner_key_text = extract_span_text(
-                input,
-                inner_key.span.start_usize(),
-                inner_key.span.end_usize(),
-            );
-            assert_eq!(inner_key_text, "inner");
-
-            let inner_value_text = extract_span_text(
-                input,
-                inner_value.span.start_usize(),
-                inner_value.span.end_usize(),
-            );
-            assert_eq!(inner_value_text, "value");
-        } else {
-            panic!("Expected nested mapping");
-        }
-    } else {
-        panic!("Expected mapping");
+    let pairs = match &doc.value {
+        Value::Mapping(pairs) => Some(pairs),
+        _ => None,
     }
+    .expect("Expected mapping");
+    assert_eq!(pairs.len(), 1);
+    let (key, value) = &pairs[0];
+
+    // Key span
+    let key_text = extract_span_text(input, key.span.start_usize(), key.span.end_usize());
+    assert_eq!(key_text, "outer");
+
+    // Value is a nested mapping
+    let inner_pairs = match &value.value {
+        Value::Mapping(inner_pairs) => Some(inner_pairs),
+        _ => None,
+    }
+    .expect("Expected nested mapping");
+    let (inner_key, inner_value) = &inner_pairs[0];
+    let inner_key_text = extract_span_text(
+        input,
+        inner_key.span.start_usize(),
+        inner_key.span.end_usize(),
+    );
+    assert_eq!(inner_key_text, "inner");
+
+    let inner_value_text = extract_span_text(
+        input,
+        inner_value.span.start_usize(),
+        inner_value.span.end_usize(),
+    );
+    assert_eq!(inner_value_text, "value");
 }
 
 #[test]
@@ -211,37 +191,38 @@ fn test_flow_sequence_spans() {
     let span_text = extract_span_text(input, doc.span.start_usize(), doc.span.end_usize());
     assert_eq!(span_text, "[a, b, c]");
 
-    if let Value::Sequence(items) = &doc.value {
-        assert_eq!(items.len(), 3);
-
-        // Each item should have correct span
-        assert_eq!(
-            extract_span_text(
-                input,
-                items[0].span.start_usize(),
-                items[0].span.end_usize()
-            ),
-            "a"
-        );
-        assert_eq!(
-            extract_span_text(
-                input,
-                items[1].span.start_usize(),
-                items[1].span.end_usize()
-            ),
-            "b"
-        );
-        assert_eq!(
-            extract_span_text(
-                input,
-                items[2].span.start_usize(),
-                items[2].span.end_usize()
-            ),
-            "c"
-        );
-    } else {
-        panic!("Expected sequence");
+    let items = match &doc.value {
+        Value::Sequence(items) => Some(items),
+        _ => None,
     }
+    .expect("Expected sequence");
+    assert_eq!(items.len(), 3);
+
+    // Each item should have correct span
+    assert_eq!(
+        extract_span_text(
+            input,
+            items[0].span.start_usize(),
+            items[0].span.end_usize()
+        ),
+        "a"
+    );
+    assert_eq!(
+        extract_span_text(
+            input,
+            items[1].span.start_usize(),
+            items[1].span.end_usize()
+        ),
+        "b"
+    );
+    assert_eq!(
+        extract_span_text(
+            input,
+            items[2].span.start_usize(),
+            items[2].span.end_usize()
+        ),
+        "c"
+    );
 }
 
 #[test]
@@ -264,19 +245,11 @@ fn test_multiline_scalar_spans() {
 
     let scalar = events
         .iter()
-        .find_map(|e| {
-            if let Event::Scalar {
+        .find_map(|event| match event {
+            Event::Scalar {
                 value, span, style, ..
-            } = e
-            {
-                if *style == ScalarStyle::Folded {
-                    Some((value, span))
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
+            } if *style == ScalarStyle::Folded => Some((value, span)),
+            _ => None,
         })
         .expect("Should have folded scalar event");
 
@@ -296,22 +269,14 @@ fn test_anchor_and_alias_spans() {
     // Find the scalar with anchor
     let scalar_with_anchor = events
         .iter()
-        .find_map(|e| {
-            if let Event::Scalar {
+        .find_map(|event| match event {
+            Event::Scalar {
                 value,
                 span,
                 anchor,
                 ..
-            } = e
-            {
-                if anchor.is_some() {
-                    Some((value, span))
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
+            } if anchor.is_some() => Some((value, span)),
+            _ => None,
         })
         .expect("Should have scalar with anchor");
 
@@ -326,12 +291,9 @@ fn test_anchor_and_alias_spans() {
     // Find the alias
     let alias = events
         .iter()
-        .find_map(|e| {
-            if let Event::Alias { name, span } = e {
-                Some((name, span))
-            } else {
-                None
-            }
+        .find_map(|event| match event {
+            Event::Alias { name, span } => Some((name, span)),
+            _ => None,
         })
         .expect("Should have alias event");
 
@@ -350,15 +312,11 @@ fn test_tag_spans() {
 
     let scalar = events
         .iter()
-        .find_map(|e| {
-            if let Event::Scalar {
+        .find_map(|event| match event {
+            Event::Scalar {
                 value, span, tag, ..
-            } = e
-            {
-                Some((value, span, tag))
-            } else {
-                None
-            }
+            } => Some((value, span, tag)),
+            _ => None,
         })
         .expect("Should have scalar with tag");
 
@@ -374,15 +332,17 @@ fn test_empty_scalar_spans() {
     let (docs, _) = parse(input);
 
     assert_eq!(docs.len(), 1);
-    if let Value::Mapping(pairs) = &docs[0].value {
-        let (_key, value) = &pairs[0];
-
-        // Empty value should have a valid span (even if zero-length)
-        assert!(value.span.start_usize() <= value.span.end_usize());
-        assert!(value.span.end_usize() <= input.len());
-    } else {
-        panic!("Expected mapping");
+    let doc = &docs[0];
+    let pairs = match &doc.value {
+        Value::Mapping(pairs) => Some(pairs),
+        _ => None,
     }
+    .expect("Expected mapping");
+    let (_key, value) = &pairs[0];
+
+    // Empty value should have a valid span (even if zero-length)
+    assert!(value.span.start_usize() <= value.span.end_usize());
+    assert!(value.span.end_usize() <= input.len());
 }
 
 #[test]
@@ -432,12 +392,9 @@ fn test_document_marker_spans() {
     // Find document start
     let doc_start = events
         .iter()
-        .find_map(|e| {
-            if let Event::DocumentStart { span, explicit, .. } = e {
-                if *explicit { Some(span) } else { None }
-            } else {
-                None
-            }
+        .find_map(|event| match event {
+            Event::DocumentStart { span, explicit, .. } if *explicit => Some(span),
+            _ => None,
         })
         .expect("Should have explicit document start");
 
@@ -447,12 +404,9 @@ fn test_document_marker_spans() {
     // Find document end
     let doc_end = events
         .iter()
-        .find_map(|e| {
-            if let Event::DocumentEnd { span, explicit, .. } = e {
-                if *explicit { Some(span) } else { None }
-            } else {
-                None
-            }
+        .find_map(|event| match event {
+            Event::DocumentEnd { span, explicit, .. } if *explicit => Some(span),
+            _ => None,
         })
         .expect("Should have explicit document end");
 

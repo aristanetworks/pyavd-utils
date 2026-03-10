@@ -56,12 +56,6 @@ impl<'events, 'input> Parser<'events, 'input> {
         }
     }
 
-    /// Get collected errors (read-only).
-    #[must_use]
-    pub fn errors(&self) -> &[ParseError] {
-        &self.errors
-    }
-
     /// Take collected errors.
     #[must_use]
     pub fn take_errors(&mut self) -> Vec<ParseError> {

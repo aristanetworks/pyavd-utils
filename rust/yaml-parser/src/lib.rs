@@ -44,15 +44,10 @@ mod span;
 mod stream;
 mod value;
 
-pub use emitter::Emitter;
+// Public API: high-level parsing, AST, spans, and errors.
 pub use error::{ErrorKind, ParseError};
 pub use event::{CollectionStyle, Event, ScalarStyle};
-pub use lexer::{Lexer, RichToken, Token, tokenize_document};
-pub use parser::Parser;
-pub use span::{
-    BytePosition, IndentLevel, Position, SourceMap, Span, Spanned, indent_to_usize, pos_to_usize,
-    usize_to_indent, usize_to_pos,
-};
+pub use span::{Position, SourceMap, Span, Spanned};
 pub use stream::Stream;
 pub use value::{Node, Properties, Value};
 
@@ -63,8 +58,8 @@ pub use value::{Node, Properties, Value};
 /// `Spanned<Value>`.
 ///
 /// This function returns owned data (`Node<'static>`) for convenience. The returned
-/// nodes can outlive the input string. For zero-copy parsing, use the lower-level
-/// API: [`tokenize_document`], [`Emitter`], and [`Parser`] directly.
+/// nodes can outlive the input string. If you need streaming/event-level access,
+/// use the lower-level [`emit_events`] API.
 ///
 /// # Arguments
 ///
@@ -78,12 +73,11 @@ pub use value::{Node, Properties, Value};
 ///
 /// # Architecture
 ///
-/// This function uses the event-based architecture:
-/// 1. Tokenize input with [`Lexer`]
-/// 2. Emit events with [`Emitter`]
-/// 3. Build AST with [`Parser`]
-///
-/// See `DESIGN_EVENT_LAYER.md` for details.
+/// Internally this function uses the three-layer architecture described in
+/// `ARCHITECTURE.md`:
+/// 1. Tokenize input with the unified lexer
+/// 2. Emit events with the internal event emitter
+/// 3. Build the AST with the event-to-AST parser
 ///
 /// # Example
 ///
@@ -99,8 +93,8 @@ pub fn parse(input: &str) -> (Stream<'static>, Vec<ParseError>) {
     // Get events from the emitter
     let (events, mut all_errors) = emit_events(input);
 
-    // Parse events into AST using Parser
-    let mut parser = Parser::new(&events);
+    // Parse events into AST using the internal event-to-AST parser
+    let mut parser = parser::Parser::new(&events);
     let nodes = parser.parse();
     all_errors.extend(parser.take_errors());
 
@@ -112,11 +106,12 @@ pub fn parse(input: &str) -> (Stream<'static>, Vec<ParseError>) {
 
 /// Emit raw YAML events from input without building an AST.
 ///
-/// This function tokenizes the input and runs the parser in event-emitting mode
-/// to produce a stream of events. This is useful for:
-/// - Testing event emission against the YAML test suite
-/// - Streaming/SAX-style processing
-/// - Round-tripping YAML documents
+/// This is an advanced API intended primarily for tests and tooling.
+/// Typical library users should prefer [`parse`], which builds a typed AST
+/// (`Stream<Node>`). Use `emit_events` when you need:
+/// - Direct access to the YAML event stream (SAX-style processing)
+/// - Integration with the YAML Test Suite event format
+/// - Custom tooling for round-tripping or formatting based on events
 ///
 /// The event stream follows the YAML Test Suite format:
 /// `StreamStart`, `DocumentStart`, content events, `DocumentEnd`, `StreamEnd`
