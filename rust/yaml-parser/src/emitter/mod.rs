@@ -18,7 +18,7 @@ use std::borrow::Cow;
 use std::collections::HashSet;
 
 use crate::error::{ErrorKind, ParseError};
-use crate::event::{Event, ScalarStyle};
+use crate::event::{Event, Properties, Property, ScalarStyle};
 use crate::lexer::{RichToken, Token};
 use crate::span::{IndentLevel, Span, usize_to_indent};
 
@@ -29,29 +29,24 @@ use states::{
 };
 
 /// Type alias for property collection return type:
-/// `(anchor, tag, crossed_property_line_boundary)`.
+/// `(properties, crossed_property_line_boundary)`.
 ///
 /// The boolean is `true` if a `LineStart` token was encountered while
 /// collecting properties (i.e. properties span multiple lines).
-type PropertyCollection<'input> = (
-    Option<(Cow<'input, str>, Span)>,
-    Option<(Cow<'input, str>, Span)>,
-    bool,
-);
+type PropertyCollection<'input> = (Properties<'input>, bool);
 
-/// Type alias for the result of deciding whether collected properties at a
-/// dedented indent should emit an empty scalar or "bridge" to a collection.
-///
-/// `(maybe_event, anchor, tag)` where:
-/// - `maybe_event` is `Some(Event)` when an empty scalar should be emitted and
-///   callers should return early from `parse_value`.
-/// - `anchor` and `tag` are the (possibly updated) properties to continue with
-///   when `maybe_event` is `None`.
-type MaybeEmptyScalarDecision<'input> = (
-    Option<Event<'input>>,
-    Option<(Cow<'input, str>, Span)>,
-    Option<(Cow<'input, str>, Span)>,
-);
+/// Result of deciding what to do with collected properties at a dedented
+/// indent: either emit an empty scalar now, or keep the properties attached to
+/// the upcoming value.
+#[derive(Debug)]
+enum MaybeEmptyScalarDecision<'input> {
+    /// Do not emit an empty scalar; continue parsing this value with the
+    /// (possibly updated) properties.
+    Continue { properties: Properties<'input> },
+    /// Emit an empty scalar event using the given properties, and stop
+    /// parsing the current value.
+    EmitEmptyScalar { event: Event<'input> },
+}
 
 /// Line classification used when folding block scalars.
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -851,8 +846,7 @@ impl<'tokens, 'input> Emitter<'tokens, 'input> {
         Event::Scalar {
             style: ScalarStyle::Plain,
             value: Cow::Borrowed(""),
-            anchor: None,
-            tag: None,
+            properties: Properties::default(),
             span: self.current_span(),
         }
     }
@@ -896,8 +890,7 @@ impl<'input> Iterator for Emitter<'_, 'input> {
                             kind: ValueKind::TopLevelValue,
                             allow_implicit_mapping: true, // Document root allows implicit mappings
                         },
-                        anchor: None,
-                        tag: None,
+                        properties: Properties::default(),
                     });
                     self.doc_state = DocState::Content;
                     return Some(event);
@@ -949,10 +942,6 @@ impl<'input> Iterator for Emitter<'_, 'input> {
     clippy::too_many_lines,
     reason = "Complex state machine with value dispatch logic"
 )]
-#[allow(
-    clippy::unnecessary_wraps,
-    reason = "Return type consistency - these methods are called from the same dispatch logic that requires Option"
-)]
 impl<'input> Emitter<'_, 'input> {
     /// Process the state stack and return the next event, if any.
     ///
@@ -962,24 +951,20 @@ impl<'input> Emitter<'_, 'input> {
             let state = self.state_stack.pop()?;
 
             match state {
-                ParseState::Value { ctx, anchor, tag } => {
-                    if let Some(event) = self.parse_value(ctx, anchor, tag) {
-                        return Some(event);
-                    }
-                    // No value produced, continue with next state
+                ParseState::Value { ctx, properties } => {
+                    // Parse the value context and properties and push state accordingly
+                    self.parse_value(ctx, properties);
                 }
                 ParseState::ValueAfterProperties {
                     ctx,
-                    anchor,
-                    tag,
+                    properties,
                     initial_crossed_line,
                     prop_crossed_line,
                     property_indent,
                 } => {
                     if let Some(event) = self.process_value_after_properties(
                         ctx,
-                        anchor,
-                        tag,
+                        properties,
                         initial_crossed_line,
                         prop_crossed_line,
                         property_indent,
@@ -991,29 +976,18 @@ impl<'input> Emitter<'_, 'input> {
                 ParseState::AliasValue {
                     name,
                     span,
-                    anchor,
-                    tag,
+                    properties,
                     crossed_line_after_properties,
-                    ..
                 } => {
-                    if let Some(event) = self.process_alias_value_state(
+                    return Some(self.process_alias_value_state(
                         name,
                         span,
-                        anchor,
-                        tag,
+                        properties,
                         crossed_line_after_properties,
-                    ) {
-                        return Some(event);
-                    }
-                    // No value produced, continue with next state
+                    ));
                 }
-                ParseState::AdditionalPropertiesValue {
-                    ctx,
-                    outer_anchor,
-                    outer_tag,
-                } => {
-                    if let Some(event) =
-                        self.process_additional_properties_value_state(ctx, outer_anchor, outer_tag)
+                ParseState::AdditionalPropertiesValue { ctx, outer } => {
+                    if let Some(event) = self.process_additional_properties_value_state(ctx, outer)
                     {
                         return Some(event);
                     }
@@ -1022,27 +996,21 @@ impl<'input> Emitter<'_, 'input> {
                 ParseState::FlowCollectionValue {
                     is_map,
                     span,
-                    anchor,
-                    tag,
-                    ..
+                    properties,
                 } => {
-                    if let Some(event) =
-                        self.process_flow_collection_value_state(is_map, span, anchor, tag)
-                    {
-                        return Some(event);
-                    }
-                    // No value produced, continue with next state
+                    return Some(
+                        self.process_flow_collection_value_state(is_map, span, properties),
+                    );
                 }
 
                 ParseState::BlockSeq {
                     indent,
                     phase,
                     start_span,
-                    anchor,
-                    tag,
+                    properties,
                 } => {
                     if let Some(event) =
-                        self.process_block_seq(indent, phase, start_span, anchor, tag)
+                        self.process_block_seq(indent, phase, start_span, properties)
                     {
                         return Some(event);
                     }
@@ -1052,11 +1020,10 @@ impl<'input> Emitter<'_, 'input> {
                     indent,
                     phase,
                     start_span,
-                    anchor,
-                    tag,
+                    properties,
                 } => {
                     if let Some(event) =
-                        self.process_block_map(indent, phase, start_span, anchor, tag)
+                        self.process_block_map(indent, phase, start_span, properties)
                     {
                         return Some(event);
                     }
@@ -1081,16 +1048,14 @@ impl<'input> Emitter<'_, 'input> {
 
                 ParseState::EmitScalar {
                     value,
-                    anchor,
-                    tag,
+                    properties,
                     span,
                     style,
                 } => {
                     return Some(Event::Scalar {
                         style,
                         value,
-                        anchor,
-                        tag,
+                        properties,
                         span,
                     });
                 }
@@ -1099,11 +1064,10 @@ impl<'input> Emitter<'_, 'input> {
                     return Some(Event::Alias { name, span });
                 }
 
-                ParseState::EmitSeqStart { anchor, tag, span } => {
+                ParseState::EmitSeqStart { properties, span } => {
                     return Some(Event::SequenceStart {
                         style: crate::event::CollectionStyle::Flow,
-                        anchor,
-                        tag,
+                        properties,
                         span,
                     });
                 }
@@ -1139,30 +1103,29 @@ impl<'input> Emitter<'_, 'input> {
     ///   parent collection's indent and the next content is a block collection
     ///   indicator (`-` or `?`).
     ///
-    /// Returns a `MaybeEmptyScalarDecision<'input>`: `(maybe_event, anchor, tag)`.
-    /// When `maybe_event` is `Some`, callers should return early from
-    /// `parse_value` and ignore the updated `anchor` and `tag` values.
+    /// Returns a `MaybeEmptyScalarDecision<'input>` describing whether to emit
+    /// an empty scalar now or continue parsing this value with updated
+    /// properties.
     fn maybe_emit_empty_scalar_for_non_bridging_properties(
         &mut self,
         min_indent: IndentLevel,
-        anchor: Option<(Cow<'input, str>, Span)>,
-        tag: Option<(Cow<'input, str>, Span)>,
+        properties: Properties<'input>,
         initial_crossed_line: bool,
         property_indent: Option<IndentLevel>,
     ) -> MaybeEmptyScalarDecision<'input> {
         // No properties collected – nothing to decide.
-        if anchor.is_none() && tag.is_none() {
-            return (None, anchor, tag);
+        if properties.is_empty() {
+            return MaybeEmptyScalarDecision::Continue { properties };
         }
 
         // Only care about the case where the next token is a LineStart at a
         // dedented level (< min_indent). Otherwise, we leave the properties
         // attached to the upcoming value.
         let Some((Token::LineStart(next_indent), _)) = self.peek() else {
-            return (None, anchor, tag);
+            return MaybeEmptyScalarDecision::Continue { properties };
         };
         if *next_indent >= min_indent {
-            return (None, anchor, tag);
+            return MaybeEmptyScalarDecision::Continue { properties };
         }
 
         // Check if we're in a sequence entry context.
@@ -1209,26 +1172,23 @@ impl<'input> Emitter<'_, 'input> {
             // If properties were collected at an invalid indent (below min_indent),
             // drop them (e.g. `seq:\n&anchor\n- a` where &anchor is at indent 0
             // < min_indent 1).
-            let (event_anchor, event_tag) = if properties_at_invalid_indent {
-                (None, None) // Drop properties collected at invalid indent
+            let event_properties = if properties_at_invalid_indent {
+                Properties::default() // Drop properties collected at invalid indent
             } else {
-                (anchor, tag)
+                properties
             };
-            return (
-                Some(Event::Scalar {
+            return MaybeEmptyScalarDecision::EmitEmptyScalar {
+                event: Event::Scalar {
                     style: ScalarStyle::Plain,
                     value: Cow::Borrowed(""),
-                    anchor: event_anchor,
-                    tag: event_tag,
+                    properties: event_properties,
                     span: self.current_span(),
-                }),
-                None,
-                None,
-            );
+                },
+            };
         }
 
         // Bridging to block collection at valid dedent level.
-        (None, anchor, tag)
+        MaybeEmptyScalarDecision::Continue { properties }
     }
 
     /// Check if a dedent after crossing a line boundary indicates an empty
@@ -1274,8 +1234,7 @@ impl<'input> Emitter<'_, 'input> {
         &mut self,
         ctx: ValueContext,
         crossed_line_after_properties: bool,
-        anchor: Option<&(Cow<'input, str>, Span)>,
-        tag: Option<&(Cow<'input, str>, Span)>,
+        properties: &Properties<'input>,
     ) -> Option<Event<'input>> {
         let min_indent = ctx.min_indent;
 
@@ -1318,8 +1277,7 @@ impl<'input> Emitter<'_, 'input> {
             return Some(Event::Scalar {
                 style: ScalarStyle::Plain,
                 value: Cow::Borrowed(""),
-                anchor: anchor.cloned(),
-                tag: tag.cloned(),
+                properties: properties.clone(),
                 span: self.current_span(),
             });
         }
@@ -1341,18 +1299,10 @@ impl<'input> Emitter<'_, 'input> {
     ///
     /// where `inner` properties can be defined on a later line and should
     /// override earlier inner properties.
-    #[allow(
-        clippy::type_complexity,
-        reason = "Small internal helper returning two property option tuples"
-    )]
     fn collect_additional_inner_properties(
         &mut self,
-        mut inner_anchor: Option<(Cow<'input, str>, Span)>,
-        mut inner_tag: Option<(Cow<'input, str>, Span)>,
-    ) -> (
-        Option<(Cow<'input, str>, Span)>,
-        Option<(Cow<'input, str>, Span)>,
-    ) {
+        mut inner_properties: Properties<'input>,
+    ) -> Properties<'input> {
         // Check for line boundary followed by more content (third layer of
         // properties).
         if matches!(self.peek(), Some((Token::LineStart(_), _))) {
@@ -1372,10 +1322,9 @@ impl<'input> Emitter<'_, 'input> {
                 if matches!(tok, Token::Anchor(_) | Token::Tag(_)) {
                     // More properties on next line - merge with inner.
                     self.skip_ws_and_newlines();
-                    let (new_anchor, new_tag, _) = self.collect_properties(None, None);
+                    let (new_props, _) = self.collect_properties(Properties::default());
                     // Prefer newer properties (or keep inner if new is None).
-                    inner_anchor = new_anchor.or(inner_anchor);
-                    inner_tag = new_tag.or(inner_tag);
+                    inner_properties.update(new_props);
                     self.skip_ws();
 
                     // If we see LineStart again, skip it.
@@ -1389,7 +1338,7 @@ impl<'input> Emitter<'_, 'input> {
             }
         }
 
-        (inner_anchor, inner_tag)
+        inner_properties
     }
 
     /// Decide whether properties collected before a colon in a null-key mapping
@@ -1401,11 +1350,10 @@ impl<'input> Emitter<'_, 'input> {
     fn properties_belong_to_null_key(
         &self,
         prop_crossed_line: bool,
-        anchor: Option<&(Cow<'input, str>, Span)>,
-        tag: Option<&(Cow<'input, str>, Span)>,
+        properties: &Properties<'input>,
     ) -> bool {
         !prop_crossed_line
-            && (anchor.is_some() || tag.is_some())
+            && (properties.anchor.is_some() || properties.tag.is_some())
             && matches!(self.peek(), Some((Token::Colon, _)))
     }
 
@@ -1420,17 +1368,19 @@ impl<'input> Emitter<'_, 'input> {
         &mut self,
         map_indent: IndentLevel,
         start_span: Span,
-        map_anchor: Option<(Cow<'input, str>, Span)>,
-        map_tag: Option<(Cow<'input, str>, Span)>,
-        key_event: Option<Event<'input>>,
+        map_properties: Properties<'input>,
+        key_event: Event<'input>,
     ) -> Event<'input> {
-        if let Some(Event::Scalar {
+        if let Event::Scalar {
             value,
-            anchor: k_anchor,
-            tag: k_tag,
+            properties:
+                Properties {
+                    anchor: k_anchor,
+                    tag: k_tag,
+                },
             span: k_span,
             style,
-        }) = key_event
+        } = key_event
         {
             // Check for multiline implicit key error.
             self.check_multiline_implicit_key(k_span);
@@ -1442,13 +1392,14 @@ impl<'input> Emitter<'_, 'input> {
                     is_implicit_scalar_key: true, // Plain scalar key
                 },
                 start_span,
-                anchor: None,
-                tag: None,
+                properties: Properties::default(),
             });
             self.state_stack.push(ParseState::EmitScalar {
                 value,
-                anchor: k_anchor,
-                tag: k_tag,
+                properties: Properties {
+                    anchor: k_anchor,
+                    tag: k_tag,
+                },
                 span: k_span,
                 style,
             });
@@ -1457,8 +1408,7 @@ impl<'input> Emitter<'_, 'input> {
 
             Event::MappingStart {
                 style: crate::event::CollectionStyle::Block,
-                anchor: map_anchor,
-                tag: map_tag,
+                properties: map_properties,
                 span: k_span, // Use full key span for MappingStart
             }
         } else {
@@ -1466,8 +1416,7 @@ impl<'input> Emitter<'_, 'input> {
             self.push_indent(map_indent);
             Event::MappingStart {
                 style: crate::event::CollectionStyle::Block,
-                anchor: map_anchor,
-                tag: map_tag,
+                properties: map_properties,
                 span: start_span,
             }
         }
@@ -1575,9 +1524,8 @@ impl<'input> Emitter<'_, 'input> {
         &mut self,
         is_map: bool,
         span: Span,
-        anchor: Option<(Cow<'input, str>, Span)>,
-        tag: Option<(Cow<'input, str>, Span)>,
-    ) -> Option<Event<'input>> {
+        properties: Properties<'input>,
+    ) -> Event<'input> {
         // In block context, check if this flow collection is a complex key.
         let is_complex_key = if is_map {
             self.flow_depth == 0 && self.is_flow_map_complex_key()
@@ -1598,8 +1546,7 @@ impl<'input> Emitter<'_, 'input> {
                     is_implicit_scalar_key: false, // Flow collection key, not plain scalar
                 },
                 start_span: span,
-                anchor: None,
-                tag: None,
+                properties: Properties::default(),
             });
 
             // Push flow collection state with EmitStart phase to emit
@@ -1619,12 +1566,11 @@ impl<'input> Emitter<'_, 'input> {
             // Push indent level for orphan indent detection.
             self.push_indent(map_indent);
             // Emit MappingStart with the properties.
-            return Some(Event::MappingStart {
+            return Event::MappingStart {
                 style: crate::event::CollectionStyle::Block,
-                anchor,
-                tag,
+                properties,
                 span,
-            });
+            };
         }
 
         // Not a complex key: treat as regular flow collection value.
@@ -1635,23 +1581,21 @@ impl<'input> Emitter<'_, 'input> {
                 phase: FlowMapPhase::BeforeKey,
                 start_span: span,
             });
-            Some(Event::MappingStart {
+            Event::MappingStart {
                 style: crate::event::CollectionStyle::Flow,
-                anchor,
-                tag,
+                properties,
                 span,
-            })
+            }
         } else {
             self.state_stack.push(ParseState::FlowSeq {
                 phase: FlowSeqPhase::BeforeEntry,
                 start_span: span,
             });
-            Some(Event::SequenceStart {
+            Event::SequenceStart {
                 style: crate::event::CollectionStyle::Flow,
-                anchor,
-                tag,
+                properties,
                 span,
-            })
+            }
         }
     }
 
@@ -1664,24 +1608,27 @@ impl<'input> Emitter<'_, 'input> {
     fn process_additional_properties_value_state(
         &mut self,
         ctx: ValueContext,
-        outer_anchor: Option<(Cow<'input, str>, Span)>,
-        outer_tag: Option<(Cow<'input, str>, Span)>,
+        outer: Properties<'input>,
     ) -> Option<Event<'input>> {
+        let Properties {
+            anchor: outer_anchor,
+            tag: outer_tag,
+        } = outer;
         let min_indent = ctx.min_indent;
         let is_key = matches!(ctx.kind, ValueKind::Key);
 
         // Collect the NEW properties at current position (don't pass outer ones
         // since collect_properties would overwrite them), then merge any
         // additional properties that may appear after a line break.
-        let (inner_anchor, inner_tag) = {
-            let (inner_anchor, inner_tag, _crossed) = self.collect_properties(None, None);
+        let inner: Properties<'input> = {
+            let (props, _crossed) = self.collect_properties(Properties::default());
             self.skip_ws();
-            self.collect_additional_inner_properties(inner_anchor, inner_tag)
+            self.collect_additional_inner_properties(props)
         };
         // Check if this is a complex key pattern (flow seq/map followed by :).
         // If we have separate outer and inner properties, and the value is a
         // flow collection that's a key, emit MappingStart with outer props.
-        if (inner_anchor.is_some() || inner_tag.is_some())
+        if !inner.is_empty()
             && let Some((Token::FlowSeqStart | Token::FlowMapStart, _)) = self.peek()
             && self.is_flow_seq_complex_key()
         {
@@ -1701,8 +1648,7 @@ impl<'input> Emitter<'_, 'input> {
                     is_implicit_scalar_key: false, // Flow collection key
                 },
                 start_span: span,
-                anchor: None,
-                tag: None,
+                properties: Properties::default(),
             });
 
             // Push flow collection to parse key content.
@@ -1713,8 +1659,7 @@ impl<'input> Emitter<'_, 'input> {
                 });
                 // Emit seq start with inner props (via EmitSeqStart).
                 self.state_stack.push(ParseState::EmitSeqStart {
-                    anchor: inner_anchor,
-                    tag: inner_tag,
+                    properties: inner.clone(),
                     span,
                 });
             } else {
@@ -1731,8 +1676,10 @@ impl<'input> Emitter<'_, 'input> {
             // Emit MappingStart with outer props.
             return Some(Event::MappingStart {
                 style: crate::event::CollectionStyle::Block,
-                anchor: outer_anchor,
-                tag: outer_tag,
+                properties: Properties {
+                    anchor: outer_anchor,
+                    tag: outer_tag,
+                },
                 span,
             });
         }
@@ -1750,14 +1697,16 @@ impl<'input> Emitter<'_, 'input> {
                     let map_indent = self.current_indent;
 
                     // Parse the first key WITH inner properties.
-                    let key_event = self.parse_plain_scalar(inner_anchor, inner_tag, min_indent);
+                    let key_event = self.parse_plain_scalar(inner.clone(), min_indent);
 
                     // Build the mapping from the parsed key and outer properties.
                     let mapping_start = self.build_block_mapping_from_scalar_key(
                         map_indent,
                         span,
-                        outer_anchor,
-                        outer_tag,
+                        Properties {
+                            anchor: outer_anchor,
+                            tag: outer_tag,
+                        },
                         key_event,
                     );
                     return Some(mapping_start);
@@ -1766,32 +1715,35 @@ impl<'input> Emitter<'_, 'input> {
                 // Outer properties that crossed a line boundary can only attach
                 // to collections, not scalars. So we use inner properties only.
                 // E.g., `&outer\n  &inner scalar` → &outer is lost, &inner on scalar.
-                let result = self.parse_plain_scalar(inner_anchor, inner_tag, min_indent);
+                let result = self.parse_plain_scalar(inner.clone(), min_indent);
                 // If this is a mapping key, check for multiline implicit key error.
-                if is_key && let Some(Event::Scalar { span, .. }) = &result {
+                if is_key && let Event::Scalar { span, .. } = &result {
                     self.check_multiline_implicit_key(*span);
                 }
-                result
+                Some(result)
             }
             Some((Token::BlockSeqIndicator, _)) => {
                 // Nested sequence; merge properties (outer takes precedence).
-                let merged_anchor = outer_anchor.or(inner_anchor);
-                let merged_tag = outer_tag.or(inner_tag);
+                let merged = inner.updated(Properties {
+                    anchor: outer_anchor,
+                    tag: outer_tag,
+                });
                 let span = self.current_span();
                 let seq_indent = self.column_of_position(span.start_usize());
                 self.state_stack.push(ParseState::BlockSeq {
                     indent: seq_indent,
                     phase: BlockSeqPhase::EmitStart,
                     start_span: span,
-                    anchor: merged_anchor,
-                    tag: merged_tag,
+                    properties: merged,
                 });
                 self.process_state_stack()
             }
             Some((Token::FlowSeqStart, span)) => {
                 // Flow sequence; merge properties (outer takes precedence).
-                let merged_anchor = outer_anchor.or(inner_anchor);
-                let merged_tag = outer_tag.or(inner_tag);
+                let merged = inner.updated(Properties {
+                    anchor: outer_anchor,
+                    tag: outer_tag,
+                });
                 self.advance();
                 self.enter_flow_collection(span.start_usize());
                 self.state_stack.push(ParseState::FlowSeq {
@@ -1800,15 +1752,16 @@ impl<'input> Emitter<'_, 'input> {
                 });
                 Some(Event::SequenceStart {
                     style: crate::event::CollectionStyle::Flow,
-                    anchor: merged_anchor,
-                    tag: merged_tag,
+                    properties: merged,
                     span,
                 })
             }
             Some((Token::FlowMapStart, span)) => {
                 // Flow mapping; merge properties (outer takes precedence).
-                let merged_anchor = outer_anchor.or(inner_anchor);
-                let merged_tag = outer_tag.or(inner_tag);
+                let merged = inner.updated(Properties {
+                    anchor: outer_anchor,
+                    tag: outer_tag,
+                });
                 self.advance();
                 self.enter_flow_collection(span.start_usize());
                 self.state_stack.push(ParseState::FlowMap {
@@ -1817,20 +1770,20 @@ impl<'input> Emitter<'_, 'input> {
                 });
                 Some(Event::MappingStart {
                     style: crate::event::CollectionStyle::Flow,
-                    anchor: merged_anchor,
-                    tag: merged_tag,
+                    properties: merged,
                     span,
                 })
             }
             _ => {
                 // Emit scalar with merged properties (outer takes precedence).
-                let merged_anchor = outer_anchor.or(inner_anchor);
-                let merged_tag = outer_tag.or(inner_tag);
+                let merged = inner.updated(Properties {
+                    anchor: outer_anchor,
+                    tag: outer_tag,
+                });
                 Some(Event::Scalar {
                     style: ScalarStyle::Plain,
                     value: Cow::Borrowed(""),
-                    anchor: merged_anchor,
-                    tag: merged_tag,
+                    properties: merged,
                     span: self.current_span(),
                 })
             }
@@ -1846,16 +1799,15 @@ impl<'input> Emitter<'_, 'input> {
         &mut self,
         alias_name: Cow<'input, str>,
         alias_span: Span,
-        anchor: Option<(Cow<'input, str>, Span)>,
-        tag: Option<(Cow<'input, str>, Span)>,
+        properties: Properties<'input>,
         crossed_line_boundary: bool,
-    ) -> Option<Event<'input>> {
+    ) -> Event<'input> {
         // Advance past the alias token and skip any immediate whitespace.
         self.advance();
         self.skip_ws();
 
         // Error: Properties (anchor/tag) on alias are invalid when on the same line.
-        if (anchor.is_some() || tag.is_some()) && !crossed_line_boundary {
+        if !properties.is_empty() && !crossed_line_boundary {
             self.error(ErrorKind::PropertiesOnAlias, alias_span);
         }
 
@@ -1876,8 +1828,7 @@ impl<'input> Emitter<'_, 'input> {
                     is_implicit_scalar_key: false, // Alias, not a plain scalar
                 },
                 start_span: alias_span,
-                anchor: None,
-                tag: None,
+                properties: Properties::default(),
             });
             // The alias itself will be emitted as the key.
             self.state_stack.push(ParseState::EmitAlias {
@@ -1888,19 +1839,18 @@ impl<'input> Emitter<'_, 'input> {
             // Push indent level for orphan indent detection.
             self.push_indent(map_indent);
             // Emit MappingStart with any outer anchor/tag.
-            return Some(Event::MappingStart {
+            return Event::MappingStart {
                 style: crate::event::CollectionStyle::Block,
-                anchor,
-                tag,
+                properties,
                 span: alias_span,
-            });
+            };
         }
 
         // Not a mapping key: emit the alias as a simple value.
-        Some(Event::Alias {
+        Event::Alias {
             name: alias_name,
             span: alias_span,
-        })
+        }
     }
 
     /// Parse any value. Returns the first event for this value.
@@ -1910,12 +1860,7 @@ impl<'input> Emitter<'_, 'input> {
     /// properties have been collected, control is transferred to
     /// `ValueAfterProperties`, which performs the main dispatch and
     /// bridging/empty-value decisions.
-    fn parse_value(
-        &mut self,
-        ctx: ValueContext,
-        anchor: Option<(Cow<'input, str>, Span)>,
-        tag: Option<(Cow<'input, str>, Span)>,
-    ) -> Option<Event<'input>> {
+    fn parse_value(&mut self, ctx: ValueContext, properties: Properties<'input>) {
         let min_indent = ctx.min_indent;
 
         // Track if we see a LineStart before value content
@@ -1931,26 +1876,23 @@ impl<'input> Emitter<'_, 'input> {
 
         // Check for properties (anchor, tag) before the value
         // Use min_indent to prevent collecting properties that are at invalid indentation
-        let (valid_anchor, valid_tag, prop_crossed_line) =
-            self.collect_properties_with_min_indent(anchor, tag, min_indent);
+        let (valid_properties, prop_crossed_line) =
+            self.collect_properties_with_min_indent(properties, min_indent);
 
         self.report_orphaned_properties_after_invalid_indent(min_indent, prop_crossed_line);
 
         // Capture the indent where properties were collected (if any)
-        let property_indent =
-            (valid_anchor.is_some() || valid_tag.is_some()).then_some(self.current_indent);
+        let property_indent = (!valid_properties.is_empty()).then_some(self.current_indent);
 
         // Hand off to the `ValueAfterProperties` state, which will perform the
         // main dispatch, bridging decisions, and empty-value handling.
         self.state_stack.push(ParseState::ValueAfterProperties {
             ctx,
-            anchor: valid_anchor,
-            tag: valid_tag,
+            properties: valid_properties,
             initial_crossed_line,
             prop_crossed_line,
             property_indent,
         });
-        None
     }
 
     /// Continue parsing a value after properties have been collected.
@@ -1966,8 +1908,7 @@ impl<'input> Emitter<'_, 'input> {
     fn process_value_after_properties(
         &mut self,
         ctx: ValueContext,
-        mut anchor: Option<(Cow<'input, str>, Span)>,
-        mut tag: Option<(Cow<'input, str>, Span)>,
+        mut properties: Properties<'input>,
         initial_crossed_line: bool,
         prop_crossed_line: bool,
         property_indent: Option<IndentLevel>,
@@ -1992,18 +1933,20 @@ impl<'input> Emitter<'_, 'input> {
         // the common "no properties" case avoids extra lookahead work on the hot
         // plain-scalar path.
         if property_indent.is_some() {
-            let (maybe_event, new_anchor, new_tag) = self
-                .maybe_emit_empty_scalar_for_non_bridging_properties(
-                    min_indent,
-                    anchor,
-                    tag,
-                    initial_crossed_line,
-                    property_indent,
-                );
-            anchor = new_anchor;
-            tag = new_tag;
-            if let Some(event) = maybe_event {
-                return Some(event);
+            match self.maybe_emit_empty_scalar_for_non_bridging_properties(
+                min_indent,
+                properties,
+                initial_crossed_line,
+                property_indent,
+            ) {
+                MaybeEmptyScalarDecision::EmitEmptyScalar { event } => {
+                    return Some(event);
+                }
+                MaybeEmptyScalarDecision::Continue {
+                    properties: new_props,
+                } => {
+                    properties = new_props;
+                }
             }
         }
 
@@ -2015,12 +1958,8 @@ impl<'input> Emitter<'_, 'input> {
         // actually crossed a line boundary; avoid calling the helper at all on
         // the very common single-line value paths.
         if crossed_line_after_properties
-            && let Some(event) = self.maybe_emit_empty_due_to_dedent(
-                ctx,
-                crossed_line_after_properties,
-                anchor.as_ref(),
-                tag.as_ref(),
-            )
+            && let Some(event) =
+                self.maybe_emit_empty_due_to_dedent(ctx, crossed_line_after_properties, &properties)
         {
             return Some(event);
         }
@@ -2032,8 +1971,7 @@ impl<'input> Emitter<'_, 'input> {
                 Some(Event::Scalar {
                     style: ScalarStyle::Plain,
                     value: Cow::Borrowed(""),
-                    anchor,
-                    tag,
+                    properties,
                     span: self.current_span(),
                 })
             }
@@ -2051,8 +1989,7 @@ impl<'input> Emitter<'_, 'input> {
                         kind: ctx.kind,
                         allow_implicit_mapping,
                     },
-                    anchor,
-                    tag,
+                    properties,
                 });
                 None
             }
@@ -2071,8 +2008,7 @@ impl<'input> Emitter<'_, 'input> {
                             kind: ctx.kind,
                             allow_implicit_mapping,
                         },
-                        anchor,
-                        tag,
+                        properties,
                     });
                     None
                 } else {
@@ -2080,8 +2016,7 @@ impl<'input> Emitter<'_, 'input> {
                     Some(Event::Scalar {
                         style: ScalarStyle::Plain,
                         value: Cow::Borrowed(""),
-                        anchor,
-                        tag,
+                        properties,
                         span: self.current_span(),
                     })
                 }
@@ -2093,11 +2028,9 @@ impl<'input> Emitter<'_, 'input> {
                 let alias_name = Cow::Borrowed(*name);
                 let alias_span = span;
                 self.state_stack.push(ParseState::AliasValue {
-                    ctx,
                     name: alias_name,
                     span: alias_span,
-                    anchor,
-                    tag,
+                    properties,
                     crossed_line_after_properties,
                 });
                 None
@@ -2114,21 +2047,26 @@ impl<'input> Emitter<'_, 'input> {
                 // We can't rely on crossed_line_boundary because it may be reset when
                 // we consume Dedent tokens and re-enter parse_value.
                 // Instead, check if there's a LineStart token between the property and the indicator.
-                let properties_on_same_line =
-                    if let Some((_, prop_span)) = anchor.as_ref().or(tag.as_ref()) {
-                        // Check if the property and the indicator are on the same line
-                        // by checking if there's a LineStart token between them.
-                        // We can do this by checking if the property's end position is on the
-                        // same line as the indicator's start position.
-                        // A simple heuristic: if the indicator's start is immediately after
-                        // the property's end (with only whitespace in between), they're on the same line.
-                        // But this doesn't work if there's a newline.
-                        // Better: check if we've seen a LineStart token since the property.
-                        // We can use last_line_start_span for this.
-                        prop_span.end_usize() > self.last_line_start_span.end_usize()
-                    } else {
-                        false
+                let properties_on_same_line = {
+                    // Check if the property and the indicator are on the same line
+                    // by checking if there's a LineStart token between them.
+                    // We can do this by checking if the property's end position is on the
+                    // same line as the indicator's start position.
+                    // A simple heuristic: if the indicator's start is immediately after
+                    // the property's end (with only whitespace in between), they're on the same line.
+                    // But this doesn't work if there's a newline.
+                    // Better: check if we've seen a LineStart token since the property.
+                    // We can use last_line_start_span for this.
+                    let prop_end = match &properties {
+                        Properties {
+                            anchor: Some(anchor),
+                            ..
+                        } => anchor.span.end_usize(),
+                        Properties { tag: Some(tag), .. } => tag.span.end_usize(),
+                        _ => 0,
                     };
+                    prop_end > self.last_line_start_span.end_usize()
+                };
 
                 if properties_on_same_line {
                     // Properties on same line as block sequence indicator - error
@@ -2144,8 +2082,7 @@ impl<'input> Emitter<'_, 'input> {
                     indent: seq_indent,
                     phase: BlockSeqPhase::EmitStart,
                     start_span: span,
-                    anchor,
-                    tag,
+                    properties,
                 });
                 // Re-process to emit SequenceStart
                 self.process_state_stack()
@@ -2159,8 +2096,7 @@ impl<'input> Emitter<'_, 'input> {
                     return Some(Event::Scalar {
                         style: ScalarStyle::Plain,
                         value: Cow::Borrowed(""),
-                        anchor,
-                        tag,
+                        properties,
                         span: self.current_span(),
                     });
                 }
@@ -2177,13 +2113,7 @@ impl<'input> Emitter<'_, 'input> {
                         .start_usize()
                         .saturating_sub(self.last_line_start_span.end_usize());
                     // YAML indentation is limited to reasonable values (< 65535)
-                    #[allow(
-                        clippy::cast_possible_truncation,
-                        clippy::as_conversions,
-                        reason = "YAML indentation is limited to reasonable values"
-                    )]
-                    let indent = column as IndentLevel;
-                    indent
+                    usize_to_indent(column)
                 } else {
                     // Regular notation: use the line's indent
                     self.current_indent
@@ -2202,11 +2132,8 @@ impl<'input> Emitter<'_, 'input> {
                 //   → tag belongs to the key (it's on the same line as the colon)
                 // - `!!null : a` (at root) → initial_crossed_line=false, prop_crossed_line=false
                 //   → tag belongs to the key
-                let props_for_key = self.properties_belong_to_null_key(
-                    prop_crossed_line,
-                    anchor.as_ref(),
-                    tag.as_ref(),
-                );
+                let props_for_key =
+                    self.properties_belong_to_null_key(prop_crossed_line, &properties);
 
                 if props_for_key {
                     // Properties belong to the implicit null key
@@ -2219,14 +2146,12 @@ impl<'input> Emitter<'_, 'input> {
                             is_implicit_scalar_key: false, // Null key with properties, not plain scalar
                         },
                         start_span: span,
-                        anchor: None,
-                        tag: None,
+                        properties: Properties::default(),
                     });
                     // Push the null key with properties
                     self.state_stack.push(ParseState::EmitScalar {
                         value: Cow::Borrowed(""),
-                        anchor,
-                        tag,
+                        properties,
                         span,
                         style: ScalarStyle::Plain,
                     });
@@ -2234,8 +2159,7 @@ impl<'input> Emitter<'_, 'input> {
                     self.push_indent(self.current_indent);
                     Some(Event::MappingStart {
                         style: crate::event::CollectionStyle::Block,
-                        anchor: None,
-                        tag: None,
+                        properties: Properties::default(),
                         span,
                     })
                 } else {
@@ -2244,8 +2168,7 @@ impl<'input> Emitter<'_, 'input> {
                         indent: map_indent,
                         phase: BlockMapPhase::EmitStart,
                         start_span: span,
-                        anchor,
-                        tag,
+                        properties,
                     });
                     self.process_state_stack()
                 }
@@ -2254,11 +2177,9 @@ impl<'input> Emitter<'_, 'input> {
             Some((Token::FlowSeqStart, _)) => {
                 let span = self.current_span();
                 self.state_stack.push(ParseState::FlowCollectionValue {
-                    ctx,
                     is_map: false,
                     span,
-                    anchor,
-                    tag,
+                    properties,
                 });
                 None
             }
@@ -2266,17 +2187,15 @@ impl<'input> Emitter<'_, 'input> {
             Some((Token::FlowMapStart, _)) => {
                 let span = self.current_span();
                 self.state_stack.push(ParseState::FlowCollectionValue {
-                    ctx,
                     is_map: true,
                     span,
-                    anchor,
-                    tag,
+                    properties,
                 });
                 None
             }
 
             Some((Token::LiteralBlockHeader(_) | Token::FoldedBlockHeader(_), _)) => {
-                self.parse_block_scalar(min_indent, anchor, tag)
+                Some(self.parse_block_scalar(min_indent, properties))
             }
 
             Some((Token::Plain(_) | Token::StringStart(_), _)) => {
@@ -2293,14 +2212,13 @@ impl<'input> Emitter<'_, 'input> {
                 // This prevents `a: b: c` from creating nested mappings.
                 let effective_allow =
                     allow_implicit_mapping || prop_crossed_line || initial_crossed_line;
-                self.parse_scalar_or_mapping(
+                Some(self.parse_scalar_or_mapping(
                     min_indent,
-                    anchor,
-                    tag,
+                    properties,
                     is_key,
                     prop_crossed_line,
                     effective_allow,
-                )
+                ))
             }
 
             Some((Token::Anchor(_) | Token::Tag(_), _)) => {
@@ -2311,8 +2229,7 @@ impl<'input> Emitter<'_, 'input> {
                 self.state_stack
                     .push(ParseState::AdditionalPropertiesValue {
                         ctx,
-                        outer_anchor: anchor,
-                        outer_tag: tag,
+                        outer: properties,
                     });
                 None
             }
@@ -2322,8 +2239,7 @@ impl<'input> Emitter<'_, 'input> {
                 Some(Event::Scalar {
                     style: ScalarStyle::Plain,
                     value: Cow::Borrowed(""),
-                    anchor,
-                    tag,
+                    properties,
                     span: self.current_span(),
                 })
             }
@@ -2355,13 +2271,9 @@ impl<'input> Emitter<'_, 'input> {
     /// &mapping
     /// &key [...]: val  # &mapping applies to mapping, &key applies to [...]
     /// ```
-    fn collect_properties(
-        &mut self,
-        anchor: Option<(Cow<'input, str>, Span)>,
-        tag: Option<(Cow<'input, str>, Span)>,
-    ) -> PropertyCollection<'input> {
+    fn collect_properties(&mut self, properties: Properties<'input>) -> PropertyCollection<'input> {
         // Delegate to the version with min_indent = 0 (no indent restriction)
-        self.collect_properties_with_min_indent(anchor, tag, 0)
+        self.collect_properties_with_min_indent(properties, 0)
     }
 
     /// Collect properties (anchor, tag) with a minimum indentation constraint.
@@ -2370,8 +2282,7 @@ impl<'input> Emitter<'_, 'input> {
     /// are NOT collected - they belong to a parent context.
     fn collect_properties_with_min_indent(
         &mut self,
-        mut anchor: Option<(Cow<'input, str>, Span)>,
-        mut tag: Option<(Cow<'input, str>, Span)>,
+        mut properties: Properties<'input>,
         min_indent: IndentLevel,
     ) -> PropertyCollection<'input> {
         // Track whether we crossed a line boundary while collecting properties.
@@ -2379,7 +2290,7 @@ impl<'input> Emitter<'_, 'input> {
         // `crossed_line_boundary` flag used by block mappings.
         let mut crossed_property_line_boundary = false;
         loop {
-            let has_props = anchor.is_some() || tag.is_some();
+            let has_props = !properties.is_empty();
 
             match self.peek() {
                 Some((Token::Anchor(name_ref), span)) => {
@@ -2387,13 +2298,16 @@ impl<'input> Emitter<'_, 'input> {
                     let name_str = *name_ref;
 
                     // Error: Duplicate anchor on same node
-                    if anchor.is_some() {
+                    if properties.anchor.is_some() {
                         self.error(ErrorKind::DuplicateAnchor, span);
                     }
 
                     // Register anchor and store it (zero-copy)
                     self.anchors.insert(name_str);
-                    anchor = Some((Cow::Borrowed(name_str), span));
+                    properties.anchor = Some(Property {
+                        value: Cow::Borrowed(name_str),
+                        span,
+                    });
                     self.advance();
                     self.skip_ws();
                 }
@@ -2405,13 +2319,16 @@ impl<'input> Emitter<'_, 'input> {
                     let tag_cow_clone = tag_cow.clone(); // Clone the Cow (cheap if Borrowed)
 
                     // Error: Duplicate tag on same node
-                    if tag.is_some() {
+                    if properties.tag.is_some() {
                         self.error(ErrorKind::DuplicateTag, span);
                     }
 
                     // Expand tag handle (returns Cow, so zero-copy when possible)
                     let expanded = self.expand_tag(tag_cow_clone, span);
-                    tag = Some((expanded, span));
+                    properties.tag = Some(Property {
+                        value: expanded,
+                        span,
+                    });
                     self.advance();
 
                     // Check for content immediately after tag (no space)
@@ -2476,7 +2393,7 @@ impl<'input> Emitter<'_, 'input> {
                 _ => break,
             }
         }
-        (anchor, tag, crossed_property_line_boundary)
+        (properties, crossed_property_line_boundary)
     }
 
     /// Check if we should continue collecting properties across a line boundary.
@@ -2711,25 +2628,22 @@ impl<'input> Emitter<'_, 'input> {
         indent: IndentLevel,
         phase: BlockSeqPhase,
         start_span: Span,
-        anchor: Option<(Cow<'input, str>, Span)>,
-        tag: Option<(Cow<'input, str>, Span)>,
+        properties: Properties<'input>,
     ) -> Option<Event<'input>> {
         match phase {
             BlockSeqPhase::EmitStart => {
                 // Push indent level onto stack for orphan indent detection
                 self.push_indent(indent);
-                // Push state for first entry (anchor/tag already consumed)
+                // Push state for first entry (properties already consumed by SequenceStart)
                 self.state_stack.push(ParseState::BlockSeq {
                     indent,
                     phase: BlockSeqPhase::BeforeEntry,
                     start_span,
-                    anchor: None,
-                    tag: None,
+                    properties: Properties::default(),
                 });
                 Some(Event::SequenceStart {
                     style: crate::event::CollectionStyle::Block,
-                    anchor,
-                    tag,
+                    properties,
                     span: start_span,
                 })
             }
@@ -2760,8 +2674,7 @@ impl<'input> Emitter<'_, 'input> {
                             indent,
                             phase: BlockSeqPhase::AfterEntry,
                             start_span,
-                            anchor: None,
-                            tag: None,
+                            properties: Properties::default(),
                         });
                         self.state_stack.push(ParseState::Value {
                             ctx: ValueContext {
@@ -2769,8 +2682,7 @@ impl<'input> Emitter<'_, 'input> {
                                 kind: ValueKind::SeqEntryValue,
                                 allow_implicit_mapping: true, // Sequence entries allow implicit mappings
                             },
-                            anchor: None,
-                            tag: None,
+                            properties: Properties::default(),
                         });
                         None // Continue processing
                     }
@@ -2808,8 +2720,7 @@ impl<'input> Emitter<'_, 'input> {
                                 indent,
                                 phase: BlockSeqPhase::BeforeEntry,
                                 start_span,
-                                anchor: None,
-                                tag: None,
+                                properties: Properties::default(),
                             });
                             None
                         }
@@ -2839,8 +2750,7 @@ impl<'input> Emitter<'_, 'input> {
                                 indent,
                                 phase: BlockSeqPhase::BeforeEntry,
                                 start_span,
-                                anchor: None,
-                                tag: None,
+                                properties: Properties::default(),
                             });
                             None
                         }
@@ -2884,8 +2794,7 @@ impl<'input> Emitter<'_, 'input> {
                     indent,
                     phase: BlockSeqPhase::BeforeEntry,
                     start_span,
-                    anchor: None,
-                    tag: None,
+                    properties: Properties::default(),
                 });
                 None
             }
@@ -2901,8 +2810,7 @@ impl<'input> Emitter<'_, 'input> {
         indent: IndentLevel,
         phase: BlockMapPhase,
         start_span: Span,
-        anchor: Option<(Cow<'input, str>, Span)>,
-        tag: Option<(Cow<'input, str>, Span)>,
+        properties: Properties<'input>,
     ) -> Option<Event<'input>> {
         match phase {
             BlockMapPhase::EmitStart => {
@@ -2918,13 +2826,11 @@ impl<'input> Emitter<'_, 'input> {
                         require_line_boundary: false, // First key doesn't require line boundary
                     },
                     start_span,
-                    anchor: None,
-                    tag: None,
+                    properties: Properties::default(),
                 });
                 Some(Event::MappingStart {
                     style: crate::event::CollectionStyle::Block,
-                    anchor,
-                    tag,
+                    properties,
                     span: start_span,
                 })
             }
@@ -2988,8 +2894,7 @@ impl<'input> Emitter<'_, 'input> {
                                 is_implicit_scalar_key: false, // Explicit key (`?`)
                             },
                             start_span,
-                            anchor: None,
-                            tag: None,
+                            properties: Properties::default(),
                         });
                         // Use kind: MappingValue because the VALUE after an explicit `?`
                         // can be any node, including a mapping.
@@ -2999,8 +2904,7 @@ impl<'input> Emitter<'_, 'input> {
                                 kind: ValueKind::MappingValue,
                                 allow_implicit_mapping: true, // Explicit key value on new line
                             },
-                            anchor: None,
-                            tag: None,
+                            properties: Properties::default(),
                         });
                         None
                     }
@@ -3013,8 +2917,7 @@ impl<'input> Emitter<'_, 'input> {
                                 is_implicit_scalar_key: false, // Null key, not plain scalar
                             },
                             start_span,
-                            anchor: None,
-                            tag: None,
+                            properties: Properties::default(),
                         });
                         Some(self.emit_null())
                     }
@@ -3053,8 +2956,7 @@ impl<'input> Emitter<'_, 'input> {
                                     require_line_boundary: false,
                                 },
                                 start_span,
-                                anchor: None,
-                                tag: None,
+                                properties: Properties::default(),
                             });
                             None
                         }
@@ -3080,8 +2982,7 @@ impl<'input> Emitter<'_, 'input> {
                                     require_line_boundary: false,
                                 },
                                 start_span,
-                                anchor: None,
-                                tag: None,
+                                properties: Properties::default(),
                             });
                             None
                         }
@@ -3121,8 +3022,7 @@ impl<'input> Emitter<'_, 'input> {
                                     is_implicit_scalar_key: true, // Implicit key detected
                                 },
                                 start_span,
-                                anchor: None,
-                                tag: None,
+                                properties: Properties::default(),
                             });
                             self.state_stack.push(ParseState::Value {
                                 ctx: ValueContext {
@@ -3130,8 +3030,7 @@ impl<'input> Emitter<'_, 'input> {
                                     kind: ValueKind::Key, // This is a mapping key
                                     allow_implicit_mapping: true, // Keys can be implicit mappings if on new line
                                 },
-                                anchor: None,
-                                tag: None,
+                                properties: Properties::default(),
                             });
                             None
                         } else {
@@ -3210,8 +3109,7 @@ impl<'input> Emitter<'_, 'input> {
                         indent,
                         phase: BlockMapPhase::AfterValue,
                         start_span,
-                        anchor: None,
-                        tag: None,
+                        properties: Properties::default(),
                     });
                     self.state_stack.push(ParseState::Value {
                         ctx: ValueContext {
@@ -3224,8 +3122,7 @@ impl<'input> Emitter<'_, 'input> {
                             // The allow_implicit_mapping will become true if parse_value crosses a line.
                             allow_implicit_mapping: !is_implicit_scalar_key,
                         },
-                        anchor: None,
-                        tag: None,
+                        properties: Properties::default(),
                     });
                     None
                 } else {
@@ -3234,8 +3131,7 @@ impl<'input> Emitter<'_, 'input> {
                         indent,
                         phase: BlockMapPhase::AfterValue,
                         start_span,
-                        anchor: None,
-                        tag: None,
+                        properties: Properties::default(),
                     });
                     // Use the LineStart span if we've crossed a line boundary (either before
                     // skip_ws_and_newlines_impl or during it). This correctly handles the case
@@ -3250,8 +3146,7 @@ impl<'input> Emitter<'_, 'input> {
                     Some(Event::Scalar {
                         style: ScalarStyle::Plain,
                         value: Cow::Borrowed(""),
-                        anchor: None,
-                        tag: None,
+                        properties: Properties::default(),
                         span: empty_span,
                     })
                 }
@@ -3280,8 +3175,7 @@ impl<'input> Emitter<'_, 'input> {
                         require_line_boundary,
                     },
                     start_span,
-                    anchor: None,
-                    tag: None,
+                    properties: Properties::default(),
                 });
                 None
             }
@@ -3422,8 +3316,7 @@ impl<'input> Emitter<'_, 'input> {
                 Some(Event::Scalar {
                     style: ScalarStyle::Plain,
                     value,
-                    anchor: None,
-                    tag: None,
+                    properties: Properties::default(),
                     span,
                 })
             }
@@ -3435,8 +3328,7 @@ impl<'input> Emitter<'_, 'input> {
                 Some(Event::Scalar {
                     style: ScalarStyle::DoubleQuoted, // or SingleQuoted - doesn't matter for error recovery
                     value,
-                    anchor: None,
-                    tag: None,
+                    properties: Properties::default(),
                     span: full_span.unwrap_or(span),
                 })
             }
@@ -4235,8 +4127,7 @@ impl<'input> Emitter<'_, 'input> {
                 });
                 Some(Event::SequenceStart {
                     style: crate::event::CollectionStyle::Flow,
-                    anchor: None,
-                    tag: None,
+                    properties: Properties::default(),
                     span: start_span,
                 })
             }
@@ -4322,15 +4213,13 @@ impl<'input> Emitter<'_, 'input> {
                                 kind: ValueKind::Key,
                                 allow_implicit_mapping: true, // Flow context - doesn't affect block mappings
                             },
-                            anchor: None,
-                            tag: None,
+                            properties: Properties::default(),
                         });
 
                         // Emit MappingStart for the explicit mapping (flow style)
                         Some(Event::MappingStart {
                             style: crate::event::CollectionStyle::Flow,
-                            anchor: None,
-                            tag: None,
+                            properties: Properties::default(),
                             span: map_start_span,
                         })
                     }
@@ -4374,16 +4263,14 @@ impl<'input> Emitter<'_, 'input> {
                                         kind: ValueKind::Key, // This is the key of the implicit mapping
                                         allow_implicit_mapping: true, // Flow context
                                     },
-                                    anchor: None,
-                                    tag: None,
+                                    properties: Properties::default(),
                                 });
                             }
 
                             // Emit MappingStart for the implicit mapping
                             Some(Event::MappingStart {
                                 style: crate::event::CollectionStyle::Flow,
-                                anchor: None,
-                                tag: None,
+                                properties: Properties::default(),
                                 span: map_start_span,
                             })
                         } else {
@@ -4398,8 +4285,7 @@ impl<'input> Emitter<'_, 'input> {
                                     kind: ValueKind::SeqEntryValue, // Sequence entry is a value
                                     allow_implicit_mapping: true,   // Flow context
                                 },
-                                anchor: None,
-                                tag: None,
+                                properties: Properties::default(),
                             });
                             None
                         }
@@ -4412,8 +4298,7 @@ impl<'input> Emitter<'_, 'input> {
                 Some(Event::Scalar {
                     style: ScalarStyle::Plain,
                     value: Cow::Borrowed(""),
-                    anchor: None,
-                    tag: None,
+                    properties: Properties::default(),
                     span: map_start_span,
                 })
             }
@@ -4438,8 +4323,7 @@ impl<'input> Emitter<'_, 'input> {
                                 kind: ValueKind::MappingValue,
                                 allow_implicit_mapping: true, // Flow context
                             },
-                            anchor: None,
-                            tag: None,
+                            properties: Properties::default(),
                         });
                         None
                     }
@@ -4449,8 +4333,7 @@ impl<'input> Emitter<'_, 'input> {
                     Some(Event::Scalar {
                         style: ScalarStyle::Plain,
                         value: Cow::Borrowed(""),
-                        anchor: None,
-                        tag: None,
+                        properties: Properties::default(),
                         span: map_start_span,
                     })
                 }
@@ -4543,8 +4426,7 @@ impl<'input> Emitter<'_, 'input> {
                 });
                 Some(Event::MappingStart {
                     style: crate::event::CollectionStyle::Flow,
-                    anchor: None,
-                    tag: None,
+                    properties: Properties::default(),
                     span: start_span,
                 })
             }
@@ -4592,8 +4474,7 @@ impl<'input> Emitter<'_, 'input> {
                                 kind: ValueKind::Key,         // Flow mapping key
                                 allow_implicit_mapping: true, // Flow context
                             },
-                            anchor: None,
-                            tag: None,
+                            properties: Properties::default(),
                         });
                         None
                     }
@@ -4637,8 +4518,7 @@ impl<'input> Emitter<'_, 'input> {
                                 kind: ValueKind::Key,         // Flow mapping key
                                 allow_implicit_mapping: true, // Flow context
                             },
-                            anchor: None,
-                            tag: None,
+                            properties: Properties::default(),
                         });
                         None
                     }
@@ -4670,8 +4550,7 @@ impl<'input> Emitter<'_, 'input> {
                                 kind: ValueKind::MappingValue, // Flow mapping value
                                 allow_implicit_mapping: true,  // Flow context
                             },
-                            anchor: None,
-                            tag: None,
+                            properties: Properties::default(),
                         });
                         None
                     }
@@ -4753,12 +4632,11 @@ impl<'input> Emitter<'_, 'input> {
     fn parse_scalar_or_mapping(
         &mut self,
         min_indent: IndentLevel,
-        anchor: Option<(Cow<'input, str>, Span)>,
-        tag: Option<(Cow<'input, str>, Span)>,
+        properties: Properties<'input>,
         is_key: bool,
         crossed_line_boundary: bool,
         allow_implicit_mapping: bool,
-    ) -> Option<Event<'input>> {
+    ) -> Event<'input> {
         // Check if this is an implicit mapping key (scalar followed by colon)
         // Skip this check if:
         // - we're already parsing a key (avoid infinite recursion)
@@ -4768,56 +4646,63 @@ impl<'input> Emitter<'_, 'input> {
             // This is a block mapping with an implicit key
             let span = self.current_span();
 
-            // Determine where anchor/tag belong based on crossed_line_boundary:
+            // Determine where properties belong based on crossed_line_boundary:
             // - If crossed_line_boundary: properties belong to MAPPING, key has none
             // - Otherwise: properties belong to KEY (same line), mapping has none
-            let (map_anchor, map_tag, key_anchor, key_tag) = if crossed_line_boundary {
+            let (map_props, key_props) = if crossed_line_boundary {
                 // Properties crossed a line boundary, so they belong to the mapping
-                (anchor, tag, None, None)
+                (properties, Properties::default())
             } else {
                 // Properties on same line as key, so they belong to the key
                 // Also collect any additional properties before the key itself
-                let (key_anchor, key_tag, _) = self.collect_properties(anchor, tag);
-                (None, None, key_anchor, key_tag)
+                let (key_props, _crossed) = self.collect_properties(properties);
+                (Properties::default(), key_props)
             };
             self.skip_ws();
 
             // Parse the key scalar with its properties
-            let key_event = self.parse_plain_scalar(key_anchor, key_tag, min_indent);
+            let key_event = self.parse_plain_scalar(key_props.clone(), min_indent);
 
             // Determine mapping indent based on context:
             // - If there are properties (anchor or tag), use current_indent because
             //   the mapping's indent is the line's indent (e.g., `&a a: b` at root = indent 0)
             // - Otherwise (no properties, e.g., `- key: value`), use key's column position
             //   because that's where continuation lines need to align
-            let has_properties = map_anchor.is_some()
-                || map_tag.is_some()
+            let has_properties = !map_props.is_empty()
                 || matches!(
                     key_event,
-                    Some(Event::Scalar {
-                        anchor: Some(_),
+                    Event::Scalar {
+                        properties: Properties {
+                            anchor: Some(_),
+                            ..
+                        },
                         ..
-                    })
+                    }
                 )
-                || matches!(key_event, Some(Event::Scalar { tag: Some(_), .. }));
+                || matches!(
+                    key_event,
+                    Event::Scalar {
+                        properties: Properties { tag: Some(_), .. },
+                        ..
+                    }
+                );
             let map_indent = if crossed_line_boundary || has_properties {
                 self.current_indent
-            } else if let Some(Event::Scalar { span: k_span, .. }) = key_event {
+            } else if let Event::Scalar { span: k_span, .. } = key_event {
                 self.column_of_position(k_span.start_usize())
             } else {
                 self.current_indent
             };
 
-            let mapping_start = self.build_block_mapping_from_scalar_key(
-                map_indent, span, map_anchor, map_tag, key_event,
-            );
-            return Some(mapping_start);
+            let mapping_start =
+                self.build_block_mapping_from_scalar_key(map_indent, span, map_props, key_event);
+            return mapping_start;
         }
 
         // Not a mapping key, just parse as a scalar
-        let result = self.parse_plain_scalar(anchor, tag, min_indent);
+        let result = self.parse_plain_scalar(properties, min_indent);
         // If this is a mapping key, check for multiline implicit key error
-        if is_key && let Some(Event::Scalar { span, .. }) = &result {
+        if is_key && let Event::Scalar { span, .. } = &result {
             self.check_multiline_implicit_key(*span);
         }
         result
@@ -4833,10 +4718,9 @@ impl<'input> Emitter<'_, 'input> {
     /// Continuation lines must have indent >= `min_indent` to be considered part of the scalar.
     fn parse_plain_scalar(
         &mut self,
-        anchor: Option<(Cow<'input, str>, Span)>,
-        tag: Option<(Cow<'input, str>, Span)>,
+        properties: Properties<'input>,
         min_indent: IndentLevel,
-    ) -> Option<Event<'input>> {
+    ) -> Event<'input> {
         match self.peek() {
             Some((Token::Plain(text), span)) => {
                 // Extract values before releasing the borrow
@@ -4902,63 +4786,57 @@ impl<'input> Emitter<'_, 'input> {
                 } else {
                     // Block context: continuation based on indentation
                     // Use the min_indent passed from caller, not current_indent
-                    #[allow(clippy::while_let_loop, reason = "complex match with multiple arms")]
-                    loop {
-                        match self.peek() {
-                            Some((Token::LineStart(n), line_span)) => {
-                                let indent = *n;
+                    while let Some((Token::LineStart(n), line_span)) = self.peek() {
+                        let indent = *n;
 
-                                // Check if this continues the scalar
-                                if indent >= min_indent {
-                                    // Normal continuation - properly indented
-                                    self.advance();
-                                    consecutive_newlines += 1;
+                        // Check if this continues the scalar
+                        if indent >= min_indent {
+                            // Normal continuation - properly indented
+                            self.advance();
+                            consecutive_newlines += 1;
 
-                                    // Skip whitespace/indent tokens
-                                    self.skip_indent_tokens();
+                            // Skip whitespace/indent tokens
+                            self.skip_indent_tokens();
 
-                                    // Check for continuation content
-                                    // Allocate content string on first continuation
-                                    let content_str = content
-                                        .get_or_insert_with(|| first_line.clone().into_owned());
+                            // Check for continuation content
+                            // Allocate content string on first continuation
+                            let content_str =
+                                content.get_or_insert_with(|| first_line.clone().into_owned());
 
-                                    if self.try_consume_plain_continuation(
-                                        content_str,
-                                        &mut end_span,
-                                        &mut consecutive_newlines,
-                                        min_indent,
-                                    ) {
-                                        has_continuation = true;
-                                    } else {
-                                        // Not a continuation. Check for orphan indentation.
-                                        // We report `InvalidIndentation` when encountering an
-                                        // indent level not in the stack, even if the indent is
-                                        // >= min_indent. This handles cases like EW3V where a line
-                                        // at indent 1 is seen while the stack is [0, 0].
-                                        if !self.is_valid_indent(indent)
-                                            && self.has_content_at_orphan_level_from(1)
-                                        {
-                                            self.error(ErrorKind::InvalidIndentation, line_span);
-                                        }
-                                        break;
-                                    }
-                                } else {
-                                    // Low indent - might be empty line, check for continuation
-                                    if self.has_continuation_after_low_indent(min_indent) {
-                                        // Empty line - consume and continue counting
-                                        self.advance();
-                                        consecutive_newlines += 1;
-                                        // Skip any dedent tokens
-                                        while matches!(self.peek(), Some((Token::Dedent, _))) {
-                                            self.advance();
-                                        }
-                                    } else {
-                                        // No continuation, end of scalar
-                                        break;
-                                    }
+                            if self.try_consume_plain_continuation(
+                                content_str,
+                                &mut end_span,
+                                &mut consecutive_newlines,
+                                min_indent,
+                            ) {
+                                has_continuation = true;
+                            } else {
+                                // Not a continuation. Check for orphan indentation.
+                                // We report `InvalidIndentation` when encountering an
+                                // indent level not in the stack, even if the indent is
+                                // >= min_indent. This handles cases like EW3V where a line
+                                // at indent 1 is seen while the stack is [0, 0].
+                                if !self.is_valid_indent(indent)
+                                    && self.has_content_at_orphan_level_from(1)
+                                {
+                                    self.error(ErrorKind::InvalidIndentation, line_span);
                                 }
+                                break;
                             }
-                            _ => break,
+                        } else {
+                            // Low indent - might be empty line, check for continuation
+                            if self.has_continuation_after_low_indent(min_indent) {
+                                // Empty line - consume and continue counting
+                                self.advance();
+                                consecutive_newlines += 1;
+                                // Skip any dedent tokens
+                                while matches!(self.peek(), Some((Token::Dedent, _))) {
+                                    self.advance();
+                                }
+                            } else {
+                                // No continuation, end of scalar
+                                break;
+                            }
                         }
                     }
                 }
@@ -4974,20 +4852,19 @@ impl<'input> Emitter<'_, 'input> {
                     first_line
                 };
 
-                Some(Event::Scalar {
+                Event::Scalar {
                     style: ScalarStyle::Plain,
                     value,
-                    anchor,
-                    tag,
+                    properties,
                     span: final_span,
-                })
+                }
             }
 
             Some((Token::StringStart(quote_style), _)) => {
-                self.parse_quoted_scalar(anchor, tag, *quote_style, min_indent)
+                self.parse_quoted_scalar(properties, *quote_style, min_indent)
             }
 
-            _ => Some(self.emit_null()),
+            _ => self.emit_null(),
         }
     }
 
@@ -4995,11 +4872,10 @@ impl<'input> Emitter<'_, 'input> {
     /// `min_indent` is used to validate that continuation lines have proper indentation.
     fn parse_quoted_scalar(
         &mut self,
-        anchor: Option<(Cow<'input, str>, Span)>,
-        tag: Option<(Cow<'input, str>, Span)>,
+        properties: Properties<'input>,
         quote_style: crate::lexer::QuoteStyle,
         min_indent: IndentLevel,
-    ) -> Option<Event<'input>> {
+    ) -> Event<'input> {
         let start_span = self.current_span();
         self.advance(); // consume StringStart
 
@@ -5037,13 +4913,12 @@ impl<'input> Emitter<'_, 'input> {
 
             let full_span = Span::from_usize_range(start_span.start_usize()..end_span.end_usize());
 
-            return Some(Event::Scalar {
+            return Event::Scalar {
                 style,
                 value: content_cow,
-                anchor,
-                tag,
+                properties,
                 span: full_span,
-            });
+            };
         }
 
         // Slow path: multiple tokens, collect parts to minimize allocations
@@ -5170,13 +5045,12 @@ impl<'input> Emitter<'_, 'input> {
 
         let full_span = Span::from_usize_range(start_span.start_usize()..end_span.end_usize());
 
-        Some(Event::Scalar {
+        Event::Scalar {
             style,
             value: Cow::Owned(value),
-            anchor,
-            tag,
+            properties,
             span: full_span,
-        })
+        }
     }
 
     /// Parse a block scalar (literal or folded).
@@ -5188,14 +5062,13 @@ impl<'input> Emitter<'_, 'input> {
     fn parse_block_scalar(
         &mut self,
         min_indent: IndentLevel,
-        anchor: Option<(Cow<'input, str>, Span)>,
-        tag: Option<(Cow<'input, str>, Span)>,
-    ) -> Option<Event<'input>> {
+        properties: Properties<'input>,
+    ) -> Event<'input> {
         let (header, start_span) = match self.peek() {
             Some((Token::LiteralBlockHeader(hdr) | Token::FoldedBlockHeader(hdr), span)) => {
                 (hdr.clone(), span)
             }
-            _ => return Some(self.emit_null()),
+            _ => return self.emit_null(),
         };
 
         let is_literal = matches!(self.peek(), Some((Token::LiteralBlockHeader(_), _)));
@@ -5234,11 +5107,8 @@ impl<'input> Emitter<'_, 'input> {
             self.advance();
         }
 
-        loop {
-            // Expect LineStart to begin each line
-            let Some((Token::LineStart(indent_level), ls_span)) = self.peek() else {
-                break;
-            };
+        // Expect LineStart to begin each line
+        while let Some((Token::LineStart(indent_level), ls_span)) = self.peek() {
             let n = usize::from(*indent_level);
             let line_start_span = ls_span;
             self.advance();
@@ -5581,13 +5451,12 @@ impl<'input> Emitter<'_, 'input> {
             Span::from_usize_range(start_span.start_usize()..end_span.end_usize())
         };
 
-        Some(Event::Scalar {
+        Event::Scalar {
             style,
             value: Cow::Owned(chomped_value),
-            anchor,
-            tag,
+            properties,
             span: full_span,
-        })
+        }
     }
 
     // `join_folded_lines` logic is now inlined into `parse_block_scalar` for
@@ -5662,7 +5531,7 @@ mod tests {
     }
 
     mod event_generation {
-        use crate::event::{CollectionStyle, Event, ScalarStyle};
+        use crate::event::{CollectionStyle, Event, Properties, Property, ScalarStyle};
 
         /// Helper to get events from YAML input using the emitter
         fn events_from(input: &str) -> Vec<Event<'static>> {
@@ -5817,7 +5686,13 @@ mod tests {
             let has_anchor = events.iter().any(|ev| {
                 matches!(
                     ev,
-                    Event::Scalar { anchor: Some((anchor_name, _)), .. } if anchor_name == "anchor"
+                    Event::Scalar {
+                        properties: Properties {
+                            anchor: Some(Property { value, .. }),
+                            ..
+                        },
+                        ..
+                    } if value == "anchor"
                 )
             });
             assert!(has_anchor, "Expected scalar with anchor, got: {events:?}");
@@ -5840,7 +5715,13 @@ mod tests {
             let has_tag = events.iter().any(|ev| {
                 matches!(
                     ev,
-                    Event::Scalar { tag: Some((tg, _)), .. } if tg == "tag:yaml.org,2002:str"
+                    Event::Scalar {
+                        properties: Properties {
+                            tag: Some(Property { value, .. }),
+                            ..
+                        },
+                        ..
+                    } if value == "tag:yaml.org,2002:str"
                 )
             });
             assert!(

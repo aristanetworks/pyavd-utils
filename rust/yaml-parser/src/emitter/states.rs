@@ -4,7 +4,7 @@
 
 use std::borrow::Cow;
 
-use crate::{ScalarStyle, Span, span::IndentLevel};
+use crate::{ScalarStyle, Span, event::Properties as EventProperties, span::IndentLevel};
 
 /// Kind of value being parsed.
 ///
@@ -104,8 +104,7 @@ pub(super) enum ParseState<'input> {
     Value {
         ctx: ValueContext,
         /// Collected properties (anchor, tag) carried into the value.
-        anchor: Option<(Cow<'input, str>, Span)>,
-        tag: Option<(Cow<'input, str>, Span)>,
+        properties: EventProperties<'input>,
     },
     /// Continue parsing a value after properties have been collected.
     ///
@@ -115,8 +114,8 @@ pub(super) enum ParseState<'input> {
     /// - The main token dispatch for scalars, collections, and aliases.
     ValueAfterProperties {
         ctx: ValueContext,
-        anchor: Option<(Cow<'input, str>, Span)>,
-        tag: Option<(Cow<'input, str>, Span)>,
+        /// Properties (anchor, tag) collected for this value.
+        properties: EventProperties<'input>,
         initial_crossed_line: bool,
         prop_crossed_line: bool,
         property_indent: Option<IndentLevel>,
@@ -124,29 +123,19 @@ pub(super) enum ParseState<'input> {
     /// Handle an alias token as a value, including potential complex-key
     /// behaviour when used as a mapping key.
     AliasValue {
-        /// Value context is stored for future use as we gradually migrate
-        /// more behaviour into state-driven handlers.
-        #[allow(dead_code, reason = "Will be used in later emitter refactor phases")]
-        ctx: ValueContext,
         name: Cow<'input, str>,
         span: Span,
-        anchor: Option<(Cow<'input, str>, Span)>,
-        tag: Option<(Cow<'input, str>, Span)>,
+        properties: EventProperties<'input>,
         crossed_line_after_properties: bool,
     },
 
     /// Handle a flow collection start (`[` or `{`) as a value, including
     /// potential complex-key behaviour in block context.
     FlowCollectionValue {
-        /// Value context is stored for future use as we gradually migrate
-        /// more behaviour into state-driven handlers.
-        #[allow(dead_code, reason = "Will be used in later emitter refactor phases")]
-        ctx: ValueContext,
         /// `true` for flow mappings (`{`), `false` for flow sequences (`[`).
         is_map: bool,
         span: Span,
-        anchor: Option<(Cow<'input, str>, Span)>,
-        tag: Option<(Cow<'input, str>, Span)>,
+        properties: EventProperties<'input>,
     },
 
     /// Handle additional properties after a line boundary before a value,
@@ -157,26 +146,23 @@ pub(super) enum ParseState<'input> {
         /// more behaviour into state-driven handlers.
         ctx: ValueContext,
         /// Properties collected before the line boundary ("outer" properties).
-        outer_anchor: Option<(Cow<'input, str>, Span)>,
-        outer_tag: Option<(Cow<'input, str>, Span)>,
+        outer: EventProperties<'input>,
     },
     /// Block sequence parsing.
     BlockSeq {
         indent: IndentLevel,
         phase: BlockSeqPhase,
         start_span: Span,
-        /// Anchor/tag to attach to `SequenceStart` (only used in `EmitStart` phase).
-        anchor: Option<(Cow<'input, str>, Span)>,
-        tag: Option<(Cow<'input, str>, Span)>,
+        /// Properties to attach to `SequenceStart` (only used in `EmitStart` phase).
+        properties: EventProperties<'input>,
     },
     /// Block mapping parsing.
     BlockMap {
         indent: IndentLevel,
         phase: BlockMapPhase,
         start_span: Span,
-        /// Anchor/tag to attach to `MappingStart` (only used in `EmitStart` phase).
-        anchor: Option<(Cow<'input, str>, Span)>,
-        tag: Option<(Cow<'input, str>, Span)>,
+        /// Properties to attach to `MappingStart` (only used in `EmitStart` phase).
+        properties: EventProperties<'input>,
     },
     /// Flow sequence parsing.
     FlowSeq {
@@ -192,15 +178,13 @@ pub(super) enum ParseState<'input> {
     EmitMapEnd { span: Span },
     /// Emit `SequenceStart` (for complex key scenarios where `MappingStart` is emitted first).
     EmitSeqStart {
-        anchor: Option<(Cow<'input, str>, Span)>,
-        tag: Option<(Cow<'input, str>, Span)>,
+        properties: EventProperties<'input>,
         span: Span,
     },
     /// Emit a scalar event (used for deferred key emission).
     EmitScalar {
         value: Cow<'input, str>,
-        anchor: Option<(Cow<'input, str>, Span)>,
-        tag: Option<(Cow<'input, str>, Span)>,
+        properties: EventProperties<'input>,
         span: Span,
         style: ScalarStyle,
     },

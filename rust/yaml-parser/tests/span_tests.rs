@@ -273,9 +273,9 @@ fn test_anchor_and_alias_spans() {
             Event::Scalar {
                 value,
                 span,
-                anchor,
+                properties,
                 ..
-            } if anchor.is_some() => Some((value, span)),
+            } if properties.anchor.is_some() => Some((value, span)),
             _ => None,
         })
         .expect("Should have scalar with anchor");
@@ -314,8 +314,11 @@ fn test_tag_spans() {
         .iter()
         .find_map(|event| match event {
             Event::Scalar {
-                value, span, tag, ..
-            } => Some((value, span, tag)),
+                value,
+                span,
+                properties,
+                ..
+            } => Some((value, span, &properties.tag)),
             _ => None,
         })
         .expect("Should have scalar with tag");

@@ -38,6 +38,81 @@ use std::borrow::Cow;
 
 use crate::span::Span;
 
+/// A node property (anchor or tag) with its source span.
+///
+/// This pairs the raw property text (usually borrowed from the input) with the
+/// span covering its syntax in the source.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Property<'input> {
+    /// The property value (`&anchor` name or expanded tag).
+    pub value: Cow<'input, str>,
+    /// Span covering the property syntax in the source.
+    pub span: Span,
+}
+
+impl Property<'_> {
+    /// Convert this property to an owned `'static` property.
+    #[must_use]
+    pub fn into_owned(self) -> Property<'static> {
+        Property {
+            value: Cow::Owned(self.value.into_owned()),
+            span: self.span,
+        }
+    }
+}
+
+/// A pair of optional properties (anchor, tag) with spans.
+///
+/// This is used at the event/emitter layer where we need to keep track of
+/// both the property values and their precise source locations.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Properties<'input> {
+    /// Optional anchor property.
+    pub anchor: Option<Property<'input>>,
+    /// Optional tag property.
+    pub tag: Option<Property<'input>>,
+}
+
+#[allow(
+    clippy::elidable_lifetime_names,
+    reason = "need explicit lifetime for update/updated signatures"
+)]
+impl<'input> Properties<'input> {
+    /// Returns true if both anchor and tag are absent.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.anchor.is_none() && self.tag.is_none()
+    }
+
+    /// Convert properties to owned `'static` properties.
+    #[must_use]
+    pub fn into_owned(self) -> Properties<'static> {
+        Properties {
+            anchor: self.anchor.map(Property::into_owned),
+            tag: self.tag.map(Property::into_owned),
+        }
+    }
+
+    /// Update this set of properties with another, overriding existing
+    /// fields with any that are present in `other` (like Python's
+    /// `dict.update`).
+    pub fn update(&mut self, other: Properties<'input>) {
+        if let Some(anchor) = other.anchor {
+            self.anchor = Some(anchor);
+        }
+        if let Some(tag) = other.tag {
+            self.tag = Some(tag);
+        }
+    }
+
+    /// Return a new `Properties` value that is `self` updated with `other`.
+    #[must_use]
+    pub fn updated(mut self, other: Properties<'input>) -> Properties<'input> {
+        self.update(other);
+        self
+    }
+}
+
 /// Scalar style information for presentation preservation.
 ///
 /// This distinguishes how a scalar was written in the source, which is
@@ -115,11 +190,8 @@ pub enum Event<'input> {
     MappingStart {
         /// Block or flow style.
         style: CollectionStyle,
-        /// Optional anchor name and its span (from `&name`).
-        /// Uses `Cow` for zero-copy (usually borrowed) while supporting `into_owned()`.
-        anchor: Option<(Cow<'input, str>, Span)>,
-        /// Optional tag and its span (expanded to full URI).
-        tag: Option<(Cow<'input, str>, Span)>,
+        /// Collected properties (anchor, tag) for this mapping.
+        properties: Properties<'input>,
         /// Span covering the mapping start (indicator or first key).
         span: Span,
     },
@@ -134,11 +206,8 @@ pub enum Event<'input> {
     SequenceStart {
         /// Block or flow style.
         style: CollectionStyle,
-        /// Optional anchor name and its span (from `&name`).
-        /// Uses `Cow` for zero-copy (usually borrowed) while supporting `into_owned()`.
-        anchor: Option<(Cow<'input, str>, Span)>,
-        /// Optional tag and its span (expanded to full URI).
-        tag: Option<(Cow<'input, str>, Span)>,
+        /// Collected properties (anchor, tag) for this sequence.
+        properties: Properties<'input>,
         /// Span covering the sequence start (indicator or bracket).
         span: Span,
     },
@@ -155,11 +224,8 @@ pub enum Event<'input> {
         style: ScalarStyle,
         /// The scalar's content (original text for plain, processed for others).
         value: Cow<'input, str>,
-        /// Optional anchor name and its span (from `&name`).
-        /// Uses `Cow` for zero-copy (usually borrowed) while supporting `into_owned()`.
-        anchor: Option<(Cow<'input, str>, Span)>,
-        /// Optional tag and its span (expanded to full URI).
-        tag: Option<(Cow<'input, str>, Span)>,
+        /// Collected properties (anchor, tag) for this scalar.
+        properties: Properties<'input>,
         /// Span covering the scalar content only.
         span: Span,
     },
@@ -191,89 +257,6 @@ impl Event<'_> {
         }
     }
 
-    /// Offset a span by adding the given byte offset to both start and end.
-    fn offset_span(span: Span, offset: usize) -> Span {
-        Span::from_usize_range((span.start_usize() + offset)..(span.end_usize() + offset))
-    }
-
-    /// Offset an optional (value, span) tuple.
-    fn offset_opt_span<T>(opt: Option<(T, Span)>, offset: usize) -> Option<(T, Span)> {
-        opt.map(|(val, span)| (val, Self::offset_span(span, offset)))
-    }
-}
-
-#[allow(
-    clippy::elidable_lifetime_names,
-    reason = "need explicit lifetime for into_owned return type"
-)]
-impl<'input> Event<'input> {
-    /// Add a byte offset to all spans in this event.
-    ///
-    /// This is used to convert document-relative spans to absolute positions
-    /// when documents have leading comments or directives.
-    #[must_use]
-    pub fn with_offset(self, offset: usize) -> Self {
-        if offset == 0 {
-            return self;
-        }
-        match self {
-            Self::StreamStart | Self::StreamEnd => self,
-            Self::DocumentStart { explicit, span } => Self::DocumentStart {
-                explicit,
-                span: Self::offset_span(span, offset),
-            },
-            Self::DocumentEnd { explicit, span } => Self::DocumentEnd {
-                explicit,
-                span: Self::offset_span(span, offset),
-            },
-            Self::MappingStart {
-                style,
-                anchor,
-                tag,
-                span,
-            } => Self::MappingStart {
-                style,
-                anchor: Self::offset_opt_span(anchor, offset),
-                tag: Self::offset_opt_span(tag, offset),
-                span: Self::offset_span(span, offset),
-            },
-            Self::MappingEnd { span } => Self::MappingEnd {
-                span: Self::offset_span(span, offset),
-            },
-            Self::SequenceStart {
-                style,
-                anchor,
-                tag,
-                span,
-            } => Self::SequenceStart {
-                style,
-                anchor: Self::offset_opt_span(anchor, offset),
-                tag: Self::offset_opt_span(tag, offset),
-                span: Self::offset_span(span, offset),
-            },
-            Self::SequenceEnd { span } => Self::SequenceEnd {
-                span: Self::offset_span(span, offset),
-            },
-            Self::Scalar {
-                style,
-                value,
-                anchor,
-                tag,
-                span,
-            } => Self::Scalar {
-                style,
-                value,
-                anchor: Self::offset_opt_span(anchor, offset),
-                tag: Self::offset_opt_span(tag, offset),
-                span: Self::offset_span(span, offset),
-            },
-            Self::Alias { name, span } => Self::Alias {
-                name,
-                span: Self::offset_span(span, offset),
-            },
-        }
-    }
-
     /// Convert to an owned event with `'static` lifetime.
     ///
     /// This is useful when you need to store events beyond the input's lifetime.
@@ -286,39 +269,33 @@ impl<'input> Event<'input> {
             Self::DocumentEnd { explicit, span } => Event::DocumentEnd { explicit, span },
             Self::MappingStart {
                 style,
-                anchor,
-                tag,
+                properties,
                 span,
             } => Event::MappingStart {
                 style,
-                anchor: anchor.map(|(cow, sp)| (Cow::Owned(cow.into_owned()), sp)),
-                tag: tag.map(|(cow, sp)| (Cow::Owned(cow.into_owned()), sp)),
+                properties: properties.into_owned(),
                 span,
             },
             Self::MappingEnd { span } => Event::MappingEnd { span },
             Self::SequenceStart {
                 style,
-                anchor,
-                tag,
+                properties,
                 span,
             } => Event::SequenceStart {
                 style,
-                anchor: anchor.map(|(cow, sp)| (Cow::Owned(cow.into_owned()), sp)),
-                tag: tag.map(|(cow, sp)| (Cow::Owned(cow.into_owned()), sp)),
+                properties: properties.into_owned(),
                 span,
             },
             Self::SequenceEnd { span } => Event::SequenceEnd { span },
             Self::Scalar {
                 style,
                 value,
-                anchor,
-                tag,
+                properties,
                 span,
             } => Event::Scalar {
                 style,
                 value: Cow::Owned(value.into_owned()),
-                anchor: anchor.map(|(cow, sp)| (Cow::Owned(cow.into_owned()), sp)),
-                tag: tag.map(|(cow, sp)| (Cow::Owned(cow.into_owned()), sp)),
+                properties: properties.into_owned(),
                 span,
             },
             Self::Alias { name, span } => Event::Alias {
@@ -349,33 +326,33 @@ impl std::fmt::Display for Event<'_> {
                 }
             }
             Self::MappingStart {
-                style, anchor, tag, ..
+                style, properties, ..
             } => {
                 write!(f, "+MAP")?;
                 if *style == CollectionStyle::Flow {
                     write!(f, " {{}}")?;
                 }
-                if let Some((anchor_name, _)) = anchor {
-                    write!(f, " &{anchor_name}")?;
+                if let Some(prop) = &properties.anchor {
+                    write!(f, " &{}", prop.value)?;
                 }
-                if let Some((tg, _)) = tag {
-                    write!(f, " <{tg}>")?;
+                if let Some(prop) = &properties.tag {
+                    write!(f, " <{}>", prop.value)?;
                 }
                 Ok(())
             }
             Self::MappingEnd { .. } => write!(f, "-MAP"),
             Self::SequenceStart {
-                style, anchor, tag, ..
+                style, properties, ..
             } => {
                 write!(f, "+SEQ")?;
                 if *style == CollectionStyle::Flow {
                     write!(f, " []")?;
                 }
-                if let Some((anchor_name, _)) = anchor {
-                    write!(f, " &{anchor_name}")?;
+                if let Some(prop) = &properties.anchor {
+                    write!(f, " &{}", prop.value)?;
                 }
-                if let Some((tg, _)) = tag {
-                    write!(f, " <{tg}>")?;
+                if let Some(prop) = &properties.tag {
+                    write!(f, " <{}>", prop.value)?;
                 }
                 Ok(())
             }
@@ -383,16 +360,15 @@ impl std::fmt::Display for Event<'_> {
             Self::Scalar {
                 style,
                 value,
-                anchor,
-                tag,
+                properties,
                 ..
             } => {
                 write!(f, "=VAL")?;
-                if let Some((anchor_name, _)) = anchor {
-                    write!(f, " &{anchor_name}")?;
+                if let Some(prop) = &properties.anchor {
+                    write!(f, " &{}", prop.value)?;
                 }
-                if let Some((tg, _)) = tag {
-                    write!(f, " <{tg}>")?;
+                if let Some(prop) = &properties.tag {
+                    write!(f, " <{}>", prop.value)?;
                 }
                 let style_char = match style {
                     ScalarStyle::Plain => ':',

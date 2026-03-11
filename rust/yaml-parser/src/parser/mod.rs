@@ -24,9 +24,9 @@ use std::borrow::Cow;
 use std::collections::HashSet;
 
 use crate::error::{ErrorKind, ParseError};
-use crate::event::{Event, ScalarStyle};
+use crate::event::{Event, Properties as EventProperties, Property as EventProperty, ScalarStyle};
 use crate::span::Span;
-use crate::value::{Node, Properties, Value};
+use crate::value::{Node, Properties as NodeProperties, Value};
 
 /// Parser that builds AST from events.
 ///
@@ -127,30 +127,29 @@ impl<'events, 'input> Parser<'events, 'input> {
         let event = self.peek()?.clone();
         match event {
             Event::MappingStart {
-                anchor, tag, span, ..
+                properties, span, ..
             } => {
                 self.advance();
-                Some(self.parse_mapping(anchor, tag, span))
+                Some(self.parse_mapping(properties, span))
             }
             Event::SequenceStart {
-                anchor, tag, span, ..
+                properties, span, ..
             } => {
                 self.advance();
-                Some(self.parse_sequence(anchor, tag, span))
+                Some(self.parse_sequence(properties, span))
             }
             Event::Scalar {
                 style,
                 value,
-                anchor,
-                tag,
+                properties,
                 span,
             } => {
                 self.advance();
-                Some(self.build_scalar(style, value, anchor, tag, span))
+                Some(self.build_scalar(style, value, properties, span))
             }
             Event::Alias { name, span } => {
                 self.advance();
-                self.build_alias(name, span)
+                Some(self.build_alias(name, span))
             }
             // Skip document markers, stream markers
             Event::StreamStart
@@ -167,14 +166,9 @@ impl<'events, 'input> Parser<'events, 'input> {
     /// Note: To match the hybrid parser, span calculation differs by style:
     /// - Block mappings: `start..last_value.end`
     /// - Flow mappings: `start..closing_brace.end`
-    fn parse_mapping(
-        &mut self,
-        anchor: Option<(Cow<'input, str>, Span)>,
-        tag: Option<(Cow<'input, str>, Span)>,
-        start_span: Span,
-    ) -> Node<'input> {
+    fn parse_mapping(&mut self, props: EventProperties<'input>, start_span: Span) -> Node<'input> {
         // Register anchor if present
-        self.register_anchor(anchor.as_ref());
+        self.register_anchor(props.anchor.as_ref());
 
         let mut pairs: Vec<(Node<'input>, Node<'input>)> = Vec::new();
         let mut end_span = start_span;
@@ -220,7 +214,7 @@ impl<'events, 'input> Parser<'events, 'input> {
         let span = Span::from_usize_range(start..end);
 
         let node = Node::new(Value::Mapping(pairs), span);
-        Self::apply_properties(node, anchor, tag)
+        Self::apply_properties(node, props)
     }
 
     /// Parse a sequence node.
@@ -228,14 +222,9 @@ impl<'events, 'input> Parser<'events, 'input> {
     /// Note: To match the hybrid parser, span calculation differs by style:
     /// - Block sequences: `start..last_item.end`
     /// - Flow sequences: `start..closing_bracket.end`
-    fn parse_sequence(
-        &mut self,
-        anchor: Option<(Cow<'input, str>, Span)>,
-        tag: Option<(Cow<'input, str>, Span)>,
-        start_span: Span,
-    ) -> Node<'input> {
+    fn parse_sequence(&mut self, props: EventProperties<'input>, start_span: Span) -> Node<'input> {
         // Register anchor if present
-        self.register_anchor(anchor.as_ref());
+        self.register_anchor(props.anchor.as_ref());
 
         let mut items: Vec<Node<'input>> = Vec::new();
         let mut end_span = start_span;
@@ -279,7 +268,7 @@ impl<'events, 'input> Parser<'events, 'input> {
         let span = Span::from_usize_range(start..end);
 
         let node = Node::new(Value::Sequence(items), span);
-        Self::apply_properties(node, anchor, tag)
+        Self::apply_properties(node, props)
     }
 
     /// Build a scalar node with type inference.
@@ -292,12 +281,11 @@ impl<'events, 'input> Parser<'events, 'input> {
         &mut self,
         style: ScalarStyle,
         value: Cow<'input, str>,
-        anchor: Option<(Cow<'input, str>, Span)>,
-        tag: Option<(Cow<'input, str>, Span)>,
+        props: EventProperties<'input>,
         span: Span,
     ) -> Node<'input> {
         // Register anchor if present
-        self.register_anchor(anchor.as_ref());
+        self.register_anchor(props.anchor.as_ref());
 
         // Type inference applies to plain scalars (regardless of tag, to match hybrid parser)
         let typed_value = if style == ScalarStyle::Plain {
@@ -308,24 +296,23 @@ impl<'events, 'input> Parser<'events, 'input> {
         };
 
         let node = Node::new(typed_value, span);
-        Self::apply_properties(node, anchor, tag)
+        Self::apply_properties(node, props)
     }
 
     /// Build an alias node.
-    #[allow(clippy::unnecessary_wraps, reason = "Consistent API with parse_node")]
-    fn build_alias(&mut self, name: Cow<'input, str>, span: Span) -> Option<Node<'input>> {
+    fn build_alias(&mut self, name: Cow<'input, str>, span: Span) -> Node<'input> {
         // Validate that the anchor exists
         if !self.anchor_is_defined(name.as_ref()) {
             self.error(ErrorKind::UndefinedAlias, span);
         }
-        Some(Node::new(Value::Alias(name), span))
+        Node::new(Value::Alias(name), span)
     }
 
     /// Register an anchor in the anchor tracking set.
-    fn register_anchor(&mut self, anchor: Option<&(Cow<'input, str>, Span)>) {
-        if let Some((anchor_name, _)) = anchor {
+    fn register_anchor(&mut self, anchor: Option<&EventProperty<'input>>) {
+        if let Some(prop) = anchor {
             // Use as_ref() to avoid cloning if already owned, or convert borrowed to owned
-            self.anchors.insert(anchor_name.as_ref().to_owned());
+            self.anchors.insert(prop.value.as_ref().to_owned());
         }
     }
 
@@ -339,16 +326,12 @@ impl<'events, 'input> Parser<'events, 'input> {
     /// Note: We intentionally do NOT extend the node span to include property spans.
     /// The node span should cover only the value itself, so that span-based extraction
     /// (used by tests) returns just the value text without anchor/tag syntax.
-    fn apply_properties(
-        mut node: Node<'input>,
-        anchor: Option<(Cow<'input, str>, Span)>,
-        tag: Option<(Cow<'input, str>, Span)>,
-    ) -> Node<'input> {
-        if anchor.is_some() || tag.is_some() {
+    fn apply_properties(mut node: Node<'input>, props: EventProperties<'input>) -> Node<'input> {
+        if props.anchor.is_some() || props.tag.is_some() {
             // Store just the values (without spans) in the node properties
-            node.properties = Some(Box::new(Properties {
-                anchor: anchor.map(|(val, _)| val),
-                tag: tag.map(|(val, _)| val),
+            node.properties = Some(Box::new(NodeProperties {
+                anchor: props.anchor.map(|prop| prop.value),
+                tag: props.tag.map(|prop| prop.value),
             }));
         }
         node
