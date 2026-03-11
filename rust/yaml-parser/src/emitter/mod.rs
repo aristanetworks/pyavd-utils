@@ -4612,7 +4612,7 @@ impl<'input> Emitter<'_, 'input> {
     }
 
     // ─────────────────────────────────────────────────────────────
-    // Scalar Parsing (Simplified - will need enhancement)
+    // Scalar Parsing
     // ─────────────────────────────────────────────────────────────
 
     /// Parse a scalar or detect if it's actually a mapping key.

@@ -13,8 +13,6 @@
     reason = "single-char names are fine in tests"
 )]
 #![allow(clippy::indexing_slicing, reason = "panics are acceptable in tests")]
-#![allow(clippy::print_stderr, reason = "test output via eprintln is fine")]
-#![allow(clippy::use_debug, reason = "debug formatting in tests is fine")]
 #![allow(
     clippy::tests_outside_test_module,
     reason = "integration tests are in tests/ dir"
@@ -29,17 +27,6 @@ use std::fs;
 use std::path::Path;
 
 use yaml_parser::parse;
-
-/// Known differences between the emitter and YAML test suite expectations.
-/// These represent intentional differences where the emitter has different (often better)
-/// error recovery behavior than the reference implementation.
-///
-/// Breakdown:
-/// - 16 structural differences (event sequence differs in error recovery)
-/// - 31 error detection differences (different error reporting strategy)
-/// - Total: 47 out of 842 tests (94.4% pass rate)
-#[allow(dead_code, reason = "kept for documentation purposes")]
-const KNOWN_DIFFERENCES: usize = 47;
 
 /// Event notation for YAML test suite comparison.
 #[derive(Debug, Clone, PartialEq, Eq)]
