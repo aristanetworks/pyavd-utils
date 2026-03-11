@@ -12,8 +12,8 @@ categories = ["parsing", "text-processing"]
 derive_more = { workspace = true, features = ["display"] }
 
 [dev-dependencies]
-criterion = "0.8.2"
-saphyr = "0.0.6"
+criterion = "0.8.2" # Used for benchmarking
+saphyr = "0.0.6"    # Used for benchmarking
 
 [[bench]]
 name = "parser_bench"
