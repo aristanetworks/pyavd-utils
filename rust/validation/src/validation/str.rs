@@ -3,45 +3,86 @@
 // that can be found in the LICENSE file.
 
 use avdschema::{any::AnySchema, resolve_ref, str::Str};
-use serde_json::Value;
 
 use crate::{
     context::Context,
-    feedback::{Type, Violation},
+    feedback::{CoercionNote, Type, Violation},
+    validatable::ValidatableValue,
 };
 
 use super::{Validation, valid_values::ValidateValidValues as _};
 
-impl Validation<String> for Str {
-    fn validate(&self, value: &String, ctx: &mut Context) {
-        self.valid_values.validate(value, ctx);
-        validate_min_length(self, value, ctx);
-        validate_max_length(self, value, ctx);
-        validate_pattern(self, value, ctx);
-        self.validate_ref(value, ctx);
-    }
-
-    fn validate_value(&self, value: &Value, ctx: &mut Context) {
+impl Validation for Str {
+    fn validate<V: ValidatableValue>(&self, value: &V, ctx: &mut Context) -> Option<V::Coerced> {
+        // Lenient type check - accept anything coercible to string
         if let Some(v) = value.as_str() {
-            self.validate(&v.into(), ctx)
+            let s = v.into_owned();
+            // Emit coercion info if original was not a string
+            emit_coercion_info(value, &s, ctx);
+            // Apply convert_to_lower_case if specified
+            let s = convert_to_lower_case(self, s, ctx);
+            self.valid_values.validate(&s, ctx);
+            validate_min_length(self, &s, ctx);
+            validate_max_length(self, &s, ctx);
+            validate_pattern(self, &s, ctx);
+            validate_ref(self, value, ctx);
+            if ctx.configuration.return_coerced_data {
+                Some(value.coerce_str(s))
+            } else {
+                None
+            }
         } else if value.is_null() && !ctx.configuration.restrict_null_values {
+            // Null is allowed when not restricted
+            ctx.configuration
+                .return_coerced_data
+                .then(|| value.coerce_null())
         } else {
             ctx.add_error(Violation::InvalidType {
                 expected: Type::Str,
-                found: value.into(),
-            })
+                found: value.value_type(),
+            });
+            None
         }
     }
+}
 
-    fn validate_ref(&self, value: &String, ctx: &mut Context) {
-        if let Some(ref_) = self.base.schema_ref.as_ref() {
-            // Ignoring not being able to resolve the schema.
-            // Ignoring a wrong schema type at the ref. Since Validation is infallible.
-            // TODO: What to do?
-            if let Ok(AnySchema::Str(ref_schema)) = resolve_ref(ref_, ctx.store) {
-                ref_schema.validate(value, ctx);
+/// Emit coercion info if the original value was coerced to string.
+fn emit_coercion_info<V: ValidatableValue>(value: &V, coerced_str: &str, ctx: &mut Context) {
+    if !ctx.configuration.return_coercion_infos || value.is_str() {
+        return;
+    }
+    ctx.add_info(CoercionNote {
+        found: value.to_feedback_value(),
+        made: coerced_str.to_owned().into(),
+    });
+}
+
+fn convert_to_lower_case(schema: &Str, s: String, ctx: &mut Context) -> String {
+    if schema.convert_to_lower_case.unwrap_or_default() {
+        let lower = s.to_lowercase();
+        if lower != s {
+            if ctx.configuration.return_coercion_infos {
+                ctx.add_info(CoercionNote {
+                    found: s.into(),
+                    made: lower.clone().into(),
+                });
             }
+            lower
+        } else {
+            s
         }
+    } else {
+        s
+    }
+}
+
+/// Validate against a referenced schema (for unresolved $ref ending with #).
+fn validate_ref<V: ValidatableValue>(schema: &Str, value: &V, ctx: &mut Context) {
+    if let Some(ref_) = schema.base.schema_ref.as_ref()
+        && let Ok(AnySchema::Str(ref_schema)) = resolve_ref(ref_, ctx.store)
+    {
+        // Note: We ignore the coerced result from ref validation since we already have our coerced value
+        let _ = ref_schema.validate(value, ctx);
     }
 }
 
@@ -84,11 +125,11 @@ fn validate_pattern(schema: &Str, input: &str, ctx: &mut Context) {
 #[cfg(test)]
 mod tests {
     use avdschema::base::valid_values::ValidValues;
+    use serde_json::Value;
 
     use super::*;
     use crate::{
         Configuration,
-        coercion::Coercion,
         feedback::{CoercionNote, Feedback},
         validation::test_utils::get_test_store,
     };
@@ -96,10 +137,10 @@ mod tests {
     #[test]
     fn validate_type_ok() {
         let schema = Str::default();
-        let input = "foo".into();
+        let input: Value = "foo".into();
         let store = get_test_store();
         let mut ctx = Context::new(&store, None);
-        schema.validate_value(&input, &mut ctx);
+        let _ = schema.validate(&input, &mut ctx);
         assert!(ctx.result.errors.is_empty() && ctx.result.infos.is_empty());
     }
 
@@ -109,7 +150,7 @@ mod tests {
         let input = serde_json::json!([]);
         let store = get_test_store();
         let mut ctx = Context::new(&store, None);
-        schema.validate_value(&input, &mut ctx);
+        let _ = schema.validate(&input, &mut ctx);
         assert!(ctx.result.infos.is_empty());
         assert_eq!(
             ctx.result.errors,
@@ -133,10 +174,10 @@ mod tests {
             },
             ..Default::default()
         };
-        let input = "foo".into();
+        let input: Value = "foo".into();
         let store = get_test_store();
         let mut ctx = Context::new(&store, None);
-        schema.validate_value(&input, &mut ctx);
+        let _ = schema.validate(&input, &mut ctx);
         assert!(ctx.result.errors.is_empty() && ctx.result.infos.is_empty());
     }
 
@@ -149,10 +190,10 @@ mod tests {
             },
             ..Default::default()
         };
-        let input = "FOO".into();
+        let input: Value = "FOO".into();
         let store = get_test_store();
         let mut ctx = Context::new(&store, None);
-        schema.validate_value(&input, &mut ctx);
+        let _ = schema.validate(&input, &mut ctx);
         assert!(ctx.result.infos.is_empty());
         assert_eq!(
             ctx.result.errors,
@@ -177,15 +218,15 @@ mod tests {
             convert_to_lower_case: Some(true),
             ..Default::default()
         };
-        let mut input = "FOO".into();
+        let input: Value = "FOO".into();
         let store = get_test_store();
         let configuration = Configuration {
             return_coercion_infos: true,
+            return_coerced_data: true,
             ..Default::default()
         };
         let mut ctx = Context::new(&store, Some(&configuration));
-        schema.coerce(&mut input, &mut ctx);
-        schema.validate_value(&input, &mut ctx);
+        let coerced = schema.validate(&input, &mut ctx);
         assert!(ctx.result.errors.is_empty());
         assert_eq!(
             ctx.result.infos,
@@ -198,6 +239,7 @@ mod tests {
                 .into()
             }]
         );
+        assert_eq!(coerced, Some(Value::String("foo".into())));
     }
 
     #[test]
@@ -210,16 +252,18 @@ mod tests {
             convert_to_lower_case: Some(true),
             ..Default::default()
         };
-        let mut input = true.into();
+        // Bool input - as_str() returns "True" (Title case), then convert_to_lower_case makes it "true"
+        let input: Value = true.into();
         let store = get_test_store();
-        let configururation = Configuration {
+        let configuration = Configuration {
             return_coercion_infos: true,
+            return_coerced_data: true,
             ..Default::default()
         };
-        let mut ctx = Context::new(&store, Some(&configururation));
-        schema.coerce(&mut input, &mut ctx);
-        schema.validate_value(&input, &mut ctx);
+        let mut ctx = Context::new(&store, Some(&configuration));
+        let coerced = schema.validate(&input, &mut ctx);
         assert!(ctx.result.errors.is_empty());
+        // Two coercion notes: bool -> "True", then "True" -> "true"
         assert_eq!(
             ctx.result.infos,
             vec![
@@ -241,6 +285,35 @@ mod tests {
                 }
             ]
         );
+        assert_eq!(coerced, Some(Value::String("true".into())));
+    }
+
+    #[test]
+    fn validate_type_coerced_from_float_ok() {
+        let schema = Str::default();
+        // Float 1.5 can be coerced to string "1.5"
+        let input: Value = serde_json::json!(1.5);
+        let store = get_test_store();
+        let configuration = Configuration {
+            return_coercion_infos: true,
+            return_coerced_data: true,
+            ..Default::default()
+        };
+        let mut ctx = Context::new(&store, Some(&configuration));
+        let coerced = schema.validate(&input, &mut ctx);
+        assert!(ctx.result.errors.is_empty());
+        assert_eq!(
+            ctx.result.infos,
+            vec![Feedback {
+                path: vec![].into(),
+                issue: CoercionNote {
+                    found: 1.5.into(),
+                    made: "1.5".into()
+                }
+                .into()
+            }]
+        );
+        assert_eq!(coerced, Some(Value::String("1.5".into())));
     }
 
     #[test]
@@ -249,10 +322,10 @@ mod tests {
             min_length: Some(3),
             ..Default::default()
         };
-        let input = "foo".into();
+        let input: Value = "foo".into();
         let store = get_test_store();
         let mut ctx = Context::new(&store, None);
-        schema.validate_value(&input, &mut ctx);
+        let _ = schema.validate(&input, &mut ctx);
         assert!(ctx.result.errors.is_empty());
         assert!(ctx.result.warnings.is_empty());
         assert!(ctx.result.infos.is_empty());
@@ -264,10 +337,10 @@ mod tests {
             min_length: Some(3),
             ..Default::default()
         };
-        let input = "go".into();
+        let input: Value = "go".into();
         let store = get_test_store();
         let mut ctx = Context::new(&store, None);
-        schema.validate_value(&input, &mut ctx);
+        let _ = schema.validate(&input, &mut ctx);
         assert!(ctx.result.infos.is_empty());
         assert_eq!(
             ctx.result.errors,
@@ -288,10 +361,10 @@ mod tests {
             max_length: Some(3),
             ..Default::default()
         };
-        let input = "foo".into();
+        let input: Value = "foo".into();
         let store = get_test_store();
         let mut ctx = Context::new(&store, None);
-        schema.validate_value(&input, &mut ctx);
+        let _ = schema.validate(&input, &mut ctx);
         assert!(ctx.result.errors.is_empty() && ctx.result.infos.is_empty());
     }
 
@@ -301,10 +374,10 @@ mod tests {
             max_length: Some(3),
             ..Default::default()
         };
-        let input = "fooo".into();
+        let input: Value = "fooo".into();
         let store = get_test_store();
         let mut ctx = Context::new(&store, None);
-        schema.validate_value(&input, &mut ctx);
+        let _ = schema.validate(&input, &mut ctx);
         assert!(ctx.result.infos.is_empty());
         assert_eq!(
             ctx.result.errors,
@@ -325,10 +398,10 @@ mod tests {
             pattern: Some("[a-z][A-Z][a-z]".into()),
             ..Default::default()
         };
-        let input = "fOo".into();
+        let input: Value = "fOo".into();
         let store = get_test_store();
         let mut ctx = Context::new(&store, None);
-        schema.validate_value(&input, &mut ctx);
+        let _ = schema.validate(&input, &mut ctx);
         assert!(ctx.result.errors.is_empty() && ctx.result.infos.is_empty());
     }
 
@@ -338,10 +411,10 @@ mod tests {
             pattern: Some("[a-z][A-Z][a-z]".into()),
             ..Default::default()
         };
-        let input = "foo".into();
+        let input: Value = "foo".into();
         let store = get_test_store();
         let mut ctx = Context::new(&store, None);
-        schema.validate_value(&input, &mut ctx);
+        let _ = schema.validate(&input, &mut ctx);
         assert!(ctx.result.infos.is_empty());
         assert_eq!(
             ctx.result.errors,

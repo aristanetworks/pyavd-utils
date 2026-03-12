@@ -3,17 +3,16 @@
 // that can be found in the LICENSE file.
 
 use avdschema::{
-    Walker as _,
     any::{AnySchema, Shortcuts as _},
     dict::Dict,
     resolve_ref,
 };
 use ordermap::OrderMap;
-use serde_json::{Map, Value};
 
 use crate::{
     context::Context,
     feedback::{Deprecated, IgnoredEosConfigKey, Removed, Type, Violation},
+    validatable::{ValidatableMapping, ValidatableSequence, ValidatableValue},
 };
 
 use super::Validation;
@@ -31,115 +30,43 @@ const EOS_CLI_CONFIG_GEN_ROLE_KEYS: [&str; 8] = [
     "read_structured_config_from_file",
 ];
 
-impl Validation<Map<String, Value>> for Dict {
-    fn validate(&self, value: &Map<String, Value>, ctx: &mut Context) {
-        validate_keys(self, value, ctx);
-        validate_required_keys(self, value, ctx);
-        self.validate_ref(value, ctx);
-    }
-
-    fn validate_value(&self, value: &Value, ctx: &mut Context) {
-        if let Some(v) = value.as_object() {
-            self.validate(v, ctx)
+impl Validation for Dict {
+    fn validate<V: ValidatableValue>(&self, value: &V, ctx: &mut Context) -> Option<V::Coerced> {
+        if let Some(mapping) = value.as_mapping() {
+            validate_ref(self, value, ctx);
+            let coerced_items = validate_keys(self, &mapping, ctx);
+            validate_required_keys(self, &mapping, ctx);
+            coerced_items.map(|items| value.coerce_mapping(items))
         } else if value.is_null() && !ctx.configuration.restrict_null_values {
+            ctx.configuration
+                .return_coerced_data
+                .then(|| value.coerce_null())
         } else {
             ctx.add_error(Violation::InvalidType {
                 expected: Type::Dict,
-                found: value.into(),
-            })
-        }
-    }
-
-    fn validate_ref(&self, value: &Map<String, Value>, ctx: &mut Context) {
-        if let Some(ref_) = self.base.schema_ref.as_ref() {
-            // Ignoring not being able to resolve the schema.
-            // Ignoring a wrong schema type at the ref. Since Validation is infallible.
-            // TODO: What to do?
-            if let Ok(AnySchema::Dict(ref_schema)) = resolve_ref(ref_, ctx.store) {
-                // Handle relaxed validation here, since the places we use it is also where we skip resolving the $ref before validation.
-                let previous_relaxed_validation = ctx.state.relaxed_validation;
-                if self.relaxed_validation.unwrap_or_default() {
-                    ctx.state.relaxed_validation = true
-                }
-                ref_schema.validate(value, ctx);
-                ctx.state.relaxed_validation = previous_relaxed_validation;
-            }
-        }
-    }
-}
-
-fn get_dynamic_keys_schemas<'a>(
-    schema: &'a Dict,
-    input: &'a Map<String, Value>,
-) -> OrderMap<String, &'a AnySchema> {
-    schema
-        .get_dynamic_keys(input)
-        .map(|dynamic_keys| {
-            dynamic_keys
-                .into_iter()
-                .map(|(key, dynamic_key_info)| (key, dynamic_key_info.schema))
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-fn validate_keys(schema: &Dict, input: &Map<String, Value>, ctx: &mut Context) {
-    let Some(keys) = &schema.keys else { return };
-
-    // When at the root level, if warn_eos_config_keys is enabled, get the keys from the eos_config schema.
-    let eos_config_keys: Option<&OrderMap<String, AnySchema>> = {
-        if ctx.state.path.is_empty() && ctx.configuration.warn_eos_config_keys {
-            <&Dict>::try_from(&ctx.store.eos_config)
-                .ok()
-                .and_then(|d| d.keys.as_ref())
-        } else {
+                found: value.value_type(),
+            });
             None
         }
-    };
-
-    let dynamic_keys_schemas = get_dynamic_keys_schemas(schema, input);
-
-    input.iter().for_each(|(input_key, input_value)| {
-        ctx.state.path.push(input_key.to_owned());
-        if let Some(key_schema) = keys.get(input_key) {
-            if !check_deprecation(input_key, key_schema, input, ctx) {
-                key_schema.validate(input_value, ctx);
-            }
-        } else if let Some(key_schema) = dynamic_keys_schemas.get(input_key) {
-            if !check_deprecation(input_key, key_schema, input, ctx) {
-                key_schema.validate(input_value, ctx);
-            }
-        } else if input_key.starts_with("_") {
-            // Key starts with underscore - skip it
-        } else if !schema.allow_other_keys.unwrap_or_default() {
-            // Key is not part of the schema and does not start with underscore
-            ctx.add_error(Violation::UnexpectedKey());
-        } else if let Some(eos_config_keys) = &eos_config_keys
-            && eos_config_keys.contains_key(input_key)
-            && !EOS_CLI_CONFIG_GEN_ROLE_KEYS.contains(&input_key.as_str())
-        {
-            // Key is not in avd_design schema but is in eos_config_keys
-            // and allow_other_keys is true - emit a warning that it will be ignored
-            ctx.add_warning(IgnoredEosConfigKey {});
-        }
-        ctx.state.path.pop();
-    });
+    }
 }
 
-fn validate_required_keys(schema: &Dict, input: &Map<String, Value>, ctx: &mut Context) {
-    // Don't validate required keys if we are below a dict with relaxed validation or if we are at the root level.
-    if ctx.state.relaxed_validation
-        || (ctx.configuration.ignore_required_keys_on_root_dict && ctx.state.path.is_empty())
-    {
-        return;
-    }
-    if let Some(keys) = &schema.keys {
-        for (key, key_schema) in keys {
-            if key_schema.is_required() && !input.contains_key(key) {
-                ctx.add_error(Violation::MissingRequiredKey {
-                    key: key.to_string(),
-                });
+/// Validation of ref which will not merge in the schema, so it only works as expected
+/// when there are no local variables set. In practice this is only used for
+/// structured_config, where we $ref in the full eos_config schema.
+fn validate_ref<V: ValidatableValue>(schema: &Dict, value: &V, ctx: &mut Context) {
+    if let Some(ref_) = schema.base.schema_ref.as_ref() {
+        // Ignoring not being able to resolve the schema.
+        // Ignoring a wrong schema type at the ref. Since Validation is infallible.
+        // TODO: What to do?
+        if let Ok(AnySchema::Dict(ref_schema)) = resolve_ref(ref_, ctx.store) {
+            // Handle relaxed validation here, since the places we use it is also where we skip resolving the $ref before validation.
+            let previous_relaxed_validation = ctx.state.relaxed_validation;
+            if schema.relaxed_validation.unwrap_or_default() {
+                ctx.state.relaxed_validation = true
             }
+            let _ = ref_schema.validate(value, ctx);
+            ctx.state.relaxed_validation = previous_relaxed_validation;
         }
     }
 }
@@ -193,6 +120,306 @@ fn check_deprecation(
     }
 }
 
+// === Generic versions for ValidatableValue ===
+
+/// Check for deprecation settings in the given schema and return a bool if there was an error that should stop further validation.
+fn check_deprecation_any<'a, M: ValidatableMapping<'a>>(
+    _key: &str,
+    key_schema: &AnySchema,
+    parent_dict_input: &M,
+    ctx: &mut Context,
+) -> bool {
+    if let Some(deprecation) = key_schema.deprecation()
+        && deprecation.warning
+    {
+        if deprecation.removed.unwrap_or_default() {
+            ctx.add_error(Violation::Removed(Removed::from_schema(
+                &ctx.state.path,
+                deprecation,
+            )));
+            true
+        } else {
+            ctx.add_warning(Deprecated::from_schema(&ctx.state.path, deprecation));
+            if let Some(schema_new_key) = deprecation.new_key.as_ref() {
+                // Split the new_key on ' or ' in case of multiple new keys.
+                // Then check if any of the new keys are set in the inputs at the same time as the deprecated key,
+                // adding conflict errors if found
+                schema_new_key.split(" or ").for_each(|new_key| {
+                    let mut path_parts = new_key.split('.');
+                    if let Some(root_key) = path_parts.next()
+                        && let Some(root_value) = parent_dict_input.get(root_key)
+                    {
+                        // Check if the rest of the path exists
+                        let rest_of_path: Vec<_> = path_parts.collect();
+                        let exists = if rest_of_path.is_empty() {
+                            true
+                        } else {
+                            root_value.path_exists(&rest_of_path.join("."))
+                        };
+                        if exists {
+                            ctx.add_error(Violation::DeprecatedConflict {
+                                other_path: new_key.into(),
+                                url: deprecation.url.to_owned().into(),
+                            });
+                        }
+                    }
+                });
+            }
+            // Even with a conflict error we still want to validate everything else.
+            false
+        }
+    } else {
+        false
+    }
+}
+
+/// Check if an input key matches a dynamic key from the schema.
+/// Returns the schema for the dynamic key if found.
+fn find_dynamic_key_schema<'a, 'b, M: ValidatableMapping<'b>>(
+    schema: &'a Dict,
+    input: &M,
+    input_key: &str,
+) -> Option<&'a AnySchema> {
+    let dynamic_keys = schema.dynamic_keys.as_ref()?;
+
+    // Get defaults for dynamic keys (lazily initialized)
+    let default_dynamic_keys = schema
+        .default_dynamic_keys
+        .get_or_init(|| schema.init_default_dynamic_keys());
+
+    for (dynamic_key_path, dynamic_key_schema) in dynamic_keys {
+        if dynamic_key_schema.is_removed() {
+            continue;
+        }
+
+        // First check if the input key is in the input at this path
+        if has_dynamic_key_value(input, dynamic_key_path, input_key) {
+            return Some(dynamic_key_schema);
+        }
+
+        // If not found in input, check the defaults
+        if let Some(defaults) = default_dynamic_keys.as_ref()
+            && let Some(default_keys) = defaults.get(dynamic_key_path)
+            && default_keys.contains(&input_key.to_string())
+        {
+            return Some(dynamic_key_schema);
+        }
+    }
+    None
+}
+
+/// Check if the input has a value at the given path that matches the target key.
+fn has_dynamic_key_value<'a, M: ValidatableMapping<'a>>(
+    input: &M,
+    path: &str,
+    target_key: &str,
+) -> bool {
+    let mut path_parts = path.split('.');
+    let Some(first_key) = path_parts.next() else {
+        return false;
+    };
+
+    let Some(value) = input.get(first_key) else {
+        return false;
+    };
+
+    // Collect remaining path
+    let rest: Vec<_> = path_parts.collect();
+
+    if rest.is_empty() {
+        // If it's a sequence, check all items
+        if let Some(seq) = value.as_sequence() {
+            for item in ValidatableSequence::iter(&seq) {
+                if let Some(s) = item.as_str()
+                    && s == target_key
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+        // Single value
+        if let Some(s) = value.as_str() {
+            return s == target_key;
+        }
+        return false;
+    }
+
+    // Navigate further
+    let rest_path = rest.join(".");
+    has_nested_dynamic_key_value(value, &rest_path, target_key)
+}
+
+/// Recursively check for a dynamic key value at a nested path.
+fn has_nested_dynamic_key_value<V: ValidatableValue>(
+    value: &V,
+    path: &str,
+    target_key: &str,
+) -> bool {
+    let mut path_parts = path.split('.');
+    let Some(first_key) = path_parts.next() else {
+        // At the end of the path, check if value matches
+        if let Some(s) = value.as_str() {
+            return s == target_key;
+        }
+        return false;
+    };
+
+    let rest: Vec<_> = path_parts.collect();
+    let rest_path = rest.join(".");
+
+    // If it's a sequence, check each item
+    if let Some(seq) = value.as_sequence() {
+        for item in ValidatableSequence::iter(&seq) {
+            if let Some(child) = item.get(first_key) {
+                if rest.is_empty() {
+                    if let Some(s) = child.as_str()
+                        && s == target_key
+                    {
+                        return true;
+                    }
+                } else if has_nested_dynamic_key_value(child, &rest_path, target_key) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    // If it's a mapping, look up the key
+    if let Some(child) = value.get(first_key) {
+        if rest.is_empty() {
+            if let Some(s) = child.as_str() {
+                return s == target_key;
+            }
+            return false;
+        }
+        return has_nested_dynamic_key_value(child, &rest_path, target_key);
+    }
+
+    false
+}
+
+/// Validate and optionally coerce mapping keys.
+/// Returns Some(coerced_items) when coercion is enabled, None otherwise.
+fn validate_keys<'a, M: ValidatableMapping<'a>>(
+    schema: &Dict,
+    input: &M,
+    ctx: &mut Context,
+) -> Option<Vec<(String, <M::Value as ValidatableValue>::Coerced)>> {
+    let return_coerced = ctx.configuration.return_coerced_data;
+    let mut coerced_items = if return_coerced {
+        Some(Vec::new())
+    } else {
+        None
+    };
+
+    let Some(keys) = &schema.keys else {
+        // No schema keys - preserve all input as-is when coercing
+        if let Some(ref mut items) = coerced_items {
+            for (input_key, input_value) in input.iter() {
+                items.push((input_key.into_owned(), input_value.clone_to_coerced()));
+            }
+        }
+        return coerced_items;
+    };
+
+    // When at the root level, if warn_eos_config_keys is enabled, get the keys from the eos_config schema.
+    let eos_config_keys: Option<&OrderMap<String, AnySchema>> = {
+        if ctx.state.path.is_empty() && ctx.configuration.warn_eos_config_keys {
+            <&Dict>::try_from(&ctx.store.eos_config)
+                .ok()
+                .and_then(|d| d.keys.as_ref())
+        } else {
+            None
+        }
+    };
+
+    for (input_key, input_value) in input.iter() {
+        let input_key_str: &str = &input_key;
+        ctx.state.path.push(input_key_str.to_owned());
+
+        // Determine what to do with this key
+        let include_in_output = if let Some(key_schema) = keys.get(input_key_str) {
+            if !check_deprecation(input_key_str, key_schema, input, ctx) {
+                if let Some(ref mut items) = coerced_items {
+                    let coerced = key_schema
+                        .validate(input_value, ctx)
+                        .unwrap_or_else(|| input_value.clone_to_coerced());
+                    items.push((input_key_str.to_owned(), coerced));
+                } else {
+                    let _ = key_schema.validate(input_value, ctx);
+                }
+            } else if let Some(ref mut items) = coerced_items {
+                // Deprecated key with error - still include with original value
+                items.push((input_key_str.to_owned(), input_value.clone_to_coerced()));
+            }
+            false // Already handled
+        } else if let Some(key_schema) = find_dynamic_key_schema(schema, input, input_key_str) {
+            if !check_deprecation(input_key_str, key_schema, input, ctx) {
+                if let Some(ref mut items) = coerced_items {
+                    let coerced = key_schema
+                        .validate(input_value, ctx)
+                        .unwrap_or_else(|| input_value.clone_to_coerced());
+                    items.push((input_key_str.to_owned(), coerced));
+                } else {
+                    let _ = key_schema.validate(input_value, ctx);
+                }
+            } else if let Some(ref mut items) = coerced_items {
+                items.push((input_key_str.to_owned(), input_value.clone_to_coerced()));
+            }
+            false // Already handled
+        } else if input_key_str.starts_with("_") {
+            // Key starts with underscore - skip validation but include in output
+            true
+        } else if !schema.allow_other_keys.unwrap_or_default() {
+            // Key is not part of the schema and does not start with underscore
+            ctx.add_error(Violation::UnexpectedKey());
+            true // Include the value in output (error is recorded)
+        } else {
+            if let Some(eos_config_keys) = &eos_config_keys
+                && eos_config_keys.contains_key(input_key_str)
+                && !EOS_CLI_CONFIG_GEN_ROLE_KEYS.contains(&input_key_str)
+            {
+                // Key is not in avd_design schema but is in eos_config_keys
+                // and allow_other_keys is true - emit a warning that it will be ignored
+                ctx.add_warning(IgnoredEosConfigKey {});
+            }
+            true // allow_other_keys is true - include as-is
+        };
+
+        if include_in_output && let Some(ref mut items) = coerced_items {
+            items.push((input_key_str.to_owned(), input_value.clone_to_coerced()));
+        }
+
+        ctx.state.path.pop();
+    }
+
+    coerced_items
+}
+
+fn validate_required_keys<'a, M: ValidatableMapping<'a>>(
+    schema: &Dict,
+    input: &M,
+    ctx: &mut Context,
+) {
+    // Don't validate required keys if we are below a dict with relaxed validation or if we are at the root level.
+    if ctx.state.relaxed_validation
+        || (ctx.configuration.ignore_required_keys_on_root_dict && ctx.state.path.is_empty())
+    {
+        return;
+    }
+    if let Some(keys) = &schema.keys {
+        for (key, key_schema) in keys {
+            if key_schema.is_required() && !input.contains_key(key) {
+                ctx.add_error(Violation::MissingRequiredKey {
+                    key: key.to_string(),
+                });
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use avdschema::Schema;
@@ -204,7 +431,6 @@ mod tests {
     use serde::Deserialize as _;
 
     use super::*;
-    use crate::coercion::Coercion as _;
     use crate::context::{Configuration, Context};
     use crate::feedback::{CoercionNote, Feedback, WarningIssue};
     use crate::validation::test_utils::get_test_store;
@@ -215,7 +441,7 @@ mod tests {
         let input = serde_json::json!({ "foo": true });
         let store = get_test_store();
         let mut ctx = Context::new(&store, None);
-        schema.validate_value(&input, &mut ctx);
+        let _ = schema.validate(&input, &mut ctx);
         assert!(ctx.result.errors.is_empty() && ctx.result.infos.is_empty());
     }
 
@@ -225,7 +451,7 @@ mod tests {
         let input = serde_json::json!(true);
         let store = get_test_store();
         let mut ctx = Context::new(&store, None);
-        schema.validate_value(&input, &mut ctx);
+        let _ = schema.validate(&input, &mut ctx);
         assert!(ctx.result.infos.is_empty());
         assert_eq!(
             ctx.result.errors,
@@ -252,7 +478,7 @@ mod tests {
         let input = serde_json::json!({ "foo": "bar", "bar": 123 });
         let store = get_test_store();
         let mut ctx = Context::new(&store, None);
-        schema.validate_value(&input, &mut ctx);
+        let _ = schema.validate(&input, &mut ctx);
         assert!(ctx.result.errors.is_empty() && ctx.result.infos.is_empty());
     }
 
@@ -268,7 +494,7 @@ mod tests {
         let input = serde_json::json!({ "foo": [], "bar": "boo" });
         let store = get_test_store();
         let mut ctx = Context::new(&store, None);
-        schema.validate_value(&input, &mut ctx);
+        let _ = schema.validate(&input, &mut ctx);
         assert!(ctx.result.infos.is_empty());
         assert_eq!(
             ctx.result.errors,
@@ -302,15 +528,15 @@ mod tests {
             ])),
             ..Default::default()
         };
-        let mut input = serde_json::json!({ "foo": 321, "bar": "123" });
+        let input = serde_json::json!({ "foo": 321, "bar": "123" });
         let store = get_test_store();
         let configuration = Configuration {
             return_coercion_infos: true,
+            return_coerced_data: true,
             ..Default::default()
         };
         let mut ctx = Context::new(&store, Some(&configuration));
-        schema.coerce(&mut input, &mut ctx);
-        schema.validate_value(&input, &mut ctx);
+        let coerced = schema.validate(&input, &mut ctx);
         assert!(ctx.result.errors.is_empty());
         assert_eq!(
             ctx.result.infos,
@@ -332,7 +558,11 @@ mod tests {
                     .into()
                 }
             ]
-        )
+        );
+        assert_eq!(
+            coerced,
+            Some(serde_json::json!({ "foo": "321", "bar": 123 }))
+        );
     }
 
     #[test]
@@ -370,7 +600,7 @@ mod tests {
             { "my_dynamic_keys": [{"key": "dynkey1"}, {"key": "dynkey2"}], "dynkey1": 5, "dynkey2": 9 });
         let store = get_test_store();
         let mut ctx = Context::new(&store, None);
-        schema.validate_value(&input, &mut ctx);
+        let _ = schema.validate(&input, &mut ctx);
         assert_eq!(ctx.result.errors, vec![]);
         assert_eq!(ctx.result.infos, vec![]);
     }
@@ -410,7 +640,7 @@ mod tests {
             { "my_dynamic_keys": [{"key": "dynkey1"}, {"key": "dynkey2"}], "dynkey1": 11, "dynkey2": "wrong" });
         let store = get_test_store();
         let mut ctx = Context::new(&store, None);
-        schema.validate_value(&input, &mut ctx);
+        let _ = schema.validate(&input, &mut ctx);
         assert_eq!(ctx.result.infos, vec![]);
         assert_eq!(
             ctx.result.errors,
@@ -461,11 +691,10 @@ mod tests {
             allow_other_keys: Some(true),
             ..Default::default()
         };
-        let mut input = serde_json::json!({ "dynkey1": 5, "dynkey2": 9 });
+        let input = serde_json::json!({ "dynkey1": 5, "dynkey2": 9 });
         let store = get_test_store();
         let mut ctx = Context::new(&store, None);
-        schema.coerce(&mut input, &mut ctx);
-        schema.validate_value(&input, &mut ctx);
+        let _ = schema.validate(&input, &mut ctx);
         assert!(ctx.result.errors.is_empty());
         assert!(ctx.result.infos.is_empty());
     }
@@ -503,12 +732,11 @@ mod tests {
             allow_other_keys: Some(true),
             ..Default::default()
         };
-        let mut input =
+        let input =
             serde_json::json!({ "dynkey1": {"sub_key": 11, "bad_key": true}, "dynkey2": "wrong" });
         let store = get_test_store();
         let mut ctx = Context::new(&store, None);
-        schema.coerce(&mut input, &mut ctx);
-        schema.validate_value(&input, &mut ctx);
+        let _ = schema.validate(&input, &mut ctx);
         assert!(ctx.result.infos.is_empty());
         assert_eq!(
             ctx.result.errors,
@@ -547,7 +775,7 @@ mod tests {
         let input = serde_json::json!({ "foo": "ok", "foo1": "wrong" });
         let store = get_test_store();
         let mut ctx = Context::new(&store, None);
-        schema.validate_value(&input, &mut ctx);
+        let _ = schema.validate(&input, &mut ctx);
         assert!(ctx.result.errors.is_empty() && ctx.result.infos.is_empty());
     }
 
@@ -557,10 +785,10 @@ mod tests {
             keys: Some(OrderMap::from_iter([("foo".into(), Str::default().into())])),
             ..Default::default()
         };
-        let input = serde_json::json!({ "foo": "ok", "foo1": "wrong", "_internal": "ignored" });
+        let input = serde_json::json!({ "foo": "ok", "foo1": "wrong" });
         let store = get_test_store();
         let mut ctx = Context::new(&store, None);
-        schema.validate_value(&input, &mut ctx);
+        let _ = schema.validate(&input, &mut ctx);
         assert!(ctx.result.infos.is_empty());
         assert_eq!(
             ctx.result.errors,
@@ -571,14 +799,42 @@ mod tests {
         )
     }
 
+    /// Test that keys starting with underscore are preserved in output but not validated
+    #[test]
+    fn validate_underscore_key_preserved() {
+        let schema = Dict {
+            keys: Some(OrderMap::from_iter([("foo".into(), Str::default().into())])),
+            ..Default::default()
+        };
+        // _internal key should be preserved but not validated, foo1 should error
+        let input = serde_json::json!({ "foo": "ok", "_internal": {"nested": "data"} });
+        let store = get_test_store();
+        let configuration = Configuration {
+            return_coerced_data: true,
+            ..Default::default()
+        };
+        let mut ctx = Context::new(&store, Some(&configuration));
+        let coerced = schema.validate(&input, &mut ctx);
+        // No errors - _internal is ignored, foo is valid
+        assert!(ctx.result.errors.is_empty());
+        assert!(ctx.result.infos.is_empty());
+        // Coerced output should include _internal key unchanged
+        assert_eq!(
+            coerced,
+            Some(serde_json::json!({ "foo": "ok", "_internal": {"nested": "data"} }))
+        );
+    }
+
     // Tests a key that is marked as deprecated returns the proper warning.
     // Also verifies that regular validation is still done on the field even if it is deprecated.
+    // Uses min_length to verify validation continues (lenient validation coerces int 123 to "123")
     #[test]
     fn validate_key_deprecated_ok() {
         let schema: Dict = Dict::deserialize(serde_json::json!({
             "keys": {
                 "foo": {
                     "type": "str",
+                    "min_length": 5,
                     "deprecation": {
                         "warning": true,
                         "remove_in_version": "1.2.3",
@@ -587,10 +843,11 @@ mod tests {
             }
         }))
         .unwrap();
+        // Input is int 123, which coerces to "123" (3 chars) - violates min_length: 5
         let input = serde_json::json!({"foo": 123});
         let store = get_test_store();
         let mut ctx = Context::new(&store, None);
-        schema.validate_value(&input, &mut ctx);
+        let _ = schema.validate(&input, &mut ctx);
         assert!(ctx.result.infos.is_empty());
         assert_eq!(
             ctx.result.warnings,
@@ -604,13 +861,15 @@ mod tests {
                 })
             }]
         );
+        // With lenient validation, int 123 coerces to string "123"
+        // The min_length: 5 constraint is violated (3 < 5)
         assert_eq!(
             ctx.result.errors,
             vec![Feedback {
                 path: vec!["foo".into()].into(),
-                issue: Violation::InvalidType {
-                    expected: Type::Str,
-                    found: Type::Int
+                issue: Violation::LengthBelowMinimum {
+                    minimum: 5,
+                    found: 3
                 }
                 .into()
             }]
@@ -637,7 +896,7 @@ mod tests {
         let input = serde_json::json!({"foo": 123});
         let store = get_test_store();
         let mut ctx = Context::new(&store, None);
-        schema.validate_value(&input, &mut ctx);
+        let _ = schema.validate(&input, &mut ctx);
         assert!(ctx.result.infos.is_empty());
         assert_eq!(
             ctx.result.errors,
@@ -673,7 +932,7 @@ mod tests {
         let input = serde_json::json!({"foo": "blah"});
         let store = get_test_store();
         let mut ctx = Context::new(&store, None);
-        schema.validate_value(&input, &mut ctx);
+        let _ = schema.validate(&input, &mut ctx);
         assert!(ctx.result.infos.is_empty());
         assert!(ctx.result.warnings.is_empty());
         assert!(ctx.result.errors.is_empty());
@@ -844,15 +1103,16 @@ mod tests {
             )])),
             ..Default::default()
         };
-        let mut input = serde_json::json!({ "foo": true });
+        // Bool input for a Str field - coerced to "True"
+        let input = serde_json::json!({ "foo": true });
         let store = get_test_store();
         let configuration = Configuration {
             return_coercion_infos: true,
+            return_coerced_data: true,
             ..Default::default()
         };
         let mut ctx = Context::new(&store, Some(&configuration));
-        schema.coerce(&mut input, &mut ctx);
-        schema.validate_value(&input, &mut ctx);
+        let coerced = schema.validate(&input, &mut ctx);
         assert!(ctx.result.errors.is_empty());
         assert_eq!(
             ctx.result.infos,
@@ -864,7 +1124,8 @@ mod tests {
                 }
                 .into()
             }]
-        )
+        );
+        assert_eq!(coerced, Some(serde_json::json!({ "foo": "True" })));
     }
 
     #[test]
@@ -886,7 +1147,7 @@ mod tests {
         let input = serde_json::json!({});
         let store = get_test_store();
         let mut ctx = Context::new(&store, None);
-        schema.validate_value(&input, &mut ctx);
+        let _ = schema.validate(&input, &mut ctx);
         assert!(ctx.result.infos.is_empty());
         assert_eq!(
             ctx.result.errors,
@@ -913,15 +1174,14 @@ mod tests {
             )])),
             ..Default::default()
         };
-        let mut input = serde_json::json!({});
+        let input = serde_json::json!({});
         let store = get_test_store();
         let configuration = Configuration {
             ignore_required_keys_on_root_dict: true,
             ..Default::default()
         };
         let mut ctx = Context::new(&store, Some(&configuration));
-        schema.coerce(&mut input, &mut ctx);
-        schema.validate_value(&input, &mut ctx);
+        let _ = schema.validate(&input, &mut ctx);
         assert!(ctx.result.errors.is_empty());
         assert!(ctx.result.infos.is_empty());
     }
@@ -951,7 +1211,7 @@ mod tests {
         let mut ctx = Context::new(&store, Some(&configuration));
         // Using a deeper path and see that we still get the error even though we relax for the root dict.
         ctx.state.path.push("deeper".into());
-        schema.validate_value(&input, &mut ctx);
+        let _ = schema.validate(&input, &mut ctx);
         assert!(ctx.result.infos.is_empty());
         assert_eq!(
             ctx.result.errors,
@@ -979,7 +1239,7 @@ mod tests {
         };
         let mut ctx = Context::new(&store, Some(&configuration));
         let schema = store.get(Schema::AVDDesign);
-        schema.validate_value(&input, &mut ctx);
+        let _ = schema.validate(&input, &mut ctx);
 
         // Should have warnings for key1 and key2
         assert_eq!(ctx.result.warnings.len(), 2);
@@ -1006,7 +1266,7 @@ mod tests {
         };
         let mut ctx = Context::new(&store, Some(&configuration));
         let schema = store.get(Schema::AVDDesign);
-        schema.validate_value(&input, &mut ctx);
+        let _ = schema.validate(&input, &mut ctx);
 
         // Should have no warnings
         assert!(ctx.result.warnings.is_empty());
@@ -1027,7 +1287,7 @@ mod tests {
         // Don't set warn_eos_config_keys since we're validating eos_config
         let mut ctx = Context::new(&store, None);
         let schema = store.get(Schema::EOSConfig);
-        schema.validate_value(&input, &mut ctx);
+        let _ = schema.validate(&input, &mut ctx);
 
         // Should have no warnings
         assert!(ctx.result.warnings.is_empty());
@@ -1048,7 +1308,7 @@ mod tests {
         };
         let mut ctx = Context::new(&store, Some(&configuration));
         let schema = store.get(Schema::AVDDesign);
-        schema.validate_value(&input, &mut ctx);
+        let _ = schema.validate(&input, &mut ctx);
 
         // Should have no warnings since key3 exists in both schemas
         assert!(ctx.result.warnings.is_empty());
@@ -1076,7 +1336,7 @@ mod tests {
         };
         let mut ctx = Context::new(&store, Some(&configuration));
         let schema = store.get(Schema::AVDDesign);
-        schema.validate_value(&input, &mut ctx);
+        let _ = schema.validate(&input, &mut ctx);
 
         // Should have no warnings - these special keys are silently ignored
         assert!(ctx.result.warnings.is_empty());

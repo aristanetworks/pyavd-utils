@@ -3,46 +3,53 @@
 // that can be found in the LICENSE file.
 
 use avdschema::{any::AnySchema, boolean::Bool, resolve_ref};
-use serde_json::Value;
 
 use crate::{
     context::Context,
     feedback::{Type, Violation},
+    validatable::ValidatableValue,
 };
 
 use super::Validation;
 
-impl Validation<bool> for Bool {
-    fn validate(&self, value: &bool, ctx: &mut Context) {
-        self.validate_ref(value, ctx);
-    }
-
-    fn validate_value(&self, value: &Value, ctx: &mut Context) {
+impl Validation for Bool {
+    fn validate<V: ValidatableValue>(&self, value: &V, ctx: &mut Context) -> Option<V::Coerced> {
         if let Some(v) = value.as_bool() {
-            self.validate(&v, ctx)
+            // Bool schema has no constraints to validate beyond type checking
+            validate_ref(self, value, ctx);
+            if ctx.configuration.return_coerced_data {
+                Some(value.coerce_bool(v))
+            } else {
+                None
+            }
         } else if value.is_null() && !ctx.configuration.restrict_null_values {
+            // Null is allowed when not restricted
+            ctx.configuration
+                .return_coerced_data
+                .then(|| value.coerce_null())
         } else {
             ctx.add_error(Violation::InvalidType {
                 expected: Type::Bool,
-                found: value.into(),
-            })
+                found: value.value_type(),
+            });
+            None
         }
     }
+}
 
-    fn validate_ref(&self, value: &bool, ctx: &mut Context) {
-        if let Some(ref_) = self.base.schema_ref.as_ref() {
-            // Ignoring not being able to resolve the schema.
-            // Ignoring a wrong schema type at the ref. Since Validation is infallible.
-            // TODO: What to do?
-            if let Ok(AnySchema::Bool(ref_schema)) = resolve_ref(ref_, ctx.store) {
-                ref_schema.validate(value, ctx);
-            }
-        }
+/// Validate against a referenced schema (for unresolved $ref ending with #).
+fn validate_ref<V: ValidatableValue>(schema: &Bool, value: &V, ctx: &mut Context) {
+    if let Some(ref_) = schema.base.schema_ref.as_ref()
+        && let Ok(AnySchema::Bool(ref_schema)) = resolve_ref(ref_, ctx.store)
+    {
+        let _ = ref_schema.validate(value, ctx);
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use serde_json::Value;
+
     use super::*;
     use crate::{
         feedback::{Feedback, Type, Violation},
@@ -52,10 +59,10 @@ mod tests {
     #[test]
     fn validate_type_ok() {
         let schema = Bool::default();
-        let input = true.into();
+        let input: Value = true.into();
         let store = get_test_store();
         let mut ctx = Context::new(&store, None);
-        schema.validate_value(&input, &mut ctx);
+        let _ = schema.validate(&input, &mut ctx);
         assert!(ctx.result.errors.is_empty() && ctx.result.infos.is_empty());
     }
 
@@ -65,7 +72,7 @@ mod tests {
         let input = serde_json::json!([]);
         let store = get_test_store();
         let mut ctx = Context::new(&store, None);
-        schema.validate_value(&input, &mut ctx);
+        let _ = schema.validate(&input, &mut ctx);
         assert!(ctx.result.infos.is_empty());
         assert_eq!(
             ctx.result.errors,
