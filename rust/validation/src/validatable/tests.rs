@@ -4,7 +4,7 @@
 
 use serde_json::json;
 
-use super::{ValidatableMapping, ValidatableSequence, ValidatableValue};
+use super::{ValidatableSequence, ValidatableValue};
 
 #[test]
 fn test_serde_json_null() {
@@ -18,7 +18,7 @@ fn test_serde_json_null() {
 fn test_serde_json_string() {
     let value = json!("hello");
     assert!(!value.is_null());
-    assert_eq!(value.as_str().as_deref(), Some("hello"));
+    assert_eq!(value.as_str(), Some("hello"));
     assert!(value.as_i64().is_none());
     assert!(value.as_bool().is_none());
 }
@@ -80,14 +80,11 @@ fn test_serde_json_mapping() {
     assert!(!mapping.contains_key("missing"));
 
     let name = mapping.get("name").expect("should have name");
-    assert_eq!(name.as_str().as_deref(), Some("Alice"));
+    assert_eq!(name.as_str(), Some("Alice"));
 
-    // Test iteration - use the trait method explicitly
-    let keys: Vec<String> = ValidatableMapping::iter(&mapping)
-        .map(|(k, _)| k.into_owned())
-        .collect();
-    assert!(keys.contains(&"name".to_string()));
-    assert!(keys.contains(&"age".to_string()));
+    let keys: Vec<_> = mapping.keys().collect();
+    assert!(keys.contains(&&"name".to_owned()));
+    assert!(keys.contains(&&"age".to_owned()));
 }
 
 #[test]
@@ -112,7 +109,7 @@ fn test_serde_json_get() {
 
     let nested = value.get("nested").expect("should have nested");
     let key = nested.get("key").expect("should have key");
-    assert_eq!(key.as_str().as_deref(), Some("value"));
+    assert_eq!(key.as_str(), Some("value"));
 
     assert!(value.get("missing").is_none());
 }

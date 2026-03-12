@@ -170,9 +170,15 @@ pub trait ValidatableMapping<'a> {
     fn iter(&self) -> Self::Iter;
 
     /// Get the number of entries in the mapping.
+    #[allow(dead_code, reason = "len() could be useful later")]
     fn len(&self) -> usize;
 
     /// Check if the mapping is empty.
+    #[allow(
+        dead_code,
+        clippy::len_without_is_empty,
+        reason = "is_empty() could be useful later"
+    )]
     fn is_empty(&self) -> bool {
         self.len() == 0
     }
@@ -193,6 +199,7 @@ pub trait ValidatableSequence<'a> {
     fn len(&self) -> usize;
 
     /// Check if the sequence is empty.
+    #[allow(dead_code, reason = "exposed for future use in validators")]
     fn is_empty(&self) -> bool {
         self.len() == 0
     }

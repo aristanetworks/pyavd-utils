@@ -71,59 +71,10 @@ fn validate_ref<V: ValidatableValue>(schema: &Dict, value: &V, ctx: &mut Context
     }
 }
 
-/// Check for deprecation settings in the given schema and return a bool if there was an error that should stop further validation.
-fn check_deprecation(
-    _key: &str,
-    key_schema: &AnySchema,
-    parent_dict_input: &Map<String, Value>,
-    ctx: &mut Context,
-) -> bool {
-    if let Some(deprecation) = key_schema.deprecation()
-        && deprecation.warning
-    {
-        if deprecation.removed.unwrap_or_default() {
-            ctx.add_error(Violation::Removed(Removed::from_schema(
-                &ctx.state.path,
-                deprecation,
-            )));
-            true
-        } else {
-            ctx.add_warning(Deprecated::from_schema(&ctx.state.path, deprecation));
-            if !deprecation.allow_with_new_key.unwrap_or_default()
-                && let Some(schema_new_key) = deprecation.new_key.as_ref()
-            {
-                // Split the new_key on ' or ' in case of multiple new keys.
-                // Then check if any of the new keys are set in the inputs at the same time as the deprecated key,
-                // adding conflict errors if found
-                schema_new_key.split(" or ").for_each(|new_key| {
-                    let mut path = new_key.split('.');
-                    if let Some(root_key) = path.next()
-                        && let Some((key, value)) = parent_dict_input.get_key_value(root_key)
-                        && value
-                            .walk(path, Some(&mut vec![key.to_string()]))
-                            .into_iter()
-                            .next()
-                            .is_some()
-                    {
-                        ctx.add_error(Violation::DeprecatedConflict {
-                            other_path: new_key.into(),
-                            url: deprecation.url.to_owned().into(),
-                        });
-                    }
-                });
-            }
-            // Even with a conflict error we still want to validate everything else.
-            false
-        }
-    } else {
-        false
-    }
-}
-
 // === Generic versions for ValidatableValue ===
 
 /// Check for deprecation settings in the given schema and return a bool if there was an error that should stop further validation.
-fn check_deprecation_any<'a, M: ValidatableMapping<'a>>(
+fn check_deprecation<'a, M: ValidatableMapping<'a>>(
     _key: &str,
     key_schema: &AnySchema,
     parent_dict_input: &M,
@@ -140,7 +91,9 @@ fn check_deprecation_any<'a, M: ValidatableMapping<'a>>(
             true
         } else {
             ctx.add_warning(Deprecated::from_schema(&ctx.state.path, deprecation));
-            if let Some(schema_new_key) = deprecation.new_key.as_ref() {
+            if !deprecation.allow_with_new_key.unwrap_or_default()
+                && let Some(schema_new_key) = deprecation.new_key.as_ref()
+            {
                 // Split the new_key on ' or ' in case of multiple new keys.
                 // Then check if any of the new keys are set in the inputs at the same time as the deprecated key,
                 // adding conflict errors if found
@@ -962,7 +915,7 @@ mod tests {
         let input = serde_json::json!({"old_key": "old_value", "new_key": "new_value"});
         let store = get_test_store();
         let mut ctx = Context::new(&store, None);
-        schema.validate_value(&input, &mut ctx);
+        schema.validate(&input, &mut ctx);
         assert!(ctx.result.infos.is_empty());
         // Should have a deprecation warning
         assert_eq!(
@@ -1005,7 +958,7 @@ mod tests {
         let input = serde_json::json!({"old_key": "old_value", "new_key": "new_value"});
         let store = get_test_store();
         let mut ctx = Context::new(&store, None);
-        schema.validate_value(&input, &mut ctx);
+        schema.validate(&input, &mut ctx);
         assert!(ctx.result.infos.is_empty());
         // Should have a deprecation warning
         assert_eq!(
@@ -1058,7 +1011,7 @@ mod tests {
         let input = serde_json::json!({"old_key": "old_value", "new_key": "new_value"});
         let store = get_test_store();
         let mut ctx = Context::new(&store, None);
-        schema.validate_value(&input, &mut ctx);
+        schema.validate(&input, &mut ctx);
         assert!(ctx.result.infos.is_empty());
         // Should have a deprecation warning
         assert_eq!(
