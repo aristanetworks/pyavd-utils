@@ -10,10 +10,15 @@ categories = ["parsing", "text-processing"]
 
 [dependencies]
 derive_more = { workspace = true, features = ["display"] }
+serde = { workspace = true, optional = true }
 
 [dev-dependencies]
 criterion = "0.8.2" # Used for benchmarking
 saphyr = "0.0.6"    # Used for benchmarking
+
+[features]
+default = []
+serde = ["dep:serde"]
 
 [[bench]]
 name = "parser_bench"

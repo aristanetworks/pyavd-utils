@@ -44,6 +44,9 @@ mod span;
 mod stream;
 mod value;
 
+#[cfg(feature = "serde")]
+pub mod serde;
+
 // Public API: high-level parsing, AST, spans, and errors.
 pub use error::{ErrorKind, ParseError};
 pub use event::{CollectionStyle, Event, ScalarStyle};

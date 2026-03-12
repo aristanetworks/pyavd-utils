@@ -68,9 +68,7 @@ impl StoreValidate<Schema> for Store {
         configuration: Option<&Configuration>,
     ) -> Result<ValidationResult, StoreValidateError> {
         debug!("Validating YAML");
-        // todo: remove `serde_yaml` once `saphyr` adds `serde` support
-        // https://github.com/saphyr-rs/saphyr/issues/1
-        let mut value = serde_yaml::from_str::<Value>(yaml)?;
+        let mut value = yaml_parser::serde::from_str::<Value>(yaml)?;
         debug!("Deserialization of YAML Done");
         let result = self.validate_value(&mut value, schema_name, configuration);
         debug!("Validating YAML Done");
@@ -145,7 +143,7 @@ impl StoreValidate<&str> for Store {
 #[derive(Debug, derive_more::Display, derive_more::From)]
 pub enum StoreValidateError {
     JsonError(serde_json::Error),
-    YamlError(serde_yaml::Error),
+    YamlError(yaml_parser::serde::DeError),
 }
 
 #[derive(Debug, derive_more::Display, derive_more::From)]
