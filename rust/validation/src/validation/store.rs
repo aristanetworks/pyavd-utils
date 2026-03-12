@@ -84,7 +84,15 @@ impl StoreValidate<Schema> for Store {
     ) -> ValidationResult {
         debug!("Validating serde_json::Value");
         let mut ctx = Context::new(self, configuration);
-        let schema = self.get(schema_name);
+        let schema = match self.get(schema_name) {
+            Ok(schema) => schema,
+            Err(err) => {
+                ctx.add_error(Violation::InvalidSchema {
+                    schema: err.to_string(),
+                });
+                return ctx.result;
+            }
+        };
         schema.coerce(value, &mut ctx);
         debug!("Validating serde_json::Value Coercion Done");
         schema.validate_value(value, &mut ctx);
@@ -94,7 +102,15 @@ impl StoreValidate<Schema> for Store {
     fn coerce_value(&self, value: &mut Value, schema_name: Schema) -> ValidationResult {
         debug!("Coercing serde_json::Value");
         let mut ctx = Context::new(self, None);
-        let schema = self.get(schema_name);
+        let schema = match self.get(schema_name) {
+            Ok(schema) => schema,
+            Err(err) => {
+                ctx.add_error(Violation::InvalidSchema {
+                    schema: err.to_string(),
+                });
+                return ctx.result;
+            }
+        };
         schema.coerce(value, &mut ctx);
         debug!("Coercing serde_json::Value Done");
         ctx.result

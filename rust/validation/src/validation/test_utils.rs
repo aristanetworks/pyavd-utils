@@ -37,5 +37,6 @@ pub(crate) fn get_test_store() -> Store {
             }
         ))
         .unwrap(),
+        cv_deploy: None,
     }
 }

@@ -91,7 +91,7 @@ def init_store_from_file(file: Path) -> None:
 
 def validate_json(
     data_as_json: str,
-    schema_name: Literal["eos_config", "avd_design"],
+    schema_name: Literal["eos_config", "avd_design", "cv_deploy"],
     configuration: Configuration | None = None,
 ) -> ValidationResult:
     """
@@ -108,7 +108,7 @@ def validate_json(
 
 def get_validated_data(
     data_as_json: str,
-    schema_name: Literal["eos_config", "avd_design"],
+    schema_name: Literal["eos_config", "avd_design", "cv_deploy"],
     configuration: Configuration | None = None,
 ) -> ValidatedDataResult:
     """

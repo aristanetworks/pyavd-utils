@@ -21,12 +21,19 @@ pub struct Store {
     pub eos_config: AnySchema,
     #[serde(alias = "eos_designs")]
     pub avd_design: AnySchema,
+    #[serde(default)]
+    pub cv_deploy: Option<AnySchema>,
 }
 impl Store {
-    pub fn get(&self, schema: Schema) -> &AnySchema {
+    /// Get the schema for the given schema type, returning an error if the schema is not available in the store.
+    pub fn get(&self, schema: Schema) -> Result<&AnySchema, SchemaStoreError> {
         match schema {
-            Schema::AVDDesign => &self.avd_design,
-            Schema::EOSConfig => &self.eos_config,
+            Schema::AVDDesign => Ok(&self.avd_design),
+            Schema::EOSConfig => Ok(&self.eos_config),
+            Schema::CVDeploy => self
+                .cv_deploy
+                .as_ref()
+                .ok_or_else(|| SchemaNotAvailable::new("cv_deploy".into()).into()),
         }
     }
     pub fn as_resolved(mut self) -> Self {
@@ -41,6 +48,13 @@ impl Store {
         resolve_schema(&mut avd_design_schema, &self).unwrap();
         self.avd_design = avd_design_schema;
 
+        // Resolve cv_deploy only if it exists.
+        if let Some(cv_deploy) = self.cv_deploy.take() {
+            let mut cv_deploy_schema = cv_deploy;
+            resolve_schema(&mut cv_deploy_schema, &self).unwrap();
+            self.cv_deploy = Some(cv_deploy_schema);
+        }
+
         self
     }
 
@@ -54,10 +68,14 @@ impl Store {
     pub fn new_from_paths(
         avd_design_schema_path: PathBuf,
         eos_config_schema_path: PathBuf,
+        cv_deploy_schema_path: Option<PathBuf>,
     ) -> Result<Self, LoadError> {
         Ok(Store {
             eos_config: AnySchema::new_from_path(eos_config_schema_path)?,
             avd_design: AnySchema::new_from_path(avd_design_schema_path)?,
+            cv_deploy: cv_deploy_schema_path
+                .map(AnySchema::new_from_path)
+                .transpose()?,
         })
     }
 }
@@ -68,6 +86,7 @@ impl Load for Store {}
 pub enum Schema {
     AVDDesign,
     EOSConfig,
+    CVDeploy,
 }
 
 impl TryFrom<&str> for Schema {
@@ -80,6 +99,7 @@ impl TryFrom<&str> for Schema {
             "eos_config" => Ok(Self::EOSConfig),
             "eos_designs" => Ok(Self::AVDDesign),
             "eos_cli_config_gen" => Ok(Self::EOSConfig),
+            "cv_deploy" => Ok(Self::CVDeploy),
             _ => Err(SchemaName::new(value.into()).into()),
         }
     }
@@ -90,6 +110,7 @@ impl From<Schema> for String {
         match value {
             Schema::AVDDesign => "avd_design".to_string(),
             Schema::EOSConfig => "eos_config".to_string(),
+            Schema::CVDeploy => "cv_deploy".to_string(),
         }
     }
 }
@@ -97,11 +118,18 @@ impl From<Schema> for String {
 #[derive(Debug, derive_more::Display, derive_more::From)]
 pub enum SchemaStoreError {
     SchemaName(SchemaName),
+    SchemaNotAvailable(SchemaNotAvailable),
 }
 
 #[derive(Debug, derive_more::Constructor, derive_more::Display)]
 #[display("Schema name '{name}' not found in the schema store.")]
 pub struct SchemaName {
+    pub name: String,
+}
+
+#[derive(Debug, derive_more::Constructor, derive_more::Display)]
+#[display("Schema name '{name}' found in the schema store, but is not available.")]
+pub struct SchemaNotAvailable {
     pub name: String,
 }
 
