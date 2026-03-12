@@ -93,8 +93,12 @@ pub fn parse(input: &str) -> (Stream<'static>, Vec<ParseError>) {
     // Get events from the emitter
     let (events, mut all_errors) = emit_events(input);
 
-    // Parse events into AST using the internal event-to-AST parser
-    let mut parser = parser::Parser::new(&events);
+    // Parse events into AST using the internal event-to-AST parser.
+    //
+    // The parser now consumes a streaming iterator of events rather than
+    // indexing into a slice, so we pass ownership of the event Vec here
+    // and iterate over it.
+    let mut parser = parser::Parser::new(events.into_iter());
     let nodes = parser.parse();
     all_errors.extend(parser.take_errors());
 

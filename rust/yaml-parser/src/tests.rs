@@ -457,8 +457,8 @@ fn test_zero_copy_parsing() {
     let parse_errors = emitter.take_errors();
     assert!(parse_errors.is_empty());
 
-    // Reconstruct AST from events using Parser
-    let mut parser = Parser::new(&events);
+    // Reconstruct AST from events using Parser (streaming over the event iterator)
+    let mut parser = Parser::new(events.into_iter());
     let nodes = parser.parse();
     assert!(parser.take_errors().is_empty());
     assert_eq!(nodes.len(), 1);

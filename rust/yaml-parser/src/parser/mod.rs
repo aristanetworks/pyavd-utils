@@ -28,15 +28,26 @@ use crate::event::{Event, Properties as EventProperties, Property as EventProper
 use crate::span::Span;
 use crate::value::{Node, Properties as NodeProperties, Value};
 
-/// Parser that builds AST from events.
+/// Parser that builds AST from a streaming source of events.
 ///
 /// This is a simplified parser that consumes events and builds the AST.
 /// Structural complexity is handled by the `Emitter`.
-pub struct Parser<'events, 'input> {
-    /// Event stream to consume
-    events: &'events [Event<'input>],
-    /// Current position in event stream
-    pos: usize,
+///
+/// The parser operates over any `Iterator<Item = Event<'input>>`, using an
+/// internal one-element lookahead buffer. This keeps behaviour identical to
+/// the previous slice+index based implementation while allowing future
+/// integration with a truly streaming event source.
+pub struct Parser<'input, I>
+where
+    I: Iterator<Item = Event<'input>>,
+{
+    /// Underlying event iterator.
+    events: I,
+    /// Buffered lookahead event (result of the most recent `peek()`).
+    peeked: Option<Event<'input>>,
+    /// Count of events that have been logically consumed via `advance()`.
+    /// Used to preserve the previous implementation's progress checks.
+    events_consumed: usize,
     /// Collected errors
     errors: Vec<ParseError>,
     /// Set of registered anchor names (for alias validation)
@@ -44,13 +55,17 @@ pub struct Parser<'events, 'input> {
     anchors: HashSet<String>,
 }
 
-impl<'events, 'input> Parser<'events, 'input> {
-    /// Create a new parser.
+impl<'input, I> Parser<'input, I>
+where
+    I: Iterator<Item = Event<'input>>,
+{
+    /// Create a new parser from an event iterator.
     #[must_use]
-    pub fn new(events: &'events [Event<'input>]) -> Self {
+    pub fn new(events: I) -> Self {
         Self {
             events,
-            pos: 0,
+            peeked: None,
+            events_consumed: 0,
             errors: Vec::new(),
             anchors: HashSet::new(),
         }
@@ -67,7 +82,7 @@ impl<'events, 'input> Parser<'events, 'input> {
     pub fn parse(&mut self) -> Vec<Node<'input>> {
         let mut documents = Vec::new();
 
-        while let Some(event) = self.peek() {
+        while let Some(event) = self.peek().cloned() {
             match event {
                 Event::StreamStart => {
                     self.advance();
@@ -105,15 +120,24 @@ impl<'events, 'input> Parser<'events, 'input> {
         documents
     }
 
-    /// Peek at the current event.
-    fn peek(&self) -> Option<&Event<'input>> {
-        self.events.get(self.pos)
+    /// Peek at the current event, using an internal one-element buffer.
+    fn peek(&mut self) -> Option<&Event<'input>> {
+        if self.peeked.is_none() {
+            self.peeked = self.events.next();
+        }
+        self.peeked.as_ref()
     }
 
     /// Advance to the next event.
+    ///
+    /// This logically consumes the current event (including any buffered by
+    /// `peek()`) and increments `events_consumed` for progress tracking.
     fn advance(&mut self) {
-        if self.pos < self.events.len() {
-            self.pos += 1;
+        if self.peeked.is_some() {
+            self.peeked = None;
+            self.events_consumed += 1;
+        } else if self.events.next().is_some() {
+            self.events_consumed += 1;
         }
     }
 
@@ -174,9 +198,9 @@ impl<'events, 'input> Parser<'events, 'input> {
         let mut end_span = start_span;
 
         loop {
-            match self.peek() {
+            match self.peek().cloned() {
                 Some(Event::MappingEnd { span }) => {
-                    end_span = *span;
+                    end_span = span;
                     self.advance();
                     break;
                 }
@@ -186,13 +210,13 @@ impl<'events, 'input> Parser<'events, 'input> {
                 }
                 Some(_) => {
                     // Parse key
-                    let pos_before = self.pos;
+                    let consumed_before = self.events_consumed;
                     let key = self.parse_node().unwrap_or_else(|| Node::null(start_span));
                     // Parse value
                     let value = self.parse_node().unwrap_or_else(|| Node::null(start_span));
                     pairs.push((key, value));
                     // Ensure we made progress to avoid infinite loop
-                    if self.pos == pos_before {
+                    if self.events_consumed == consumed_before {
                         self.advance();
                     }
                 }
@@ -230,9 +254,9 @@ impl<'events, 'input> Parser<'events, 'input> {
         let mut end_span = start_span;
 
         loop {
-            match self.peek() {
+            match self.peek().cloned() {
                 Some(Event::SequenceEnd { span }) => {
-                    end_span = *span;
+                    end_span = span;
                     self.advance();
                     break;
                 }
@@ -241,12 +265,12 @@ impl<'events, 'input> Parser<'events, 'input> {
                     break;
                 }
                 Some(_) => {
-                    let pos_before = self.pos;
+                    let consumed_before = self.events_consumed;
                     if let Some(item) = self.parse_node() {
                         items.push(item);
                     }
                     // Ensure we made progress to avoid infinite loop
-                    if self.pos == pos_before {
+                    if self.events_consumed == consumed_before {
                         self.advance();
                     }
                 }
@@ -525,7 +549,7 @@ mod tests {
     /// Parse input through the full event pipeline and return nodes.
     fn parse_via_events(input: &str) -> Vec<crate::value::Node<'static>> {
         let (events, _errors) = crate::emit_events(input);
-        let mut parser = Parser::new(&events);
+        let mut parser = Parser::new(events.into_iter());
         parser
             .parse()
             .into_iter()
