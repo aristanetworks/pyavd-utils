@@ -84,7 +84,15 @@ impl StoreValidate<Schema> for Store {
     ) -> ValidationResult {
         debug!("Validating serde_json::Value");
         let mut ctx = Context::new(self, configuration);
-        let schema = self.get(schema_name);
+        let schema = match self.get(schema_name) {
+            Ok(schema) => schema,
+            Err(err) => {
+                ctx.add_error(Violation::InvalidSchema {
+                    schema: err.to_string(),
+                });
+                return ctx.result;
+            }
+        };
         schema.coerce(value, &mut ctx);
         debug!("Validating serde_json::Value Coercion Done");
         schema.validate_value(value, &mut ctx);
@@ -94,7 +102,15 @@ impl StoreValidate<Schema> for Store {
     fn coerce_value(&self, value: &mut Value, schema_name: Schema) -> ValidationResult {
         debug!("Coercing serde_json::Value");
         let mut ctx = Context::new(self, None);
-        let schema = self.get(schema_name);
+        let schema = match self.get(schema_name) {
+            Ok(schema) => schema,
+            Err(err) => {
+                ctx.add_error(Violation::InvalidSchema {
+                    schema: err.to_string(),
+                });
+                return ctx.result;
+            }
+        };
         schema.coerce(value, &mut ctx);
         debug!("Coercing serde_json::Value Done");
         ctx.result
@@ -193,7 +209,7 @@ mod tests {
     use super::*;
 
     use crate::{
-        feedback::{Feedback, Type},
+        feedback::{ErrorIssue, Feedback, Type, Violation},
         validation::test_utils::get_test_store,
     };
 
@@ -252,5 +268,18 @@ mod tests {
                 .into()
             },]
         )
+    }
+
+    #[test]
+    fn validate_value_cv_deploy_not_available() {
+        let mut input = serde_json::json!({});
+        let store = get_test_store();
+        let validation_result = store.validate_value(&mut input, "cv_deploy", None);
+        assert!(validation_result.warnings.is_empty());
+        assert_eq!(validation_result.errors.len(), 1);
+        assert!(matches!(
+            &validation_result.errors[0].issue,
+            ErrorIssue::Violation(Violation::InvalidSchema { schema }) if schema.contains("cv_deploy")
+        ));
     }
 }
