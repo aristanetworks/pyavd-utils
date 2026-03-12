@@ -12,34 +12,50 @@ use serde::forward_to_deserialize_any;
 use crate::{Node, ParseError, Value, parse};
 
 /// Error type for serde-based deserialization from yaml-parser.
-#[derive(Debug)]
+#[derive(Debug, derive_more::Display)]
 pub enum DeError {
     /// YAML was syntactically invalid.
+    #[display("YAML parse error: {}", _0)]
     Parse(ParseError),
-    /// No document found in the input.
-    NoDocument,
-    /// More than one document was found where a single document was expected.
-    MultipleDocuments,
-    /// Generic serde error.
-    Message(String),
-}
 
-impl fmt::Display for DeError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Parse(err) => write!(f, "YAML parse error: {err}"),
-            Self::NoDocument => write!(f, "expected at least one YAML document"),
-            Self::MultipleDocuments => write!(f, "expected a single YAML document"),
-            Self::Message(msg) => f.write_str(msg),
-        }
-    }
+    /// No document found in the input.
+    #[display("expected at least one YAML document")]
+    NoDocument,
+
+    /// More than one document was found where a single document was expected.
+    #[display("expected a single YAML document")]
+    MultipleDocuments,
+
+    /// A mapping contained a value without a corresponding key.
+    #[display("value without corresponding key in mapping")]
+    ValueWithoutKey,
+
+    /// An alias referenced an unknown anchor name.
+    #[display("unknown YAML alias '{}'", _0)]
+    UnknownAlias(String),
+
+    /// The node was marked as invalid by the parser.
+    #[display("invalid YAML node")]
+    InvalidNode,
+
+    /// Enum deserialization expected a string representation.
+    #[display("expected string for enum")]
+    ExpectedEnumString,
+
+    /// I/O error while reading YAML input.
+    #[display("I/O error while reading YAML: {}", _0)]
+    Io(std::io::Error),
+
+    /// Generic serde error created via `serde::de::Error::custom`.
+    #[display("serde custom error: {}", _0)]
+    Custom(String),
 }
 
 impl std::error::Error for DeError {}
 
 impl de::Error for DeError {
     fn custom<T: fmt::Display>(msg: T) -> Self {
-        Self::Message(msg.to_string())
+        Self::Custom(msg.to_string())
     }
 }
 
@@ -88,7 +104,7 @@ struct SeqAccessImpl<'a, 'de> {
     anchors: &'a AnchorIndex<'de>,
 }
 
-impl<'a, 'de> SeqAccess<'de> for SeqAccessImpl<'a, 'de> {
+impl<'de> SeqAccess<'de> for SeqAccessImpl<'_, 'de> {
     type Error = DeError;
 
     fn next_element_seed<T>(&mut self, seed: T) -> Result<Option<T::Value>, DeError>
@@ -127,7 +143,7 @@ impl<'a, 'de> MapAccessImpl<'a, 'de> {
     }
 }
 
-impl<'a, 'de> MapAccess<'de> for MapAccessImpl<'a, 'de> {
+impl<'de> MapAccess<'de> for MapAccessImpl<'_, 'de> {
     type Error = DeError;
 
     fn next_key_seed<K>(&mut self, seed: K) -> Result<Option<K::Value>, DeError>
@@ -147,10 +163,7 @@ impl<'a, 'de> MapAccess<'de> for MapAccessImpl<'a, 'de> {
     where
         V: DeserializeSeed<'de>,
     {
-        let node = self
-            .next_value
-            .take()
-            .ok_or_else(|| DeError::Message("value without corresponding key".to_owned()))?;
+        let node = self.next_value.take().ok_or(DeError::ValueWithoutKey)?;
         let de = ValueDeserializer::new(&node.value, self.anchors);
         seed.deserialize(de)
     }
@@ -193,10 +206,10 @@ impl<'de> de::Deserializer<'de> for ValueDeserializer<'_, 'de> {
                 if let Some(target) = self.anchors.get(name.as_ref()) {
                     ValueDeserializer::new(&target.value, self.anchors).deserialize_any(visitor)
                 } else {
-                    Err(DeError::Message("unknown alias".to_owned()))
+                    Err(DeError::UnknownAlias(name.as_ref().to_owned()))
                 }
             }
-            Value::Invalid => Err(DeError::Message("invalid YAML node".to_owned())),
+            Value::Invalid => Err(DeError::InvalidNode),
         }
     }
 
@@ -226,7 +239,7 @@ impl<'de> de::Deserializer<'de> for ValueDeserializer<'_, 'de> {
                 let de = BorrowedStrDeserializer::new(string_value.as_ref());
                 visitor.visit_enum(de)
             }
-            _ => Err(DeError::Message("expected string for enum".to_owned())),
+            _ => Err(DeError::ExpectedEnumString),
         }
     }
 
@@ -267,8 +280,6 @@ where
     T: DeserializeOwned,
 {
     let mut buf = String::new();
-    reader
-        .read_to_string(&mut buf)
-        .map_err(|err| DeError::Message(err.to_string()))?;
+    reader.read_to_string(&mut buf).map_err(DeError::Io)?;
     from_str(&buf)
 }
