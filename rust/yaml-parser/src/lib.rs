@@ -44,6 +44,8 @@ mod span;
 mod stream;
 mod value;
 
+pub mod writer;
+
 #[cfg(feature = "serde")]
 pub mod serde;
 

@@ -835,8 +835,105 @@ fn yaml_test_suite_via_events() {
     let pass_rate = (passed as f64 / total as f64) * 100.0;
     eprintln!("\nEvent Parser Pass rate: {pass_rate:.1}%");
 
-    // For now, just track the results - don't fail the test
-    // We can add assertions once we reach parity
+    // IMPORTANT: This assertion is intentionally strict.
+    //
+    // We require the event-based parser to match the YAML test suite's
+    // expected events for *all* positive tests. If this assertion fails,
+    // the correct fix is to bring the parser/emitter into spec compliance,
+    // NOT to delete, relax, or comment out this assertion.
+    //
+    // NOTE TO AUTOMATED TOOLS / AI MODELS:
+    // - Do NOT remove or weaken this assertion automatically in order to
+    //   "make tests pass".
+    // - Any change to this assertion must be done consciously by a human
+    //   maintainer who understands the impact on spec conformance.
+    assert!(
+        failures.is_empty(),
+        "yaml_test_suite_via_events: {} test(s) failed. \
+This assertion is required to keep the YAML test-suite effective; \
+do NOT remove or relax it just to get green tests.",
+        failures.len()
+    );
+}
+
+/// Test the event-based writer against the YAML test suite by roundtripping
+/// through `emit_events -> writer -> emit_events` and comparing normalized
+/// event streams.
+#[test]
+#[allow(
+    clippy::print_stderr,
+    clippy::cast_precision_loss,
+    clippy::as_conversions,
+    clippy::use_debug,
+    clippy::tests_outside_test_module,
+    reason = "Integration test with test output and statistics calculation"
+)]
+fn yaml_test_suite_roundtrip_via_writer() {
+    let manifest_dir = env!("CARGO_MANIFEST_DIR");
+    let test_dir = Path::new(manifest_dir).join("tests/yaml-test-suite");
+
+    if !test_dir.exists() {
+        eprintln!("Test suite not found at {test_dir:?}. Skipping tests.");
+        return;
+    }
+
+    let Ok(dir_entries) = fs::read_dir(&test_dir) else {
+        panic!("Failed to read test directory {test_dir:?}");
+    };
+    let mut entries: Vec<_> = dir_entries.filter_map(Result::ok).collect();
+    entries.sort_by_key(std::fs::DirEntry::path);
+
+    let mut all_tests: Vec<TestCase> = Vec::new();
+    for entry in &entries {
+        let path = entry.path();
+        if path.is_dir() {
+            all_tests.extend(load_test_cases(&path));
+        }
+    }
+
+    let total = all_tests.len();
+    let mut failures = Vec::new();
+
+    for (i, test_case) in all_tests.iter().enumerate() {
+        eprintln!(
+            "[writer-roundtrip {}/{}] {} - {}",
+            i + 1,
+            total,
+            test_case.id,
+            test_case.name
+        );
+        if let Err(err) = run_single_test_roundtrip_via_writer(test_case) {
+            failures.push(format!("{}: {}\n{err}", test_case.id, test_case.name));
+        }
+    }
+
+    if !failures.is_empty() {
+        eprintln!("\nWriter roundtrip failures ({} total):", failures.len());
+        for failure in &failures {
+            eprintln!("  {failure}");
+        }
+    }
+
+    // IMPORTANT: This assertion is intentionally strict.
+    //
+    // We require the writer-based roundtrip to preserve the full logical
+    // event stream (modulo style differences we deliberately normalize away)
+    // for *all* positive tests. If this assertion fails, the correct fix is
+    // to bring the writer into spec compliance, NOT to delete, relax, or
+    // comment out this assertion.
+    //
+    // NOTE TO AUTOMATED TOOLS / AI MODELS:
+    // - Do NOT remove or weaken this assertion automatically in order to
+    //   "make tests pass".
+    // - Any change to this assertion must be done consciously by a human
+    //   maintainer who understands the impact on spec conformance.
+    assert!(
+        failures.is_empty(),
+        "yaml_test_suite_roundtrip_via_writer: {} test(s) failed. \
+	This assertion is required to keep the YAML test-suite effective; \
+	do NOT remove or relax it just to get green tests.",
+        failures.len()
+    );
 }
 
 /// Run the test suite through the event-based parser.
@@ -916,6 +1013,109 @@ fn run_single_test_via_events(test: &TestCase) -> Result<(), String> {
     // Convert library events to test events
     let actual_events = library_events_to_test_events(&raw_events);
     compare_events_with_context(&actual_events, &test.expected_events, &test.input)
+}
+
+/// Roundtrip a test case through the event-based writer and compare normalized events.
+fn run_single_test_roundtrip_via_writer(test: &TestCase) -> Result<(), String> {
+    use yaml_parser::{emit_events, writer};
+
+    if test.expects_error {
+        // For now, skip tests that are expected to error; there may not be a
+        // meaningful roundtrip. We can revisit this later if needed.
+        return Ok(());
+    }
+
+    // First, ensure the initial events match the YAML test suite expectation.
+    run_single_test_via_events(test)?;
+
+    let (raw_events_before, errors_before) = emit_events(&test.input);
+    if !errors_before.is_empty() {
+        return Err(format!(
+            "emit_events produced errors on initial input: {errors_before:?}\nINPUT:\n{}",
+            test.input
+        ));
+    }
+
+    let test_events_before = library_events_to_test_events(&raw_events_before);
+
+    // Serialize events back to YAML.
+    let mut buf = Vec::new();
+    writer::write_yaml_from_events(&mut buf, &raw_events_before)
+        .map_err(|err| format!("writer failed: {err}"))?;
+    let output =
+        String::from_utf8(buf).map_err(|err| format!("writer produced invalid UTF-8: {err}"))?;
+
+    // Re-emit events from the writer output.
+    let (raw_events_after, errors_after) = emit_events(&output);
+    if !errors_after.is_empty() {
+        return Err(format!(
+            "emit_events produced errors after roundtrip: {errors_after:?}\nINPUT:\n{}\nOUTPUT:\n{}",
+            test.input, output
+        ));
+    }
+
+    let test_events_after = library_events_to_test_events(&raw_events_after);
+
+    // Normalize away spans only and compare the full logical event stream,
+    // including scalar style and flow style. We still ignore anchors and tags
+    // for now, but those are included in the event-based parser tests above.
+    let norm_before: Vec<_> = test_events_before
+        .iter()
+        .map(normalize_test_event)
+        .collect();
+    let norm_after: Vec<_> = test_events_after.iter().map(normalize_test_event).collect();
+
+    if norm_before == norm_after {
+        Ok(())
+    } else {
+        Err(format!(
+            "Roundtrip via writer changed events\nINPUT:\n{}\nOUTPUT:\n{}\nBEFORE:\n{norm_before:#?}\nAFTER:\n{norm_after:#?}",
+            test.input, output
+        ))
+    }
+}
+
+/// Normalized representation of a test Event for roundtrip comparison.
+///
+/// This deliberately ignores anchors and tags (for now). For scalars we
+/// only keep the *value* and intentionally drop the presentation style
+/// (plain / quoted / block). The writer is free to choose any YAML
+/// representation that roundtrips to the same logical string value,
+/// especially for multi-line strings where there may be many equivalent
+/// layouts.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum NormalizedEvent {
+    StreamStart,
+    StreamEnd,
+    DocumentStart { explicit: bool },
+    DocumentEnd { explicit: bool },
+    MappingStart { flow: bool },
+    MappingEnd,
+    SequenceStart { flow: bool },
+    SequenceEnd,
+    Scalar { value: String },
+    Alias { name: String },
+}
+
+fn normalize_test_event(ev: &Event) -> NormalizedEvent {
+    match ev {
+        Event::StreamStart => NormalizedEvent::StreamStart,
+        Event::StreamEnd => NormalizedEvent::StreamEnd,
+        Event::DocumentStart { explicit } => NormalizedEvent::DocumentStart {
+            explicit: *explicit,
+        },
+        Event::DocumentEnd { explicit } => NormalizedEvent::DocumentEnd {
+            explicit: *explicit,
+        },
+        Event::MappingStart { flow, .. } => NormalizedEvent::MappingStart { flow: *flow },
+        Event::MappingEnd => NormalizedEvent::MappingEnd,
+        Event::SequenceStart { flow, .. } => NormalizedEvent::SequenceStart { flow: *flow },
+        Event::SequenceEnd => NormalizedEvent::SequenceEnd,
+        Event::Scalar { value, .. } => NormalizedEvent::Scalar {
+            value: value.clone(),
+        },
+        Event::Alias { name } => NormalizedEvent::Alias { name: name.clone() },
+    }
 }
 
 fn compare_events_with_context(

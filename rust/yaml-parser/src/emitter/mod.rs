@@ -5222,6 +5222,7 @@ impl<'input> Emitter<'_, 'input> {
             // Track whether this line has any non-whitespace content so we can
             // classify purely-whitespace lines without re-scanning all parts.
             let mut has_non_whitespace = false;
+            let mut has_tab_in_prefix = false;
             let line_type;
             let mut line_end_span = line_start_span;
 
@@ -5255,6 +5256,13 @@ impl<'input> Emitter<'_, 'input> {
                         )]
                         {
                             let ws = &self.input[span.start_usize()..span.end_usize()];
+                            if !has_non_whitespace {
+                                // Tabs before any non-whitespace content are part of
+                                // the leading indentation within the block scalar
+                                // content. Treating such lines as "more-indented"
+                                // matches the YAML folding semantics tested by MJS9.
+                                has_tab_in_prefix = true;
+                            }
                             line_parts.push(Cow::Borrowed(ws));
                         }
                         line_end_span = span;
@@ -5341,7 +5349,13 @@ impl<'input> Emitter<'_, 'input> {
                     // Whitespace-only line: treat as more-indented whitespace.
                     line_type = LineType::MoreIndent;
                 }
-            } else if extra_indent > 0 {
+            } else if extra_indent > 0 || has_tab_in_prefix {
+                // Lines that are visually more-indented than the content
+                // indent, including lines whose leading whitespace contains
+                // tabs before the first non-whitespace character, are
+                // treated as `MoreIndent`. This matches the YAML test suite
+                // case MJS9 (Spec Example 6.7. Block Folding), where a line
+                // starting with a tab must be preserved more literally.
                 line_type = LineType::MoreIndent;
             } else {
                 line_type = LineType::Normal;
@@ -5436,8 +5450,10 @@ impl<'input> Emitter<'_, 'input> {
         // whitespace-only lines).
         let is_empty_scalar = !scalar_has_any_part;
 
-        // Apply chomping
-        let chomped_value = Self::apply_chomping(&value, &header);
+        // Apply chomping. We pass `is_empty_scalar` so that `Chomping::Clip`
+        // can distinguish truly empty scalars (like K858's `clip: >` with no
+        // content) from scalars that merely end with newlines.
+        let chomped_value = Self::apply_chomping(&value, &header, is_empty_scalar);
 
         let style = if is_literal {
             ScalarStyle::Literal
@@ -5463,7 +5479,16 @@ impl<'input> Emitter<'_, 'input> {
     // a streaming implementation; helper removed.
 
     /// Apply chomping indicator to block scalar value.
-    fn apply_chomping(value: &str, header: &crate::lexer::BlockScalarHeader) -> String {
+    ///
+    /// `is_empty_scalar` is true when no logical line contributed any
+    /// content parts at all. This lets us distinguish truly empty block
+    /// scalars (like K858's `clip: >` with no content lines) from scalars
+    /// that merely end with trailing newlines.
+    fn apply_chomping(
+        value: &str,
+        header: &crate::lexer::BlockScalarHeader,
+        is_empty_scalar: bool,
+    ) -> String {
         use crate::lexer::Chomping;
 
         match header.chomping {
@@ -5474,9 +5499,14 @@ impl<'input> Emitter<'_, 'input> {
                 trimmed.to_owned()
             }
             Chomping::Clip => {
-                // Clip: ensure at most one trailing newline, and only if there's
-                // actual content. This matches the intended YAML semantics.
-                if value.is_empty() {
+                // Clip: ensure at most one trailing newline, and only if
+                // there's actual content.
+                //
+                // For *truly empty* block scalars (no content lines at all),
+                // the YAML Test Suite (K858) expects an empty string even for
+                // `>` (clip). Treat those separately based on
+                // `is_empty_scalar` instead of just looking at `value`.
+                if is_empty_scalar {
                     return String::new();
                 }
 
@@ -5487,6 +5517,10 @@ impl<'input> Emitter<'_, 'input> {
                     result.push_str(trimmed);
                     result.push('\n');
                     result
+                } else if value.is_empty() {
+                    // Non-empty scalar should always have at least one
+                    // newline, but be defensive.
+                    String::new()
                 } else {
                     // No trailing newline yet: add exactly one.
                     let mut result = String::with_capacity(value.len() + 1);

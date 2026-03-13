@@ -87,3 +87,76 @@ Sketch:
 - Carefully manage buffer growth and compaction so that spans and `Cow<'input, str>` values remain valid.
 
 This step is only needed if the project requires truly large-input streaming; for current use (config-sized YAML), reading into memory first is acceptable.
+
+---
+
+## Serialization plan – events as the central layer
+
+In addition to the deserialization/streaming work above, we want a serializer design that:
+
+1. Uses **events** as the primary representation for emitting YAML, so we can eventually preserve comments, descriptions, and spacing.
+2. Can be tested independently by round-tripping YAML through the existing **lexer + emitter + new event-based serializer**.
+3. Aligns with a future fully streaming serde deserializer that also operates directly on events.
+
+The current plan for serialization is:
+
+### Step 1a – Initial YAML serializer from events
+
+**Objective:** Implement a first-cut YAML emitter that takes a complete `Vec<Event<'_>>` (as produced by `emit_events`) and writes YAML text. This version will be conservative and block-style only, but structurally correct.
+
+High-level tasks:
+
+- Add an internal module (e.g. `writer` or `event_writer`) that exposes a function like:
+  - `write_yaml_from_events<W: Write>(writer: W, events: &[Event<'_>]) -> io::Result<()>`.
+- Implement a simple, deterministic mapping from events to YAML:
+  - Ignore most presentation details initially (e.g., always use block mappings/sequences, conservative quoting for scalars, skip tags/anchors or handle them minimally).
+  - Ensure output YAML parses back to an equivalent event stream for *simple* documents (single document, scalar keys, scalar/collection values).
+- Keep the implementation intentionally straightforward, even if it does not yet handle all YAML 1.2 edge cases.
+
+### Step 1b – Tighten the event-based serializer using roundtrip testing
+
+**Objective:** Strengthen the initial event-based YAML serializer so it forms a solid foundation before building serde serialization on top.
+
+High-level tasks:
+
+- Add tests that:
+  - Take input YAML from selected YAML Test Suite cases.
+  - Run it through `emit_events`.
+  - Serialize those events back to YAML using the new writer.
+  - Re-run `emit_events` on the serializer output.
+  - Compare the resulting events to the original ones using a *normalized* comparison that ignores spans and, initially, some presentation details (e.g. flow vs block style), but checks structural equivalence (stream/doc/map/seq boundaries, scalar values, anchors/aliases where supported).
+- Iterate on the writer to:
+  - Handle more YAML constructs correctly (anchors, aliases, flow collections where feasible, multiline scalars, etc.).
+  - Reduce the set of ignored differences in the normalized comparison.
+- Only move on to serde serialization once the event-based writer behaves robustly across a representative subset of the YAML Test Suite.
+
+### Step 2 – Value/AST to events serializer (serde-ready)
+
+**Objective:** Provide a reusable conversion from `Node` / `Value` to events, so both serde serialization and other tooling can emit events without going back through the low-level emitter.
+
+High-level tasks:
+
+- Add a small module that can traverse `Node<'input>` / `Value<'input>` and emit a structurally equivalent sequence of events:
+  - `Value::Null/Bool/Int/Float/String` → `Scalar` events.
+  - `Value::Sequence` → `SequenceStart` / items / `SequenceEnd`.
+  - `Value::Mapping` → `MappingStart` / (key, value) pairs / `MappingEnd`.
+  - `Value::Alias` → `Alias`.
+  - Node properties (anchors/tags) → event `Properties` when appropriate.
+- Decide on behaviour for `Value::Invalid` when serializing (likely an error surfaced at the serde layer).
+- Ensure that running `parse` (AST) → value-to-events → event-based writer produces YAML that round-trips back into an equivalent AST for typical configuration inputs.
+
+### Step 3 – Serde serializer via Value → events → YAML
+
+**Objective:** Implement a `serde` serializer that reuses the Value → events converter and the event-based YAML writer, so serde-based code can emit YAML without depending on `serde_yaml`.
+
+High-level tasks:
+
+- Add a `serde` serialization module with:
+  - A `SerError` type (mirroring `DeError` style: specific variants and `derive_more::Display`).
+  - A `ValueSerializer` implementing `serde::Serializer` that builds a `Value<'static>` (or `Node<'static>`) from arbitrary `T: Serialize`.
+  - Public helpers like:
+    - `to_writer<W: Write, T: Serialize>(writer: W, value: &T) -> Result<(), SerError>`
+    - `to_string<T: Serialize>(value: &T) -> Result<String, SerError>`
+- Wire `to_writer` / `to_string` as:
+  - `T: Serialize` → `ValueSerializer` → `Value<'static>` → Value → events → event-based YAML writer.
+- Once stable, switch remaining `serde_yaml::to_writer` call sites (e.g. in `avdschema::utils::dump`) to use `yaml-parser`’s serde-based serializer instead, and then remove `serde_yaml` as a dumping dependency.
