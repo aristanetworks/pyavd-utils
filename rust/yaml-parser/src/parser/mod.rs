@@ -26,7 +26,7 @@ use std::collections::HashSet;
 use crate::error::{ErrorKind, ParseError};
 use crate::event::{Event, Properties as EventProperties, Property as EventProperty, ScalarStyle};
 use crate::span::Span;
-use crate::value::{Node, Properties as NodeProperties, Value};
+use crate::value::{Node, Number, Properties as NodeProperties, Value};
 
 /// Parser that builds AST from a streaming source of events.
 ///
@@ -378,10 +378,25 @@ where
             "true" | "True" | "TRUE" => Value::Bool(true),
             "false" | "False" | "FALSE" => Value::Bool(false),
             _ => {
-                // Try integer
+                // Try integer, widening through i64 -> i128 -> u128. This
+                // allows us to represent a wide range of integer values
+                // directly as numbers.
                 if let Ok(int) = value.parse::<i64>() {
-                    return Value::Int(int);
+                    return Value::Int(Number::I64(int));
                 }
+                if let Ok(int) = value.parse::<i128>() {
+                    return Value::Int(Number::I128(int));
+                }
+                if let Ok(uint) = value.parse::<u128>() {
+                    return Value::Int(Number::U128(uint));
+                }
+
+                // If it still looks like a plain decimal integer but does not
+                // fit in i128/u128, store it as a textual big integer.
+                if Self::looks_like_decimal_integer(value.as_ref()) {
+                    return Value::Int(Number::BigIntStr(value));
+                }
+
                 // Try float
                 if let Ok(float) = value.parse::<f64>() {
                     return Value::Float(float);
@@ -397,6 +412,27 @@ where
                 Value::String(value)
             }
         }
+    }
+
+    /// Lightweight check to see if a scalar looks like a plain decimal integer
+    /// (optional sign followed by digits only). Used to decide when to
+    /// represent a value as `Number::BigIntStr` if it does not fit in the
+    /// native integer ranges.
+    fn looks_like_decimal_integer(input: &str) -> bool {
+        let trimmed = input.trim();
+        if trimmed.is_empty() {
+            return false;
+        }
+        let bytes = trimmed.as_bytes();
+        let Some((first, rest)) = bytes.split_first() else {
+            return false;
+        };
+        let has_sign = *first == b'+' || *first == b'-';
+        let digit_bytes: &[u8] = if has_sign { rest } else { bytes };
+        if has_sign && digit_bytes.is_empty() {
+            return false;
+        }
+        digit_bytes.iter().all(u8::is_ascii_digit)
     }
 }
 
@@ -501,7 +537,10 @@ mod tests {
     fn test_parse_number_values() {
         let (docs, errors) = parse("42");
         assert!(errors.is_empty());
-        assert!(matches!(&docs.first().unwrap().value, Value::Int(42)));
+        assert!(matches!(
+            &docs.first().unwrap().value,
+            Value::Int(Number::I64(42))
+        ));
 
         let (docs_, errors_) = parse("3.45");
         assert!(errors_.is_empty());
@@ -668,7 +707,7 @@ mod tests {
             ("true", |v| matches!(v, Value::Bool(true))),
             ("false", |v| matches!(v, Value::Bool(false))),
             ("null", |v| matches!(v, Value::Null)),
-            ("42", |v| matches!(v, Value::Int(42))),
+            ("42", |v| matches!(v, Value::Int(Number::I64(42)))),
             (
                 "3.14",
                 |v| matches!(v, Value::Float(f) if (*f - 3.14).abs() < 0.001),
@@ -695,10 +734,10 @@ mod tests {
             assert_eq!(pairs.len(), 2);
             // First pair
             assert!(matches!(&pairs[0].0.value, Value::String(s) if s == "a"));
-            assert!(matches!(&pairs[0].1.value, Value::Int(1)));
+            assert!(matches!(&pairs[0].1.value, Value::Int(Number::I64(1))));
             // Second pair
             assert!(matches!(&pairs[1].0.value, Value::String(s) if s == "b"));
-            assert!(matches!(&pairs[1].1.value, Value::Int(2)));
+            assert!(matches!(&pairs[1].1.value, Value::Int(Number::I64(2))));
         } else {
             panic!("Expected mapping, got: {:?}", nodes[0].value);
         }
@@ -738,9 +777,9 @@ mod tests {
 
         if let Value::Sequence(items) = &nodes[0].value {
             assert_eq!(items.len(), 3);
-            assert!(matches!(&items[0].value, Value::Int(1)));
-            assert!(matches!(&items[1].value, Value::Int(2)));
-            assert!(matches!(&items[2].value, Value::Int(3)));
+            assert!(matches!(&items[0].value, Value::Int(Number::I64(1))));
+            assert!(matches!(&items[1].value, Value::Int(Number::I64(2))));
+            assert!(matches!(&items[2].value, Value::Int(Number::I64(3))));
         } else {
             panic!("Expected sequence, got: {:?}", nodes[0].value);
         }
@@ -819,7 +858,7 @@ mod tests {
             // First item is mapping
             if let Value::Mapping(pairs) = &items[0].value {
                 assert!(matches!(&pairs[0].0.value, Value::String(s) if s == "a"));
-                assert!(matches!(&pairs[0].1.value, Value::Int(1)));
+                assert!(matches!(&pairs[0].1.value, Value::Int(Number::I64(1))));
             } else {
                 panic!("Expected mapping, got: {:?}", items[0].value);
             }

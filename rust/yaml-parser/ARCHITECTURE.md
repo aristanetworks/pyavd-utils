@@ -98,7 +98,7 @@ The parser uses a **three-layer architecture** with unified streaming tokenizati
                            ▼
 ┌─────────────────────────────────────────────────────────────┐
 │  Layer 3: Event-to-AST Parser (parser::Parser)              │
-│  - Consumes &[Event<'input>]                                │
+│  - Consumes a streaming event source with 1-element peek    │
 │  - Reconstructs AST (Vec<Node<'input>>) from event stream   │
 │  - Applies scalar type inference                            │
 │  - Resolves anchors and validates aliases                   │
@@ -231,16 +231,43 @@ The parser uses a **three-layer architecture** with unified streaming tokenizati
 
 #### `value.rs` - AST Types
 
+- **`Properties<'input>`**: Optional node-level properties (anchor, tag)
+
+  ```rust
+  pub struct Properties<'input> {
+      pub anchor: Option<Cow<'input, str>>,  // &name (zero-copy)
+      pub tag: Option<Cow<'input, str>>,     // !tag (zero-copy)
+  }
+  ```
+
+  Properties are boxed inside `Node` to keep the common case (no properties)
+  small while still supporting anchors and tags on any node.
+
 - **`Node<'input>`**: The core AST node type with zero-copy support
 
   ```rust
   pub struct Node<'input> {
-      pub anchor: Option<Cow<'input, str>>,  // &name (zero-copy)
-      pub tag: Option<Cow<'input, str>>,     // !tag (zero-copy)
-      pub value: Value<'input>,              // The actual content
-      pub span: Span,                        // Source location
+      pub properties: Option<Box<Properties<'input>>>,
+      pub value: Value<'input>,  // The actual content
+      pub span: Span,            // Source location
   }
   ```
+
+- **`Number<'input>`**: Flexible integer representation
+
+  ```rust
+  pub enum Number<'input> {
+      I64(i64),
+      U64(u64),
+      I128(i128),
+      U128(u128),
+      BigIntStr(Cow<'input, str>), // very large decimal integers
+  }
+  ```
+
+  `BigIntStr` preserves decimal integers that do not fit in the native
+  `i128` / `u128` ranges as their original textual representation while still
+  allowing them to be re-emitted as numeric scalars in YAML.
 
 - **`Value<'input>`**: The actual YAML value with zero-copy support
 
@@ -248,17 +275,17 @@ The parser uses a **three-layer architecture** with unified streaming tokenizati
   pub enum Value<'input> {
       Null,
       Bool(bool),
-      Int(i64),
+      Int(Number<'input>),
       Float(f64),
       String(Cow<'input, str>),       // Zero-copy when possible
       Sequence(Vec<Node<'input>>),
       Mapping(Vec<(Node<'input>, Node<'input>)>),
       Alias(Cow<'input, str>),        // Zero-copy when possible
-      Invalid,
   }
   ```
 
-- **Zero-Copy Design**: Uses `Cow<'input, str>` (Copy-on-Write) for string content
+- **Zero-Copy Design**: Uses `Cow<'input, str>` (Copy-on-Write) for string and
+  some numeric content
   - `Cow::Borrowed(&str)` - zero allocation, borrows from input
   - `Cow::Owned(String)` - allocated when content is transformed (escapes, multiline)
   - `into_owned()` methods convert to `'static` lifetime when needed
@@ -784,9 +811,8 @@ where needed (e.g., `InvalidIndentationContext { expected: u16, found: u16 }`).
 
 1. **Lexer-level errors**: When the lexer encounters invalid input, it records a `ParseError`
    and attempts to continue tokenizing from the next safe point.
-2. **Invalid Nodes**: The parser produces `Value::Invalid` for unparsable structures.
-3. **Continue Parsing**: After an error, the parser skips to the next reasonable boundary and continues.
-4. **Partial Collections**: Collections with errors still include valid elements.
+    2. **Continue Parsing**: After an error, the parser skips to the next reasonable boundary and continues.
+    3. **Partial Collections**: Collections with errors still include valid elements.
 
 ### Example
 

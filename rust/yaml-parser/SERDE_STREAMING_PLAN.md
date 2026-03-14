@@ -145,6 +145,13 @@ High-level tasks:
 - Decide on behaviour for `Value::Invalid` when serializing (likely an error surfaced at the serde layer).
 - Ensure that running `parse` (AST) → value-to-events → event-based writer produces YAML that round-trips back into an equivalent AST for typical configuration inputs.
 
+Status (2026-03-13):
+
+- Implemented in the internal `ast_events` module as `node_to_events` / `emit_node_events` helpers:
+  - All `Value` variants are mapped to the corresponding `Event` forms using block-style collections.
+  - Node anchors/tags are converted into event `Properties`, but the property span is currently approximated using the node span (the original per-property spans are not available at the AST layer).
+- Covered by tests in `serde::ser` that exercise `parse` → AST → events → writer → `parse` and assert AST equality for typical configuration-shaped inputs.
+
 ### Step 3 – Serde serializer via Value → events → YAML
 
 **Objective:** Implement a `serde` serializer that reuses the Value → events converter and the event-based YAML writer, so serde-based code can emit YAML without depending on `serde_yaml`.
@@ -160,3 +167,20 @@ High-level tasks:
 - Wire `to_writer` / `to_string` as:
   - `T: Serialize` → `ValueSerializer` → `Value<'static>` → Value → events → event-based YAML writer.
 - Once stable, switch remaining `serde_yaml::to_writer` call sites (e.g. in `avdschema::utils::dump`) to use `yaml-parser`’s serde-based serializer instead, and then remove `serde_yaml` as a dumping dependency.
+
+Status (2026-03-13):
+
+- Implemented `yaml_parser::serde::SerError` and `ValueSerializer` plus helpers `to_writer` / `to_string`.
+  - `SerError` mirrors `DeError` style (specific variants and `derive_more::Display`) and reports:
+    - I/O failures (`Io`).
+    - Non-finite floats (`UnsupportedFloat`).
+    - Mapping entries without a prior key (`ValueWithoutKey`).
+    - Generic serde errors via `Custom`.
+  - `ValueSerializer` supports the common serde surface (bools, integers, finite floats, strings, options, sequences, maps, structs and enums via variant mappings).
+    - All Rust integer types (`i*`, `u*`) are represented losslessly using the internal `Number` type (`I64`, `U64`, `I128`, `U128`, `BigIntStr`), so there are no integer-range serialization errors.
+    - `serialize_bytes` is currently encoded as a sequence of integer scalars, which is sufficient for internal use but diverges from `serde_yaml`’s binary handling.
+    - `serialize_enum` for manually implemented enums falls back to delegating to the enum value’s own `Serialize` implementation; derived enums use the more specific `*_variant` paths.
+- Round-trip tests are in `serde::ser`:
+  - `to_string_roundtrips_via_serde` checks `Serialize` → `to_string` → `yaml_parser::serde::from_str` → `Deserialize` for a simple config struct.
+  - `ast_to_events_writer_roundtrip_preserves_values` validates the full pipeline
+    `parse` → AST → events → writer → `parse` and asserts that the AST values are preserved for typical configuration inputs.

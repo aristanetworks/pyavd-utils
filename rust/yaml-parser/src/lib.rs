@@ -44,6 +44,9 @@ mod span;
 mod stream;
 mod value;
 
+#[cfg(feature = "serde")]
+mod ast_events;
+
 pub mod writer;
 
 #[cfg(feature = "serde")]
@@ -54,7 +57,7 @@ pub use error::{ErrorKind, ParseError};
 pub use event::{CollectionStyle, Event, ScalarStyle};
 pub use span::{Position, SourceMap, Span, Spanned};
 pub use stream::Stream;
-pub use value::{Node, Properties, Value};
+pub use value::{Node, Number, Properties, Value};
 
 /// Parse YAML input and return the parsed documents and any errors encountered.
 ///

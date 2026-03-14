@@ -8,5 +8,7 @@
 //! `serde`, built on top of the parser's AST (`Node` / `Value`).
 
 mod de;
+mod ser;
 
 pub use de::{DeError, from_reader, from_str};
+pub use ser::{SerError, to_string, to_writer};

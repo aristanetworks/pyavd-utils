@@ -23,6 +23,230 @@ use std::borrow::Cow;
 
 use crate::span::Span;
 
+/// Numeric value representation used by `Value::Int`.
+///
+/// This allows representing a wide range of integer values while still
+/// preserving the original textual representation for very large numbers.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Number<'input> {
+    /// Negative / positive integers that fit in `i64`.
+    I64(i64),
+    /// Non-negative integers that fit in `u64`.
+    U64(u64),
+    /// Larger negative integers.
+    I128(i128),
+    /// Larger non-negative integers.
+    U128(u128),
+    /// Decimal integer that did not fit in the above, stored as text.
+    BigIntStr(Cow<'input, str>),
+}
+
+impl Number<'_> {
+    /// Convert this number to an owned `'static` variant.
+    #[must_use]
+    pub fn into_owned(self) -> Number<'static> {
+        match self {
+            Number::I64(value) => Number::I64(value),
+            Number::U64(value) => Number::U64(value),
+            Number::I128(value) => Number::I128(value),
+            Number::U128(value) => Number::U128(value),
+            Number::BigIntStr(text) => Number::BigIntStr(Cow::Owned(text.into_owned())),
+        }
+    }
+
+    /// Return the decimal string representation of this number.
+    #[must_use]
+    pub fn to_decimal_string(&self) -> Cow<'_, str> {
+        match self {
+            Number::I64(value) => Cow::Owned(value.to_string()),
+            Number::U64(value) => Cow::Owned(value.to_string()),
+            Number::I128(value) => Cow::Owned(value.to_string()),
+            Number::U128(value) => Cow::Owned(value.to_string()),
+            Number::BigIntStr(text) => Cow::Borrowed(text.as_ref()),
+        }
+    }
+}
+
+#[cfg(feature = "serde")]
+mod serde_impls {
+    use super::{Node, Number, Value};
+    use crate::span::Span;
+    use serde::de::{self, Deserialize, Deserializer, MapAccess, SeqAccess, Visitor};
+    use serde::ser::{Serialize, SerializeMap as _, SerializeSeq as _, Serializer};
+    use std::fmt;
+
+    impl Serialize for Value<'_> {
+        fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: Serializer,
+        {
+            match self {
+                Value::Null => serializer.serialize_unit(),
+                Value::Bool(bool_value) => serializer.serialize_bool(*bool_value),
+                Value::Int(number) => match number {
+                    Number::I64(i64_value) => serializer.serialize_i64(*i64_value),
+                    Number::U64(u64_value) => serializer.serialize_u64(*u64_value),
+                    Number::I128(i128_value) => serializer.serialize_i128(*i128_value),
+                    Number::U128(u128_value) => serializer.serialize_u128(*u128_value),
+                    // Fall back to string for very large integers.
+                    Number::BigIntStr(text) => serializer.serialize_str(text.as_ref()),
+                },
+                Value::Float(float_value) => serializer.serialize_f64(*float_value),
+                Value::String(string_value) => serializer.serialize_str(string_value.as_ref()),
+                Value::Sequence(items) => {
+                    let mut seq = serializer.serialize_seq(Some(items.len()))?;
+                    for node in items {
+                        seq.serialize_element(&node.value)?;
+                    }
+                    seq.end()
+                }
+                Value::Mapping(pairs) => {
+                    let mut map = serializer.serialize_map(Some(pairs.len()))?;
+                    for (key_node, value_node) in pairs {
+                        map.serialize_entry(&key_node.value, &value_node.value)?;
+                    }
+                    map.end()
+                }
+                // For generic serde, aliases are represented as plain strings.
+                Value::Alias(name) => serializer.serialize_str(name.as_ref()),
+            }
+        }
+    }
+
+    struct ValueVisitor;
+
+    impl<'de> Visitor<'de> for ValueVisitor {
+        type Value = Value<'de>;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+            formatter.write_str("any valid serde value")
+        }
+
+        fn visit_unit<E>(self) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(Value::Null)
+        }
+
+        fn visit_none<E>(self) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(Value::Null)
+        }
+
+        fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            Value::deserialize(deserializer)
+        }
+
+        fn visit_bool<E>(self, v: bool) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(Value::Bool(v))
+        }
+
+        fn visit_i64<E>(self, v: i64) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(Value::Int(Number::I64(v)))
+        }
+
+        fn visit_i128<E>(self, v: i128) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(Value::Int(Number::I128(v)))
+        }
+
+        fn visit_u64<E>(self, v: u64) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(Value::Int(Number::U64(v)))
+        }
+
+        fn visit_u128<E>(self, v: u128) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(Value::Int(Number::U128(v)))
+        }
+
+        fn visit_f64<E>(self, v: f64) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(Value::Float(v))
+        }
+
+        fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(Value::String(std::borrow::Cow::Owned(v.to_owned())))
+        }
+
+        fn visit_string<E>(self, v: String) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(Value::String(std::borrow::Cow::Owned(v)))
+        }
+
+        fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+        where
+            A: SeqAccess<'de>,
+        {
+            let mut items = Vec::new();
+            while let Some(elem) = seq.next_element::<Value<'de>>()? {
+                let node = Node {
+                    properties: None,
+                    value: elem,
+                    span: Span::default(),
+                };
+                items.push(node);
+            }
+            Ok(Value::Sequence(items))
+        }
+
+        fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+        where
+            A: MapAccess<'de>,
+        {
+            let mut pairs = Vec::new();
+            while let Some((key, value)) = map.next_entry::<Value<'de>, Value<'de>>()? {
+                let key_node = Node {
+                    properties: None,
+                    value: key,
+                    span: Span::default(),
+                };
+                let value_node = Node {
+                    properties: None,
+                    value,
+                    span: Span::default(),
+                };
+                pairs.push((key_node, value_node));
+            }
+            Ok(Value::Mapping(pairs))
+        }
+    }
+
+    impl<'de> Deserialize<'de> for Value<'de> {
+        fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            deserializer.deserialize_any(ValueVisitor)
+        }
+    }
+}
+
 /// Optional properties (anchor, tag) for a YAML node.
 ///
 /// This is boxed within `Node` to reduce memory footprint since most nodes
@@ -129,12 +353,6 @@ impl<'input> Node<'input> {
         Self::new(Value::Null, span)
     }
 
-    /// Create an invalid node (for error recovery).
-    #[must_use]
-    pub fn invalid(span: Span) -> Self {
-        Self::new(Value::Invalid, span)
-    }
-
     /// Returns the anchor if present.
     #[must_use]
     pub fn anchor(&self) -> Option<&str> {
@@ -195,8 +413,8 @@ pub enum Value<'input> {
     /// A boolean value (`true` or `false`)
     Bool(bool),
 
-    /// An integer value
-    Int(i64),
+    /// An integer value represented using the flexible `Number` type.
+    Int(Number<'input>),
 
     /// A floating-point value
     Float(f64),
@@ -218,12 +436,6 @@ pub enum Value<'input> {
     /// Note: Aliases don't have their own anchor/tag properties in YAML.
     /// Uses `Cow` (usually borrowed) for zero-copy while supporting `into_owned()`.
     Alias(Cow<'input, str>),
-
-    /// An invalid node (placeholder for error recovery)
-    ///
-    /// When the parser encounters an error and recovers, it may insert
-    /// this node to represent the invalid portion of the input.
-    Invalid,
 }
 
 impl Value<'_> {
@@ -231,12 +443,6 @@ impl Value<'_> {
     #[must_use]
     pub const fn is_null(&self) -> bool {
         matches!(self, Self::Null)
-    }
-
-    /// Returns `true` if this is an invalid/error node.
-    #[must_use]
-    pub const fn is_invalid(&self) -> bool {
-        matches!(self, Self::Invalid)
     }
 
     /// Returns `true` if this is a scalar value (null, bool, int, float, string).
@@ -262,7 +468,7 @@ impl Value<'_> {
         match self {
             Self::Null => Value::Null,
             Self::Bool(val) => Value::Bool(val),
-            Self::Int(val) => Value::Int(val),
+            Self::Int(number) => Value::Int(number.into_owned()),
             Self::Float(val) => Value::Float(val),
             Self::String(cow) => Value::String(Cow::Owned(cow.into_owned())),
             Self::Sequence(seq) => Value::Sequence(seq.into_iter().map(Node::into_owned).collect()),
@@ -272,7 +478,6 @@ impl Value<'_> {
                     .collect(),
             ),
             Self::Alias(cow) => Value::Alias(Cow::Owned(cow.into_owned())),
-            Self::Invalid => Value::Invalid,
         }
     }
 }
@@ -289,14 +494,12 @@ mod tests {
         assert!(!Value::<'_>::Null.is_collection());
 
         assert!(Value::Bool(true).is_scalar());
-        assert!(Value::Int(42).is_scalar());
+        assert!(Value::Int(Number::I64(42)).is_scalar());
         assert!(Value::Float(1.5).is_scalar());
         assert!(Value::String(Cow::Borrowed("hello")).is_scalar());
 
         assert!(Value::<'_>::Sequence(vec![]).is_collection());
         assert!(Value::<'_>::Mapping(vec![]).is_collection());
-
-        assert!(Value::<'_>::Invalid.is_invalid());
     }
 
     #[test]
@@ -322,10 +525,6 @@ mod tests {
         // Null node
         let node4 = Node::null(span);
         assert!(node4.value.is_null());
-
-        // Invalid node
-        let node5 = Node::invalid(span);
-        assert!(node5.value.is_invalid());
     }
 
     #[test]

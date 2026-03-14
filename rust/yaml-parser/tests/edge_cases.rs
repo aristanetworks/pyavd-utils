@@ -17,7 +17,7 @@
               like 'exactly one document' and makes assertions more readable"
 )]
 
-use yaml_parser::{Value, parse};
+use yaml_parser::{Number, Value, parse};
 
 #[test]
 fn test_empty_input() {
@@ -118,11 +118,28 @@ fn test_integer_edge_cases() {
         assert_eq!(docs.len(), 1, "Input {input:?} should produce 1 document",);
         let doc = docs.first().expect("expected exactly one document");
         assert!(
-            matches!(doc.value, Value::Int(val) if val == expected),
+            matches!(doc.value, Value::Int(Number::I64(val)) if val == expected),
             "Input {input:?} should parse to {expected}, got {:?}",
             doc.value,
         );
     }
+}
+
+#[test]
+fn test_very_large_integer_as_bigintstr() {
+    let input = "123456789012345678901234567890123456789012345678901234567890";
+    let (docs, errors) = parse(input);
+    assert!(errors.is_empty(), "unexpected parse errors: {errors:?}");
+    assert_eq!(docs.len(), 1, "expected a single document");
+    let doc = docs.first().expect("expected exactly one document");
+    assert!(
+        matches!(
+            doc.value,
+            Value::Int(Number::BigIntStr(ref text)) if text.as_ref() == input
+        ),
+        "expected BigIntStr for very large integer, got {:?}",
+        doc.value,
+    );
 }
 
 #[test]

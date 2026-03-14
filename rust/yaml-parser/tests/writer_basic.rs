@@ -66,3 +66,15 @@ fn writer_roundtrip_nested_structures() {
     let input = "outer:\n  inner:\n    - item1\n    - item2\n";
     roundtrip_value(input);
 }
+
+#[test]
+fn writer_roundtrip_anchors_and_tags() {
+    let input = "anchor_node: &a 1\nalias_node: *a\n!!map-tag tagged: !tagged 2\n";
+    roundtrip_value(input);
+}
+
+#[test]
+fn writer_roundtrip_big_integer() {
+    let input = "huge: 12345678901234567890123456789012345678901234567890\n";
+    roundtrip_value(input);
+}

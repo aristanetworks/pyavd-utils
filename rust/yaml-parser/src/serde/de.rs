@@ -9,6 +9,7 @@ use std::io::Read;
 use serde::de::{self, DeserializeOwned, DeserializeSeed, MapAccess, SeqAccess, Visitor};
 use serde::forward_to_deserialize_any;
 
+use crate::value::Number;
 use crate::{Node, ParseError, Value, parse};
 
 /// Error type for serde-based deserialization from yaml-parser.
@@ -33,10 +34,6 @@ pub enum DeError {
     /// An alias referenced an unknown anchor name.
     #[display("unknown YAML alias '{}'", _0)]
     UnknownAlias(String),
-
-    /// The node was marked as invalid by the parser.
-    #[display("invalid YAML node")]
-    InvalidNode,
 
     /// Enum deserialization expected a string representation.
     #[display("expected string for enum")]
@@ -185,7 +182,16 @@ impl<'de> de::Deserializer<'de> for ValueDeserializer<'_, 'de> {
         match self.value {
             Value::Null => visitor.visit_unit(),
             Value::Bool(bool_value) => visitor.visit_bool(*bool_value),
-            Value::Int(int_value) => visitor.visit_i64(*int_value),
+            Value::Int(number) => match number {
+                Number::I64(i64_value) => visitor.visit_i64(*i64_value),
+                Number::U64(u64_value) => visitor.visit_u64(*u64_value),
+                Number::I128(i128_value) => visitor.visit_i128(*i128_value),
+                Number::U128(u128_value) => visitor.visit_u128(*u128_value),
+                Number::BigIntStr(text) => match text {
+                    Cow::Borrowed(borrowed) => visitor.visit_borrowed_str(borrowed),
+                    Cow::Owned(owned) => visitor.visit_string(owned.clone()),
+                },
+            },
             Value::Float(float_value) => visitor.visit_f64(*float_value),
             Value::String(string_value) => match string_value {
                 Cow::Borrowed(borrowed) => visitor.visit_borrowed_str(borrowed),
@@ -209,7 +215,6 @@ impl<'de> de::Deserializer<'de> for ValueDeserializer<'_, 'de> {
                     Err(DeError::UnknownAlias(name.as_ref().to_owned()))
                 }
             }
-            Value::Invalid => Err(DeError::InvalidNode),
         }
     }
 
