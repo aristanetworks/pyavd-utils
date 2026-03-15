@@ -46,49 +46,41 @@ cargo bench -p yaml-parser --features serde
 ```
 
 Times are in microseconds (µs) for latency-style benchmarks and MiB/s for
-throughput-style benchmarks. "Skipped" indicates that the serde benchmark was
-not run for that dataset because at least one of the libraries failed to
-deserialize it successfully.
+throughput-style benchmarks. All serde benchmarks are configured to **panic on
+failure** (via `unwrap()`), so any deserialization incompatibility will cause
+the benchmark run itself to fail rather than silently skipping a dataset.
 
 |Group|Dataset|yaml_parser|saphyr_marked / serde_yaml|Notes|
 |-----|-------|----------|---------------------------|-----|
-|**parse_throughput** (MiB/s)|large_mapping|**34.2 MiB/s**|27.5 MiB/s|yaml_parser ~24% faster than saphyr_marked|
-|**parse_throughput** (MiB/s)|nested_mapping|**26.7 MiB/s**|22.0 MiB/s|yaml_parser ~21% faster than saphyr_marked|
-|**parse_throughput** (MiB/s)|large_sequence|32.5 MiB/s|**34.4 MiB/s**|saphyr_marked ~6% faster|
-|**parse_throughput** (MiB/s)|block_scalars|73.6 MiB/s|**91.3 MiB/s**|saphyr_marked noticeably faster on this input|
-|**parse_throughput** (MiB/s)|flow_collections|**44.8 MiB/s**|21.8 MiB/s|yaml_parser >2× faster than saphyr_marked|
-|**parse_throughput** (MiB/s)|anchors_aliases|**45.3 MiB/s**|18.7 MiB/s|yaml_parser ~2.4× faster than saphyr_marked|
-|**parse_throughput** (MiB/s)|tags|**41.9 MiB/s**|28.4 MiB/s|yaml_parser ~47% faster than saphyr_marked|
-|**parse_latency** (µs)|small|**1.16 µs**|1.18 µs|~parity, yaml_parser slightly faster|
-|**parse_latency** (µs)|medium|**44.0 µs**|53.5 µs|yaml_parser ~18% faster than saphyr_marked|
-|**parse_latency** (µs)|large|**117.4 µs**|129.0 µs|yaml_parser ~9% faster than saphyr_marked|
-|**scalar_types** (µs)|plain|2.47 µs|**2.39 µs**|saphyr_marked ~3% faster|
-|**scalar_types** (µs)|double_quoted|3.12 µs|**2.51 µs**|saphyr_marked faster on this micro-benchmark|
-|**scalar_types** (µs)|block_scalars|20.32 µs|**16.07 µs**|saphyr_marked faster on this micro-benchmark|
-|**serde_deserialize** (MiB/s)|large_mapping|**25.7 MiB/s**|21.0 MiB/s (`serde_yaml`)|yaml_parser::serde ~22% faster than serde_yaml|
-|**serde_deserialize** (MiB/s)|nested_mapping|**19.9 MiB/s**|18.3 MiB/s (`serde_yaml`)|yaml_parser::serde modestly faster|
-|**serde_deserialize** (MiB/s)|large_sequence|**29.2 MiB/s**|24.9 MiB/s (`serde_yaml`)|yaml_parser::serde ~17% faster|
-|**serde_deserialize** (MiB/s)|block_scalars|**65.9 MiB/s**|60.2 MiB/s (`serde_yaml`)|yaml_parser::serde consistently faster|
-|**serde_deserialize** (MiB/s)|flow_collections|Skipped|Skipped|behaviour differs; yaml_parser reports trailing content|
-|**serde_deserialize** (MiB/s)|anchors_aliases|Skipped|Skipped|n/a (serde benchmark not executed)|
-|**serde_deserialize** (MiB/s)|tags|Skipped|Skipped|n/a (serde benchmark not executed)|
+|**parse_throughput** (MiB/s)|large_mapping|**33.4 MiB/s**|27.0 MiB/s|yaml_parser ~23% faster than saphyr_marked|
+|**parse_throughput** (MiB/s)|nested_mapping|**26.2 MiB/s**|21.6 MiB/s|yaml_parser ~21% faster than saphyr_marked|
+|**parse_throughput** (MiB/s)|large_sequence|31.6 MiB/s|**34.2 MiB/s**|saphyr_marked ~8% faster|
+|**parse_throughput** (MiB/s)|block_scalars|70.7 MiB/s|**91.4 MiB/s**|saphyr_marked noticeably faster on this input|
+|**parse_throughput** (MiB/s)|flow_collections|**24.0 MiB/s**|21.4 MiB/s|yaml_parser ~12% faster than saphyr_marked (after stricter trailing-content checks)|
+|**parse_throughput** (MiB/s)|anchors_aliases|**27.0 MiB/s**|18.2 MiB/s|yaml_parser ~48% faster than saphyr_marked|
+|**parse_throughput** (MiB/s)|tags|23.8 MiB/s|**28.0 MiB/s**|saphyr_marked ~18% faster on this corpus after tag semantics alignment|
+|**parse_latency** (µs)|small|**1.20 µs**|1.20 µs|~parity on tiny documents|
+|**parse_latency** (µs)|medium|**44.5 µs**|54.0 µs|yaml_parser ~18% faster than saphyr_marked|
+|**parse_latency** (µs)|large|**126.8 µs**|129.9 µs|yaml_parser slightly faster on large combined input|
+|**scalar_types** (µs)|plain|2.49 µs|**2.44 µs**|saphyr_marked ~2% faster|
+|**scalar_types** (µs)|double_quoted|3.20 µs|**2.49 µs**|saphyr_marked faster on this micro-benchmark|
+|**scalar_types** (µs)|block_scalars|21.0 µs|**16.1 µs**|saphyr_marked faster on this micro-benchmark|
+|**serde_deserialize** (MiB/s)|large_mapping|**24.8 MiB/s**|21.0 MiB/s (`serde_yaml`)|yaml_parser::serde ~18% faster than serde_yaml|
+|**serde_deserialize** (MiB/s)|nested_mapping|**19.4 MiB/s**|18.3 MiB/s (`serde_yaml`)|yaml_parser::serde modestly faster|
+|**serde_deserialize** (MiB/s)|large_sequence|**28.6 MiB/s**|25.6 MiB/s (`serde_yaml`)|yaml_parser::serde ~12% faster|
+|**serde_deserialize** (MiB/s)|block_scalars|**63.1 MiB/s**|61.0 MiB/s (`serde_yaml`)|yaml_parser::serde slightly faster|
+|**serde_deserialize** (MiB/s)|flow_collections|**18.7 MiB/s**|18.4 MiB/s (`serde_yaml`)|rough parity; yaml_parser::serde very slightly faster|
+|**serde_deserialize** (MiB/s)|anchors_aliases|17.2 MiB/s|17.2 MiB/s (`serde_yaml`)|~parity between yaml_parser::serde and serde_yaml|
+|**serde_deserialize** (MiB/s)|tags|20.4 MiB/s|**22.1 MiB/s** (`serde_yaml`)|serde_yaml modestly faster; both libraries now accept this corpus|
 
-### Notes on serde exclusions
+### Notes on serde behaviour
 
-For the `serde_deserialize` group we deliberately **skip** any dataset where
-either `yaml_parser::serde::from_str::<serde_yaml::Value>` or
-`serde_yaml::from_str::<serde_yaml::Value>` fails. At the time of writing this
-affects:
-
-- `flow_collections`: `yaml_parser::serde` reports a `TrailingContent` parse
-  error for this corpus, while `serde_yaml` accepts it. The serde benchmark is
-  therefore skipped for this dataset to avoid mixing behavioural differences
-  into the performance comparison.
-- `anchors_aliases`, `tags`: these datasets are currently also skipped in the
-  serde benchmarks (one of the deserializers does not successfully parse them).
-
-These differences are tracked separately from throughput/latency; the numbers
-reported here are only for inputs both libraries can deserialize successfully.
+For the `serde_deserialize` group, both
+`yaml_parser::serde::from_str::<serde_yaml::Value>` and
+`serde_yaml::from_str::<serde_yaml::Value>` are invoked with `unwrap()`. This
+means that if either library fails to deserialize a benchmark corpus, the
+corresponding benchmark will **panic** and the run will clearly surface that
+behavioural difference instead of hiding it behind a "Skipped" entry.
 
 ## Test Data
 

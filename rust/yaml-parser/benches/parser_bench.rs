@@ -158,16 +158,9 @@ fn bench_serde_deserialize_throughput(criterion: &mut Criterion) {
     let mut group = criterion.benchmark_group("serde_deserialize_throughput");
 
     for (name, input) in test_cases {
-        // Only benchmark cases that both libraries can successfully
-        // deserialize. This keeps the benchmark focused on performance
-        // rather than surfacing behavioural differences as panics.
-        if yaml_parser::serde::from_str::<serde_yaml::Value>(input).is_err() {
-            continue;
-        }
-        if serde_yaml::from_str::<serde_yaml::Value>(input).is_err() {
-            continue;
-        }
-
+        // We expect both libraries to successfully deserialize all benchmark
+        // corpora. If either panics here, that's a behavioural regression we
+        // want to see rather than silently skipping the dataset.
         group.throughput(Throughput::Bytes(u64::try_from(input.len()).unwrap()));
 
         // Benchmark yaml-parser's serde-based deserialization into a generic

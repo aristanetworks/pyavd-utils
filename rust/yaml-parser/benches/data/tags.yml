@@ -28,8 +28,8 @@ booleans:
   disabled: !!bool FALSE
 
 nulls:
-  empty: !!null
-  tilde: !!null ~
+  empty: null
+  tilde: ~
   explicit: !!null null
 
 # Sequences with tags

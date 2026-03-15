@@ -311,7 +311,13 @@ where
         // Register anchor if present
         self.register_anchor(props.anchor.as_ref());
 
-        // Type inference applies to plain scalars (regardless of tag, to match hybrid parser)
+        // Keep a copy of the raw scalar text for tag validation before we move `value`.
+        // Cloning the `Cow` is cheap when it's already borrowed.
+        let raw_text_owned = value.clone();
+
+        // Type inference applies to plain scalars (regardless of tag, to match hybrid parser).
+        // We may still record additional errors later if an explicit tag is
+        // incompatible with the scalar's textual representation.
         let typed_value = if style == ScalarStyle::Plain {
             Self::infer_type(value)
         } else {
@@ -320,7 +326,43 @@ where
         };
 
         let node = Node::new(typed_value, span);
-        Self::apply_properties(node, props)
+        let node = Self::apply_properties(node, props);
+
+        // Validate core-schema tags against the scalar's textual form.
+        // For now we are conservative and only enforce additional rules for
+        // the `!!null` tag. Other core tags continue to follow the previous
+        // behaviour (type inference first, tags as annotations).
+        //
+        // NOTE: We adopt a *mostly strict* policy for explicit `!!null` to
+        // match the behaviour of `serde_yaml` and `saphyr` while still staying
+        // compatible with the YAML test suite:
+        // - For plain scalars tagged `!!null`, we accept either the canonical
+        //   textual form `null` or an *empty* scalar as valid representations
+        //   of `tag:yaml.org,2002:null`.
+        // - Any other textual form (e.g. `Null`, `NULL`, `~`, `str`, `0`, ...)
+        //   is treated as an invalid use of the null tag and recorded as a
+        //   parse error.
+        //
+        // This keeps `!!null str` and similar cases aligned with
+        // `serde_yaml`/`saphyr`, but allows "tags on empty scalars" such as
+        // those in the FH7J YAML test to remain error-free.
+        if style == ScalarStyle::Plain {
+            if let Some(tag) = node.tag() {
+                let tag_str = tag.as_ref();
+                let text = raw_text_owned.as_ref();
+                if tag_str == "tag:yaml.org,2002:null" && !text.is_empty() && text != "null" {
+                    // Recognised null tag whose textual content is neither
+                    // empty nor the canonical "null" is treated as an
+                    // invalid null scalar. We still keep the inferred
+                    // `Value::Null` in the AST so error-recovery consumers can
+                    // inspect partial data, but callers like `parse_ok` and
+                    // `serde::from_str` will see this as a parse error.
+                    self.error(ErrorKind::InvalidValue, span);
+                }
+            }
+        }
+
+        node
     }
 
     /// Build an alias node.

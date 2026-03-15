@@ -17,41 +17,42 @@
               like 'exactly one document' and makes assertions more readable"
 )]
 
+mod support;
+
+use saphyr::{LoadableYamlNode as _, Yaml};
+use support::parse_ok;
 use yaml_parser::{Number, Value, parse};
 
 #[test]
 fn test_empty_input() {
-    let (docs, errors) = parse("");
+    let docs = parse_ok("");
     assert_eq!(docs.len(), 0, "Empty input should produce no documents");
-    assert_eq!(errors.len(), 0, "Empty input should produce no errors");
 }
 
 #[test]
 fn test_whitespace_only() {
-    let (docs, errors) = parse("   \n  \n   ");
+    let docs = parse_ok("   \n  \n   ");
     // Whitespace-only input produces no documents (same as empty input)
     assert_eq!(
         docs.len(),
         0,
-        "Whitespace-only input should produce no documents"
+        "Whitespace-only input should produce no documents",
     );
-    assert_eq!(errors.len(), 0, "Whitespace-only should produce no errors");
 }
 
 #[test]
 fn test_comments_only() {
-    let (docs, errors) = parse("# comment 1\n# comment 2\n");
+    let docs = parse_ok("# comment 1\n# comment 2\n");
     assert_eq!(
         docs.len(),
         0,
-        "Comments-only input should produce no documents"
+        "Comments-only input should produce no documents",
     );
-    assert_eq!(errors.len(), 0, "Comments-only should produce no errors");
 }
 
 #[test]
 fn test_single_null() {
-    let (docs, _) = parse("~");
+    let docs = parse_ok("~");
     assert_eq!(docs.len(), 1);
     let doc = docs.first().expect("expected exactly one document");
     assert!(matches!(doc.value, Value::Null));
@@ -62,7 +63,7 @@ fn test_explicit_null_variants() {
     let inputs = vec!["null", "Null", "NULL", "~"];
 
     for input in inputs {
-        let (docs, _) = parse(input);
+        let docs = parse_ok(input);
         assert_eq!(docs.len(), 1, "Input {input:?} should produce 1 document",);
         let doc = docs.first().expect("expected exactly one document");
         assert!(
@@ -71,8 +72,8 @@ fn test_explicit_null_variants() {
         );
     }
 
-    // Empty string is a special case - it produces no documents
-    let (docs, _) = parse("");
+    // Empty string is a special case - it produces no documents and no errors.
+    let docs = parse_ok("");
     assert_eq!(docs.len(), 0, "Empty string should produce no documents");
 }
 
@@ -82,7 +83,7 @@ fn test_bool_variants() {
     let false_inputs = vec!["false", "False", "FALSE"];
 
     for input in true_inputs {
-        let (docs, _) = parse(input);
+        let docs = parse_ok(input);
         assert_eq!(docs.len(), 1);
         let doc = docs.first().expect("expected exactly one document");
         assert!(
@@ -92,7 +93,7 @@ fn test_bool_variants() {
     }
 
     for input in false_inputs {
-        let (docs, _) = parse(input);
+        let docs = parse_ok(input);
         assert_eq!(docs.len(), 1);
         let doc = docs.first().expect("expected exactly one document");
         assert!(
@@ -114,7 +115,7 @@ fn test_integer_edge_cases() {
     ];
 
     for (input, expected) in test_cases {
-        let (docs, _) = parse(input);
+        let docs = parse_ok(input);
         assert_eq!(docs.len(), 1, "Input {input:?} should produce 1 document",);
         let doc = docs.first().expect("expected exactly one document");
         assert!(
@@ -128,8 +129,7 @@ fn test_integer_edge_cases() {
 #[test]
 fn test_very_large_integer_as_bigintstr() {
     let input = "123456789012345678901234567890123456789012345678901234567890";
-    let (docs, errors) = parse(input);
-    assert!(errors.is_empty(), "unexpected parse errors: {errors:?}");
+    let docs = parse_ok(input);
     assert_eq!(docs.len(), 1, "expected a single document");
     let doc = docs.first().expect("expected exactly one document");
     assert!(
@@ -145,21 +145,80 @@ fn test_very_large_integer_as_bigintstr() {
 #[test]
 fn test_flow_collections_bench_file_has_no_parse_errors() {
     let input = include_str!("../benches/data/flow_collections.yml");
-    let (_docs, errors) = parse(input);
-    assert!(
-        errors.is_empty(),
-        "expected no parse errors for benches/data/flow_collections.yml",
-    );
+    // Use parse_ok to enforce the no-error invariant for this positive corpus.
+    let _docs = parse_ok(input);
 }
 
 #[test]
 fn test_json_style_flow_mapping_line_has_no_parse_errors() {
     let input = r#"json_style: {"key":"value","number":42,"nested":{"a":"b"}}"#;
-    let (_docs, errors) = parse(input);
-    assert!(
-        errors.is_empty(),
-        "expected no parse errors for json_style flow mapping, got: {errors:?}",
-    );
+    let _docs = parse_ok(input);
+}
+
+#[test]
+fn test_bench_corpora_have_no_parse_errors() {
+    let corpora: &[(&str, &str)] = &[
+        (
+            "large_mapping",
+            include_str!("../benches/data/large_mapping.yml"),
+        ),
+        (
+            "nested_mapping",
+            include_str!("../benches/data/nested_mapping.yml"),
+        ),
+        (
+            "large_sequence",
+            include_str!("../benches/data/large_sequence.yml"),
+        ),
+        (
+            "block_scalars",
+            include_str!("../benches/data/block_scalars.yml"),
+        ),
+        (
+            "flow_collections",
+            include_str!("../benches/data/flow_collections.yml"),
+        ),
+        (
+            "anchors_aliases",
+            include_str!("../benches/data/anchors_aliases.yml"),
+        ),
+        ("tags", include_str!("../benches/data/tags.yml")),
+    ];
+
+    for (name, input) in corpora {
+        // All positive corpora used by benchmarks must be parse-error free.
+        let _docs = parse_ok(input);
+    }
+}
+
+#[cfg(feature = "serde")]
+#[test]
+fn debug_tags_serde_deserialize_failure() {
+    let input = include_str!("../benches/data/tags.yml");
+
+    let yaml_parser_result: Result<serde_yaml::Value, _> = yaml_parser::serde::from_str(input);
+    let serde_yaml_result: Result<serde_yaml::Value, _> = serde_yaml::from_str(input);
+
+    // Also check how saphyr interprets the same document.
+    let saphyr_docs = Yaml::load_from_str(input).expect("saphyr failed to parse tags.yml");
+    let root = saphyr_docs
+        .get(0)
+        .expect("saphyr returned no documents for tags.yml");
+    let nulls = &root["nulls"];
+    let empty = &nulls["empty"];
+
+    // This test now asserts the harmonised behaviour across libraries on
+    // our `tags.yml` benchmark corpus:
+    // - yaml-parser's serde integration successfully deserializes `tags.yml`.
+    // - serde_yaml also successfully deserializes `tags.yml`.
+    // - saphyr parses the document and classifies `nulls.empty` as a real
+    //   null value (not `BadValue`).
+    //
+    // If any of these libraries start rejecting `tags.yml` in the future,
+    // this test will catch that regression.
+    assert!(yaml_parser_result.is_ok());
+    assert!(serde_yaml_result.is_ok());
+    assert!(empty.is_null());
 }
 
 #[test]
@@ -174,7 +233,7 @@ fn test_float_edge_cases() {
     ];
 
     for (input, expected) in test_cases {
-        let (docs, _) = parse(input);
+        let docs = parse_ok(input);
         assert_eq!(docs.len(), 1, "Input {input:?} should produce 1 document",);
         let doc = docs.first().expect("expected exactly one document");
         assert!(
@@ -188,7 +247,7 @@ fn test_float_edge_cases() {
 #[test]
 fn test_special_float_values() {
     {
-        let (docs, _) = parse(".inf");
+        let docs = parse_ok(".inf");
         let doc = docs.first().expect("expected .inf document");
         assert!(matches!(
             doc.value,
@@ -197,7 +256,7 @@ fn test_special_float_values() {
     }
 
     {
-        let (docs, _) = parse("-.inf");
+        let docs = parse_ok("-.inf");
         let doc = docs.first().expect("expected -.inf document");
         assert!(matches!(
             doc.value,
@@ -206,7 +265,7 @@ fn test_special_float_values() {
     }
 
     {
-        let (docs, _) = parse(".nan");
+        let docs = parse_ok(".nan");
         let doc = docs.first().expect("expected .nan document");
         assert!(matches!(doc.value, Value::Float(float) if float.is_nan()));
     }
@@ -214,7 +273,7 @@ fn test_special_float_values() {
 
 #[test]
 fn test_empty_sequence() {
-    let (docs, _) = parse("[]");
+    let docs = parse_ok("[]");
     assert_eq!(docs.len(), 1);
     let doc = docs.first().expect("expected exactly one document");
     assert!(
@@ -226,7 +285,7 @@ fn test_empty_sequence() {
 
 #[test]
 fn test_empty_mapping() {
-    let (docs, _) = parse("{}");
+    let docs = parse_ok("{}");
     assert_eq!(docs.len(), 1);
     let doc = docs.first().expect("expected exactly one document");
     assert!(
@@ -238,7 +297,7 @@ fn test_empty_mapping() {
 
 #[test]
 fn test_nested_empty_collections() {
-    let (docs, _) = parse("[[[]]]");
+    let docs = parse_ok("[[[]]]");
     assert_eq!(docs.len(), 1);
     let doc = docs.first().expect("expected exactly one document");
 
@@ -273,13 +332,8 @@ fn test_nested_empty_collections() {
 fn test_deeply_nested_structure() {
     // Test 10 levels of nesting
     let input = "a:\n  b:\n    c:\n      d:\n        e:\n          f:\n            g:\n              h:\n                i:\n                  j: value";
-    let (docs, errors) = parse(input);
+    let docs = parse_ok(input);
     assert_eq!(docs.len(), 1);
-    assert_eq!(
-        errors.len(),
-        0,
-        "Deeply nested structure should parse without errors"
-    );
 }
 
 #[test]
@@ -292,7 +346,7 @@ fn test_unicode_scalars() {
     ];
 
     for (input, expected_value) in test_cases {
-        let (docs, _) = parse(input);
+        let docs = parse_ok(input);
         assert_eq!(docs.len(), 1, "Input {input:?} should produce 1 document",);
         let doc = docs.first().expect("expected exactly one document");
 
@@ -328,7 +382,7 @@ fn test_escape_sequences() {
     ];
 
     for (input, expected) in test_cases {
-        let (docs, _) = parse(input);
+        let docs = parse_ok(input);
         assert_eq!(docs.len(), 1, "Input {input:?} should produce 1 document",);
         let doc = docs.first().expect("expected exactly one document");
 
@@ -350,7 +404,7 @@ fn test_block_scalar_chomping() {
     // Strip chomping (-)
     let input_strip = "text: |-\n  content\n  \n";
     {
-        let (docs, _) = parse(input_strip);
+        let docs = parse_ok(input_strip);
         let doc = docs.first().expect("expected exactly one document");
 
         let pairs = match &doc.value {
@@ -376,7 +430,7 @@ fn test_block_scalar_chomping() {
     // Keep chomping (+)
     let input_keep = "text: |+\n  content\n  \n";
     {
-        let (docs, _) = parse(input_keep);
+        let docs = parse_ok(input_keep);
         let doc = docs.first().expect("expected exactly one document");
 
         let pairs = match &doc.value {
@@ -403,7 +457,7 @@ fn test_block_scalar_chomping() {
 #[test]
 fn test_multiple_documents() {
     let input = "---\ndoc1\n---\ndoc2\n---\ndoc3";
-    let (docs, _) = parse(input);
+    let docs = parse_ok(input);
     assert_eq!(docs.len(), 3, "Should parse 3 documents");
     {
         let doc = docs.first().expect("expected first document");
@@ -437,26 +491,21 @@ fn test_multiple_documents() {
 #[test]
 fn test_document_end_marker() {
     let input = "---\nvalue\n...\n---\nvalue2";
-    let (docs, _) = parse(input);
+    let docs = parse_ok(input);
     assert_eq!(docs.len(), 2, "Should parse 2 documents separated by ...");
 }
 
 #[test]
 fn test_trailing_whitespace() {
     let input = "key: value   \n  \n";
-    let (docs, errors) = parse(input);
+    let docs = parse_ok(input);
     assert_eq!(docs.len(), 1);
-    assert_eq!(
-        errors.len(),
-        0,
-        "Trailing whitespace should not cause errors"
-    );
 }
 
 #[test]
 fn test_mixed_flow_and_block() {
     let input = "block:\n  - item1\n  - item2\nflow: [a, b, c]";
-    let (docs, _) = parse(input);
+    let docs = parse_ok(input);
     assert_eq!(docs.len(), 1);
 
     let doc = docs.first().expect("expected exactly one document");
@@ -492,7 +541,7 @@ fn test_mixed_flow_and_block() {
 fn test_complex_keys() {
     // Simple complex key (quoted string as key)
     let input = "\"complex key\": value";
-    let (docs, _) = parse(input);
+    let docs = parse_ok(input);
     assert_eq!(docs.len(), 1);
 
     let doc = docs.first().expect("expected exactly one document");
@@ -512,7 +561,7 @@ fn test_complex_keys() {
 #[test]
 fn test_anchor_before_tag() {
     let input = "&anchor !!str value";
-    let (docs, _) = parse(input);
+    let docs = parse_ok(input);
     assert_eq!(docs.len(), 1);
 
     // Should have both anchor and tag
@@ -528,7 +577,7 @@ fn test_anchor_before_tag() {
 #[test]
 fn test_tag_before_anchor() {
     let input = "!!str &anchor value";
-    let (docs, _) = parse(input);
+    let docs = parse_ok(input);
     assert_eq!(docs.len(), 1);
 
     // Should have both tag and anchor
@@ -546,9 +595,8 @@ fn test_very_long_line() {
     // Test with a 1000-character line
     let long_value = "x".repeat(1000);
     let input = format!("key: {long_value}");
-    let (docs, errors) = parse(&input);
+    let docs = parse_ok(&input);
     assert_eq!(docs.len(), 1);
-    assert_eq!(errors.len(), 0, "Long lines should parse without errors");
 
     let doc = docs.first().expect("expected exactly one document");
 
@@ -578,13 +626,8 @@ fn test_many_items_in_sequence() {
         let _ = writeln!(input, "- item{i}");
     }
 
-    let (docs, errors) = parse(&input);
+    let docs = parse_ok(&input);
     assert_eq!(docs.len(), 1);
-    assert_eq!(
-        errors.len(),
-        0,
-        "Large sequences should parse without errors"
-    );
 
     let doc = docs.first().expect("expected exactly one document");
 
@@ -606,13 +649,8 @@ fn test_many_pairs_in_mapping() {
         let _ = writeln!(input, "key{i}: value{i}");
     }
 
-    let (docs, errors) = parse(&input);
+    let docs = parse_ok(&input);
     assert_eq!(docs.len(), 1);
-    assert_eq!(
-        errors.len(),
-        0,
-        "Large mappings should parse without errors"
-    );
 
     let doc = docs.first().expect("expected exactly one document");
 

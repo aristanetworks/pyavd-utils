@@ -3481,8 +3481,60 @@ impl<'input> Emitter<'_, 'input> {
                     let n = *n;
 
                     if n < mapping_indent {
-                        // Dedented below mapping - don't consume, let caller handle
-                        // Update current_indent so caller knows the level
+                        // Potentially dedented below mapping. However, blank lines inside a
+                        // mapping (lines with no content before the next LineStart/Doc marker)
+                        // are allowed and MUST NOT end the mapping or trigger
+                        // InvalidIndentation.
+                        let mut i = 1;
+                        let mut is_blank_line = false;
+                        loop {
+                            match self.peek_nth(i) {
+                                // Skip structural spacing tokens when looking ahead
+                                Some((
+                                    Token::Indent(_)
+                                    | Token::Dedent
+                                    | Token::Whitespace
+                                    | Token::WhitespaceWithTabs,
+                                    _,
+                                )) => {
+                                    i += 1;
+                                }
+                                // Comment-only line at a lower indent is treated as real
+                                // content outside the mapping; let the existing
+                                // dedent-handling logic below deal with it.
+                                Some((Token::Comment(_), _)) => {
+                                    break;
+                                }
+                                // Next token is another LineStart, a document marker, or EOF
+                                // with no intervening content: this line is effectively blank.
+                                Some((
+                                    Token::LineStart(_) | Token::DocStart | Token::DocEnd,
+                                    _,
+                                ))
+                                | None => {
+                                    is_blank_line = true;
+                                    break;
+                                }
+                                // Any other token means there is content at this lower indent;
+                                // fall through to the original dedent handling below.
+                                Some(_) => {
+                                    break;
+                                }
+                            }
+                        }
+
+                        if is_blank_line {
+                            // Consume the LineStart and continue scanning without ending
+                            // the mapping. Do not update current_indent / last_line_start_span:
+                            // they should continue to refer to the last meaningful line in
+                            // this mapping.
+                            crossed_line = true;
+                            self.advance();
+                            continue;
+                        }
+
+                        // Dedented below mapping with actual content - don't consume, let
+                        // caller handle. Update current_indent so caller knows the level.
                         crossed_line = true; // We DID cross a line, even though we're breaking
                         self.current_indent = n;
                         self.last_line_start_span = span;
@@ -5589,7 +5641,11 @@ mod tests {
 
         /// Helper to get events from YAML input using the emitter
         fn events_from(input: &str) -> Vec<Event<'static>> {
-            let (events, _errors) = crate::emit_events(input);
+            let (events, errors) = crate::emit_events(input);
+            assert!(
+                errors.is_empty(),
+                "unexpected emitter errors for input:\n{input}\nerrors: {errors:?}",
+            );
             events.into_iter().map(Event::into_owned).collect()
         }
 

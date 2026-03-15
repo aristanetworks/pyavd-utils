@@ -15,7 +15,10 @@
 )]
 #![allow(clippy::expect_used, reason = "expect is acceptable in tests")]
 
-use yaml_parser::{Event, ScalarStyle, Value, emit_events, parse};
+mod support;
+
+use support::{emit_events_ok, parse_ok};
+use yaml_parser::{Event, ScalarStyle, Value, parse};
 
 /// Helper to extract the text covered by a span from the input.
 fn extract_span_text(input: &str, start: usize, end: usize) -> &str {
@@ -25,7 +28,7 @@ fn extract_span_text(input: &str, start: usize, end: usize) -> &str {
 #[test]
 fn test_scalar_spans_plain() {
     let input = "hello";
-    let (events, _) = emit_events(input);
+    let events = emit_events_ok(input);
 
     // Find the scalar event
     let scalar = events
@@ -44,7 +47,7 @@ fn test_scalar_spans_plain() {
 #[test]
 fn test_scalar_spans_quoted() {
     let input = r#""hello world""#;
-    let (events, _) = emit_events(input);
+    let events = emit_events_ok(input);
 
     let scalar = events
         .iter()
@@ -70,7 +73,7 @@ fn test_scalar_spans_quoted() {
 #[test]
 fn test_scalar_spans_block_literal() {
     let input = "key: |\n  line1\n  line2\n";
-    let (events, _) = emit_events(input);
+    let events = emit_events_ok(input);
 
     let scalar = events
         .iter()
@@ -94,7 +97,7 @@ fn test_scalar_spans_block_literal() {
 #[test]
 fn test_mapping_spans() {
     let input = "key: value";
-    let (docs, _) = parse(input);
+    let docs = parse_ok(input);
 
     assert_eq!(docs.len(), 1);
     let doc = &docs[0];
@@ -107,7 +110,7 @@ fn test_mapping_spans() {
 #[test]
 fn test_sequence_spans() {
     let input = "- item1\n- item2";
-    let (docs, _) = parse(input);
+    let docs = parse_ok(input);
 
     assert_eq!(docs.len(), 1);
     let doc = &docs[0];
@@ -140,7 +143,7 @@ fn test_sequence_spans() {
 #[test]
 fn test_nested_structure_spans() {
     let input = "outer:\n  inner: value";
-    let (docs, _) = parse(input);
+    let docs = parse_ok(input);
 
     assert_eq!(docs.len(), 1);
     let doc = &docs[0];
@@ -182,7 +185,7 @@ fn test_nested_structure_spans() {
 #[test]
 fn test_flow_sequence_spans() {
     let input = "[a, b, c]";
-    let (docs, _) = parse(input);
+    let docs = parse_ok(input);
 
     assert_eq!(docs.len(), 1);
     let doc = &docs[0];
@@ -228,7 +231,7 @@ fn test_flow_sequence_spans() {
 #[test]
 fn test_flow_mapping_spans() {
     let input = "{a: 1, b: 2}";
-    let (docs, _) = parse(input);
+    let docs = parse_ok(input);
 
     assert_eq!(docs.len(), 1);
     let doc = &docs[0];
@@ -241,7 +244,7 @@ fn test_flow_mapping_spans() {
 #[test]
 fn test_multiline_scalar_spans() {
     let input = "key: >\n  folded\n  text\n";
-    let (events, _) = emit_events(input);
+    let events = emit_events_ok(input);
 
     let scalar = events
         .iter()
@@ -264,7 +267,7 @@ fn test_multiline_scalar_spans() {
 #[test]
 fn test_anchor_and_alias_spans() {
     let input = "- &anchor value\n- *anchor";
-    let (events, _) = emit_events(input);
+    let events = emit_events_ok(input);
 
     // Find the scalar with anchor
     let scalar_with_anchor = events
@@ -308,7 +311,7 @@ fn test_anchor_and_alias_spans() {
 #[test]
 fn test_tag_spans() {
     let input = "!!str value";
-    let (events, _) = emit_events(input);
+    let events = emit_events_ok(input);
 
     let scalar = events
         .iter()
@@ -332,7 +335,7 @@ fn test_tag_spans() {
 #[test]
 fn test_empty_scalar_spans() {
     let input = "key:";
-    let (docs, _) = parse(input);
+    let docs = parse_ok(input);
 
     assert_eq!(docs.len(), 1);
     let doc = &docs[0];
@@ -390,7 +393,7 @@ fn test_error_spans_are_valid() {
 #[test]
 fn test_document_marker_spans() {
     let input = "---\nkey: value\n...";
-    let (events, _) = emit_events(input);
+    let events = emit_events_ok(input);
 
     // Find document start
     let doc_start = events
