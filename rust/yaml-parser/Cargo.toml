@@ -15,6 +15,7 @@ serde = { workspace = true, optional = true }
 [dev-dependencies]
 criterion = "0.8.2" # Used for benchmarking
 saphyr = "0.0.6"    # Used for benchmarking
+serde_yaml = { workspace = true } # Used for serde benchmarking
 
 [features]
 default = []

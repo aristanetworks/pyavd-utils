@@ -143,6 +143,26 @@ fn test_very_large_integer_as_bigintstr() {
 }
 
 #[test]
+fn test_flow_collections_bench_file_has_no_parse_errors() {
+    let input = include_str!("../benches/data/flow_collections.yml");
+    let (_docs, errors) = parse(input);
+    assert!(
+        errors.is_empty(),
+        "expected no parse errors for benches/data/flow_collections.yml",
+    );
+}
+
+#[test]
+fn test_json_style_flow_mapping_line_has_no_parse_errors() {
+    let input = r#"json_style: {"key":"value","number":42,"nested":{"a":"b"}}"#;
+    let (_docs, errors) = parse(input);
+    assert!(
+        errors.is_empty(),
+        "expected no parse errors for json_style flow mapping, got: {errors:?}",
+    );
+}
+
+#[test]
 fn test_float_edge_cases() {
     let test_cases = vec![
         ("0.0", 0.0f64),

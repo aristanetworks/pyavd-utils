@@ -2988,6 +2988,26 @@ impl<'input> Emitter<'_, 'input> {
                         }
                     }
 
+                    // Standalone comment at the mapping's indent should not end the
+                    // mapping. Treat it as whitespace: consume it and stay in
+                    // BeforeKey so that subsequent lines (including the next real
+                    // key) are still part of this mapping.
+                    Some((Token::Comment(_), _)) => {
+                        self.advance();
+                        self.state_stack.push(ParseState::BlockMap {
+                            indent,
+                            phase: BlockMapPhase::BeforeKey {
+                                // We've already crossed a line boundary to reach
+                                // this comment, so we no longer require an
+                                // additional line boundary for the next entry.
+                                require_line_boundary: false,
+                            },
+                            start_span,
+                            properties: Properties::default(),
+                        });
+                        None
+                    }
+
                     _ => {
                         // Check for orphan indentation before trying to parse content.
                         // If current_indent is greater than mapping indent but not a valid
@@ -5681,6 +5701,45 @@ mod tests {
         }
 
         #[test]
+        fn test_block_mapping_with_comment_between_keys() {
+            let input = "a: 1\n# comment between keys\nb: 2\n";
+            let (events, errors) = crate::emit_events(input);
+            let events: Vec<Event<'static>> = events.into_iter().map(Event::into_owned).collect();
+
+            assert!(
+                errors.is_empty(),
+                "expected no errors for mapping with comment between keys, got: {errors:?}"
+            );
+
+            // We should still have exactly one block MappingStart and MappingEnd
+            let map_starts = events
+                .iter()
+                .filter(|ev| {
+                    matches!(
+                        ev,
+                        Event::MappingStart {
+                            style: CollectionStyle::Block,
+                            ..
+                        }
+                    )
+                })
+                .count();
+            let map_ends = events
+                .iter()
+                .filter(|ev| matches!(ev, Event::MappingEnd { .. }))
+                .count();
+
+            assert_eq!(
+                map_starts, 1,
+                "expected exactly 1 MappingStart, got {map_starts}: {events:?}",
+            );
+            assert_eq!(
+                map_ends, 1,
+                "expected exactly 1 MappingEnd, got {map_ends}: {events:?}",
+            );
+        }
+
+        #[test]
         fn test_quoted_string() {
             let events = events_from("\"hello world\"");
 
@@ -5785,6 +5844,27 @@ mod tests {
             assert!(
                 map_count >= 2,
                 "Expected at least 2 mappings, got {map_count}: {events:?}"
+            );
+        }
+
+        #[test]
+        fn test_nested_block_mapping_with_comment_between_keys() {
+            let input = "outer:\n  a: 1\n  # comment between nested keys\n  b: 2\n";
+            let (events, errors) = events_and_errors_from(input);
+
+            assert!(
+                errors.is_empty(),
+                "expected no errors for nested mapping with comment between keys, got: {errors:?}",
+            );
+
+            let map_count = events
+                .iter()
+                .filter(|ev| matches!(ev, Event::MappingStart { .. }))
+                .count();
+
+            assert!(
+                map_count >= 2,
+                "expected at least 2 mappings (outer + nested), got {map_count}: {events:?}",
             );
         }
 

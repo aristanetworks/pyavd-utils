@@ -996,6 +996,19 @@ fn run_single_test_via_events(test: &TestCase) -> Result<(), String> {
         return Ok(());
     }
 
+    // For tests that are not supposed to error, we require both the
+    // event-based pipeline *and* the core AST parser to succeed without
+    // any reported parse errors. This keeps the YAML test suite aligned
+    // with the stricter behaviour expected by `yaml_parser::serde::from_str`.
+    let (_docs, parse_errors) = yaml_parser::parse(&test.input);
+    if !parse_errors.is_empty() {
+        return Err(format!(
+            "Core parse() produced errors for a non-error test: {parse_errors:?}\n\
+             -- INPUT --\n{}",
+            test.input,
+        ));
+    }
+
     if !errors.is_empty() {
         return Err(format!(
             "Parse errors: {errors:?}\n\

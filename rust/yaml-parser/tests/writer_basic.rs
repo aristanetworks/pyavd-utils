@@ -13,7 +13,52 @@
     reason = "panicking on unexpected writer failure is fine in these focused tests"
 )]
 
-use yaml_parser::{emit_events, parse, writer};
+use yaml_parser::{Node, Value, emit_events, parse, writer};
+
+fn assert_node_eq_ignoring_spans<'input>(expected: &Node<'input>, actual: &Node<'input>) {
+    assert_eq!(
+        expected.properties, actual.properties,
+        "node properties changed after roundtrip",
+    );
+    assert_value_eq_ignoring_spans(&expected.value, &actual.value);
+}
+
+fn assert_value_eq_ignoring_spans<'input>(expected: &Value<'input>, actual: &Value<'input>) {
+    match (expected, actual) {
+        (Value::Null, Value::Null) => {}
+        (Value::Bool(left_bool), Value::Bool(right_bool)) => {
+            assert_eq!(left_bool, right_bool, "bool value changed");
+        }
+        (Value::Int(left_int), Value::Int(right_int)) => {
+            assert_eq!(left_int, right_int, "integer value changed");
+        }
+        (Value::Float(left_float), Value::Float(right_float)) => {
+            assert_eq!(left_float, right_float, "float value changed");
+        }
+        (Value::String(left_str), Value::String(right_str)) => {
+            assert_eq!(left_str, right_str, "string value changed");
+        }
+        (Value::Alias(left_alias), Value::Alias(right_alias)) => {
+            assert_eq!(left_alias, right_alias, "alias name changed");
+        }
+        (Value::Sequence(a_items), Value::Sequence(b_items)) => {
+            assert_eq!(a_items.len(), b_items.len(), "sequence length changed");
+            for (a_node, b_node) in a_items.iter().zip(b_items.iter()) {
+                assert_node_eq_ignoring_spans(a_node, b_node);
+            }
+        }
+        (Value::Mapping(a_pairs), Value::Mapping(b_pairs)) => {
+            assert_eq!(a_pairs.len(), b_pairs.len(), "mapping length changed");
+            for ((a_key, a_val), (b_key, b_val)) in a_pairs.iter().zip(b_pairs.iter()) {
+                assert_node_eq_ignoring_spans(a_key, b_key);
+                assert_node_eq_ignoring_spans(a_val, b_val);
+            }
+        }
+        (left, right) => {
+            panic!("value kind changed after roundtrip: left={left:?}, right={right:?}");
+        }
+    }
+}
 
 fn roundtrip_value(input: &str) {
     let (docs_before, errors_before) = parse(input);
@@ -47,7 +92,7 @@ fn roundtrip_value(input: &str) {
     );
 
     for (before, after) in docs_before.iter().zip(docs_after.iter()) {
-        assert_eq!(before.value, after.value, "value changed after roundtrip");
+        assert_value_eq_ignoring_spans(&before.value, &after.value);
     }
 }
 
