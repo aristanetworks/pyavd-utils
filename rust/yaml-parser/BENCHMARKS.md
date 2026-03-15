@@ -58,7 +58,7 @@ the benchmark run itself to fail rather than silently skipping a dataset.
 |**parse_throughput** (MiB/s)|block_scalars|70.7 MiB/s|**91.4 MiB/s**|saphyr_marked noticeably faster on this input|
 |**parse_throughput** (MiB/s)|flow_collections|**24.0 MiB/s**|21.4 MiB/s|yaml_parser ~12% faster than saphyr_marked (after stricter trailing-content checks)|
 |**parse_throughput** (MiB/s)|anchors_aliases|**27.0 MiB/s**|18.2 MiB/s|yaml_parser ~48% faster than saphyr_marked|
-|**parse_throughput** (MiB/s)|tags|23.8 MiB/s|**28.0 MiB/s**|saphyr_marked ~18% faster on this corpus after tag semantics alignment|
+|**parse_throughput** (MiB/s)|tags|24.5 MiB/s|**26.4 MiB/s**|saphyr_marked ~8% faster on this corpus after tag semantics alignment and tag expansion optimisations|
 |**parse_latency** (µs)|small|**1.20 µs**|1.20 µs|~parity on tiny documents|
 |**parse_latency** (µs)|medium|**44.5 µs**|54.0 µs|yaml_parser ~18% faster than saphyr_marked|
 |**parse_latency** (µs)|large|**126.8 µs**|129.9 µs|yaml_parser slightly faster on large combined input|
@@ -71,7 +71,7 @@ the benchmark run itself to fail rather than silently skipping a dataset.
 |**serde_deserialize** (MiB/s)|block_scalars|**63.1 MiB/s**|61.0 MiB/s (`serde_yaml`)|yaml_parser::serde slightly faster|
 |**serde_deserialize** (MiB/s)|flow_collections|**18.7 MiB/s**|18.4 MiB/s (`serde_yaml`)|rough parity; yaml_parser::serde very slightly faster|
 |**serde_deserialize** (MiB/s)|anchors_aliases|17.2 MiB/s|17.2 MiB/s (`serde_yaml`)|~parity between yaml_parser::serde and serde_yaml|
-|**serde_deserialize** (MiB/s)|tags|20.4 MiB/s|**22.1 MiB/s** (`serde_yaml`)|serde_yaml modestly faster; both libraries now accept this corpus|
+|**serde_deserialize** (MiB/s)|tags|19.7 MiB/s|**22.1 MiB/s** (`serde_yaml`)|serde_yaml modestly faster; both libraries now accept this corpus|
 
 ### Notes on serde behaviour
 

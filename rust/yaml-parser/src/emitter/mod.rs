@@ -2573,7 +2573,37 @@ impl<'input> Emitter<'_, 'input> {
                 let decoded_suffix = percent_decode(suffix).unwrap_or_else(|| suffix.to_owned());
                 return Cow::Owned(format!("{prefix}{decoded_suffix}"));
             }
-            // Default secondary handle if not in tag_handles
+            // Default secondary handle if not in tag_handles.
+            // This is the common case for core schema tags such as `!!null`,
+            // `!!str`, `!!seq`, etc. Optimise these to avoid per-tag
+            // allocations by returning borrowed canonical URIs where
+            // possible.
+            if !suffix.contains('%') {
+                // Fast path for well-known core tags with the default
+                // secondary handle mapping.
+                match suffix {
+                    "str" => return Cow::Borrowed("tag:yaml.org,2002:str"),
+                    "seq" => return Cow::Borrowed("tag:yaml.org,2002:seq"),
+                    "map" => return Cow::Borrowed("tag:yaml.org,2002:map"),
+                    "int" => return Cow::Borrowed("tag:yaml.org,2002:int"),
+                    "float" => return Cow::Borrowed("tag:yaml.org,2002:float"),
+                    "bool" => return Cow::Borrowed("tag:yaml.org,2002:bool"),
+                    "null" => return Cow::Borrowed("tag:yaml.org,2002:null"),
+                    "timestamp" => return Cow::Borrowed("tag:yaml.org,2002:timestamp"),
+                    _ => {
+                        // No percent-encoding and not one of the built-in
+                        // core tags; still avoid an intermediate
+                        // `String` for the suffix by writing directly into
+                        // the result buffer.
+                        const TAG_PREFIX: &str = "tag:yaml.org,2002:";
+                        let mut tag_buf = String::with_capacity(TAG_PREFIX.len() + suffix.len());
+                        tag_buf.push_str(TAG_PREFIX);
+                        tag_buf.push_str(suffix);
+                        return Cow::Owned(tag_buf);
+                    }
+                }
+            }
+            // Fallback: suffix includes percent-encoding or needs decoding.
             let decoded_suffix = percent_decode(suffix).unwrap_or_else(|| suffix.to_owned());
             return Cow::Owned(format!("tag:yaml.org,2002:{decoded_suffix}"));
         }
