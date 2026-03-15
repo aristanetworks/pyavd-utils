@@ -10,5 +10,5 @@
 mod de;
 mod ser;
 
-pub use de::{DeError, from_reader, from_str};
+pub use de::{DeError, StreamDeserializer, from_reader, from_str, stream_from_str_docs};
 pub use ser::{SerError, to_string, to_writer};

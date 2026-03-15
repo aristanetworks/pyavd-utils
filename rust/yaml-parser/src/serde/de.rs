@@ -5,6 +5,7 @@
 use std::collections::HashMap;
 use std::fmt;
 use std::io::Read;
+use std::marker::PhantomData;
 
 use serde::de::{self, DeserializeOwned, DeserializeSeed, MapAccess, SeqAccess, Visitor};
 use serde::forward_to_deserialize_any;
@@ -256,6 +257,42 @@ impl<'de> de::Deserializer<'de> for ValueDeserializer<'_, 'de> {
     }
 }
 
+/// Streaming deserializer over multiple YAML documents in a string.
+///
+/// This is a document-level streaming API: it still uses the AST-backed
+/// `parse` implementation internally, but allows callers to iterate over
+/// documents as `T` values rather than materialising/deserialising in one
+/// step. Future work can swap the internals to a fully streaming engine
+/// without changing this public shape.
+pub struct StreamDeserializer<T> {
+    docs: std::vec::IntoIter<Node<'static>>,
+    _marker: PhantomData<T>,
+}
+
+impl<T> StreamDeserializer<T> {
+    fn new(docs: Vec<Node<'static>>) -> Self {
+        Self {
+            docs: docs.into_iter(),
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl<T> Iterator for StreamDeserializer<T>
+where
+    T: DeserializeOwned,
+{
+    type Item = Result<T, DeError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let node = self.docs.next()?;
+        let mut anchors = AnchorIndex::new();
+        collect_anchors(&node, &mut anchors);
+        let de = ValueDeserializer::new(&node.value, &anchors);
+        Some(T::deserialize(de))
+    }
+}
+
 /// Deserialize a single YAML document from a string into `T`.
 pub fn from_str<T>(input: &str) -> Result<T, DeError>
 where
@@ -287,4 +324,21 @@ where
     let mut buf = String::new();
     reader.read_to_string(&mut buf).map_err(DeError::Io)?;
     from_str(&buf)
+}
+
+/// Deserialize zero or more YAML documents from a string into a streaming
+/// iterator of `T`.
+///
+/// This function currently uses the AST-backed `parse` internally and then
+/// deserializes each document on demand. If parsing fails, it returns the
+/// first parse error as `Err` and does not produce an iterator.
+pub fn stream_from_str_docs<T>(input: &str) -> Result<StreamDeserializer<T>, DeError>
+where
+    T: DeserializeOwned,
+{
+    let (docs, errors) = parse(input);
+    if let Some(err) = errors.into_iter().next() {
+        return Err(DeError::from(err));
+    }
+    Ok(StreamDeserializer::new(docs))
 }
