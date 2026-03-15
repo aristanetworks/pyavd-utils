@@ -98,19 +98,26 @@ pub use value::{Node, Number, Properties, Value};
 /// assert_eq!(nodes.len(), 1);
 /// ```
 pub fn parse(input: &str) -> (Stream<'static>, Vec<ParseError>) {
-    // Get events from the emitter
-    let (events, mut all_errors) = emit_events(input);
+    // 1. Lex the input into tokens (borrowing from the input string).
+    let mut lexer = lexer::Lexer::new(input);
+    let tokens: Vec<lexer::RichToken<'_>> = lexer.by_ref().collect();
+    let mut all_errors = lexer.take_errors();
 
-    // Parse events into AST using the internal event-to-AST parser.
-    //
-    // The parser now consumes a streaming iterator of events rather than
-    // indexing into a slice, so we pass ownership of the event Vec here
-    // and iterate over it.
-    let mut parser = parser::Parser::new(events.into_iter());
-    let nodes = parser.parse();
-    all_errors.extend(parser.take_errors());
+    // 2. Feed tokens into the emitter and stream events directly into the
+    //    event-to-AST parser. This avoids building an intermediate Vec<Event>
+    //    while still keeping the emitter's internal design (borrowing from the
+    //    token slice) intact.
+    let mut emitter = emitter::Emitter::new(&tokens, input);
+    let nodes = {
+        let mut parser = parser::Parser::new(&mut emitter);
+        let nodes = parser.parse();
+        all_errors.extend(parser.take_errors());
+        nodes
+    };
+    all_errors.extend(emitter.take_errors());
 
-    // Convert to owned
+    // 3. Convert to owned so callers get `Node<'static>` values that can
+    //    outlive the input string.
     let all_docs: Stream<'static> = nodes.into_iter().map(value::Node::into_owned).collect();
 
     (all_docs, all_errors)
