@@ -5424,7 +5424,13 @@ impl<'input> Emitter<'input> {
             let extra_indent = content_indent.map_or(0, |ci| n.saturating_sub(ci));
             if extra_indent > 0 {
                 // Add extra spaces for more-indented lines
-                line_parts.push(Cow::Owned(" ".repeat(extra_indent)));
+                // Optimize: use a static buffer for common indent sizes
+                const SPACES: &str = "                                "; // 32 spaces
+                if extra_indent <= 32 {
+                    line_parts.push(Cow::Borrowed(&SPACES[..extra_indent]));
+                } else {
+                    line_parts.push(Cow::Owned(" ".repeat(extra_indent)));
+                }
             }
 
             while let Some((tok, span)) = self.peek() {
@@ -5466,7 +5472,11 @@ impl<'input> Emitter<'input> {
                         // In block scalars, # is NOT a comment indicator - it's literal content
                         // The lexer incorrectly tokenizes it as a comment, so we need to
                         // reconstruct the original text including the #
-                        line_parts.push(Cow::Owned(format!("#{text}")));
+                        // Optimize: avoid format! macro, use string concatenation
+                        let mut comment_text = String::with_capacity(1 + text.len());
+                        comment_text.push('#');
+                        comment_text.push_str(&text);
+                        line_parts.push(Cow::Owned(comment_text));
 	                        has_non_whitespace = true;
 	                        line_end_span = span;
 	                        let _ = self.take_current();
