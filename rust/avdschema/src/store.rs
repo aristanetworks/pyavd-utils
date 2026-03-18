@@ -49,8 +49,7 @@ impl Store {
         self.avd_design = avd_design_schema;
 
         // Resolve cv_deploy only if it exists.
-        if let Some(cv_deploy) = self.cv_deploy.as_ref() {
-            let mut cv_deploy_schema = cv_deploy.to_owned();
+        if let Some(mut cv_deploy_schema) = self.cv_deploy.clone() {
             resolve_schema(&mut cv_deploy_schema, &self).unwrap();
             self.cv_deploy = Some(cv_deploy_schema);
         }
