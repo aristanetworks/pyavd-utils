@@ -260,10 +260,24 @@ fn infer_scalar_kind<'de>(value: Cow<'de, str>) -> ScalarKind<'de> {
 /// `true` / `false`). This mirrors the bool handling in `infer_scalar_kind`
 /// but is cheap enough to use in the hot paths of primitive `deserialize_*`
 /// methods without running full scalar inference.
+#[inline]
 fn parse_core_bool(s: &str) -> Option<bool> {
-    match s {
-        "true" | "True" | "TRUE" => Some(true),
-        "false" | "False" | "FALSE" => Some(false),
+    // Fast path: check first byte and length to avoid full string comparison
+    match (s.len(), s.as_bytes().first()?) {
+        (4, b't' | b'T') => {
+            if s.eq_ignore_ascii_case("true") {
+                Some(true)
+            } else {
+                None
+            }
+        }
+        (5, b'f' | b'F') => {
+            if s.eq_ignore_ascii_case("false") {
+                Some(false)
+            } else {
+                None
+            }
+        }
         _ => None,
     }
 }
