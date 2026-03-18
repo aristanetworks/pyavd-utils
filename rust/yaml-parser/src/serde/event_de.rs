@@ -106,6 +106,7 @@ impl<'de> EventStream<'de> {
 	        }
 	    }
 
+	    #[inline]
 	    fn deserialize_scalar<V>(
 	        &mut self,
 	        style: ScalarStyle,
@@ -115,11 +116,16 @@ impl<'de> EventStream<'de> {
 	    where
 	        V: Visitor<'de>,
 	    {
-	        let kind = if style == ScalarStyle::Plain {
-	            infer_scalar_kind(value)
-	        } else {
-	            ScalarKind::String(value)
-	        };
+	        // Fast path for quoted scalars - always strings
+	        if style != ScalarStyle::Plain {
+	            return match value {
+	                Cow::Borrowed(s) => visitor.visit_borrowed_str(s),
+	                Cow::Owned(s) => visitor.visit_string(s),
+	            };
+	        }
+
+	        // Plain scalars need type inference
+	        let kind = infer_scalar_kind(value);
 	        match kind {
 	            ScalarKind::Null => visitor.visit_unit(),
 	            ScalarKind::Bool(b) => visitor.visit_bool(b),
@@ -157,59 +163,93 @@ enum ScalarKind<'de> {
 fn infer_scalar_kind<'de>(value: Cow<'de, str>) -> ScalarKind<'de> {
     let s = value.as_ref();
 
-    // Fast path: check length first to avoid expensive matches on long strings
-    if s.len() > 6 {
-        // Strings longer than 6 chars can't be null/bool/special floats
-        // Only check if numeric
-        if !could_be_numeric(s) {
-            return ScalarKind::String(value);
-        }
-        // Fall through to numeric parsing below
-    } else {
-        // Short strings: check for special values
-        match s {
-            "null" | "Null" | "NULL" | "~" | "" => return ScalarKind::Null,
-            "true" | "True" | "TRUE" => return ScalarKind::Bool(true),
-            "false" | "False" | "FALSE" => return ScalarKind::Bool(false),
-            // Special float values (all start with '.' or '-.')
-            ".inf" | ".Inf" | ".INF" => return ScalarKind::Float(f64::INFINITY),
-            "-.inf" | "-.Inf" | "-.INF" => return ScalarKind::Float(f64::NEG_INFINITY),
-            ".nan" | ".NaN" | ".NAN" => return ScalarKind::Float(f64::NAN),
-            _ => {}
+    // Fast path: check first byte to quickly categorize the scalar
+    let first_byte = match s.bytes().next() {
+        Some(b) => b,
+        None => return ScalarKind::Null, // Empty string is null
+    };
+
+    // Dispatch based on first character for maximum efficiency
+    match first_byte {
+        // Numeric indicators - could be int or float
+        b'0'..=b'9' | b'+' | b'-' => {
+            // Check for float indicators (decimal point or exponent)
+            let has_float_chars = s.bytes().any(|b| b == b'.' || b == b'e' || b == b'E');
+
+            if has_float_chars {
+                // Special float values starting with '-'
+                if first_byte == b'-' {
+                    match s {
+                        "-.inf" | "-.Inf" | "-.INF" => return ScalarKind::Float(f64::NEG_INFINITY),
+                        _ => {}
+                    }
+                }
+                // Try parsing as float
+                if let Ok(float) = s.parse::<f64>() {
+                    return ScalarKind::Float(float);
+                }
+            } else {
+                // No float indicators - try integer parsing
+                if let Ok(int) = s.parse::<i64>() {
+                    return ScalarKind::Int(Number::I64(int));
+                }
+                if let Ok(int) = s.parse::<i128>() {
+                    return ScalarKind::Int(Number::I128(int));
+                }
+                if let Ok(uint) = s.parse::<u128>() {
+                    return ScalarKind::Int(Number::U128(uint));
+                }
+
+                // If it still looks like a plain decimal integer but does not fit in
+                // i128/u128, store it as a textual big integer.
+                if looks_like_decimal_integer(s) {
+                    return ScalarKind::Int(Number::BigIntStr(value));
+                }
+            }
+            // Failed to parse as number - fall through to string
         }
 
-        // Not a special value - check if numeric
-        if !could_be_numeric(s) {
-            return ScalarKind::String(value);
-        }
-    }
-
-    // At this point we know it could be numeric
-    // Check for float indicators (decimal point or exponent)
-    let has_float_chars = s.bytes().any(|b| b == b'.' || b == b'e' || b == b'E');
-
-    if has_float_chars {
-        // Try parsing as float
-        if let Ok(float) = s.parse::<f64>() {
-            return ScalarKind::Float(float);
-        }
-    } else {
-        // No float indicators - try integer parsing
-        if let Ok(int) = s.parse::<i64>() {
-            return ScalarKind::Int(Number::I64(int));
-        }
-        if let Ok(int) = s.parse::<i128>() {
-            return ScalarKind::Int(Number::I128(int));
-        }
-        if let Ok(uint) = s.parse::<u128>() {
-            return ScalarKind::Int(Number::U128(uint));
+        // Special float values starting with '.'
+        b'.' => {
+            match s {
+                ".inf" | ".Inf" | ".INF" => return ScalarKind::Float(f64::INFINITY),
+                ".nan" | ".NaN" | ".NAN" => return ScalarKind::Float(f64::NAN),
+                _ => {
+                    // Could be a float like ".5" - try parsing
+                    if let Ok(float) = s.parse::<f64>() {
+                        return ScalarKind::Float(float);
+                    }
+                }
+            }
         }
 
-        // If it still looks like a plain decimal integer but does not fit in
-        // i128/u128, store it as a textual big integer.
-        if looks_like_decimal_integer(s) {
-            return ScalarKind::Int(Number::BigIntStr(value));
+        // Boolean and null values
+        b'n' | b'N' => {
+            match s {
+                "null" | "Null" | "NULL" => return ScalarKind::Null,
+                _ => {}
+            }
         }
+        b't' | b'T' => {
+            match s {
+                "true" | "True" | "TRUE" => return ScalarKind::Bool(true),
+                _ => {}
+            }
+        }
+        b'f' | b'F' => {
+            match s {
+                "false" | "False" | "FALSE" => return ScalarKind::Bool(false),
+                _ => {}
+            }
+        }
+        b'~' => {
+            if s == "~" {
+                return ScalarKind::Null;
+            }
+        }
+
+        // Everything else is a string
+        _ => {}
     }
 
     // Default to string - return the Cow as-is (zero-copy if borrowed!).
