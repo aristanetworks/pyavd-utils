@@ -156,56 +156,64 @@ enum ScalarKind<'de> {
 
 fn infer_scalar_kind<'de>(value: Cow<'de, str>) -> ScalarKind<'de> {
     let s = value.as_ref();
-    match s {
-        "null" | "Null" | "NULL" | "~" | "" => ScalarKind::Null,
-        "true" | "True" | "TRUE" => ScalarKind::Bool(true),
-        "false" | "False" | "FALSE" => ScalarKind::Bool(false),
-        _ => {
-            // Fast path: if the scalar clearly cannot be a number, return String
-            // immediately without attempting any parses.
-            if !could_be_numeric(s) {
-                return ScalarKind::String(value);
-            }
 
-            // Check for float indicators (decimal point or exponent) - if present,
-            // skip integer parsing and go straight to float.
-            let has_float_chars = s.bytes().any(|b| b == b'.' || b == b'e' || b == b'E');
+    // Fast path: check length first to avoid expensive matches on long strings
+    if s.len() > 6 {
+        // Strings longer than 6 chars can't be null/bool/special floats
+        // Only check if numeric
+        if !could_be_numeric(s) {
+            return ScalarKind::String(value);
+        }
+        // Fall through to numeric parsing below
+    } else {
+        // Short strings: check for special values
+        match s {
+            "null" | "Null" | "NULL" | "~" | "" => return ScalarKind::Null,
+            "true" | "True" | "TRUE" => return ScalarKind::Bool(true),
+            "false" | "False" | "FALSE" => return ScalarKind::Bool(false),
+            // Special float values (all start with '.' or '-.')
+            ".inf" | ".Inf" | ".INF" => return ScalarKind::Float(f64::INFINITY),
+            "-.inf" | "-.Inf" | "-.INF" => return ScalarKind::Float(f64::NEG_INFINITY),
+            ".nan" | ".NaN" | ".NAN" => return ScalarKind::Float(f64::NAN),
+            _ => {}
+        }
 
-            if has_float_chars {
-                // Special float values first (they start with '.')
-                match s {
-                    ".inf" | ".Inf" | ".INF" => return ScalarKind::Float(f64::INFINITY),
-                    "-.inf" | "-.Inf" | "-.INF" => return ScalarKind::Float(f64::NEG_INFINITY),
-                    ".nan" | ".NaN" | ".NAN" => return ScalarKind::Float(f64::NAN),
-                    _ => {}
-                }
-                // Try parsing as float
-                if let Ok(float) = s.parse::<f64>() {
-                    return ScalarKind::Float(float);
-                }
-            } else {
-                // No float indicators - try integer parsing
-                if let Ok(int) = s.parse::<i64>() {
-                    return ScalarKind::Int(Number::I64(int));
-                }
-                if let Ok(int) = s.parse::<i128>() {
-                    return ScalarKind::Int(Number::I128(int));
-                }
-                if let Ok(uint) = s.parse::<u128>() {
-                    return ScalarKind::Int(Number::U128(uint));
-                }
-
-                // If it still looks like a plain decimal integer but does not fit in
-                // i128/u128, store it as a textual big integer.
-                if looks_like_decimal_integer(s) {
-                    return ScalarKind::Int(Number::BigIntStr(value));
-                }
-            }
-
-            // Default to string - return the Cow as-is (zero-copy if borrowed!).
-            ScalarKind::String(value)
+        // Not a special value - check if numeric
+        if !could_be_numeric(s) {
+            return ScalarKind::String(value);
         }
     }
+
+    // At this point we know it could be numeric
+    // Check for float indicators (decimal point or exponent)
+    let has_float_chars = s.bytes().any(|b| b == b'.' || b == b'e' || b == b'E');
+
+    if has_float_chars {
+        // Try parsing as float
+        if let Ok(float) = s.parse::<f64>() {
+            return ScalarKind::Float(float);
+        }
+    } else {
+        // No float indicators - try integer parsing
+        if let Ok(int) = s.parse::<i64>() {
+            return ScalarKind::Int(Number::I64(int));
+        }
+        if let Ok(int) = s.parse::<i128>() {
+            return ScalarKind::Int(Number::I128(int));
+        }
+        if let Ok(uint) = s.parse::<u128>() {
+            return ScalarKind::Int(Number::U128(uint));
+        }
+
+        // If it still looks like a plain decimal integer but does not fit in
+        // i128/u128, store it as a textual big integer.
+        if looks_like_decimal_integer(s) {
+            return ScalarKind::Int(Number::BigIntStr(value));
+        }
+    }
+
+    // Default to string - return the Cow as-is (zero-copy if borrowed!).
+    ScalarKind::String(value)
 }
 
 /// Parse a YAML 1.2 core schema boolean literal (case-insensitive variants of
@@ -245,7 +253,7 @@ impl<'a, 'de> SeqAccess<'de> for SeqAccessImpl<'a, 'de> {
 		            .stream
 		            .next_event()
 		            .ok_or_else(|| {
-		                DeError::Custom("unexpected end of input inside sequence".to_string())
+		                DeError::Custom("unexpected end of input inside sequence".into())
 		            })?;
 
 		        match event {
@@ -255,7 +263,7 @@ impl<'a, 'de> SeqAccess<'de> for SeqAccessImpl<'a, 'de> {
 		                Ok(None)
 		            }
 		            Event::StreamEnd | Event::DocumentEnd { .. } | Event::MappingEnd { .. } => Err(
-		                DeError::Custom("unexpected end of structure inside sequence".to_string()),
+		                DeError::Custom("unexpected end of structure inside sequence".into()),
 		            ),
 		            other => {
 		                // Hand the element's first event back to the main
@@ -285,7 +293,7 @@ impl<'a, 'de> MapAccess<'de> for MapAccessImpl<'a, 'de> {
 		            .stream
 		            .next_event()
 		            .ok_or_else(|| {
-		                DeError::Custom("unexpected end of input inside mapping".to_string())
+		                DeError::Custom("unexpected end of input inside mapping".into())
 		            })?;
 
 		        match event {
@@ -294,7 +302,7 @@ impl<'a, 'de> MapAccess<'de> for MapAccessImpl<'a, 'de> {
 		                Ok(None)
 		            }
 		            Event::StreamEnd | Event::DocumentEnd { .. } | Event::SequenceEnd { .. } => Err(
-		                DeError::Custom("unexpected end of structure inside mapping".to_string()),
+		                DeError::Custom("unexpected end of structure inside mapping".into()),
 		            ),
 		            other => {
 		                // Put the first key event back so the key's
@@ -330,7 +338,7 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut EventStream<'de> {
 	    {
 	        let event = self
 	            .next_event()
-	            .ok_or_else(|| DeError::Custom("unexpected end of input".to_string()))?;
+	            .ok_or_else(|| DeError::Custom("unexpected end of input".into()))?;
 
 	        match event {
 	            Event::Scalar { style, value, .. } => {
@@ -355,7 +363,7 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut EventStream<'de> {
 	                Err(DeError::UnknownAlias(name.into_owned()))
 	            }
 	            _ => Err(DeError::Custom(
-	                "unexpected event in value position".to_string(),
+	                "unexpected event in value position".into(),
 	            )),
 	        }
 	    }
@@ -367,7 +375,7 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut EventStream<'de> {
         // Treat core-schema null scalars as `None`, everything else as `Some`.
         let event = self
             .next_event()
-            .ok_or_else(|| DeError::Custom("unexpected end of input".to_string()))?;
+            .ok_or_else(|| DeError::Custom("unexpected end of input".into()))?;
 
         // Fast null check: avoid full scalar inference by checking patterns directly.
         let is_plain_null = match &event {
@@ -401,7 +409,7 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut EventStream<'de> {
 
         let event = self
             .next_event()
-            .ok_or_else(|| DeError::Custom("unexpected end of input".to_string()))?;
+            .ok_or_else(|| DeError::Custom("unexpected end of input".into()))?;
 
         if let Event::Scalar { style, value, .. } = event {
             // Fast path: quoted scalars are always strings.
@@ -435,7 +443,7 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut EventStream<'de> {
     {
         let event = self
             .next_event()
-            .ok_or_else(|| DeError::Custom("unexpected end of input".to_string()))?;
+            .ok_or_else(|| DeError::Custom("unexpected end of input".into()))?;
 
         match event {
             Event::Scalar { value, .. } => {
@@ -448,7 +456,7 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut EventStream<'de> {
                     )))
                 }
             }
-            _ => Err(DeError::Custom("expected scalar for bool".to_string())),
+            _ => Err(DeError::Custom("expected scalar for bool".into())),
         }
     }
 
@@ -458,7 +466,7 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut EventStream<'de> {
     {
         let event = self
             .next_event()
-            .ok_or_else(|| DeError::Custom("unexpected end of input".to_string()))?;
+            .ok_or_else(|| DeError::Custom("unexpected end of input".into()))?;
 
         match event {
             Event::Scalar { value, .. } => {
@@ -474,7 +482,7 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut EventStream<'de> {
                     )))
                 }
             }
-            _ => Err(DeError::Custom("expected scalar for integer".to_string())),
+            _ => Err(DeError::Custom("expected scalar for integer".into())),
         }
     }
 
@@ -484,7 +492,7 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut EventStream<'de> {
     {
         let event = self
             .next_event()
-            .ok_or_else(|| DeError::Custom("unexpected end of input".to_string()))?;
+            .ok_or_else(|| DeError::Custom("unexpected end of input".into()))?;
         match event {
             Event::Scalar { value, .. } => {
                 let s = value.as_ref();
@@ -498,7 +506,7 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut EventStream<'de> {
                     )))
                 }
             }
-            _ => Err(DeError::Custom("expected scalar for integer".to_string())),
+            _ => Err(DeError::Custom("expected scalar for integer".into())),
         }
     }
 
@@ -508,7 +516,7 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut EventStream<'de> {
     {
         let event = self
             .next_event()
-            .ok_or_else(|| DeError::Custom("unexpected end of input".to_string()))?;
+            .ok_or_else(|| DeError::Custom("unexpected end of input".into()))?;
         match event {
             Event::Scalar { value, .. } => {
                 let s = value.as_ref();
@@ -522,7 +530,7 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut EventStream<'de> {
                     )))
                 }
             }
-            _ => Err(DeError::Custom("expected scalar for integer".to_string())),
+            _ => Err(DeError::Custom("expected scalar for integer".into())),
         }
     }
 
@@ -532,7 +540,7 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut EventStream<'de> {
     {
         let event = self
             .next_event()
-            .ok_or_else(|| DeError::Custom("unexpected end of input".to_string()))?;
+            .ok_or_else(|| DeError::Custom("unexpected end of input".into()))?;
         match event {
             Event::Scalar { value, .. } => {
                 let s = value.as_ref();
@@ -546,7 +554,7 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut EventStream<'de> {
                     )))
                 }
             }
-            _ => Err(DeError::Custom("expected scalar for integer".to_string())),
+            _ => Err(DeError::Custom("expected scalar for integer".into())),
         }
     }
 
@@ -564,7 +572,7 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut EventStream<'de> {
     {
         let event = self
             .next_event()
-            .ok_or_else(|| DeError::Custom("unexpected end of input".to_string()))?;
+            .ok_or_else(|| DeError::Custom("unexpected end of input".into()))?;
         match event {
             Event::Scalar { value, .. } => {
                 let s = value.as_ref();
@@ -576,16 +584,17 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut EventStream<'de> {
                         ".inf" | ".Inf" | ".INF" => visitor.visit_f64(f64::INFINITY),
                         "-.inf" | "-.Inf" | "-.INF" => visitor.visit_f64(f64::NEG_INFINITY),
                         ".nan" | ".NaN" | ".NAN" => visitor.visit_f64(f64::NAN),
-                        _ if parse_core_bool(s).is_some() => {
-                            visitor.visit_bool(parse_core_bool(s).unwrap())
+                        _ => {
+                            if let Some(b) = parse_core_bool(s) {
+                                visitor.visit_bool(b)
+                            } else {
+                                Err(DeError::Custom(format!("invalid f64 value: {s}")))
+                            }
                         }
-                        _ => Err(DeError::Custom(format!(
-                            "invalid f64 value: {s}"
-                        ))),
                     }
                 }
             }
-            _ => Err(DeError::Custom("expected scalar for float".to_string())),
+            _ => Err(DeError::Custom("expected scalar for float".into())),
         }
     }
 
@@ -595,7 +604,7 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut EventStream<'de> {
 	    {
 	        let event = self
 	            .next_event()
-	            .ok_or_else(|| DeError::Custom("unexpected end of input".to_string()))?;
+	            .ok_or_else(|| DeError::Custom("unexpected end of input".into()))?;
 	        match event {
 	            Event::Scalar { value, .. } => {
 	                let s = value.as_ref();
@@ -603,10 +612,10 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut EventStream<'de> {
 	                if let (Some(ch), None) = (chars.next(), chars.next()) {
 	                    visitor.visit_char(ch)
 	                } else {
-	                    Err(DeError::Custom("expected single-character string for char".to_string()))
+	                    Err(DeError::Custom("expected single-character string for char".into()))
 	                }
 	            }
-	            _ => Err(DeError::Custom("expected scalar for char".to_string())),
+	            _ => Err(DeError::Custom("expected scalar for char".into())),
 	        }
 	    }
 
@@ -616,13 +625,13 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut EventStream<'de> {
 	    {
 	        let event = self
 	            .next_event()
-	            .ok_or_else(|| DeError::Custom("unexpected end of input".to_string()))?;
+	            .ok_or_else(|| DeError::Custom("unexpected end of input".into()))?;
 		    match event {
 		        Event::Scalar { value, .. } => match value {
 		            Cow::Borrowed(s) => visitor.visit_borrowed_str(s),
 		            Cow::Owned(s) => visitor.visit_string(s),
 		        },
-		        _ => Err(DeError::Custom("expected scalar for str".to_string())),
+		        _ => Err(DeError::Custom("expected scalar for str".into())),
 		    }
 	    }
 
@@ -639,10 +648,10 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut EventStream<'de> {
 	    {
 	        let event = self
 	            .next_event()
-	            .ok_or_else(|| DeError::Custom("unexpected end of input".to_string()))?;
+	            .ok_or_else(|| DeError::Custom("unexpected end of input".into()))?;
 	        match event {
 	            Event::Scalar { style, value, .. } => self.deserialize_scalar(style, value, visitor),
-	            _ => Err(DeError::Custom("expected scalar for bytes".to_string())),
+	            _ => Err(DeError::Custom("expected scalar for bytes".into())),
 	        }
 	    }
 
@@ -659,10 +668,10 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut EventStream<'de> {
 	    {
 	        let event = self
 	            .next_event()
-	            .ok_or_else(|| DeError::Custom("unexpected end of input".to_string()))?;
+	            .ok_or_else(|| DeError::Custom("unexpected end of input".into()))?;
 	        match event {
 	            Event::Scalar { style, value, .. } => self.deserialize_scalar(style, value, visitor),
-	            _ => Err(DeError::Custom("expected scalar for unit".to_string())),
+	            _ => Err(DeError::Custom("expected scalar for unit".into())),
 	        }
 	    }
 
@@ -683,7 +692,7 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut EventStream<'de> {
 	    {
 	        let event = self
 	            .next_event()
-	            .ok_or_else(|| DeError::Custom("unexpected end of input".to_string()))?;
+	            .ok_or_else(|| DeError::Custom("unexpected end of input".into()))?;
 
 	        match event {
 	            Event::SequenceStart { .. } => {
@@ -725,7 +734,7 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut EventStream<'de> {
 	    {
 	        let event = self
 	            .next_event()
-	            .ok_or_else(|| DeError::Custom("unexpected end of input".to_string()))?;
+	            .ok_or_else(|| DeError::Custom("unexpected end of input".into()))?;
 
 	        match event {
 	            Event::MappingStart { .. } => {
