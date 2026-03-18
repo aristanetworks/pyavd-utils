@@ -73,8 +73,8 @@ enum LineType {
 /// (`pos`) into that cursor and focuses on higher-level YAML
 /// structure, indentation, and error recovery.
 pub struct Emitter<'input> {
-		    /// Token cursor wrapper. Provides read-only access helpers over the token stream.
-		    cursor: TokenCursor<'input>,
+    /// Token cursor wrapper. Provides read-only access helpers over the token stream.
+    cursor: TokenCursor<'input>,
     /// Original input string.
     input: &'input str,
     /// Current position in tokens.
@@ -111,45 +111,45 @@ pub struct Emitter<'input> {
     /// Span of the last `LineStart` token that set `current_indent`.
     /// Used for reporting `InvalidIndentation` errors at the line start position.
     last_line_start_span: Span,
-	    /// Stack of columns where each flow context started.
+    /// Stack of columns where each flow context started.
     /// Used to validate that continuation lines are indented relative to the flow start.
     /// Empty when not in flow context.
     flow_context_columns: Vec<IndentLevel>,
 }
 
-	impl<'input> Emitter<'input> {
-	    /// Create a new emitter from raw input.
-	    ///
-	    /// This constructs an internal streaming lexer and cursor. Tokens are
-	    /// produced on demand as the emitter peeks and consumes them.
-	    #[must_use]
-	    pub fn new(input: &'input str) -> Self {
-	        Self {
-	            cursor: TokenCursor::new(input),
-	            input,
-	            pos: 0,
-	            current_indent: 0,
-	            flow_depth: 0,
-	            doc_state: DocState::Ready,
-	            state_stack: Vec::with_capacity(16),
-	            errors: Vec::new(),
-	            anchors: HashSet::new(),
-	            emitted_stream_start: false,
-	            tag_handles: std::collections::HashMap::new(),
-	            last_content_span: None,
-	            crossed_line_boundary: false,
-	            indent_stack: vec![0],                 // Start with base level 0
-	            last_line_start_span: Span::new(0..0), // Default span at start
-	            flow_context_columns: Vec::new(),
-	        }
-	    }
-	
-	    /// Take collected errors from both lexer and emitter.
-	    pub fn take_errors(&mut self) -> Vec<ParseError> {
-	        let mut all = self.cursor.take_lexer_errors();
-	        all.extend(std::mem::take(&mut self.errors));
-	        all
-	    }
+impl<'input> Emitter<'input> {
+    /// Create a new emitter from raw input.
+    ///
+    /// This constructs an internal streaming lexer and cursor. Tokens are
+    /// produced on demand as the emitter peeks and consumes them.
+    #[must_use]
+    pub fn new(input: &'input str) -> Self {
+        Self {
+            cursor: TokenCursor::new(input),
+            input,
+            pos: 0,
+            current_indent: 0,
+            flow_depth: 0,
+            doc_state: DocState::Ready,
+            state_stack: Vec::with_capacity(16),
+            errors: Vec::new(),
+            anchors: HashSet::new(),
+            emitted_stream_start: false,
+            tag_handles: std::collections::HashMap::new(),
+            last_content_span: None,
+            crossed_line_boundary: false,
+            indent_stack: vec![0],                 // Start with base level 0
+            last_line_start_span: Span::new(0..0), // Default span at start
+            flow_context_columns: Vec::new(),
+        }
+    }
+
+    /// Take collected errors from both lexer and emitter.
+    pub fn take_errors(&mut self) -> Vec<ParseError> {
+        let mut all = self.cursor.take_lexer_errors();
+        all.extend(std::mem::take(&mut self.errors));
+        all
+    }
 
     // ─────────────────────────────────────────────────────────────
     // Token access helpers
@@ -698,7 +698,7 @@ pub struct Emitter<'input> {
 
     /// Prepare for the next document. Returns `Some((explicit, span))` if a
     /// document should start, or `None` if at EOF.
-	    fn prepare_document(&mut self) -> Option<(bool, Span)> {
+    fn prepare_document(&mut self) -> Option<(bool, Span)> {
         self.skip_ws_and_newlines();
 
         if self.is_eof() {
@@ -772,7 +772,10 @@ pub struct Emitter<'input> {
             self.skip_ws();
             // Check for content on same line as ---
             let content_on_line = !self.is_eof()
-                && !matches!(self.peek_kind(), Some(TokenKind::LineStart | TokenKind::DocEnd));
+                && !matches!(
+                    self.peek_kind(),
+                    Some(TokenKind::LineStart | TokenKind::DocEnd)
+                );
             self.skip_ws_and_newlines();
 
             // Block mapping on start line error
@@ -875,12 +878,19 @@ pub struct Emitter<'input> {
                 let _ = self.take_current();
                 continue;
             }
-            if matches!(self.peek_kind(), Some(TokenKind::DocStart | TokenKind::DocEnd)) {
+            if matches!(
+                self.peek_kind(),
+                Some(TokenKind::DocStart | TokenKind::DocEnd)
+            ) {
                 break;
             }
             if matches!(
                 self.peek_kind(),
-                Some(TokenKind::YamlDirective | TokenKind::TagDirective | TokenKind::ReservedDirective)
+                Some(
+                    TokenKind::YamlDirective
+                        | TokenKind::TagDirective
+                        | TokenKind::ReservedDirective
+                )
             ) {
                 break;
             }
@@ -1211,8 +1221,8 @@ impl<'input> Emitter<'input> {
         // Check if we're in a sequence entry context.
         let in_sequence_entry = self.in_sequence_entry_context();
 
-	        // Check if the dedented line is too far outside the current context.
-	        let too_dedented = next_indent < min_indent.saturating_sub(1);
+        // Check if the dedented line is too far outside the current context.
+        let too_dedented = next_indent < min_indent.saturating_sub(1);
 
         // Check if properties were collected at an invalid (dedented) indent.
         // Properties are invalid if:
@@ -1710,7 +1720,10 @@ impl<'input> Emitter<'input> {
         // If we have separate outer and inner properties, and the value is a
         // flow collection that's a key, emit MappingStart with outer props.
         if !inner.is_empty()
-            && matches!(self.peek_kind(), Some(TokenKind::FlowSeqStart | TokenKind::FlowMapStart))
+            && matches!(
+                self.peek_kind(),
+                Some(TokenKind::FlowSeqStart | TokenKind::FlowMapStart)
+            )
             && self.is_flow_seq_complex_key()
         {
             // This is a block mapping with a complex key.
@@ -1884,7 +1897,7 @@ impl<'input> Emitter<'input> {
         crossed_line_boundary: bool,
     ) -> Event<'input> {
         // Advance past the alias token and skip any immediate whitespace.
-	        let _ = self.take_current();
+        let _ = self.take_current();
         self.skip_ws();
 
         // Error: Properties (anchor/tag) on alias are invalid when on the same line.
@@ -2106,7 +2119,7 @@ impl<'input> Emitter<'input> {
             Some((Token::Alias(name), span)) => {
                 // Defer alias handling to the `AliasValue` state so that
                 // complex-key behaviour is driven by the state machine.
-	                let alias_name = Cow::Borrowed(name);
+                let alias_name = Cow::Borrowed(name);
                 let alias_span = span;
                 self.state_stack.push(ParseState::AliasValue {
                     name: alias_name,
@@ -2374,9 +2387,9 @@ impl<'input> Emitter<'input> {
             let has_props = !properties.is_empty();
 
             match self.peek() {
-	                Some((Token::Anchor(name_ref), span)) => {
-	                    // Extract data we need before any mutations
-	                    let name_str = name_ref;
+                Some((Token::Anchor(name_ref), span)) => {
+                    // Extract data we need before any mutations
+                    let name_str = name_ref;
 
                     // Error: Duplicate anchor on same node
                     if properties.anchor.is_some() {
@@ -2437,9 +2450,9 @@ impl<'input> Emitter<'input> {
                     let _ = self.take_current();
                 }
 
-	                Some((Token::LineStart(indent), _)) if has_props => {
-	                    // Extract data we need before any mutations
-	                    let next_indent = indent;
+                Some((Token::LineStart(indent), _)) if has_props => {
+                    // Extract data we need before any mutations
+                    let next_indent = indent;
                     let should_continue = self.should_continue_collecting_properties();
 
                     // We have collected at least one property and there's a line boundary.
@@ -2832,10 +2845,10 @@ impl<'input> Emitter<'input> {
                     }
 
                     Some((Token::LineStart(n), _)) => {
-	                        if n < indent {
-	                            // Check for orphan indentation: n is not in the
-	                            // parser's indent stack (between valid levels)
-	                            if !self.is_valid_indent(n) {
+                        if n < indent {
+                            // Check for orphan indentation: n is not in the
+                            // parser's indent stack (between valid levels)
+                            if !self.is_valid_indent(n) {
                                 self.report_invalid_indent();
                             }
                             if self.is_root_level_sequence(indent) {
@@ -2867,17 +2880,17 @@ impl<'input> Emitter<'input> {
                                 self.report_invalid_indent();
                             }
                             // We're actually dedented - end the sequence
-                                if self.is_root_level_sequence(indent) {
-                                    self.check_trailing_content_at_root(0);
-                                }
-                                let _ = self.take_current();
+                            if self.is_root_level_sequence(indent) {
+                                self.check_trailing_content_at_root(0);
+                            }
+                            let _ = self.take_current();
                             self.pop_indent();
                             Some(Event::SequenceEnd {
                                 span: self.collection_end_span(),
                             })
-                                } else {
-                                    // Dedent from nested structure - consume and continue
-                                    let _ = self.take_current();
+                        } else {
+                            // Dedent from nested structure - consume and continue
+                            let _ = self.take_current();
                             self.state_stack.push(ParseState::BlockSeq {
                                 indent,
                                 phase: BlockSeqPhase::BeforeEntry,
@@ -3231,8 +3244,8 @@ impl<'input> Emitter<'input> {
                 let crossed_before = self.crossed_line_boundary;
                 self.skip_ws_and_newlines_impl();
 
-	                // Skip Dedent tokens that may appear between an explicit key and its colon.
-	                // For example: `? a\n  true\n: null` - after parsing the multiline key "a true",
+                // Skip Dedent tokens that may appear between an explicit key and its colon.
+                // For example: `? a\n  true\n: null` - after parsing the multiline key "a true",
                 // we encounter a Dedent before the colon. We need to skip it to find the colon.
                 // This is safe because we're looking for a colon at the SAME indent level as
                 // the mapping, so any Dedent tokens here are just returning to that level.
@@ -3492,10 +3505,10 @@ impl<'input> Emitter<'input> {
             }
             Some((Token::Alias(name), span)) => {
                 // Alias without a colon following - this is a MissingColon
-	                let alias_name = Cow::Borrowed(name); // Borrow directly from input
+                let alias_name = Cow::Borrowed(name); // Borrow directly from input
                 self.error(ErrorKind::MissingColon, span);
                 // Skip the alias token
-	                let _ = self.take_current();
+                let _ = self.take_current();
                 Some(Event::Alias {
                     name: alias_name,
                     span,
@@ -3520,7 +3533,7 @@ impl<'input> Emitter<'input> {
         loop {
             match self.peek() {
                 Some((Token::StringContent(text), _)) => {
-	                    content.push_str(&text);
+                    content.push_str(&text);
                     let _ = self.take_current();
                 }
                 Some((Token::StringEnd(_), span)) => {
@@ -3531,9 +3544,9 @@ impl<'input> Emitter<'input> {
                     return (Cow::Owned(content), Some(full_span));
                 }
                 None => break,
-	                _ => {
-	                    let _ = self.take_current();
-	                }
+                _ => {
+                    let _ = self.take_current();
+                }
             }
         }
         (Cow::Owned(content), None)
@@ -3616,7 +3629,7 @@ impl<'input> Emitter<'input> {
         loop {
             match self.peek() {
                 Some((Token::LineStart(n), span)) => {
-	                    let n = n;
+                    let n = n;
 
                     if n < mapping_indent {
                         // Potentially dedented below mapping. However, blank lines inside a
@@ -3734,7 +3747,7 @@ impl<'input> Emitter<'input> {
                     _,
                 )) => {
                     let _ = self.take_current();
-                },
+                }
                 _ => break,
             }
         }
@@ -3800,7 +3813,10 @@ impl<'input> Emitter<'input> {
                         i += 1;
                         // Skip whitespace
                         while let Some(ws_kind) = self.peek_kind_nth(i) {
-                            if matches!(ws_kind, TokenKind::Whitespace | TokenKind::WhitespaceWithTabs) {
+                            if matches!(
+                                ws_kind,
+                                TokenKind::Whitespace | TokenKind::WhitespaceWithTabs
+                            ) {
                                 i += 1;
                             } else {
                                 break;
@@ -3847,7 +3863,9 @@ impl<'input> Emitter<'input> {
                         while let Some(inner_kind) = self.peek_kind_nth(idx) {
                             if matches!(
                                 inner_kind,
-                                TokenKind::Whitespace | TokenKind::WhitespaceWithTabs | TokenKind::LineStart
+                                TokenKind::Whitespace
+                                    | TokenKind::WhitespaceWithTabs
+                                    | TokenKind::LineStart
                             ) {
                                 idx += 1;
                             } else {
@@ -4056,7 +4074,10 @@ impl<'input> Emitter<'input> {
     fn skip_indent_tokens(&mut self) {
         while let Some(kind) = self.peek_kind() {
             match kind {
-                TokenKind::Indent | TokenKind::Dedent | TokenKind::Whitespace | TokenKind::WhitespaceWithTabs => {
+                TokenKind::Indent
+                | TokenKind::Dedent
+                | TokenKind::Whitespace
+                | TokenKind::WhitespaceWithTabs => {
                     let _ = self.take_current();
                 }
                 _ => break,
@@ -4091,11 +4112,11 @@ impl<'input> Emitter<'input> {
 
                 // Apply folding: single newline → space, multiple → n-1 newlines
                 Self::append_folded_separator(content, *consecutive_newlines);
-	                content.push_str(&next_text);
-		                *end_span = next_span;
-	                *consecutive_newlines = 0;
-	                let _ = self.take_current();
-	                true
+                content.push_str(&next_text);
+                *end_span = next_span;
+                *consecutive_newlines = 0;
+                let _ = self.take_current();
+                true
             }
             Some((Token::LineStart(_), _)) => {
                 // Another newline, continue counting (caller will handle)
@@ -4189,7 +4210,7 @@ impl<'input> Emitter<'input> {
                 Token::Dedent | Token::Indent(_) => {
                     i += 1;
                 }
-	                Token::LineStart(n) if n >= min_indent => {
+                Token::LineStart(n) if n >= min_indent => {
                     // Found a properly indented line after empty line(s)
                     return true;
                 }
@@ -4321,8 +4342,8 @@ impl<'input> Emitter<'input> {
         doc_span: Span,
         phase: FlowSeqPhase,
     ) -> Option<Event<'input>> {
-	        self.error(ErrorKind::DocumentMarkerInFlow, doc_span);
-	        let _ = self.take_current();
+        self.error(ErrorKind::DocumentMarkerInFlow, doc_span);
+        let _ = self.take_current();
         self.state_stack
             .push(ParseState::FlowSeq { phase, start_span });
         None
@@ -4348,7 +4369,7 @@ impl<'input> Emitter<'input> {
                 match self.peek() {
                     Some((Token::FlowSeqEnd, span)) => {
                         let flow_end = span.end_usize();
-	                        let _ = self.take_current();
+                        let _ = self.take_current();
                         self.exit_flow_collection();
                         // Check for content immediately after flow collection in block context
                         if self.flow_depth == 0 {
@@ -4363,8 +4384,8 @@ impl<'input> Emitter<'input> {
                         // Consecutive comma - report MissingSeparator
                         // (BeforeEntry is entered after `[` or after consuming a comma,
                         // so seeing another comma means consecutive commas)
-	                        self.error(ErrorKind::MissingSeparator, comma_span);
-	                        let _ = self.take_current();
+                        self.error(ErrorKind::MissingSeparator, comma_span);
+                        let _ = self.take_current();
                         self.state_stack.push(ParseState::FlowSeq {
                             phase: FlowSeqPhase::BeforeEntry,
                             start_span,
@@ -4397,7 +4418,7 @@ impl<'input> Emitter<'input> {
                         // Explicit key inside flow sequence: [ ? key : value ]
                         // This creates a flow mapping entry
                         let map_start_span = self.current_span();
-	                        let _ = self.take_current(); // consume ?
+                        let _ = self.take_current(); // consume ?
                         self.skip_ws_and_newlines();
 
                         // Push states in reverse order:
@@ -4522,7 +4543,10 @@ impl<'input> Emitter<'input> {
                     self.skip_ws_and_newlines();
 
                     // Check for empty value (followed by , or ])
-                    if matches!(self.peek_kind(), Some(TokenKind::Comma | TokenKind::FlowSeqEnd)) {
+                    if matches!(
+                        self.peek_kind(),
+                        Some(TokenKind::Comma | TokenKind::FlowSeqEnd)
+                    ) {
                         // Empty value - emit null
                         Some(self.emit_null())
                     } else {
@@ -4561,7 +4585,7 @@ impl<'input> Emitter<'input> {
 
                 match self.peek() {
                     Some((Token::Comma, _)) => {
-	                        let _ = self.take_current();
+                        let _ = self.take_current();
                         self.state_stack.push(ParseState::FlowSeq {
                             phase: FlowSeqPhase::BeforeEntry,
                             start_span,
@@ -4571,7 +4595,7 @@ impl<'input> Emitter<'input> {
 
                     Some((Token::FlowSeqEnd, span)) => {
                         let flow_end = span.end_usize();
-	                        let _ = self.take_current();
+                        let _ = self.take_current();
                         self.exit_flow_collection();
                         // Check for content immediately after flow collection in block context
                         if self.flow_depth == 0 {
@@ -4620,8 +4644,8 @@ impl<'input> Emitter<'input> {
         doc_span: Span,
         phase: FlowMapPhase,
     ) -> Option<Event<'input>> {
-	        self.error(ErrorKind::DocumentMarkerInFlow, doc_span);
-	        let _ = self.take_current();
+        self.error(ErrorKind::DocumentMarkerInFlow, doc_span);
+        let _ = self.take_current();
         self.state_stack
             .push(ParseState::FlowMap { phase, start_span });
         None
@@ -4647,7 +4671,7 @@ impl<'input> Emitter<'input> {
                 match self.peek() {
                     Some((Token::FlowMapEnd, span)) => {
                         let flow_end = span.end_usize();
-	                        let _ = self.take_current();
+                        let _ = self.take_current();
                         self.exit_flow_collection();
                         // Check for content immediately after flow collection in block context
                         if self.flow_depth == 0 {
@@ -4662,8 +4686,8 @@ impl<'input> Emitter<'input> {
                         // Consecutive comma - report MissingSeparator
                         // (BeforeKey is entered after `{` or after consuming a comma,
                         // so seeing another comma means consecutive commas)
-	                        self.error(ErrorKind::MissingSeparator, comma_span);
-	                        let _ = self.take_current();
+                        self.error(ErrorKind::MissingSeparator, comma_span);
+                        let _ = self.take_current();
                         self.state_stack.push(ParseState::FlowMap {
                             phase: FlowMapPhase::BeforeKey,
                             start_span,
@@ -4672,7 +4696,7 @@ impl<'input> Emitter<'input> {
                     }
 
                     Some((Token::MappingKey, _)) => {
-	                        let _ = self.take_current();
+                        let _ = self.take_current();
                         self.skip_ws();
                         self.state_stack.push(ParseState::FlowMap {
                             phase: FlowMapPhase::AfterKey,
@@ -4743,7 +4767,10 @@ impl<'input> Emitter<'input> {
                     self.skip_ws_and_newlines();
 
                     // Check for empty value
-                    if matches!(self.peek_kind(), Some(TokenKind::Comma | TokenKind::FlowMapEnd)) {
+                    if matches!(
+                        self.peek_kind(),
+                        Some(TokenKind::Comma | TokenKind::FlowMapEnd)
+                    ) {
                         self.state_stack.push(ParseState::FlowMap {
                             phase: FlowMapPhase::AfterValue,
                             start_span,
@@ -4779,7 +4806,7 @@ impl<'input> Emitter<'input> {
 
                 match self.peek() {
                     Some((Token::Comma, _)) => {
-	                        let _ = self.take_current();
+                        let _ = self.take_current();
                         self.state_stack.push(ParseState::FlowMap {
                             phase: FlowMapPhase::BeforeKey,
                             start_span,
@@ -4789,7 +4816,7 @@ impl<'input> Emitter<'input> {
 
                     Some((Token::FlowMapEnd, span)) => {
                         let flow_end = span.end_usize();
-	                        let _ = self.take_current();
+                        let _ = self.take_current();
                         self.exit_flow_collection();
                         // Check for content immediately after flow collection in block context
                         if self.flow_depth == 0 {
@@ -4984,7 +5011,7 @@ impl<'input> Emitter<'input> {
                                 let content_str =
                                     content.get_or_insert_with(|| first_line.clone().into_owned());
                                 content_str.push(' ');
-	                                content_str.push_str(&continuation);
+                                content_str.push_str(&continuation);
                                 end_span = next_span;
                                 let _ = self.take_current(); // consume LineStart
                                 let _ = self.take_current(); // consume Plain
@@ -4996,7 +5023,6 @@ impl<'input> Emitter<'input> {
                     // Block context: continuation based on indentation
                     // Use the min_indent passed from caller, not current_indent
                     while let Some((indent, line_span)) = self.peek_line_start() {
-
                         // Check if this continues the scalar
                         if indent >= min_indent {
                             // Normal continuation - properly indented
@@ -5068,9 +5094,9 @@ impl<'input> Emitter<'input> {
                 }
             }
 
-	            Some((Token::StringStart(quote_style), _)) => {
-	                self.parse_quoted_scalar(properties, quote_style, min_indent)
-	            }
+            Some((Token::StringStart(quote_style), _)) => {
+                self.parse_quoted_scalar(properties, quote_style, min_indent)
+            }
 
             _ => self.emit_null(),
         }
@@ -5085,7 +5111,7 @@ impl<'input> Emitter<'input> {
         min_indent: IndentLevel,
     ) -> Event<'input> {
         let start_span = self.current_span();
-	        let _ = self.take_current(); // consume StringStart
+        let _ = self.take_current(); // consume StringStart
 
         // Try to optimize for single-content-token case (most common)
         // Check if we have: StringContent followed immediately by StringEnd
@@ -5141,9 +5167,9 @@ impl<'input> Emitter<'input> {
         let mut pending_newlines: usize = 0;
         let mut needs_trim = false;
 
-	        loop {
-	            match self.peek() {
-	                Some((Token::StringContent(content), span)) => {
+        loop {
+            match self.peek() {
+                Some((Token::StringContent(content), span)) => {
                     // If we need to trim, do it BEFORE applying pending newlines
                     // This trims trailing spaces from the previous line
                     if needs_trim {
@@ -5176,19 +5202,18 @@ impl<'input> Emitter<'input> {
                         pending_newlines = 0;
                     }
 
-	                    parts.push(content.clone());
-	                    end_span = span;
-	                    let _ = self.take_current();
-	                }
+                    parts.push(content.clone());
+                    end_span = span;
+                    let _ = self.take_current();
+                }
                 Some((Token::LineStart(indent), span)) => {
-	                    let indent = indent;
+                    let indent = indent;
                     let line_start_span = span;
 
                     // Check for InvalidIndentationContext error:
                     // If the next token is StringContent (a content line) and indent < min_indent,
                     // report the error.
-                    let is_content_line =
-                        self.peek_kind_nth(1) == Some(TokenKind::StringContent);
+                    let is_content_line = self.peek_kind_nth(1) == Some(TokenKind::StringContent);
                     if is_content_line && indent < min_indent {
                         self.error(
                             ErrorKind::InvalidIndentationContext {
@@ -5201,11 +5226,11 @@ impl<'input> Emitter<'input> {
 
                     // Mark that we need to trim trailing spaces before the next content
                     needs_trim = true;
-	                    pending_newlines += 1;
-	                    end_span = line_start_span;
-	                    let _ = self.take_current();
+                    pending_newlines += 1;
+                    end_span = line_start_span;
+                    let _ = self.take_current();
                 }
-	                Some((Token::StringEnd(_), span)) => {
+                Some((Token::StringEnd(_), span)) => {
                     // If we need to trim, do it BEFORE applying pending newlines at end
                     // This handles trailing spaces on the last line before StringEnd
                     if needs_trim && let Some(last) = parts.last_mut() {
@@ -5232,8 +5257,8 @@ impl<'input> Emitter<'input> {
                             parts.push(Cow::Borrowed("\n"));
                         }
                     }
-	                    end_span = span;
-	                    let _ = self.take_current();
+                    end_span = span;
+                    let _ = self.take_current();
                     break;
                 }
                 _ => {
@@ -5455,20 +5480,20 @@ impl<'input> Emitter<'input> {
             }
 
             while let Some((tok, span)) = self.peek() {
-	                match tok {
-	                    Token::Plain(text) => {
-	                        line_parts.push(text.clone());
-	                        // `Plain` tokens always contain some non-whitespace content;
-	                        // the lexer emits dedicated whitespace tokens.
-	                        has_non_whitespace = true;
-	                        line_end_span = span;
-	                        let _ = self.take_current();
-	                    }
-	                    Token::Whitespace => {
-	                        line_parts.push(Cow::Borrowed(" "));
-	                        let _ = self.take_current();
-	                    }
-	                    Token::WhitespaceWithTabs => {
+                match tok {
+                    Token::Plain(text) => {
+                        line_parts.push(text.clone());
+                        // `Plain` tokens always contain some non-whitespace content;
+                        // the lexer emits dedicated whitespace tokens.
+                        has_non_whitespace = true;
+                        line_end_span = span;
+                        let _ = self.take_current();
+                    }
+                    Token::Whitespace => {
+                        line_parts.push(Cow::Borrowed(" "));
+                        let _ = self.take_current();
+                    }
+                    Token::WhitespaceWithTabs => {
                         // Tabs in content are preserved - read actual content from input
                         // since it could be multiple characters (tab + space, etc.)
                         #[allow(
@@ -5486,10 +5511,10 @@ impl<'input> Emitter<'input> {
                             }
                             line_parts.push(Cow::Borrowed(ws));
                         }
-	                        line_end_span = span;
-	                        let _ = self.take_current();
+                        line_end_span = span;
+                        let _ = self.take_current();
                     }
-	                    Token::Comment(text) => {
+                    Token::Comment(text) => {
                         // In block scalars, # is NOT a comment indicator - it's literal content
                         // The lexer incorrectly tokenizes it as a comment, so we need to
                         // reconstruct the original text including the #
@@ -5498,49 +5523,49 @@ impl<'input> Emitter<'input> {
                         comment_text.push('#');
                         comment_text.push_str(&text);
                         line_parts.push(Cow::Owned(comment_text));
-	                        has_non_whitespace = true;
-	                        line_end_span = span;
-	                        let _ = self.take_current();
+                        has_non_whitespace = true;
+                        line_end_span = span;
+                        let _ = self.take_current();
                     }
                     // In block scalars, flow indicators are literal content, not structure.
                     // The lexer doesn't know we're in a block scalar context.
-	                    Token::FlowSeqStart => {
+                    Token::FlowSeqStart => {
                         line_parts.push(Cow::Borrowed("["));
-	                        has_non_whitespace = true;
-	                        line_end_span = span;
-	                        let _ = self.take_current();
+                        has_non_whitespace = true;
+                        line_end_span = span;
+                        let _ = self.take_current();
                     }
-	                    Token::FlowSeqEnd => {
+                    Token::FlowSeqEnd => {
                         line_parts.push(Cow::Borrowed("]"));
-	                        has_non_whitespace = true;
-	                        line_end_span = span;
-	                        let _ = self.take_current();
+                        has_non_whitespace = true;
+                        line_end_span = span;
+                        let _ = self.take_current();
                     }
-	                    Token::FlowMapStart => {
+                    Token::FlowMapStart => {
                         line_parts.push(Cow::Borrowed("{"));
-	                        has_non_whitespace = true;
-	                        line_end_span = span;
-	                        let _ = self.take_current();
+                        has_non_whitespace = true;
+                        line_end_span = span;
+                        let _ = self.take_current();
                     }
-	                    Token::FlowMapEnd => {
+                    Token::FlowMapEnd => {
                         line_parts.push(Cow::Borrowed("}"));
-	                        has_non_whitespace = true;
-	                        line_end_span = span;
-	                        let _ = self.take_current();
+                        has_non_whitespace = true;
+                        line_end_span = span;
+                        let _ = self.take_current();
                     }
-	                    Token::Colon => {
+                    Token::Colon => {
                         // Colon is literal content in block scalars
                         line_parts.push(Cow::Borrowed(":"));
-	                        has_non_whitespace = true;
-	                        line_end_span = span;
-	                        let _ = self.take_current();
+                        has_non_whitespace = true;
+                        line_end_span = span;
+                        let _ = self.take_current();
                     }
-	                    Token::Comma => {
+                    Token::Comma => {
                         // Comma is literal content in block scalars
                         line_parts.push(Cow::Borrowed(","));
-	                        has_non_whitespace = true;
-	                        line_end_span = span;
-	                        let _ = self.take_current();
+                        has_non_whitespace = true;
+                        line_end_span = span;
+                        let _ = self.take_current();
                     }
                     _ => break,
                 }

@@ -19,7 +19,9 @@
 
 mod support;
 
+#[cfg(feature = "serde")]
 use saphyr::{LoadableYamlNode as _, Yaml};
+
 use support::parse_ok;
 use yaml_parser::{Number, Value};
 
@@ -191,7 +193,7 @@ fn test_bench_corpora_have_no_parse_errors() {
         ("tags", include_str!("../benches/data/tags.yml")),
     ];
 
-	for (_name, input) in corpora {
+    for (_name, input) in corpora {
         // All positive corpora used by benchmarks must be parse-error free.
         let _docs = parse_ok(input);
     }
@@ -382,7 +384,7 @@ fn debug_first_difference(path: &str, a: &Value<'static>, b: &Value<'static>) ->
 
                 let key_name = match &xk.value {
                     String(s) => s.as_ref().to_owned(),
-                    other => format!("<{other:?}>")
+                    other => format!("<{other:?}>"),
                 };
                 let value_path = format!("{path}.{}", key_name);
                 if let Some(p) = debug_first_difference(&value_path, &xv.value, &yv.value) {
@@ -518,7 +520,7 @@ fn bench_corpora_serde_equivalence_across_backends() {
 fn from_str_reports_multiple_documents() {
     let input = "---\n1\n---\n2\n";
 
-	let result = yaml_parser::serde::from_str::<i64>(input);
+    let result = yaml_parser::serde::from_str::<i64>(input);
     match result {
         Err(DeError::MultipleDocuments) => {}
         other => panic!("expected MultipleDocuments error, got {other:?}"),

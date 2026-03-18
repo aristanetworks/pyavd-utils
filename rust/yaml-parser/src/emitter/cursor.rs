@@ -272,11 +272,9 @@ impl<'input> TokenCursor<'input> {
         }
 
         // At EOF, return span at end of last token.
-        buffer
-            .last()
-            .map_or(Span::from_usize_range(0..0), |rt| {
-                Span::from_usize_range(rt.span.end_usize()..rt.span.end_usize())
-            })
+        buffer.last().map_or(Span::from_usize_range(0..0), |rt| {
+            Span::from_usize_range(rt.span.end_usize()..rt.span.end_usize())
+        })
     }
 
     /// Take collected lexer errors, draining the lexer to EOF first so that

@@ -41,7 +41,11 @@ use serde::Deserialize;
 /// `yaml_parser::serde::from_str` API.
 #[cfg(feature = "serde")]
 #[derive(Debug)]
-struct OwnedYamlValue(yaml_parser::Value<'static>);
+struct OwnedYamlValue(
+    // The inner value is only used to ensure all serde backends build the same
+    // logical tree; the benchmarks never inspect it directly.
+    #[allow(dead_code)] yaml_parser::Value<'static>,
+);
 
 #[cfg(feature = "serde")]
 impl<'de> Deserialize<'de> for OwnedYamlValue {
@@ -101,21 +105,21 @@ fn bench_parse_throughput(criterion: &mut Criterion) {
             },
         );
 
-	        // Benchmark serde_yaml as an additional reference parser using its
-	        // native `serde_yaml::Value` representation. This is not a strict
-	        // apples-to-apples comparison (serde_yaml does parse+serde in one
-	        // step), but it provides a useful baseline alongside yaml_parser and
-	        // saphyr_marked.
-	        group.bench_with_input(
-	            BenchmarkId::new("serde_yaml", name),
-	            input,
-	            |bench, data| {
-	                bench.iter(|| {
-	                    let value: serde_yaml::Value = serde_yaml::from_str(data).unwrap();
-	                    std::hint::black_box(value);
-	                });
-	            },
-	        );
+        // Benchmark serde_yaml as an additional reference parser using its
+        // native `serde_yaml::Value` representation. This is not a strict
+        // apples-to-apples comparison (serde_yaml does parse+serde in one
+        // step), but it provides a useful baseline alongside yaml_parser and
+        // saphyr_marked.
+        group.bench_with_input(
+            BenchmarkId::new("serde_yaml", name),
+            input,
+            |bench, data| {
+                bench.iter(|| {
+                    let value: serde_yaml::Value = serde_yaml::from_str(data).unwrap();
+                    std::hint::black_box(value);
+                });
+            },
+        );
     }
 
     group.finish();
@@ -205,59 +209,55 @@ fn bench_serde_deserialize_throughput(criterion: &mut Criterion) {
         ("tags", TAGS),
     ];
 
-		    let mut group = criterion.benchmark_group("serde_deserialize_throughput");
+    let mut group = criterion.benchmark_group("serde_deserialize_throughput");
 
     for (name, input) in test_cases {
         // We expect both libraries to successfully deserialize all benchmark
         // corpora. If either panics here, that's a behavioural regression we
         // want to see rather than silently skipping the dataset.
-	        group.throughput(Throughput::Bytes(u64::try_from(input.len()).unwrap()));
-	
-	        // Benchmark yaml-parser's serde-based deserialization into our own
-	        // generic `OwnedYamlValue` tree. This uses the streaming
-	        // emitter+parser pipeline under the hood via
-	        // `yaml_parser::serde::from_str`.
+        group.throughput(Throughput::Bytes(u64::try_from(input.len()).unwrap()));
+
+        // Benchmark yaml-parser's serde-based deserialization into our own
+        // generic `OwnedYamlValue` tree. This uses the streaming
+        // emitter+parser pipeline under the hood via
+        // `yaml_parser::serde::from_str`.
         group.bench_with_input(
             BenchmarkId::new("yaml_parser_serde", name),
             input,
             |bench, data| {
                 bench.iter(|| {
-	                    let value: OwnedYamlValue =
-	                        yaml_parser::serde::from_str(data).unwrap();
-	                    std::hint::black_box(value);
+                    let value: OwnedYamlValue = yaml_parser::serde::from_str(data).unwrap();
+                    std::hint::black_box(value);
                 });
             },
         );
 
-	        // Benchmark the experimental event-based serde backend, which drives
-	        // serde visitors directly from the event stream without building an
-	        // intermediate AST. This backend currently does **not** support
-	        // anchors/aliases, so we only run it on corpora that do not depend
-	        // on alias resolution.
-	        if *name != "anchors_aliases" {
-	            group.bench_with_input(
-	                BenchmarkId::new("yaml_parser_events_serde", name),
-	                input,
-	                |bench, data| {
-	                    bench.iter(|| {
-	                        let value: OwnedYamlValue =
-	                            yaml_parser::serde::bench_from_str_events_internal(data).unwrap();
-	                        std::hint::black_box(value);
-	                    });
-	                },
-	            );
-	        }
+        // Benchmark the experimental event-based serde backend, which drives
+        // serde visitors directly from the event stream without building an
+        // intermediate AST. This backend now supports anchors/aliases (YAML 1.2
+        // style, not YAML 1.1 merge keys).
+        group.bench_with_input(
+            BenchmarkId::new("yaml_parser_events_serde", name),
+            input,
+            |bench, data| {
+                bench.iter(|| {
+                    let value: OwnedYamlValue =
+                        yaml_parser::serde::bench_from_str_events_internal(data).unwrap();
+                    std::hint::black_box(value);
+                });
+            },
+        );
 
-	        // Benchmark serde_yaml deserialization into the same logical
-	        // `OwnedYamlValue` tree via the generic `Deserialize`
-	        // implementation for `OwnedYamlValue`.
+        // Benchmark serde_yaml deserialization into the same logical
+        // `OwnedYamlValue` tree via the generic `Deserialize`
+        // implementation for `OwnedYamlValue`.
         group.bench_with_input(
             BenchmarkId::new("serde_yaml", name),
             input,
             |bench, data| {
                 bench.iter(|| {
-	                    let value: OwnedYamlValue = serde_yaml::from_str(data).unwrap();
-	                    std::hint::black_box(value);
+                    let value: OwnedYamlValue = serde_yaml::from_str(data).unwrap();
+                    std::hint::black_box(value);
                 });
             },
         );

@@ -6,10 +6,11 @@
 //!
 //! This module prototypes a serde `Deserializer` that reads directly from
 //! the YAML event stream emitted by `Emitter`, without building the
-//! `Node` / `Value` AST. It currently supports single-document inputs
-//! without anchors/aliases; anchor handling will be added in a later step.
+//! `Node` / `Value` AST. It supports single-document inputs including
+//! anchors and aliases (YAML 1.2 style, not YAML 1.1 merge keys).
 
 use std::borrow::Cow;
+use std::collections::HashMap;
 
 use serde::de::{self, Deserialize, DeserializeSeed, MapAccess, SeqAccess, Visitor};
 use serde::forward_to_deserialize_any;
@@ -25,6 +26,15 @@ use super::DeError;
 pub(crate) struct EventStream<'de> {
     emitter: Emitter<'de>,
     peeked: Option<Event<'de>>,
+    /// Storage for anchored event sequences. Maps anchor name to the sequence
+    /// of events that make up the anchored value. Events are stored with the
+    /// 'de lifetime, avoiding the need to clone string content into owned form.
+    anchors: HashMap<String, Vec<Event<'de>>>,
+    /// When replaying an alias, this holds the events to replay.
+    replay_buffer: Option<std::vec::IntoIter<Event<'de>>>,
+    /// When recording an anchor, this holds the events being recorded.
+    /// Format: (anchor_name, events, nesting_depth)
+    recording: Option<(String, Vec<Event<'de>>, usize)>,
 }
 
 impl<'de> EventStream<'de> {
@@ -32,6 +42,9 @@ impl<'de> EventStream<'de> {
         Self {
             emitter: Emitter::new(input),
             peeked: None,
+            anchors: HashMap::new(),
+            replay_buffer: None,
+            recording: None,
         }
     }
 
@@ -41,7 +54,9 @@ impl<'de> EventStream<'de> {
 
     fn peek(&mut self) -> Option<&Event<'de>> {
         if self.peeked.is_none() {
-            self.peeked = self.emitter.next();
+            // Use next_event() instead of self.emitter.next() to ensure
+            // recording and replay logic is applied
+            self.peeked = self.next_event();
         }
         self.peeked.as_ref()
     }
@@ -49,104 +64,250 @@ impl<'de> EventStream<'de> {
     fn advance(&mut self) {
         if self.peeked.is_some() {
             self.peeked = None;
-	        } else {
-	            let _ = self.emitter.next();
-	        }
+        } else {
+            let _ = self.emitter.next();
+        }
     }
 
     fn next_event(&mut self) -> Option<Event<'de>> {
-	        if let Some(ev) = self.peeked.take() {
-	            Some(ev)
-	        } else {
-	            self.emitter.next()
-	        }
+        // First check if we have a peeked event - this takes priority over everything
+        if let Some(ev) = self.peeked.take() {
+            return Some(ev);
+        }
+
+        // Fast path: if we're not replaying and not recording, just get from emitter
+        // This is the common case for documents without anchors/aliases
+        if self.replay_buffer.is_none() && self.recording.is_none() {
+            let event = self.emitter.next()?;
+
+            // Quick check: does this event have anchor/alias activity?
+            match &event {
+                Event::Alias { name, .. } => {
+                    // Start replaying if we have this anchor
+                    let name_str = name.to_string();
+                    if let Some(recorded) = self.anchors.get(&name_str) {
+                        self.peeked = None;
+                        self.replay_buffer = Some(recorded.clone().into_iter());
+                        return self.next_event();
+                    } else {
+                        // Unknown alias - return it and let the deserializer handle the error
+                        return Some(event);
+                    }
+                }
+                Event::Scalar { properties, .. }
+                | Event::MappingStart { properties, .. }
+                | Event::SequenceStart { properties, .. } => {
+                    if let Some(anchor) = &properties.anchor {
+                        // Start recording
+                        let name = anchor.value.to_string();
+                        let initial_depth = match &event {
+                            Event::MappingStart { .. } | Event::SequenceStart { .. } => 1,
+                            _ => 0, // Scalar - will complete immediately
+                        };
+                        self.recording = Some((name.clone(), vec![event.clone()], initial_depth));
+
+                        // For scalars, recording is complete immediately
+                        if initial_depth == 0 {
+                            let (name, recorded, _) = self.recording.take().unwrap();
+                            self.anchors.insert(name, recorded);
+                        }
+
+                        return Some(event);
+                    }
+                }
+                _ => {}
+            }
+
+            // No anchor/alias activity - just return the event
+            return Some(event);
+        }
+
+        // Slow path: we're replaying or recording
+        // Then check if we're replaying from a buffer
+        if let Some(ref mut replay) = self.replay_buffer {
+            if let Some(event) = replay.next() {
+                // If we're also recording, record this replayed event
+                if let Some((_, ref mut events, ref mut depth)) = self.recording {
+                    events.push(event.clone());
+                    // Update depth tracking
+                    match &event {
+                        Event::MappingStart { .. } | Event::SequenceStart { .. } => *depth += 1,
+                        Event::MappingEnd { .. } | Event::SequenceEnd { .. } => {
+                            *depth -= 1;
+                            if *depth == 0 {
+                                // Recording complete
+                                let (name, recorded, _) = self.recording.take().unwrap();
+                                self.anchors.insert(name, recorded);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+
+                return Some(event);
+            } else {
+                // Replay buffer exhausted
+                self.replay_buffer = None;
+            }
+        }
+
+        // Normal path: get from emitter
+        let event = self.emitter.next();
+
+        let event = match event {
+            Some(e) => e,
+            None => return None,
+        };
+
+        // Check if this is an Alias - if so, start replaying
+        if let Event::Alias { ref name, .. } = event {
+            let name_str = name.to_string();
+            if let Some(recorded) = self.anchors.get(&name_str) {
+                // Clear any peeked event to avoid confusion during replay
+                self.peeked = None;
+                self.replay_buffer = Some(recorded.clone().into_iter());
+                // Recursively call to get the first replayed event
+                return self.next_event();
+            } else {
+                // Unknown alias - return it and let the deserializer handle the error
+                return Some(event);
+            }
+        }
+
+        // Check if this event has an anchor - if so, start recording
+        let anchor_name = match &event {
+            Event::Scalar { properties, .. }
+            | Event::MappingStart { properties, .. }
+            | Event::SequenceStart { properties, .. } => {
+                properties.anchor.as_ref().map(|p| p.value.to_string())
+            }
+            _ => None,
+        };
+
+        if let Some(name) = anchor_name {
+            // Clear any peeked event to avoid it interfering with recording/replay
+            self.peeked = None;
+            let initial_depth = match &event {
+                Event::MappingStart { .. } | Event::SequenceStart { .. } => 1,
+                _ => 0, // Scalar - will complete immediately
+            };
+            self.recording = Some((name.clone(), vec![event.clone()], initial_depth));
+
+            // For scalars, recording is complete immediately
+            if initial_depth == 0 {
+                let (name, recorded, _) = self.recording.take().unwrap();
+                self.anchors.insert(name, recorded);
+            }
+
+            // Return the event - we've already added it to the recording above
+            return Some(event);
+        }
+
+        // If we're recording (and this event doesn't have an anchor), add this event to the recording
+        if let Some((_, ref mut events, ref mut depth)) = self.recording {
+            events.push(event.clone());
+
+            // Update depth tracking
+            match &event {
+                Event::MappingStart { .. } | Event::SequenceStart { .. } => *depth += 1,
+                Event::MappingEnd { .. } | Event::SequenceEnd { .. } => {
+                    *depth -= 1;
+                    if *depth == 0 {
+                        // Recording complete
+                        let (name, recorded, _) = self.recording.take().unwrap();
+                        self.anchors.insert(name, recorded);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        Some(event)
     }
 
-	    /// Push an already-fetched event back so that the next call to
-	    /// `next_event` will return it. This is used by higher-level serde
-	    /// adapters (sequences, mappings, options) that need to inspect an
-	    /// event to decide what to do, but then want to hand it off to normal
-	    /// deserialization without forcing another read from the emitter.
-	    fn put_back(&mut self, event: Event<'de>) {
-	        debug_assert!(self.peeked.is_none());
-	        self.peeked = Some(event);
-	    }
+    /// Position the stream at the start of the next document's root node, if any.
+    ///
+    /// This mirrors `Parser::parse_next_document`'s document-skipping logic but
+    /// does not parse the document; it only positions the cursor.
+    pub(crate) fn begin_next_document(&mut self) -> bool {
+        loop {
+            let event = match self.peek() {
+                Some(ev) => ev,
+                None => return false,
+            };
+            match event {
+                Event::StreamStart => {
+                    self.advance();
+                }
+                Event::StreamEnd => {
+                    self.advance();
+                    return false;
+                }
+                Event::DocumentStart { .. } => {
+                    self.advance();
+                    return true;
+                }
+                Event::MappingEnd { .. } | Event::SequenceEnd { .. } => {
+                    // Stray end markers - skip them to avoid infinite loops.
+                    self.advance();
+                }
+                _ => {
+                    // Implicit document: first content event starts the document.
+                    return true;
+                }
+            }
+        }
+    }
 
-	    /// Position the stream at the start of the next document's root node, if any.
-	    ///
-	    /// This mirrors `Parser::parse_next_document`'s document-skipping logic but
-	    /// does not parse the document; it only positions the cursor.
-	    pub(crate) fn begin_next_document(&mut self) -> bool {
-	        loop {
-	            let event = match self.peek() {
-	                Some(ev) => ev,
-	                None => return false,
-	            };
-	            match event {
-	                Event::StreamStart => {
-	                    self.advance();
-	                }
-	                Event::StreamEnd => {
-	                    self.advance();
-	                    return false;
-	                }
-	                Event::DocumentStart { .. } => {
-	                    self.advance();
-	                    return true;
-	                }
-	                Event::MappingEnd { .. } | Event::SequenceEnd { .. } => {
-	                    // Stray end markers - skip them to avoid infinite loops.
-	                    self.advance();
-	                }
-	                _ => {
-	                    // Implicit document: first content event starts the document.
-	                    return true;
-	                }
-	            }
-	        }
-	    }
+    /// Clear all stored anchors.
+    ///
+    /// This should be called between documents to ensure anchors don't leak
+    /// across document boundaries.
+    pub(crate) fn clear_anchors(&mut self) {
+        self.anchors.clear();
+    }
 
-	    #[inline]
-	    fn deserialize_scalar<V>(
-	        &mut self,
-	        style: ScalarStyle,
-	        value: Cow<'de, str>,
-	        visitor: V,
-	    ) -> Result<V::Value, DeError>
-	    where
-	        V: Visitor<'de>,
-	    {
-	        // Fast path for quoted scalars - always strings
-	        if style != ScalarStyle::Plain {
-	            return match value {
-	                Cow::Borrowed(s) => visitor.visit_borrowed_str(s),
-	                Cow::Owned(s) => visitor.visit_string(s),
-	            };
-	        }
+    #[inline]
+    fn deserialize_scalar<V>(
+        &mut self,
+        style: ScalarStyle,
+        value: Cow<'de, str>,
+        visitor: V,
+    ) -> Result<V::Value, DeError>
+    where
+        V: Visitor<'de>,
+    {
+        // Fast path for quoted scalars - always strings
+        if style != ScalarStyle::Plain {
+            return match value {
+                Cow::Borrowed(s) => visitor.visit_borrowed_str(s),
+                Cow::Owned(s) => visitor.visit_string(s),
+            };
+        }
 
-	        // Plain scalars need type inference
-	        let kind = infer_scalar_kind(value);
-	        match kind {
-	            ScalarKind::Null => visitor.visit_unit(),
-	            ScalarKind::Bool(b) => visitor.visit_bool(b),
-	            ScalarKind::Int(num) => match num {
-	                Number::I64(i) => visitor.visit_i64(i),
-	                Number::U64(u) => visitor.visit_u64(u),
-	                Number::I128(i) => visitor.visit_i128(i),
-	                Number::U128(u) => visitor.visit_u128(u),
-	                Number::BigIntStr(text) => match text {
-	                    Cow::Borrowed(s) => visitor.visit_borrowed_str(s),
-	                    Cow::Owned(s) => visitor.visit_string(s),
-	                },
-	            },
-	            ScalarKind::Float(f) => visitor.visit_f64(f),
-	            ScalarKind::String(text) => match text {
-	                Cow::Borrowed(s) => visitor.visit_borrowed_str(s),
-	                Cow::Owned(s) => visitor.visit_string(s),
-	            },
-	        }
-	    }
-	}
+        // Plain scalars need type inference
+        let kind = infer_scalar_kind(value);
+        match kind {
+            ScalarKind::Null => visitor.visit_unit(),
+            ScalarKind::Bool(b) => visitor.visit_bool(b),
+            ScalarKind::Int(num) => match num {
+                Number::I64(i) => visitor.visit_i64(i),
+                Number::U64(u) => visitor.visit_u64(u),
+                Number::I128(i) => visitor.visit_i128(i),
+                Number::U128(u) => visitor.visit_u128(u),
+                Number::BigIntStr(text) => match text {
+                    Cow::Borrowed(s) => visitor.visit_borrowed_str(s),
+                    Cow::Owned(s) => visitor.visit_string(s),
+                },
+            },
+            ScalarKind::Float(f) => visitor.visit_f64(f),
+            ScalarKind::String(text) => match text {
+                Cow::Borrowed(s) => visitor.visit_borrowed_str(s),
+                Cow::Owned(s) => visitor.visit_string(s),
+            },
+        }
+    }
+}
 
 /// Internal classification of a plain scalar value used by the event-based
 /// serde backend. This mirrors the parser's scalar inference but avoids
@@ -224,24 +385,18 @@ fn infer_scalar_kind<'de>(value: Cow<'de, str>) -> ScalarKind<'de> {
         }
 
         // Boolean and null values
-        b'n' | b'N' => {
-            match s {
-                "null" | "Null" | "NULL" => return ScalarKind::Null,
-                _ => {}
-            }
-        }
-        b't' | b'T' => {
-            match s {
-                "true" | "True" | "TRUE" => return ScalarKind::Bool(true),
-                _ => {}
-            }
-        }
-        b'f' | b'F' => {
-            match s {
-                "false" | "False" | "FALSE" => return ScalarKind::Bool(false),
-                _ => {}
-            }
-        }
+        b'n' | b'N' => match s {
+            "null" | "Null" | "NULL" => return ScalarKind::Null,
+            _ => {}
+        },
+        b't' | b'T' => match s {
+            "true" | "True" | "TRUE" => return ScalarKind::Bool(true),
+            _ => {}
+        },
+        b'f' | b'F' => match s {
+            "false" | "False" | "FALSE" => return ScalarKind::Bool(false),
+            _ => {}
+        },
         b'~' => {
             if s == "~" {
                 return ScalarKind::Null;
@@ -283,156 +438,150 @@ fn parse_core_bool(s: &str) -> Option<bool> {
 }
 
 struct SeqAccessImpl<'a, 'de> {
-	    stream: &'a mut EventStream<'de>,
-	    finished: bool,
+    stream: &'a mut EventStream<'de>,
+    finished: bool,
 }
 
 struct MapAccessImpl<'a, 'de> {
-	    stream: &'a mut EventStream<'de>,
-	    value_pending: bool,
+    stream: &'a mut EventStream<'de>,
+    value_pending: bool,
 }
 
 impl<'a, 'de> SeqAccess<'de> for SeqAccessImpl<'a, 'de> {
-	    type Error = DeError;
+    type Error = DeError;
 
     fn next_element_seed<T>(&mut self, seed: T) -> Result<Option<T::Value>, DeError>
-	    where
-	        T: DeserializeSeed<'de>,
-	    {
-		        if self.finished {
-		            return Ok(None);
-		        }
+    where
+        T: DeserializeSeed<'de>,
+    {
+        if self.finished {
+            return Ok(None);
+        }
 
-		        let event = self
-		            .stream
-		            .next_event()
-		            .ok_or_else(|| {
-		                DeError::Custom("unexpected end of input inside sequence".into())
-		            })?;
+        // Peek at the next event to see if it's the end of the sequence
+        let event = self
+            .stream
+            .peek()
+            .ok_or_else(|| DeError::Custom("unexpected end of input inside sequence".into()))?;
 
-		        match event {
-		            Event::SequenceEnd { .. } => {
-		                // Normal end-of-sequence marker.
-		                self.finished = true;
-		                Ok(None)
-		            }
-		            Event::StreamEnd | Event::DocumentEnd { .. } | Event::MappingEnd { .. } => Err(
-		                DeError::Custom("unexpected end of structure inside sequence".into()),
-		            ),
-		            other => {
-		                // Hand the element's first event back to the main
-		                // deserializer so the element can start from a normal
-		                // `next_event` call.
-		                self.stream.put_back(other);
-		                let value = seed.deserialize(&mut *self.stream)?;
-		                Ok(Some(value))
-		            }
-		        }
-	    }
+        match event {
+            Event::SequenceEnd { .. } => {
+                // Normal end-of-sequence marker - consume it
+                self.stream.next_event();
+                self.finished = true;
+                Ok(None)
+            }
+            Event::StreamEnd | Event::DocumentEnd { .. } | Event::MappingEnd { .. } => Err(
+                DeError::Custom("unexpected end of structure inside sequence".into()),
+            ),
+            _ => {
+                // It's an element - let the deserializer consume it
+                let value = seed.deserialize(&mut *self.stream)?;
+                Ok(Some(value))
+            }
+        }
+    }
 }
 
 impl<'a, 'de> MapAccess<'de> for MapAccessImpl<'a, 'de> {
-	    type Error = DeError;
+    type Error = DeError;
 
-	    fn next_key_seed<K>(&mut self, seed: K) -> Result<Option<K::Value>, DeError>
-	    where
-	        K: DeserializeSeed<'de>,
-	    {
-	        if self.value_pending {
-	            // We returned a key but its value was never consumed.
-	            return Err(DeError::ValueWithoutKey);
-	        }
+    fn next_key_seed<K>(&mut self, seed: K) -> Result<Option<K::Value>, DeError>
+    where
+        K: DeserializeSeed<'de>,
+    {
+        if self.value_pending {
+            // We returned a key but its value was never consumed.
+            return Err(DeError::ValueWithoutKey);
+        }
 
-		        let event = self
-		            .stream
-		            .next_event()
-		            .ok_or_else(|| {
-		                DeError::Custom("unexpected end of input inside mapping".into())
-		            })?;
+        // Peek at the next event to see if it's the end of the mapping
+        let event = self
+            .stream
+            .peek()
+            .ok_or_else(|| DeError::Custom("unexpected end of input inside mapping".into()))?;
 
-		        match event {
-		            Event::MappingEnd { .. } => {
-		                // Normal end-of-mapping marker.
-		                Ok(None)
-		            }
-		            Event::StreamEnd | Event::DocumentEnd { .. } | Event::SequenceEnd { .. } => Err(
-		                DeError::Custom("unexpected end of structure inside mapping".into()),
-		            ),
-		            other => {
-		                // Put the first key event back so the key's
-		                // deserialization starts from a normal `next_event`.
-		                self.stream.put_back(other);
-		                let key = seed.deserialize(&mut *self.stream)?;
-		                self.value_pending = true;
-		                Ok(Some(key))
-		            }
-		        }
-	    }
+        match event {
+            Event::MappingEnd { .. } => {
+                // Normal end-of-mapping marker - consume it
+                self.stream.next_event();
+                Ok(None)
+            }
+            Event::StreamEnd | Event::DocumentEnd { .. } | Event::SequenceEnd { .. } => Err(
+                DeError::Custom("unexpected end of structure inside mapping".into()),
+            ),
+            _ => {
+                // It's a key - let the deserializer consume it
+                let key = seed.deserialize(&mut *self.stream)?;
+                self.value_pending = true;
+                Ok(Some(key))
+            }
+        }
+    }
 
-	    fn next_value_seed<V>(&mut self, seed: V) -> Result<V::Value, DeError>
-	    where
-	        V: DeserializeSeed<'de>,
-	    {
-	        if !self.value_pending {
-	            return Err(DeError::ValueWithoutKey);
-	        }
+    fn next_value_seed<V>(&mut self, seed: V) -> Result<V::Value, DeError>
+    where
+        V: DeserializeSeed<'de>,
+    {
+        if !self.value_pending {
+            return Err(DeError::ValueWithoutKey);
+        }
 
-	        let value = seed.deserialize(&mut *self.stream)?;
-	        self.value_pending = false;
-	        Ok(value)
-	    }
+        let value = seed.deserialize(&mut *self.stream)?;
+        self.value_pending = false;
+        Ok(value)
+    }
 }
 
 impl<'de, 'a> de::Deserializer<'de> for &'a mut EventStream<'de> {
-	    type Error = DeError;
+    type Error = DeError;
 
-	    fn deserialize_any<V>(self, visitor: V) -> Result<V::Value, DeError>
-	    where
-	        V: Visitor<'de>,
-	    {
-	        let event = self
-	            .next_event()
-	            .ok_or_else(|| DeError::Custom("unexpected end of input".into()))?;
+    fn deserialize_any<V>(self, visitor: V) -> Result<V::Value, DeError>
+    where
+        V: Visitor<'de>,
+    {
+        let event = self
+            .next_event()
+            .ok_or_else(|| DeError::Custom("unexpected end of input".into()))?;
 
-	        match event {
-	            Event::Scalar { style, value, .. } => {
-	                self.deserialize_scalar(style, value, visitor)
-	            }
-	            Event::SequenceStart { .. } => {
-	                let seq = SeqAccessImpl {
-	                    stream: self,
-	                    finished: false,
-	                };
-	                visitor.visit_seq(seq)
-	            }
-	            Event::MappingStart { .. } => {
-	                let map = MapAccessImpl {
-	                    stream: self,
-	                    value_pending: false,
-	                };
-	                visitor.visit_map(map)
-	            }
-	            Event::Alias { name, .. } => {
-	                // For A2 we do not support anchors/aliases yet.
-	                Err(DeError::UnknownAlias(name.into_owned()))
-	            }
-	            _ => Err(DeError::Custom(
-	                "unexpected event in value position".into(),
-	            )),
-	        }
-	    }
+        // Anchors and aliases are now handled transparently in next_event(),
+        // so we just process the event normally
+        match event {
+            Event::Scalar { style, value, .. } => self.deserialize_scalar(style, value, visitor),
+            Event::SequenceStart { .. } => {
+                let seq = SeqAccessImpl {
+                    stream: self,
+                    finished: false,
+                };
+                visitor.visit_seq(seq)
+            }
+            Event::MappingStart { .. } => {
+                let map = MapAccessImpl {
+                    stream: self,
+                    value_pending: false,
+                };
+                visitor.visit_map(map)
+            }
+            Event::Alias { name, .. } => {
+                // This should not happen if next_event() is working correctly,
+                // but handle it gracefully
+                Err(DeError::UnknownAlias(name.into_owned()))
+            }
+            _ => Err(DeError::Custom("unexpected event in value position".into())),
+        }
+    }
 
-	    fn deserialize_option<V>(self, visitor: V) -> Result<V::Value, DeError>
+    fn deserialize_option<V>(self, visitor: V) -> Result<V::Value, DeError>
     where
         V: Visitor<'de>,
     {
         // Treat core-schema null scalars as `None`, everything else as `Some`.
         let event = self
-            .next_event()
+            .peek()
             .ok_or_else(|| DeError::Custom("unexpected end of input".into()))?;
 
         // Fast null check: avoid full scalar inference by checking patterns directly.
-        let is_plain_null = match &event {
+        let is_plain_null = match event {
             Event::Scalar { style, value, .. } if *style == ScalarStyle::Plain => {
                 matches!(value.as_ref(), "null" | "Null" | "NULL" | "~" | "")
             }
@@ -441,11 +590,10 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut EventStream<'de> {
 
         if is_plain_null {
             // Consume the null and report `None`.
+            self.next_event();
             visitor.visit_none()
         } else {
-            // Not a null scalar – put the event back so that the nested
-            // value deserialization sees it as usual.
-            self.put_back(event);
+            // Not a null scalar – let the nested deserializer consume it
             visitor.visit_some(self)
         }
     }
@@ -474,9 +622,17 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut EventStream<'de> {
                 // Check only for YAML special values that would NOT be strings.
                 !matches!(
                     value.as_ref(),
-                    "null" | "Null" | "NULL" | "~" | ""
-                        | "true" | "True" | "TRUE"
-                        | "false" | "False" | "FALSE"
+                    "null"
+                        | "Null"
+                        | "NULL"
+                        | "~"
+                        | ""
+                        | "true"
+                        | "True"
+                        | "TRUE"
+                        | "false"
+                        | "False"
+                        | "FALSE"
                 ) && !could_be_numeric(value.as_ref())
             };
             if is_string {
@@ -514,7 +670,7 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut EventStream<'de> {
         }
     }
 
-	    fn deserialize_i64<V>(self, visitor: V) -> Result<V::Value, DeError>
+    fn deserialize_i64<V>(self, visitor: V) -> Result<V::Value, DeError>
     where
         V: Visitor<'de>,
     {
@@ -531,9 +687,7 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut EventStream<'de> {
                     // Allow bool -> integer conversion via serde's visitors.
                     visitor.visit_bool(b)
                 } else {
-                    Err(DeError::Custom(format!(
-                        "invalid i64 value: {s}"
-                    )))
+                    Err(DeError::Custom(format!("invalid i64 value: {s}")))
                 }
             }
             _ => Err(DeError::Custom("expected scalar for integer".into())),
@@ -555,9 +709,7 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut EventStream<'de> {
                 } else if let Some(b) = parse_core_bool(s) {
                     visitor.visit_bool(b)
                 } else {
-                    Err(DeError::Custom(format!(
-                        "invalid u64 value: {s}"
-                    )))
+                    Err(DeError::Custom(format!("invalid u64 value: {s}")))
                 }
             }
             _ => Err(DeError::Custom("expected scalar for integer".into())),
@@ -579,9 +731,7 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut EventStream<'de> {
                 } else if let Some(b) = parse_core_bool(s) {
                     visitor.visit_bool(b)
                 } else {
-                    Err(DeError::Custom(format!(
-                        "invalid i128 value: {s}"
-                    )))
+                    Err(DeError::Custom(format!("invalid i128 value: {s}")))
                 }
             }
             _ => Err(DeError::Custom("expected scalar for integer".into())),
@@ -603,9 +753,7 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut EventStream<'de> {
                 } else if let Some(b) = parse_core_bool(s) {
                     visitor.visit_bool(b)
                 } else {
-                    Err(DeError::Custom(format!(
-                        "invalid u128 value: {s}"
-                    )))
+                    Err(DeError::Custom(format!("invalid u128 value: {s}")))
                 }
             }
             _ => Err(DeError::Custom("expected scalar for integer".into())),
@@ -652,176 +800,178 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut EventStream<'de> {
         }
     }
 
-	    fn deserialize_char<V>(self, visitor: V) -> Result<V::Value, DeError>
-	    where
-	        V: Visitor<'de>,
-	    {
-	        let event = self
-	            .next_event()
-	            .ok_or_else(|| DeError::Custom("unexpected end of input".into()))?;
-	        match event {
-	            Event::Scalar { value, .. } => {
-	                let s = value.as_ref();
-	                let mut chars = s.chars();
-	                if let (Some(ch), None) = (chars.next(), chars.next()) {
-	                    visitor.visit_char(ch)
-	                } else {
-	                    Err(DeError::Custom("expected single-character string for char".into()))
-	                }
-	            }
-	            _ => Err(DeError::Custom("expected scalar for char".into())),
-	        }
-	    }
+    fn deserialize_char<V>(self, visitor: V) -> Result<V::Value, DeError>
+    where
+        V: Visitor<'de>,
+    {
+        let event = self
+            .next_event()
+            .ok_or_else(|| DeError::Custom("unexpected end of input".into()))?;
+        match event {
+            Event::Scalar { value, .. } => {
+                let s = value.as_ref();
+                let mut chars = s.chars();
+                if let (Some(ch), None) = (chars.next(), chars.next()) {
+                    visitor.visit_char(ch)
+                } else {
+                    Err(DeError::Custom(
+                        "expected single-character string for char".into(),
+                    ))
+                }
+            }
+            _ => Err(DeError::Custom("expected scalar for char".into())),
+        }
+    }
 
-	    fn deserialize_str<V>(self, visitor: V) -> Result<V::Value, DeError>
-	    where
-	        V: Visitor<'de>,
-	    {
-	        let event = self
-	            .next_event()
-	            .ok_or_else(|| DeError::Custom("unexpected end of input".into()))?;
-		    match event {
-		        Event::Scalar { value, .. } => match value {
-		            Cow::Borrowed(s) => visitor.visit_borrowed_str(s),
-		            Cow::Owned(s) => visitor.visit_string(s),
-		        },
-		        _ => Err(DeError::Custom("expected scalar for str".into())),
-		    }
-	    }
+    fn deserialize_str<V>(self, visitor: V) -> Result<V::Value, DeError>
+    where
+        V: Visitor<'de>,
+    {
+        let event = self
+            .next_event()
+            .ok_or_else(|| DeError::Custom("unexpected end of input".into()))?;
+        match event {
+            Event::Scalar { value, .. } => match value {
+                Cow::Borrowed(s) => visitor.visit_borrowed_str(s),
+                Cow::Owned(s) => visitor.visit_string(s),
+            },
+            _ => Err(DeError::Custom("expected scalar for str".into())),
+        }
+    }
 
-	    fn deserialize_string<V>(self, visitor: V) -> Result<V::Value, DeError>
-	    where
-	        V: Visitor<'de>,
-	    {
-	        self.deserialize_str(visitor)
-	    }
+    fn deserialize_string<V>(self, visitor: V) -> Result<V::Value, DeError>
+    where
+        V: Visitor<'de>,
+    {
+        self.deserialize_str(visitor)
+    }
 
-	    fn deserialize_bytes<V>(self, visitor: V) -> Result<V::Value, DeError>
-	    where
-	        V: Visitor<'de>,
-	    {
-	        let event = self
-	            .next_event()
-	            .ok_or_else(|| DeError::Custom("unexpected end of input".into()))?;
-	        match event {
-	            Event::Scalar { style, value, .. } => self.deserialize_scalar(style, value, visitor),
-	            _ => Err(DeError::Custom("expected scalar for bytes".into())),
-	        }
-	    }
+    fn deserialize_bytes<V>(self, visitor: V) -> Result<V::Value, DeError>
+    where
+        V: Visitor<'de>,
+    {
+        let event = self
+            .next_event()
+            .ok_or_else(|| DeError::Custom("unexpected end of input".into()))?;
+        match event {
+            Event::Scalar { style, value, .. } => self.deserialize_scalar(style, value, visitor),
+            _ => Err(DeError::Custom("expected scalar for bytes".into())),
+        }
+    }
 
-	    fn deserialize_byte_buf<V>(self, visitor: V) -> Result<V::Value, DeError>
-	    where
-	        V: Visitor<'de>,
-	    {
-	        self.deserialize_bytes(visitor)
-	    }
+    fn deserialize_byte_buf<V>(self, visitor: V) -> Result<V::Value, DeError>
+    where
+        V: Visitor<'de>,
+    {
+        self.deserialize_bytes(visitor)
+    }
 
-	    fn deserialize_unit<V>(self, visitor: V) -> Result<V::Value, DeError>
-	    where
-	        V: Visitor<'de>,
-	    {
-	        let event = self
-	            .next_event()
-	            .ok_or_else(|| DeError::Custom("unexpected end of input".into()))?;
-	        match event {
-	            Event::Scalar { style, value, .. } => self.deserialize_scalar(style, value, visitor),
-	            _ => Err(DeError::Custom("expected scalar for unit".into())),
-	        }
-	    }
+    fn deserialize_unit<V>(self, visitor: V) -> Result<V::Value, DeError>
+    where
+        V: Visitor<'de>,
+    {
+        let event = self
+            .next_event()
+            .ok_or_else(|| DeError::Custom("unexpected end of input".into()))?;
+        match event {
+            Event::Scalar { style, value, .. } => self.deserialize_scalar(style, value, visitor),
+            _ => Err(DeError::Custom("expected scalar for unit".into())),
+        }
+    }
 
-	    fn deserialize_unit_struct<V>(
-	        self,
-	        _name: &'static str,
-	        visitor: V,
-	    ) -> Result<V::Value, DeError>
-	    where
-	        V: Visitor<'de>,
-	    {
-	        self.deserialize_unit(visitor)
-	    }
+    fn deserialize_unit_struct<V>(
+        self,
+        _name: &'static str,
+        visitor: V,
+    ) -> Result<V::Value, DeError>
+    where
+        V: Visitor<'de>,
+    {
+        self.deserialize_unit(visitor)
+    }
 
-	    fn deserialize_seq<V>(self, visitor: V) -> Result<V::Value, DeError>
-	    where
-	        V: Visitor<'de>,
-	    {
-	        let event = self
-	            .next_event()
-	            .ok_or_else(|| DeError::Custom("unexpected end of input".into()))?;
+    fn deserialize_seq<V>(self, visitor: V) -> Result<V::Value, DeError>
+    where
+        V: Visitor<'de>,
+    {
+        let event = self
+            .next_event()
+            .ok_or_else(|| DeError::Custom("unexpected end of input".into()))?;
 
-	        match event {
-	            Event::SequenceStart { .. } => {
-	                let seq = SeqAccessImpl {
-	                    stream: self,
-	                    finished: false,
-	                };
-	                visitor.visit_seq(seq)
-	            }
-	            _ => Err(DeError::Custom(
-	                "expected sequence start for seq deserialization".to_string(),
-	            )),
-	        }
-	    }
+        match event {
+            Event::SequenceStart { .. } => {
+                let seq = SeqAccessImpl {
+                    stream: self,
+                    finished: false,
+                };
+                visitor.visit_seq(seq)
+            }
+            _ => Err(DeError::Custom(
+                "expected sequence start for seq deserialization".to_string(),
+            )),
+        }
+    }
 
-	    fn deserialize_tuple<V>(self, _len: usize, visitor: V) -> Result<V::Value, DeError>
-	    where
-	        V: Visitor<'de>,
-	    {
-	        // YAML has no native tuple distinction; treat as a sequence.
-	        self.deserialize_seq(visitor)
-	    }
+    fn deserialize_tuple<V>(self, _len: usize, visitor: V) -> Result<V::Value, DeError>
+    where
+        V: Visitor<'de>,
+    {
+        // YAML has no native tuple distinction; treat as a sequence.
+        self.deserialize_seq(visitor)
+    }
 
-	    fn deserialize_tuple_struct<V>(
-	        self,
-	        _name: &'static str,
-	        _len: usize,
-	        visitor: V,
-	    ) -> Result<V::Value, DeError>
-	    where
-	        V: Visitor<'de>,
-	    {
-	        self.deserialize_seq(visitor)
-	    }
+    fn deserialize_tuple_struct<V>(
+        self,
+        _name: &'static str,
+        _len: usize,
+        visitor: V,
+    ) -> Result<V::Value, DeError>
+    where
+        V: Visitor<'de>,
+    {
+        self.deserialize_seq(visitor)
+    }
 
-	    fn deserialize_map<V>(self, visitor: V) -> Result<V::Value, DeError>
-	    where
-	        V: Visitor<'de>,
-	    {
-	        let event = self
-	            .next_event()
-	            .ok_or_else(|| DeError::Custom("unexpected end of input".into()))?;
+    fn deserialize_map<V>(self, visitor: V) -> Result<V::Value, DeError>
+    where
+        V: Visitor<'de>,
+    {
+        let event = self
+            .next_event()
+            .ok_or_else(|| DeError::Custom("unexpected end of input".into()))?;
 
-	        match event {
-	            Event::MappingStart { .. } => {
-	                let map = MapAccessImpl {
-	                    stream: self,
-	                    value_pending: false,
-	                };
-	                visitor.visit_map(map)
-	            }
-	            _ => Err(DeError::Custom(
-	                "expected mapping start for map deserialization".to_string(),
-	            )),
-	        }
-	    }
+        match event {
+            Event::MappingStart { .. } => {
+                let map = MapAccessImpl {
+                    stream: self,
+                    value_pending: false,
+                };
+                visitor.visit_map(map)
+            }
+            _ => Err(DeError::Custom(
+                "expected mapping start for map deserialization".to_string(),
+            )),
+        }
+    }
 
-	    fn deserialize_struct<V>(
-	        self,
-	        _name: &'static str,
-	        _fields: &'static [&'static str],
-	        visitor: V,
-	    ) -> Result<V::Value, DeError>
-	    where
-	        V: Visitor<'de>,
-	    {
-	        // Represent structs as mappings in YAML.
-	        self.deserialize_map(visitor)
-	    }
+    fn deserialize_struct<V>(
+        self,
+        _name: &'static str,
+        _fields: &'static [&'static str],
+        visitor: V,
+    ) -> Result<V::Value, DeError>
+    where
+        V: Visitor<'de>,
+    {
+        // Represent structs as mappings in YAML.
+        self.deserialize_map(visitor)
+    }
 
-	    forward_to_deserialize_any! {
-	        i8 i16 i32 u8 u16 u32
-	        newtype_struct identifier ignored_any
-	    }
-	}
+    forward_to_deserialize_any! {
+        i8 i16 i32 u8 u16 u32
+        newtype_struct identifier ignored_any
+    }
+}
 
 /// Internal helper: deserialize a single document via the event-based backend.
 ///
@@ -831,100 +981,213 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut EventStream<'de> {
 /// AST-backed path for now.
 pub fn from_str_events_internal<'de, T>(input: &'de str) -> Result<T, DeError>
 where
-	    T: Deserialize<'de>,
+    T: Deserialize<'de>,
 {
-	    let mut stream = EventStream::new(input);
+    let mut stream = EventStream::new(input);
 
-	    let has_doc = stream.begin_next_document();
-	    if !has_doc {
-	        let mut errors = stream.take_errors();
-	        if let Some(err) = errors.pop() {
-	            return Err(DeError::from(err));
-	        }
-	        return Err(DeError::NoDocument);
-	    }
+    let has_doc = stream.begin_next_document();
+    if !has_doc {
+        let mut errors = stream.take_errors();
+        if let Some(err) = errors.pop() {
+            return Err(DeError::from(err));
+        }
+        return Err(DeError::NoDocument);
+    }
 
-	    let value = T::deserialize(&mut stream)?;
+    let value = T::deserialize(&mut stream)?;
 
-	    // After deserializing the root, ensure there are no extra documents.
-	    let mut has_extra_doc = false;
-	    while let Some(ev) = stream.next_event() {
-	        match ev {
-	            Event::StreamStart => {}
-	            Event::StreamEnd => break,
-	            Event::DocumentStart { .. } => {
-	                has_extra_doc = true;
-	                break;
-	            }
-	            Event::DocumentEnd { .. } => {}
-	            _ => {
-	                has_extra_doc = true;
-	                break;
-	            }
-	        }
-	    }
+    // After deserializing the root, ensure there are no extra documents.
+    let mut has_extra_doc = false;
+    while let Some(ev) = stream.next_event() {
+        match ev {
+            Event::StreamStart => {}
+            Event::StreamEnd => break,
+            Event::DocumentStart { .. } => {
+                has_extra_doc = true;
+                break;
+            }
+            Event::DocumentEnd { .. } => {}
+            _ => {
+                has_extra_doc = true;
+                break;
+            }
+        }
+    }
 
-	    let mut errors = stream.take_errors();
-	    if let Some(err) = errors.pop() {
-	        return Err(DeError::from(err));
-	    }
-	    if has_extra_doc {
-	        return Err(DeError::MultipleDocuments);
-	    }
+    let mut errors = stream.take_errors();
+    if let Some(err) = errors.pop() {
+        return Err(DeError::from(err));
+    }
+    if has_extra_doc {
+        return Err(DeError::MultipleDocuments);
+    }
 
-	    Ok(value)
+    Ok(value)
+}
+
+/// Streaming deserializer for multiple YAML documents using the event-based backend.
+///
+/// This is exposed publicly for use by the public `stream_from_str_docs` API.
+pub struct EventStreamDeserializer<'de, T> {
+    stream: EventStream<'de>,
+    finished: bool,
+    _marker: std::marker::PhantomData<T>,
+}
+
+impl<'de, T> EventStreamDeserializer<'de, T> {
+    pub fn new(input: &'de str) -> Self {
+        Self {
+            stream: EventStream::new(input),
+            finished: false,
+            _marker: std::marker::PhantomData,
+        }
+    }
+}
+
+impl<'de, T> Iterator for EventStreamDeserializer<'de, T>
+where
+    T: serde::de::DeserializeOwned,
+{
+    type Item = Result<T, DeError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.finished {
+            return None;
+        }
+
+        // Clear anchors from the previous document to ensure they don't leak
+        // across document boundaries.
+        self.stream.clear_anchors();
+
+        let has_doc = self.stream.begin_next_document();
+        if !has_doc {
+            // No more documents. Check for errors.
+            let mut errors = self.stream.take_errors();
+            if let Some(err) = errors.pop() {
+                self.finished = true;
+                return Some(Err(DeError::from(err)));
+            }
+            self.finished = true;
+            return None;
+        }
+
+        // Deserialize the document.
+        let result = T::deserialize(&mut self.stream);
+        if result.is_err() {
+            self.finished = true;
+            return Some(result);
+        }
+
+        // After deserializing, consume any remaining events in this document
+        // (e.g., DocumentEnd) to position the stream at the start of the next
+        // document.
+        loop {
+            match self.stream.peek() {
+                Some(Event::DocumentEnd { .. }) => {
+                    self.stream.advance();
+                    break;
+                }
+                Some(Event::StreamEnd) | None => {
+                    break;
+                }
+                Some(Event::DocumentStart { .. }) => {
+                    // Next document starts immediately
+                    break;
+                }
+                _ => {
+                    // Unexpected event after document root - this shouldn't happen
+                    // if deserialization was successful, but consume it anyway
+                    self.stream.advance();
+                }
+            }
+        }
+
+        Some(result)
+    }
 }
 
 #[cfg(test)]
 mod tests {
-	    use super::from_str_events_internal;
-	    use super::super::de;
-	    use serde::Deserialize;
-	    use std::collections::BTreeMap;
+    use super::super::de;
+    use super::from_str_events_internal;
+    use serde::Deserialize;
+    use std::collections::BTreeMap;
 
-	    #[test]
-	    fn event_backend_matches_ast_for_simple_scalars() {
-	        let yaml_i64 = "42\n";
-	        let ast_i64: i64 = de::from_str(yaml_i64).unwrap();
-	        let ev_i64: i64 = from_str_events_internal(yaml_i64).unwrap();
-	        assert_eq!(ast_i64, ev_i64);
+    #[test]
+    fn event_backend_matches_ast_for_simple_scalars() {
+        let yaml_i64 = "42\n";
+        let ast_i64: i64 = de::from_str(yaml_i64).unwrap();
+        let ev_i64: i64 = from_str_events_internal(yaml_i64).unwrap();
+        assert_eq!(ast_i64, ev_i64);
 
-	        let yaml_bool = "true\n";
-	        let ast_bool: bool = de::from_str(yaml_bool).unwrap();
-	        let ev_bool: bool = from_str_events_internal(yaml_bool).unwrap();
-	        assert_eq!(ast_bool, ev_bool);
+        let yaml_bool = "true\n";
+        let ast_bool: bool = de::from_str(yaml_bool).unwrap();
+        let ev_bool: bool = from_str_events_internal(yaml_bool).unwrap();
+        assert_eq!(ast_bool, ev_bool);
 
-	        let yaml_str = "hello\n";
-	        let ast_str: String = de::from_str(yaml_str).unwrap();
-	        let ev_str: String = from_str_events_internal(yaml_str).unwrap();
-	        assert_eq!(ast_str, ev_str);
-	    }
+        let yaml_str = "hello\n";
+        let ast_str: String = de::from_str(yaml_str).unwrap();
+        let ev_str: String = from_str_events_internal(yaml_str).unwrap();
+        assert_eq!(ast_str, ev_str);
+    }
 
-	    #[test]
-	    fn event_backend_matches_ast_for_seq_and_map() {
-	        let yaml_seq = "- 1\n- 2\n- 3\n";
-	        let ast_seq: Vec<i64> = de::from_str(yaml_seq).unwrap();
-	        let ev_seq: Vec<i64> = from_str_events_internal(yaml_seq).unwrap();
-	        assert_eq!(ast_seq, ev_seq);
+    #[test]
+    fn event_backend_matches_ast_for_seq_and_map() {
+        let yaml_seq = "- 1\n- 2\n- 3\n";
+        let ast_seq: Vec<i64> = de::from_str(yaml_seq).unwrap();
+        let ev_seq: Vec<i64> = from_str_events_internal(yaml_seq).unwrap();
+        assert_eq!(ast_seq, ev_seq);
 
-	        let yaml_map = "a: 1\nb: 2\n";
-	        let ast_map: BTreeMap<String, i64> = de::from_str(yaml_map).unwrap();
-	        let ev_map: BTreeMap<String, i64> = from_str_events_internal(yaml_map).unwrap();
-	        assert_eq!(ast_map, ev_map);
-	    }
+        let yaml_map = "a: 1\nb: 2\n";
+        let ast_map: BTreeMap<String, i64> = de::from_str(yaml_map).unwrap();
+        let ev_map: BTreeMap<String, i64> = from_str_events_internal(yaml_map).unwrap();
+        assert_eq!(ast_map, ev_map);
+    }
 
-	    #[derive(Debug, PartialEq, Deserialize)]
-	    struct Foo {
-	        a: i64,
-	        b: String,
-	    }
+    #[derive(Debug, PartialEq, Deserialize)]
+    struct Foo {
+        a: i64,
+        b: String,
+    }
 
-	    #[test]
-	    fn event_backend_matches_ast_for_struct() {
-	        let yaml = "a: 10\nb: foo\n";
-	        let ast: Foo = de::from_str(yaml).unwrap();
-	        let ev: Foo = from_str_events_internal(yaml).unwrap();
-	        assert_eq!(ast, ev);
-	    }
+    #[test]
+    fn event_backend_matches_ast_for_struct() {
+        let yaml = "a: 10\nb: foo\n";
+        let ast: Foo = de::from_str(yaml).unwrap();
+        let ev: Foo = from_str_events_internal(yaml).unwrap();
+        assert_eq!(ast, ev);
+    }
+
+    #[test]
+    fn event_backend_supports_simple_anchor_alias() {
+        // Simple scalar anchor and alias
+        let yaml = "- &anchor hello\n- *anchor\n";
+        let ast: Vec<String> = de::from_str(yaml).unwrap();
+        let ev: Vec<String> = from_str_events_internal(yaml).unwrap();
+        assert_eq!(ast, ev);
+        assert_eq!(ev, vec!["hello", "hello"]);
+    }
+
+    #[test]
+    fn event_backend_supports_sequence_anchor_alias() {
+        // Sequence with anchor and alias
+        let yaml = "tags: &tags\n  - web\n  - api\nservice:\n  name: auth\n  tags: *tags\n";
+
+        #[derive(Debug, PartialEq, Deserialize)]
+        struct Service {
+            name: String,
+            tags: Vec<String>,
+        }
+
+        #[derive(Debug, PartialEq, Deserialize)]
+        struct Config {
+            tags: Vec<String>,
+            service: Service,
+        }
+
+        let ast: Config = de::from_str(yaml).unwrap();
+        let ev: Config = from_str_events_internal(yaml).unwrap();
+        assert_eq!(ast, ev);
+        assert_eq!(ev.service.tags, vec!["web", "api"]);
+    }
 }
-

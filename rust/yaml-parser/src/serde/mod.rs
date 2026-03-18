@@ -5,22 +5,18 @@
 //! Serde integration for `yaml-parser`.
 //!
 //! This module provides helper functions to deserialize YAML input using
-//! `serde`, currently built on top of the parser's AST (`Node` / `Value`).
+//! `serde`. The public API now uses an event-based backend that drives serde
+//! visitors directly from the YAML event stream without building an intermediate
+//! AST, providing better performance and lower memory usage.
 //!
-//! An experimental, internal event-based backend lives in `event_de` and is
-//! used only in tests for now.
+//! An AST-backed reference implementation is kept internally for testing and
+//! comparison purposes.
 
 mod de;
-mod ser;
 mod event_de;
+mod ser;
 
-pub use de::{
-    DeError,
-    StreamDeserializer,
-    from_reader,
-    from_str,
-    stream_from_str_docs,
-};
+pub use de::{DeError, StreamDeserializer, from_reader, from_str, stream_from_str_docs};
 pub use ser::{SerError, to_string, to_writer};
 
 /// Internal helper re-exported for benchmarks only.

@@ -77,77 +77,77 @@ where
         std::mem::take(&mut self.errors)
     }
 
-	/// Parse all documents from the event stream.
-	#[must_use]
-	pub fn parse(&mut self) -> Vec<Node<'input>> {
-	    let mut documents = Vec::new();
-	    while let Some(node) = self.parse_next_document() {
-	        documents.push(node);
-	    }
-	    documents
-	}
+    /// Parse all documents from the event stream.
+    #[must_use]
+    pub fn parse(&mut self) -> Vec<Node<'input>> {
+        let mut documents = Vec::new();
+        while let Some(node) = self.parse_next_document() {
+            documents.push(node);
+        }
+        documents
+    }
 
-	/// Parse the next document from the event stream, if any.
-	///
-	/// This is a streaming-friendly variant that consumes at most one document
-	/// worth of events and leaves the parser positioned at the start of the
-	/// next document (or end-of-stream). Anchors are scoped per document and
-	/// cleared after each call.
-	pub(crate) fn parse_next_document(&mut self) -> Option<Node<'input>> {
-	    loop {
-	        let event = match self.peek().cloned() {
-	            Some(ev) => ev,
-	            None => return None,
-	        };
-	        match event {
-	            Event::StreamStart => {
-	                // Skip the stream start marker.
-	                self.advance();
-	            }
-	            Event::StreamEnd => {
-	                // Consume the stream end marker and signal EOF.
-	                self.advance();
-	                return None;
-	            }
-	            Event::DocumentStart { .. } => {
-	                // Explicit document: consume the start marker, parse the
-	                // root node, optionally consume a trailing DocumentEnd,
-	                // then clear anchors for the next document.
-	                self.advance();
-	                let node = self.parse_node();
-	                if matches!(self.peek(), Some(Event::DocumentEnd { .. })) {
-	                    self.advance();
-	                }
-	                // Anchors are scoped to a single document.
-	                self.anchors.clear();
-	                return node;
-	            }
-	            Event::MappingEnd { .. } | Event::SequenceEnd { .. } => {
-	                // Stray end markers - skip them to avoid infinite loop.
-	                self.advance();
-	            }
-	            _ => {
-	                // Content without explicit document start - treat as an
-	                // implicit document.
-	                let consumed_before = self.events_consumed;
-	                let node = self.parse_node();
-	                if let Some(node) = node {
-	                    // Anchors are scoped to a single document.
-	                    self.anchors.clear();
-	                    return Some(node);
-	                }
-	                // `parse_node` returned None without consuming - skip the
-	                // current event to avoid an infinite loop.
-	                if self.events_consumed == consumed_before {
-	                    self.advance();
-	                }
-	            }
-	        }
-	    }
-	}
+    /// Parse the next document from the event stream, if any.
+    ///
+    /// This is a streaming-friendly variant that consumes at most one document
+    /// worth of events and leaves the parser positioned at the start of the
+    /// next document (or end-of-stream). Anchors are scoped per document and
+    /// cleared after each call.
+    pub(crate) fn parse_next_document(&mut self) -> Option<Node<'input>> {
+        loop {
+            let event = match self.peek().cloned() {
+                Some(ev) => ev,
+                None => return None,
+            };
+            match event {
+                Event::StreamStart => {
+                    // Skip the stream start marker.
+                    self.advance();
+                }
+                Event::StreamEnd => {
+                    // Consume the stream end marker and signal EOF.
+                    self.advance();
+                    return None;
+                }
+                Event::DocumentStart { .. } => {
+                    // Explicit document: consume the start marker, parse the
+                    // root node, optionally consume a trailing DocumentEnd,
+                    // then clear anchors for the next document.
+                    self.advance();
+                    let node = self.parse_node();
+                    if matches!(self.peek(), Some(Event::DocumentEnd { .. })) {
+                        self.advance();
+                    }
+                    // Anchors are scoped to a single document.
+                    self.anchors.clear();
+                    return node;
+                }
+                Event::MappingEnd { .. } | Event::SequenceEnd { .. } => {
+                    // Stray end markers - skip them to avoid infinite loop.
+                    self.advance();
+                }
+                _ => {
+                    // Content without explicit document start - treat as an
+                    // implicit document.
+                    let consumed_before = self.events_consumed;
+                    let node = self.parse_node();
+                    if let Some(node) = node {
+                        // Anchors are scoped to a single document.
+                        self.anchors.clear();
+                        return Some(node);
+                    }
+                    // `parse_node` returned None without consuming - skip the
+                    // current event to avoid an infinite loop.
+                    if self.events_consumed == consumed_before {
+                        self.advance();
+                    }
+                }
+            }
+        }
+    }
 
-	/// Peek at the current event, using an internal one-element buffer.
-	fn peek(&mut self) -> Option<&Event<'input>> {
+    /// Peek at the current event, using an internal one-element buffer.
+    fn peek(&mut self) -> Option<&Event<'input>> {
         if self.peeked.is_none() {
             self.peeked = self.events.next();
         }
@@ -321,7 +321,7 @@ where
         Self::apply_properties(node, props)
     }
 
-	    /// Build a scalar node with type inference.
+    /// Build a scalar node with type inference.
     ///
     /// Note: To match the hybrid parser, type inference is done for plain scalars
     /// BEFORE considering the tag. The hybrid parser does `parse_scalar()` (which
@@ -341,16 +341,16 @@ where
         // Cloning the `Cow` is cheap when it's already borrowed.
         let raw_text_owned = value.clone();
 
-	        // Type inference applies to plain scalars (regardless of tag, to match
-	        // the hybrid parser). We may still record additional errors later if an
-	        // explicit tag is incompatible with the scalar's textual
-	        // representation.
-	        let typed_value = if style == ScalarStyle::Plain {
-	            infer_scalar_type(value)
-	        } else {
-	            // Quoted/block scalars are always strings
-	            Value::String(value)
-	        };
+        // Type inference applies to plain scalars (regardless of tag, to match
+        // the hybrid parser). We may still record additional errors later if an
+        // explicit tag is incompatible with the scalar's textual
+        // representation.
+        let typed_value = if style == ScalarStyle::Plain {
+            infer_scalar_type(value)
+        } else {
+            // Quoted/block scalars are always strings
+            Value::String(value)
+        };
 
         let node = Node::new(typed_value, span);
         let node = Self::apply_properties(node, props);
@@ -429,7 +429,6 @@ where
         }
         node
     }
-
 }
 
 /// Fast check: could this scalar possibly be a number?
@@ -515,20 +514,20 @@ pub(crate) fn infer_scalar_type<'input>(value: Cow<'input, str>) -> Value<'input
 /// value as `Number::BigIntStr` if it does not fit in the native integer
 /// ranges.
 pub(crate) fn looks_like_decimal_integer(input: &str) -> bool {
-	let trimmed = input.trim();
-	if trimmed.is_empty() {
-	    return false;
-	}
-	let bytes = trimmed.as_bytes();
-	let Some((first, rest)) = bytes.split_first() else {
-	    return false;
-	};
-	let has_sign = *first == b'+' || *first == b'-';
-	let digit_bytes: &[u8] = if has_sign { rest } else { bytes };
-	if has_sign && digit_bytes.is_empty() {
-	    return false;
-	}
-	digit_bytes.iter().all(u8::is_ascii_digit)
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    let bytes = trimmed.as_bytes();
+    let Some((first, rest)) = bytes.split_first() else {
+        return false;
+    };
+    let has_sign = *first == b'+' || *first == b'-';
+    let digit_bytes: &[u8] = if has_sign { rest } else { bytes };
+    if has_sign && digit_bytes.is_empty() {
+        return false;
+    }
+    digit_bytes.iter().all(u8::is_ascii_digit)
 }
 
 #[cfg(test)]

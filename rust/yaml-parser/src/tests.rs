@@ -32,9 +32,15 @@ fn check_struct_sizes() {
     println!("Token: {} bytes", size_of::<crate::lexer::Token>());
     println!("Span: {} bytes", size_of::<crate::Span>());
     println!("Cow<str>: {} bytes", size_of::<std::borrow::Cow<str>>());
-    println!("Properties: {} bytes", size_of::<crate::event::Properties>());
+    println!(
+        "Properties: {} bytes",
+        size_of::<crate::event::Properties>()
+    );
     println!("Property: {} bytes", size_of::<crate::event::Property>());
-    println!("Option<Property>: {} bytes", size_of::<Option<crate::event::Property>>());
+    println!(
+        "Option<Property>: {} bytes",
+        size_of::<Option<crate::event::Property>>()
+    );
     println!("===================\n");
 }
 
@@ -460,9 +466,9 @@ fn test_zero_copy_parsing() {
     use crate::parser::Parser;
 
     let input = "key: value";
-	
-	    // Parse to events using the streaming Emitter - events lifetime is tied to input
-	    let mut emitter = Emitter::new(input);
+
+    // Parse to events using the streaming Emitter - events lifetime is tied to input
+    let mut emitter = Emitter::new(input);
     let events: Vec<_> = emitter.by_ref().collect();
     let parse_errors = emitter.take_errors();
     assert!(parse_errors.is_empty());
