@@ -148,6 +148,7 @@ impl<'input> Lexer<'input> {
         self.errors.push(ParseError::new(kind, span));
     }
 
+    #[inline]
     fn mode(&self) -> LexMode {
         if self.flow_depth > 0 {
             LexMode::Flow
@@ -157,22 +158,26 @@ impl<'input> Lexer<'input> {
     }
 
     /// Peek the current character without advancing.
+    #[inline]
     fn peek(&self) -> Option<char> {
         self.input.get(self.byte_pos..)?.chars().next()
     }
 
     /// Peek `n` characters ahead (0 = current character).
+    #[inline]
     fn peek_n(&self, n: usize) -> Option<char> {
         self.input.get(self.byte_pos..)?.chars().nth(n)
     }
 
     /// Advance to the next character and return the current one.
+    #[inline]
     fn advance(&mut self) -> Option<char> {
         let ch = self.input.get(self.byte_pos..)?.chars().next()?;
         self.byte_pos += ch.len_utf8();
         Some(ch)
     }
 
+    #[inline]
     fn current_span(&self, start: usize) -> Span {
         Span::from_usize_range(start..self.byte_pos)
     }

@@ -191,7 +191,8 @@ pub enum Event<'input> {
         /// Block or flow style.
         style: CollectionStyle,
         /// Collected properties (anchor, tag) for this mapping.
-        properties: Properties<'input>,
+        /// Boxed to reduce `Event` enum size from 104 bytes to ~40 bytes.
+        properties: Box<Properties<'input>>,
         /// Span covering the mapping start (indicator or first key).
         span: Span,
     },
@@ -207,7 +208,8 @@ pub enum Event<'input> {
         /// Block or flow style.
         style: CollectionStyle,
         /// Collected properties (anchor, tag) for this sequence.
-        properties: Properties<'input>,
+        /// Boxed to reduce `Event` enum size from 104 bytes to ~40 bytes.
+        properties: Box<Properties<'input>>,
         /// Span covering the sequence start (indicator or bracket).
         span: Span,
     },
@@ -225,7 +227,8 @@ pub enum Event<'input> {
         /// The scalar's content (original text for plain, processed for others).
         value: Cow<'input, str>,
         /// Collected properties (anchor, tag) for this scalar.
-        properties: Properties<'input>,
+        /// Boxed to reduce `Event` enum size from 104 bytes to ~40 bytes.
+        properties: Box<Properties<'input>>,
         /// Span covering the scalar content only.
         span: Span,
     },
@@ -273,7 +276,7 @@ impl Event<'_> {
                 span,
             } => Event::MappingStart {
                 style,
-                properties: properties.into_owned(),
+                properties: Box::new((*properties).into_owned()),
                 span,
             },
             Self::MappingEnd { span } => Event::MappingEnd { span },
@@ -283,7 +286,7 @@ impl Event<'_> {
                 span,
             } => Event::SequenceStart {
                 style,
-                properties: properties.into_owned(),
+                properties: Box::new((*properties).into_owned()),
                 span,
             },
             Self::SequenceEnd { span } => Event::SequenceEnd { span },
@@ -295,7 +298,7 @@ impl Event<'_> {
             } => Event::Scalar {
                 style,
                 value: Cow::Owned(value.into_owned()),
-                properties: properties.into_owned(),
+                properties: Box::new((*properties).into_owned()),
                 span,
             },
             Self::Alias { name, span } => Event::Alias {

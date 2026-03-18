@@ -10,8 +10,10 @@ use std::marker::PhantomData;
 use serde::de::{self, DeserializeOwned, DeserializeSeed, MapAccess, SeqAccess, Visitor};
 use serde::forward_to_deserialize_any;
 
+use crate::emitter::Emitter;
+use crate::parser::Parser;
 use crate::value::Number;
-use crate::{Node, ParseError, Value, parse};
+use crate::{Node, ParseError, Value};
 
 /// Error type for serde-based deserialization from yaml-parser.
 #[derive(Debug, derive_more::Display)]
@@ -190,13 +192,13 @@ impl<'de> de::Deserializer<'de> for ValueDeserializer<'_, 'de> {
                 Number::U128(u128_value) => visitor.visit_u128(*u128_value),
                 Number::BigIntStr(text) => match text {
                     Cow::Borrowed(borrowed) => visitor.visit_borrowed_str(borrowed),
-                    Cow::Owned(owned) => visitor.visit_string(owned.clone()),
+                    Cow::Owned(owned) => visitor.visit_borrowed_str(owned),
                 },
             },
             Value::Float(float_value) => visitor.visit_f64(*float_value),
             Value::String(string_value) => match string_value {
                 Cow::Borrowed(borrowed) => visitor.visit_borrowed_str(borrowed),
-                Cow::Owned(owned) => visitor.visit_string(owned.clone()),
+                Cow::Owned(owned) => visitor.visit_borrowed_str(owned),
             },
             Value::Sequence(items) => {
                 let seq = SeqAccessImpl {
@@ -257,63 +259,110 @@ impl<'de> de::Deserializer<'de> for ValueDeserializer<'_, 'de> {
     }
 }
 
-/// Streaming deserializer over multiple YAML documents in a string.
-///
-/// This is a document-level streaming API: it still uses the AST-backed
-/// `parse` implementation internally, but allows callers to iterate over
-/// documents as `T` values rather than materialising/deserialising in one
-/// step. Future work can swap the internals to a fully streaming engine
-/// without changing this public shape.
-pub struct StreamDeserializer<T> {
-    docs: std::vec::IntoIter<Node<'static>>,
-    _marker: PhantomData<T>,
-}
+	/// Streaming deserializer over multiple YAML documents in a string.
+	///
+	/// This implementation drives the streaming emitter+parser pipeline directly
+	/// and does **not** require building a `Vec<Node>` for all documents up-front.
+	/// Each call to [`Iterator::next`] parses at most one additional document,
+	/// converts it to an owned `Node<'static>`, and then deserializes it into `T`.
+	pub struct StreamDeserializer<'de, T> {
+	    emitter: Emitter<'de>,
+	    finished: bool,
+	    _marker: PhantomData<T>,
+	}
+	
+	impl<'de, T> StreamDeserializer<'de, T> {
+	    fn new(input: &'de str) -> Self {
+	        Self {
+	            emitter: Emitter::new(input),
+	            finished: false,
+	            _marker: PhantomData,
+	        }
+	    }
+	}
+	
+	impl<'de, T> Iterator for StreamDeserializer<'de, T>
+	where
+	    T: DeserializeOwned,
+	{
+	    type Item = Result<T, DeError>;
 
-impl<T> StreamDeserializer<T> {
-    fn new(docs: Vec<Node<'static>>) -> Self {
-        Self {
-            docs: docs.into_iter(),
-            _marker: PhantomData,
-        }
-    }
-}
+	    fn next(&mut self) -> Option<Self::Item> {
+	        if self.finished {
+	            return None;
+	        }
 
-impl<T> Iterator for StreamDeserializer<T>
-where
-    T: DeserializeOwned,
-{
-    type Item = Result<T, DeError>;
+	        // Construct a parser starting at the current emitter position and
+	        // parse the next document, if any.
+	        let mut parser = Parser::new(&mut self.emitter);
+	        let node_opt = parser.parse_next_document();
 
-    fn next(&mut self) -> Option<Self::Item> {
-        let node = self.docs.next()?;
-        let mut anchors = AnchorIndex::new();
-        collect_anchors(&node, &mut anchors);
-        let de = ValueDeserializer::new(&node.value, &anchors);
-        Some(T::deserialize(de))
-    }
-}
+	        // Collect parse and emitter errors that occurred while parsing this
+	        // document. If any are present, surface the first as a `DeError` and
+	        // stop the stream.
+	        let mut errors = parser.take_errors();
+	        errors.extend(self.emitter.take_errors());
+	        if let Some(err) = errors.into_iter().next() {
+	            self.finished = true;
+	            return Some(Err(DeError::from(err)));
+	        }
 
-/// Deserialize a single YAML document from a string into `T`.
-pub fn from_str<T>(input: &str) -> Result<T, DeError>
-where
-    T: DeserializeOwned,
-{
-    let (docs, errors) = parse(input);
-    if let Some(err) = errors.into_iter().next() {
-        return Err(DeError::from(err));
-    }
-    let mut iter = docs.into_iter();
-    let first = iter.next().ok_or(DeError::NoDocument)?;
-    if iter.next().is_some() {
-        return Err(DeError::MultipleDocuments);
-    }
+	        let node = match node_opt {
+	            Some(node) => node,
+	            None => {
+	                // No more documents.
+	                self.finished = true;
+	                return None;
+	            }
+	        };
 
-    let mut anchors = AnchorIndex::new();
-    collect_anchors(&first, &mut anchors);
+	        // For serde we still reuse the existing AST-backed deserializer by
+	        // converting the document root into an owned form and collecting
+	        // anchors per document.
+	        let node_owned = node.into_owned();
+	        let mut anchors = AnchorIndex::new();
+	        collect_anchors(&node_owned, &mut anchors);
+	        let de = ValueDeserializer::new(&node_owned.value, &anchors);
+	        Some(T::deserialize(de))
+	    }
+	}
 
-    let de = ValueDeserializer::new(&first.value, &anchors);
-    T::deserialize(de)
-}
+		/// Deserialize a single YAML document from a string into `T`.
+		pub fn from_str<T>(input: &str) -> Result<T, DeError>
+		where
+		    T: DeserializeOwned,
+		{
+		    let mut emitter = Emitter::new(input);
+		    let mut parser = Parser::new(&mut emitter);
+
+	    // Parse the first document, if any.
+	    let first = parser.parse_next_document();
+
+	    // Parse and discard any remaining documents so we can both detect extra
+	    // documents and collect all parse/emitter errors for the full stream.
+	    let mut has_extra_doc = false;
+	    while let Some(_doc) = parser.parse_next_document() {
+	        has_extra_doc = true;
+	    }
+
+	    // Collect and aggregate parse + emitter errors.
+	    let mut errors = parser.take_errors();
+	    errors.extend(emitter.take_errors());
+	    if let Some(err) = errors.into_iter().next() {
+	        return Err(DeError::from(err));
+	    }
+
+	    let first = first.ok_or(DeError::NoDocument)?;
+	    if has_extra_doc {
+	        return Err(DeError::MultipleDocuments);
+	    }
+
+	    let first_owned = first.into_owned();
+	    let mut anchors = AnchorIndex::new();
+	    collect_anchors(&first_owned, &mut anchors);
+	    let de = ValueDeserializer::new(&first_owned.value, &anchors);
+	    T::deserialize(de)
+	}
 
 /// Deserialize a single YAML document from a reader into `T`.
 pub fn from_reader<R, T>(mut reader: R) -> Result<T, DeError>
@@ -326,19 +375,17 @@ where
     from_str(&buf)
 }
 
-/// Deserialize zero or more YAML documents from a string into a streaming
-/// iterator of `T`.
-///
-/// This function currently uses the AST-backed `parse` internally and then
-/// deserializes each document on demand. If parsing fails, it returns the
-/// first parse error as `Err` and does not produce an iterator.
-pub fn stream_from_str_docs<T>(input: &str) -> Result<StreamDeserializer<T>, DeError>
-where
-    T: DeserializeOwned,
-{
-    let (docs, errors) = parse(input);
-    if let Some(err) = errors.into_iter().next() {
-        return Err(DeError::from(err));
-    }
-    Ok(StreamDeserializer::new(docs))
-}
+	/// Deserialize zero or more YAML documents from a string into a streaming
+	/// iterator of `T`.
+	///
+	/// This variant is fully streaming: it does not pre-parse the entire input
+	/// into a `Vec<Node>`, but instead parses and deserializes each document on
+	/// demand from the underlying event stream.
+	pub fn stream_from_str_docs<'de, T>(
+	    input: &'de str,
+	) -> Result<StreamDeserializer<'de, T>, DeError>
+	where
+	    T: DeserializeOwned,
+	{
+	    Ok(StreamDeserializer::new(input))
+	}

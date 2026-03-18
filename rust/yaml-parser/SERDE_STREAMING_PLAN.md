@@ -7,7 +7,7 @@
 # YAML Parser: Serde / Streaming Plan
 
 Status: **Design / implementation guide**
-Last updated: 2026-03-15
+Last updated: 2026-03-17
 
 This document describes how serde support in `yaml-parser` is structured today and
 lays out a detailed plan for making everything **from the input string onward**
@@ -22,16 +22,18 @@ for now. Large-input `Read` / `BufRead` streaming can be revisited separately.
 
 **Parsing pipeline:**
 
-- `emit_events(input: &str)` (internal) lexes + emits a `Vec<Event<'input>>`.
-- `Parser<'input, I>` already operates on any `Iterator<Item = Event<'input>>`:
+- `Emitter<'input>` is a streaming `Iterator<Item = Event<'input>>` backed by the
+  lexer. It pulls tokens on demand and produces events lazily.
+- `Parser<'input, I>` operates on any `Iterator<Item = Event<'input>>`:
 
   - Holds `events: I`, `peeked: Option<Event<'input>>`, `events_consumed: usize`.
-  - Implements `parse()` in terms of `peek`/`advance` over the iterator.
+  - Implements `parse()` / `parse_next_document()` in terms of `peek`/`advance`
+    over the iterator.
 
-- Public `parse(&str)` currently does:
+- Public `parse(&str)` builds a streaming emitter and parser directly:
 
   ```text
-  &str -> Vec<Event> -> Parser<Vec<Event>.into_iter()> -> Vec<Node<'input>>
+  &str -> Emitter<'input> (Iterator) -> Parser<Emitter<'input>> -> Vec<Node<'input>>
   ```
 
 **Serde deserialization today:**
@@ -76,30 +78,35 @@ Within the constraint that we still read the entire YAML into a `String`:
 
 **Objective:** Stop requiring `Vec<Event>` between the emitter and parser.
 
-### Tasks
+**Implementation status (2026-03-16):** Implemented. In the current codebase,
+`Emitter<'input>` itself is the streaming `Iterator<Item = Event<'input>>`
+backed by a `TokenCursor<'input>` over `Lexer<'input>`. Wherever this document
+mentions `EventStream<'input>`, you can read it as "the streaming
+`Emitter<'input>`".
 
-1. Introduce an internal `EventStream<'input>` iterator that encapsulates the
-   current emitter state machine:
+### Tasks (original design, conceptually satisfied)
+
+1. Ensure the emitter is exposed as a streaming iterator over `Event<'input>`:
 
    ```rust
-   pub struct EventStream<'input> { /* emitter state */ }
+   pub struct Emitter<'input> { /* emitter state */ }
 
-   impl<'input> Iterator for EventStream<'input> {
+   impl<'input> Iterator for Emitter<'input> {
        type Item = Event<'input>;
        fn next(&mut self) -> Option<Self::Item> { /* drive emitter */ }
    }
-
-   pub fn event_stream(input: &'input str) -> EventStream<'input> { ... }
    ```
 
-2. Change the internal implementation of `parse(&str)` to:
+2. Change the internal implementation of `parse(&str)` to build a parser
+   directly over the streaming emitter:
 
    ```rust
    pub fn parse(input: &str) -> (Vec<Node>, Vec<ParseError>) {
-       let events = event_stream(input);
-       let mut parser = Parser::new(events);
+       let mut emitter = Emitter::new(input);
+       let mut parser = Parser::new(&mut emitter);
        let docs = parser.parse();
-       let errors = parser.take_errors();
+       let mut errors = parser.take_errors();
+       errors.extend(emitter.take_errors());
        (docs, errors)
    }
    ```
@@ -110,298 +117,178 @@ away.
 
 ---
 
-## 4. Phase 3.1 – Document-level streaming serde API
+## 4. Phase 3.1 – Document-level streaming serde API (merged with 3.3)
 
-**Objective:** Provide a streaming API over *documents* without yet changing
-how each document is deserialized internally.
+**Objective:** Provide a streaming API over *documents* while still reusing the
+existing AST-backed serde machinery per document (Option B), and do so on top of
+the fully streaming emitter+parser pipeline.
 
-### Tasks
+**Implementation status (2026-03-17):** Implemented and merged with the
+original Phase 3.3 design. Instead of introducing a separate
+`StreamingDeserializer<'de, I>` with a bespoke consumer type, we:
 
-1. Introduce a `StreamDeserializer<'de, I>` type that owns a `Parser<'de, I>`:
+- Added `Parser::parse_next_document` that parses a single document at a time
+  from any `Iterator<Item = Event<'input>>`. Anchors are tracked internally in
+  the parser and are **cleared between documents**, so alias validation is
+  scoped per document.
+- Introduced a streaming `StreamDeserializer<'de, T>` in `serde::de` that owns
+  an `Emitter<'de>` and, on each `next()`, constructs a `Parser` over the
+  emitter, parses the next document via `parse_next_document`, converts the
+  resulting `Node<'de>` to `Node<'static>`, collects anchors, and then defers to
+  the existing `ValueDeserializer`.
+- Reimplemented single-document `from_str<T>(input: &str)` to use the same
+  streaming pipeline (Emitter + Parser + `parse_next_document`) under the hood,
+  while preserving its existing semantics (error if zero or multiple
+  documents).
+- Reimplemented `stream_from_str_docs<T>` to return the new
+  `StreamDeserializer<'de, T>` instead of building a `Vec<Node>` up front.
 
-   ```rust
-   pub struct StreamDeserializer<'de, I> {
-       parser: Parser<'de, I>,
-   }
-   ```
+### Public shape (as implemented)
 
-2. Implement an iterator-like API that yields one document at a time:
+```rust
+pub fn from_str<T>(input: &str) -> Result<T, DeError>
+where
+    T: DeserializeOwned;
 
-   ```rust
-   impl<'de> StreamDeserializer<'de, EventStream<'de>> {
-       pub fn from_str(input: &'de str) -> Self { /* event_stream + Parser */ }
-   }
+pub struct StreamDeserializer<'de, T> { /* owns Emitter<'de> + ParserContext */ }
 
-   impl<'de, I> StreamDeserializer<'de, I>
-   where
-       I: Iterator<Item = Event<'de>>,
-   {
-       pub fn next_value<T>(&mut self) -> Result<Option<T>, DeError>
-       where
-           T: DeserializeOwned,
-       {
-           // For now: parse a single Node via the existing AST path,
-           // then run AST-backed serde on that Node and drop it.
-       }
-   }
-   ```
+impl<'de, T> Iterator for StreamDeserializer<'de, T>
+where
+    T: DeserializeOwned,
+{
+    type Item = Result<T, DeError>;
+    fn next(&mut self) -> Option<Self::Item> { /* parse_next_document + serde */ }
+}
 
-3. Expose a helper in `yaml_parser::serde`:
-
-   ```rust
-   pub fn stream_from_str_docs<T>(input: &str)
-       -> impl Iterator<Item = Result<T, DeError>>
-   where
-       T: DeserializeOwned;
-   ```
+pub fn stream_from_str_docs<'de, T>(
+    input: &'de str,
+) -> Result<StreamDeserializer<'de, T>, DeError>
+where
+    T: DeserializeOwned;
+```
 
 **Result:** Users can stream multiple documents from a single input string as
-`T` values, even though each document still goes through the AST internally.
-This also defines the public "streaming" surface we will later back with a more
-aggressive implementation.
+`T` values without ever constructing a `Vec<Node>` for all documents. For the
+single-document case, the primary `from_str` entrypoint now also uses the
+streaming emitter+parser pipeline under the hood instead of going through the
+`parse()`/`Vec<Node>` API. Internally we still build a `Node` per document to
+preserve existing serde semantics and anchor/alias behaviour, but the
+emitter+parser pipeline itself is fully streaming and anchors are correctly
+scoped per document.
 
 ---
 
-## 5. Phase 3.2 – Factor parser into structural engine + consumer
+## 5. Phase 3.2 – Consumer-based structural engine (experiment, rolled back)
 
-**Objective:** Separate structural parsing (driving over `Event`s, handling
-mappings/sequences/anchors/tags/errors) from "what to do with values", so the
-same engine can either build an AST or drive serde visitors.
+**Objective (original):** Separate structural parsing (driving over `Event`s,
+handling mappings/sequences/anchors/tags/errors) from "what to do with
+values", so the same engine could either build an AST or drive serde visitors
+via a generic `Consumer<'input>` trait.
 
-### Tasks
+**Status (2026-03-17):** Experimented with and then **rolled back**. A
+`Consumer` / `ParserContext`-based parser was prototyped, but it turned out to
+be an awkward fit for serde's pull-based `Visitor` / `DeserializeSeed` APIs and
+added a lot of complexity without clear benefit. The main branch now uses the
+simpler event-to-AST parser again, and this phase is kept here only as
+historical context.
 
-1. Define a `Consumer<'input>` trait in `parser`:
+Key takeaways from the experiment:
 
-   ```rust
-   trait Consumer<'input> {
-       type Output;
-       type Error;
+- Sharing scalar type inference via callbacks was less important than keeping
+  the parser simple and predictable.
+- Serde wants to **pull** values of arbitrary types (`T`, `DeserializeSeed`),
+  whereas the `Consumer` abstraction was **push-based** with a single monomorphic
+  `Output` type.
+- Mapping serde cleanly onto `Consumer` required additional layers of
+  indirection (`MappingAccess`, `SequenceAccess`, custom contexts) that made the
+  overall design harder to reason about and maintain.
 
-       fn scalar(&mut self, ...) -> Result<Self::Output, Self::Error>;
-       fn mapping(&mut self, ...) -> Result<Self::Output, Self::Error>;
-       fn sequence(&mut self, ...) -> Result<Self::Output, Self::Error>;
-       fn alias(&mut self, ...) -> Result<Self::Output, Self::Error>;
-   }
-   ```
-
-   The mapping/sequence methods receive closures or lightweight builder types
-   (`MappingBuilder`, `SequenceBuilder`) that iterate over entries/items using
-   the parser's existing loops, but deliver each key/value/item to the
-   `Consumer`.
-
-2. Implement `NodeConsumer<'input>` as the first `Consumer`:
-
-   - `Output = Node<'input>`, `Error = ParseError`.
-   - `scalar` builds `Node::new(Value::..., span)` (with type inference).
-   - `mapping` and `sequence` internally collect `Vec<(Node, Node)>` /
-     `Vec<Node>` by driving the builder.
-   - `alias` builds `Node::new(Value::Alias, span)` and runs anchor checks.
-
-3. Refactor `Parser` internals to be parameterised by a `Consumer`:
-
-   - Introduce `parse_node_with<C: Consumer>(&mut self, consumer: &mut C)` that
-     runs one node worth of structural logic and delegates node construction to
-     the consumer.
-   - Rewrite `parse()` to use a `NodeConsumer` instance under the hood so that
-     existing `parse()` semantics remain unchanged.
-
-**Result:** The parser becomes a reusable structural engine. AST construction is
-just one particular `Consumer` implementation.
+Going forward, we instead plan to share scalar type inference logic via common
+helpers/traits that can be reused both by the parser and by a future
+event-based serde backend, without routing everything through a `Consumer`
+callback layer.
 
 ---
 
-## 6. Phase 3.3 – Streaming serde consumer and deserializer (engine)
+## 6. Phase 3.3 – Future: direct events→serde backend (Option A)
 
-**Objective:** Implement a `Consumer` that drives serde visitors directly,
-giving us a fully streaming serde backend from the emitter onward.
+**Objective:** Implement a fully streaming serde backend that consumes the
+event stream (and a thin structural layer where needed) directly, without
+building a general-purpose `Node` / `Value` AST for each document.
 
-### Tasks
+**Status (2026-03-17):** **In progress.** A prototype, single-document,
+no-anchor, event-based backend exists in `serde::event_de` and is used only in
+tests via `from_str_events_internal`. The public APIs (`from_str`,
+`StreamDeserializer`, and `stream_from_str_docs`) still follow "Option B": they
+construct a single `Node` per document and delegate to `ValueDeserializer`.
 
-1. Define `SerdeConsumer<'de>` implementing `Consumer<'de>`:
+The intended direction for this phase is:
 
-   - Holds the current serde `Visitor<'de>` and mode (scalar vs map vs seq).
-   - Has access to an `AnchorIndex<'de>` for alias resolution and to the
-     parser's error collection mechanism.
-   - `scalar` mirrors `ValueDeserializer::deserialize_any` but works directly
-     from scalar events.
-   - `mapping` constructs a `MapAccess` adaptor that pulls keys/values by
-     driving the mapping body via the parser's structural engine.
-   - `sequence` constructs a `SeqAccess` adaptor over sequence items.
-   - `alias` resolves via `AnchorIndex` and re-enters the consumer on the
-     target value (initially via a small in-memory representation if needed).
+1. **Design an event-based serde deserializer**
 
-2. Implement `StreamingDeserializer<'de, I>` that owns a `Parser<'de, I>` and
-   an `AnchorIndex<'de>`:
+- Introduce an internal event-based deserializer that drives serde visitors
+  directly from the event stream / structural parser, using the same scalar
+  type inference helpers as the AST parser.
+  - **Current implementation:** `serde::event_de::EventStream<'de>` plus
+    `impl<'de> Deserializer<'de> for &mut EventStream<'de>`, handling scalars,
+    sequences, mappings, options, and enums.
+- Start with a restricted feature set (scalars, sequences, mappings, no
+  anchors/aliases) and add a Criterion micro-benchmark comparing:
 
-   - Implements `serde::de::Deserializer<'de>` by creating a `SerdeConsumer`
-     and delegating to `Parser::parse_node_with`.
-   - Initially supports single-document inputs (matching `from_str` today);
-     multi-document streaming is handled by `StreamDeserializer` from Phase 3.1.
+     ```text
+     input -> events -> EventDeserializer (direct)  vs.  input -> events -> AST -> serde
+     ```
 
-3. Expose new serde entrypoints backed by the streaming engine:
+2. **Add streaming anchor/alias handling based on events**
 
-   - `from_str_streaming<T>(input: &str) -> Result<T, DeError>` that uses
-     `EventStream` + `Parser` + `StreamingDeserializer`.
-   - Optionally, `stream_from_str_docs<T>` wired to the same engine for
-     multi-document streaming.
+   - Keep anchors as **events** rather than AST nodes: when an anchor is
+     defined, record the subsequence of events that make up that anchored
+     subtree.
+   - For each alias, "replay" the stored event subsequence through the same
+     `EventDeserializer` logic to reconstruct the aliased value without building
+     a full AST for the whole document.
+   - Where possible, share this anchor/event replay mechanism between the parser
+     and the serde backend so that alias semantics stay consistent.
 
-**Result:** For typical inputs, serde deserialization no longer needs to build
-`Vec<Node>`; values can be deserialized directly from the event stream driven
-by the parser's structural logic. Anchor/alias handling may remain partially
-AST-backed at first and can be refined later.
+3. **Migrate public serde APIs once parity is reached**
+
+   - Once behaviour and performance match the current AST-backed serde path,
+     rewire `from_str` and `StreamDeserializer` to use the direct
+     events→serde backend.
+   - Keep the existing AST-based path available internally for a while as a
+     reference implementation in tests.
 
 ---
 
 ## 7. Phase 3.4 – API integration and future work (public surface)
 
-**Objective:** Integrate the streaming deserializer into the public API and
-decide how it relates to the existing AST-backed `from_str`.
+**Objective:** Keep the public API surface small and coherent while the
+internals evolve towards a fully streaming serde backend.
 
-### Tasks
+### Current public shape
 
-1. Add public re-exports and helpers in `yaml_parser::serde`:
+- `yaml_parser::serde::from_str` — single-document entrypoint, now implemented
+  directly on top of the streaming emitter+parser pipeline via
+  `Parser::parse_next_document`.
+- `yaml_parser::serde::stream_from_str_docs` — multi-document streaming
+  entrypoint returning `StreamDeserializer<'de, T>`.
+- Existing serialization helpers remain unchanged:
 
-   - Keep existing:
+	```rust
+	pub use de::{DeError, from_reader, from_str, StreamDeserializer, stream_from_str_docs};
+	pub use ser::{SerError, to_string, to_writer};
+	```
 
-     ```rust
-     pub use de::{DeError, from_reader, from_str};
-     pub use ser::{SerError, to_string, to_writer};
-     ```
+### Future work (not in scope for this step)
 
-   - Add streaming-specific APIs once implemented:
-
-     ```rust
-     pub use de::{from_str_streaming, StreamDeserializer};
-     ```
-
-2. After the streaming path is battle-tested, consider reimplementing
-   `from_str` in terms of `from_str_streaming` for the single-document case so
-   that the default entrypoint also benefits from streaming internals.
-
-3. Future work (not in scope for this step):
-
-   - Streaming directly from `Read` / `BufRead` with a lifetime-aware buffer
-     for the lexer.
-   - More sophisticated streaming anchor/alias handling that does not require
-     pre-building any AST even for complex alias patterns.
+- Streaming directly from `Read` / `BufRead` with a lifetime-aware buffer for
+  the lexer.
+- More sophisticated streaming anchor/alias handling that does not require
+  pre-building any AST even for complex alias patterns.
 
 ---
 
 ## 8. Notes on anchors and aliases (future refinements)
-
-The plan above deliberately treats anchor/alias handling conservatively:
-
-- Initially, we may still build enough in-memory representation to support
-  alias resolution for streaming serde, especially for complex alias graphs.
-- Longer-term, we can refine `SerdeConsumer` and the parser so that anchors are
-  indexed and aliases resolved incrementally, without needing a pre-pass over
-  the full AST.
-
-This allows us to get a working streaming serde backend in place while keeping
-behaviour identical to the existing AST-backed implementation.
-   (`MappingBuilder`, `SequenceBuilder`) that iterate over entries/items using
-   the parser's existing loops, but deliver each key/value/item to the
-   `Consumer`.
-
-1. Implement `NodeConsumer<'input>` as the first `Consumer`:
-
-   - `Output = Node<'input>`, `Error = ParseError`.
-   - `scalar` builds `Node::new(Value::..., span)` (with type inference).
-   - `mapping` and `sequence` internally collect `Vec<(Node, Node)>` /
-     `Vec<Node>` by driving the builder.
-   - `alias` builds `Node::new(Value::Alias, span)` and runs anchor checks.
-
-2. Refactor `Parser` internals to be parameterised by a `Consumer`:
-
-   - Introduce `parse_node_with<C: Consumer>(&mut self, consumer: &mut C)` that
-     runs one node worth of structural logic and delegates node construction to
-     the consumer.
-   - Rewrite `parse()` to use a `NodeConsumer` instance under the hood so that
-     existing `parse()` semantics remain unchanged.
-
-**Result:** The parser becomes a reusable structural engine. AST construction is
-just one particular `Consumer` implementation.
-
----
-
-## 6. Phase 3.3 – Streaming serde consumer and deserializer
-
-**Objective:** Implement a `Consumer` that drives serde visitors directly,
-giving us a fully streaming serde backend from the emitter onward.
-
-### Tasks
-
-1. Define `SerdeConsumer<'de>` implementing `Consumer<'de>`:
-
-   - Holds the current serde `Visitor<'de>` and mode (scalar vs map vs seq).
-   - Has access to an `AnchorIndex<'de>` for alias resolution and to the
-     parser's error collection mechanism.
-   - `scalar` mirrors `ValueDeserializer::deserialize_any` but works directly
-     from scalar events.
-   - `mapping` constructs a `MapAccess` adaptor that pulls keys/values by
-     driving the mapping body via the parser's structural engine.
-   - `sequence` constructs a `SeqAccess` adaptor over sequence items.
-   - `alias` resolves via `AnchorIndex` and re-enters the consumer on the
-     target value (initially via a small in-memory representation if needed).
-
-2. Implement `StreamingDeserializer<'de, I>` that owns a `Parser<'de, I>` and
-   an `AnchorIndex<'de>`:
-
-   - Implements `serde::de::Deserializer<'de>` by creating a `SerdeConsumer`
-     and delegating to `Parser::parse_node_with`.
-   - Initially supports single-document inputs (matching `from_str` today);
-     multi-document streaming is handled by `StreamDeserializer` from Phase 3.1.
-
-3. Expose new serde entrypoints backed by the streaming engine:
-
-   - `from_str_streaming<T>(input: &str) -> Result<T, DeError>` that uses
-     `EventStream` + `Parser` + `StreamingDeserializer`.
-   - Optionally, `stream_from_str_docs<T>` wired to the same engine for
-     multi-document streaming.
-
-**Result:** For typical inputs, serde deserialization no longer needs to build
-`Vec<Node>`; values can be deserialized directly from the event stream driven
-by the parser's structural logic. Anchor/alias handling may remain partially
-AST-backed at first and can be refined later.
-
----
-
-## 7. Phase 3.4 – API integration and future work
-
-**Objective:** Integrate the streaming deserializer into the public API and
-decide how it relates to the existing AST-backed `from_str`.
-
-### Tasks
-
-1. Add public re-exports and helpers in `yaml_parser::serde`:
-
-   - Keep existing:
-
-     ```rust
-     pub use de::{DeError, from_reader, from_str};
-     pub use ser::{SerError, to_string, to_writer};
-     ```
-
-   - Add streaming-specific APIs once implemented:
-
-     ```rust
-     pub use de::{from_str_streaming, StreamDeserializer};
-     ```
-
-2. After the streaming path is battle-tested, consider reimplementing
-   `from_str` in terms of `from_str_streaming` for the single-document case so
-   that the default entrypoint also benefits from streaming internals.
-
-3. Future work (not in scope for this step):
-
-   - Streaming directly from `Read` / `BufRead` with a lifetime-aware buffer
-     for the lexer.
-   - More sophisticated streaming anchor/alias handling that does not require
-     pre-building any AST even for complex alias patterns.
-
----
-
-## 8. Notes on anchors and aliases
 
 The plan above deliberately treats anchor/alias handling conservatively:
 

@@ -21,7 +21,13 @@ mod support;
 
 use saphyr::{LoadableYamlNode as _, Yaml};
 use support::parse_ok;
-use yaml_parser::{Number, Value, parse};
+use yaml_parser::{Number, Value};
+
+#[cfg(feature = "serde")]
+use serde::Deserialize;
+
+#[cfg(feature = "serde")]
+use yaml_parser::serde::DeError;
 
 #[test]
 fn test_empty_input() {
@@ -185,7 +191,7 @@ fn test_bench_corpora_have_no_parse_errors() {
         ("tags", include_str!("../benches/data/tags.yml")),
     ];
 
-    for (name, input) in corpora {
+	for (_name, input) in corpora {
         // All positive corpora used by benchmarks must be parse-error free.
         let _docs = parse_ok(input);
     }
@@ -219,6 +225,345 @@ fn debug_tags_serde_deserialize_failure() {
     assert!(yaml_parser_result.is_ok());
     assert!(serde_yaml_result.is_ok());
     assert!(empty.is_null());
+}
+
+#[cfg(feature = "serde")]
+#[derive(Debug, PartialEq)]
+struct OwnedYamlValue(yaml_parser::Value<'static>);
+
+#[cfg(feature = "serde")]
+impl<'de> Deserialize<'de> for OwnedYamlValue {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::de::Deserializer<'de>,
+    {
+        // First build a borrowing `Value<'de>` using its generic serde impl,
+        // then convert to an owned `Value<'static>` so the result is
+        // independent of the input lifetime. This mirrors the bench-only
+        // adapter used in `benches/parser_bench.rs`.
+        let borrowed: yaml_parser::Value<'de> = Deserialize::deserialize(deserializer)?;
+        Ok(OwnedYamlValue(borrowed.into_owned()))
+    }
+}
+
+/// Semantic equality for `Number` that ignores internal signed/unsigned
+/// representation differences and compares the underlying decimal value.
+#[cfg(feature = "serde")]
+fn numbers_semantically_equal(a: &Number<'static>, b: &Number<'static>) -> bool {
+    a.to_decimal_string() == b.to_decimal_string()
+}
+
+/// Semantic equality for `Value` trees used in serde equivalence tests.
+///
+/// This intentionally:
+/// - Ignores span information and node properties (anchors/tags), since
+///   serde-based paths (including `serde_yaml`) do not preserve them.
+/// - Treats integers as equal when their decimal representations match,
+///   even if they use different `Number` variants (e.g. `I64` vs `U64`).
+#[cfg(feature = "serde")]
+fn values_semantically_equal(a: &Value<'static>, b: &Value<'static>) -> bool {
+    match (a, b) {
+        (Value::Null, Value::Null) => true,
+        (Value::Bool(x), Value::Bool(y)) => x == y,
+        (Value::Float(x), Value::Float(y)) => {
+            if x.is_nan() && y.is_nan() {
+                true
+            } else {
+                x == y
+            }
+        }
+        (Value::String(x), Value::String(y)) => x == y,
+        (Value::Int(x), Value::Int(y)) => numbers_semantically_equal(x, y),
+        (Value::Sequence(xs), Value::Sequence(ys)) => {
+            xs.len() == ys.len()
+                && xs
+                    .iter()
+                    .zip(ys.iter())
+                    .all(|(xn, yn)| values_semantically_equal(&xn.value, &yn.value))
+        }
+        (Value::Mapping(xps), Value::Mapping(yps)) => {
+            xps.len() == yps.len()
+                && xps.iter().zip(yps.iter()).all(|((xk, xv), (yk, yv))| {
+                    values_semantically_equal(&xk.value, &yk.value)
+                        && values_semantically_equal(&xv.value, &yv.value)
+                })
+        }
+        (Value::Alias(x), Value::Alias(y)) => x == y,
+        _ => false,
+    }
+}
+
+#[cfg(feature = "serde")]
+fn owned_semantically_equal(a: &OwnedYamlValue, b: &OwnedYamlValue) -> bool {
+    values_semantically_equal(&a.0, &b.0)
+}
+
+/// Debug helper for serde equivalence tests: walk two `Value` trees and
+/// report the first path at which they differ. This is used when a semantic
+/// equivalence check between backends fails, to pinpoint the mismatch.
+#[cfg(feature = "serde")]
+fn debug_first_difference(path: &str, a: &Value<'static>, b: &Value<'static>) -> Option<String> {
+    use Value::*;
+
+    match (a, b) {
+        (Null, Null) => None,
+        (Bool(x), Bool(y)) => {
+            if x == y {
+                None
+            } else {
+                eprintln!("diff at {path}: left Bool({x}), right Bool({y})");
+                Some(path.to_owned())
+            }
+        }
+        (Float(x), Float(y)) => {
+            let both_nan = x.is_nan() && y.is_nan();
+            if both_nan || x == y {
+                None
+            } else {
+                eprintln!("diff at {path}: left Float({x}), right Float({y})");
+                Some(path.to_owned())
+            }
+        }
+        (String(xs), String(ys)) => {
+            if xs == ys {
+                None
+            } else {
+                eprintln!("diff at {path}: left String({xs:?}), right String({ys:?})");
+                Some(path.to_owned())
+            }
+        }
+        (Int(xn), Int(yn)) => {
+            if numbers_semantically_equal(xn, yn) {
+                None
+            } else {
+                eprintln!("diff at {path}: left Int({xn:?}), right Int({yn:?})");
+                Some(path.to_owned())
+            }
+        }
+        (Alias(x), Alias(y)) => {
+            if x == y {
+                None
+            } else {
+                eprintln!("diff at {path}: left Alias({x:?}), right Alias({y:?})");
+                Some(path.to_owned())
+            }
+        }
+        (Sequence(xs), Sequence(ys)) => {
+            if xs.len() != ys.len() {
+                eprintln!(
+                    "diff at {path}: sequence length mismatch (left {}, right {})",
+                    xs.len(),
+                    ys.len()
+                );
+                return Some(path.to_owned());
+            }
+            for (idx, (xn, yn)) in xs.iter().zip(ys.iter()).enumerate() {
+                let child_path = format!("{path}[{idx}]");
+                if let Some(p) = debug_first_difference(&child_path, &xn.value, &yn.value) {
+                    return Some(p);
+                }
+            }
+            None
+        }
+        (Mapping(xps), Mapping(yps)) => {
+            if xps.len() != yps.len() {
+                eprintln!(
+                    "diff at {path}: mapping length mismatch (left {}, right {})",
+                    xps.len(),
+                    yps.len()
+                );
+                return Some(path.to_owned());
+            }
+            for (idx, ((xk, xv), (yk, yv))) in xps.iter().zip(yps.iter()).enumerate() {
+                let key_path = format!("{path}.<key#{idx}>");
+                if let Some(p) = debug_first_difference(&key_path, &xk.value, &yk.value) {
+                    return Some(p);
+                }
+
+                let key_name = match &xk.value {
+                    String(s) => s.as_ref().to_owned(),
+                    other => format!("<{other:?}>")
+                };
+                let value_path = format!("{path}.{}", key_name);
+                if let Some(p) = debug_first_difference(&value_path, &xv.value, &yv.value) {
+                    return Some(p);
+                }
+            }
+            None
+        }
+        // Different variants (e.g. String vs Int)
+        _ => {
+            eprintln!("diff at {path}: left {a:?}, right {b:?}");
+            Some(path.to_owned())
+        }
+    }
+}
+
+/// For each benchmark corpus, verify that the AST-backed serde backend, the
+/// event-based serde backend (where supported), and serde_yaml all deserialize
+/// into the same logical `OwnedYamlValue` tree.
+#[cfg(feature = "serde")]
+#[test]
+fn bench_corpora_serde_equivalence_across_backends() {
+    let corpora: &[(&str, &str)] = &[
+        (
+            "large_mapping",
+            include_str!("../benches/data/large_mapping.yml"),
+        ),
+        (
+            "nested_mapping",
+            include_str!("../benches/data/nested_mapping.yml"),
+        ),
+        (
+            "large_sequence",
+            include_str!("../benches/data/large_sequence.yml"),
+        ),
+        (
+            "block_scalars",
+            include_str!("../benches/data/block_scalars.yml"),
+        ),
+        (
+            "flow_collections",
+            include_str!("../benches/data/flow_collections.yml"),
+        ),
+        (
+            "anchors_aliases",
+            include_str!("../benches/data/anchors_aliases.yml"),
+        ),
+        ("tags", include_str!("../benches/data/tags.yml")),
+    ];
+
+    for (name, input) in corpora {
+        // AST-backed yaml-parser serde backend.
+        let ast: OwnedYamlValue = yaml_parser::serde::from_str(input)
+            .unwrap_or_else(|e| panic!("yaml_parser::serde::from_str failed on {name}: {e:?}"));
+
+        // Event-based backend: skip corpora that require anchors/aliases, which
+        // the event backend does not yet support.
+        if *name != "anchors_aliases" {
+            let ev: OwnedYamlValue = yaml_parser::serde::bench_from_str_events_internal(input)
+                .unwrap_or_else(|e| {
+                    panic!(
+                        "yaml_parser::serde::bench_from_str_events_internal failed on {name}: {e:?}",
+                    )
+                });
+
+            // Use the same *semantic* equality that we use for serde_yaml
+            // comparisons: this treats NaN == NaN and compares integers via
+            // their decimal representation, ignoring spans and properties.
+            if !owned_semantically_equal(&ast, &ev) {
+                eprintln!(
+                    "AST-backed and event-based serde backends produced semantically different values on {name}; locating first differing path...",
+                );
+                if let Some(path) = debug_first_difference("root", &ast.0, &ev.0) {
+                    panic!(
+                        "event backend produced a semantically different value on {name}; first differing path: {path}",
+                    );
+                }
+                // Fallback assertion if the debug helper somehow failed to
+                // locate a difference but the semantic check still says they
+                // differ.
+                assert!(
+                    owned_semantically_equal(&ast, &ev),
+                    "event backend produced a semantically different value on {name}",
+                );
+            }
+        }
+
+        // serde_yaml using the same logical target type. This ensures that the
+        // `serde_deserialize` throughput benchmarks are comparing equivalent
+        // trees across all three libraries.
+        let sy: OwnedYamlValue = serde_yaml::from_str(input)
+            .unwrap_or_else(|e| panic!("serde_yaml::from_str failed on {name}: {e:?}"));
+
+        // For most corpora we expect serde_yaml to produce a value tree that is
+        // *semantically* equivalent to yaml-parser's serde backend when
+        // deserializing into `OwnedYamlValue`. However, on some highly
+        // specification-sensitive inputs (notably `block_scalars` and
+        // `tags`), different implementations legitimately disagree:
+        //
+        // - `block_scalars`: exact string result for certain folded+keep
+        //   combinations.
+        // - `tags`: how strongly to interpret core tags, e.g. whether
+        //   `!!int 0o52` must be treated as the integer 42 or may remain the
+        //   string `"0o52"` when using Core Schema style inference.
+        //
+        // For now we treat those corpora as known divergences rather than
+        // forcing either library's behaviour.
+        if *name == "block_scalars" || *name == "tags" {
+            continue;
+        }
+
+        if !owned_semantically_equal(&ast, &sy) {
+            eprintln!(
+                "yaml_parser (AST-backed) and serde_yaml produced semantically different values on {name}; locating first differing path...",
+            );
+            if let Some(path) = debug_first_difference("root", &ast.0, &sy.0) {
+                panic!(
+                    "serde_yaml produced a semantically different value on {name}; first differing path: {path}",
+                );
+            }
+            // Fallback assertion if the debug helper somehow failed to locate
+            // a difference but the semantic check still says they differ.
+            assert!(
+                owned_semantically_equal(&ast, &sy),
+                "serde_yaml produced a semantically different value on {name}",
+            );
+        }
+    }
+}
+
+#[cfg(feature = "serde")]
+#[test]
+fn from_str_reports_multiple_documents() {
+    let input = "---\n1\n---\n2\n";
+
+	let result = yaml_parser::serde::from_str::<i64>(input);
+    match result {
+        Err(DeError::MultipleDocuments) => {}
+        other => panic!("expected MultipleDocuments error, got {other:?}"),
+    }
+}
+
+#[cfg(feature = "serde")]
+#[test]
+fn stream_from_str_docs_yields_all_documents() {
+    let input = "---\n1\n---\n2\n---\n3\n";
+
+    let iter = yaml_parser::serde::stream_from_str_docs::<i64>(input)
+        .expect("failed to create streaming deserializer");
+    let docs: Vec<Result<i64, DeError>> = iter.collect();
+
+    assert_eq!(docs.len(), 3);
+    match &docs[0] {
+        Ok(v) => assert_eq!(*v, 1),
+        Err(e) => panic!("unexpected error in first document: {e:?}"),
+    }
+    match &docs[1] {
+        Ok(v) => assert_eq!(*v, 2),
+        Err(e) => panic!("unexpected error in second document: {e:?}"),
+    }
+    match &docs[2] {
+        Ok(v) => assert_eq!(*v, 3),
+        Err(e) => panic!("unexpected error in third document: {e:?}"),
+    }
+}
+
+#[cfg(feature = "serde")]
+#[test]
+fn stream_from_str_docs_resets_anchors_between_documents() {
+    // First document defines &a, second document reuses &a independently.
+    let input = "&a 1\n---\n&a 2\n";
+
+    let iter = yaml_parser::serde::stream_from_str_docs::<serde_yaml::Value>(input)
+        .expect("failed to create streaming deserializer");
+    let docs: Vec<Result<serde_yaml::Value, DeError>> = iter.collect();
+
+    // Both documents should deserialize successfully; if anchors leaked
+    // across documents, we'd see incorrect alias behaviour or errors.
+    assert_eq!(docs.len(), 2);
+    assert!(docs[0].is_ok());
+    assert!(docs[1].is_ok());
 }
 
 #[test]

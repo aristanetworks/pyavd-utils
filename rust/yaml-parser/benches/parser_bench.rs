@@ -16,12 +16,46 @@
 //! Both parsers include span tracking, making this a fair comparison.
 //!
 //! When the `serde` feature is enabled on `yaml-parser`, we also compare
-//! serde-based deserialization performance against `serde_yaml`:
-//! - `yaml_parser::serde::from_str::<yaml_parser::Value<'static>>`
-//! - `serde_yaml::from_str::<serde_yaml::Value>`
+//! serde-based deserialization performance against `serde_yaml`.
+//!
+//! To make this a fair comparison, **all** serde-based benchmarks deserialize
+//! into the same logical target type: our own `yaml_parser::Value<'static>`,
+//! wrapped in a small bench-only adapter `OwnedYamlValue`. That adapter
+//! implements `DeserializeOwned` by first deserializing into a borrowing
+//! `yaml_parser::Value<'de>` using its generic `Deserialize` impl and then
+//! calling `into_owned()` to obtain `yaml_parser::Value<'static>`.
+//!
+//! All three backends (`yaml_parser` AST, `yaml_parser` event backend, and
+//! `serde_yaml`) therefore build the same `OwnedYamlValue` tree.
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use saphyr::LoadableYamlNode as _;
+
+#[cfg(feature = "serde")]
+use serde::Deserialize;
+
+/// Bench-only wrapper type that always contains an owned `yaml_parser::Value<'static>`.
+///
+/// This lets us use a single logical target type across different YAML
+/// deserializers while satisfying `DeserializeOwned` for the public
+/// `yaml_parser::serde::from_str` API.
+#[cfg(feature = "serde")]
+#[derive(Debug)]
+struct OwnedYamlValue(yaml_parser::Value<'static>);
+
+#[cfg(feature = "serde")]
+impl<'de> Deserialize<'de> for OwnedYamlValue {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::de::Deserializer<'de>,
+    {
+        // First build a borrowing `Value<'de>` using its generic serde impl,
+        // then convert to an owned `Value<'static>` so the result is
+        // independent of the input lifetime.
+        let borrowed: yaml_parser::Value<'de> = Deserialize::deserialize(deserializer)?;
+        Ok(OwnedYamlValue(borrowed.into_owned()))
+    }
+}
 
 // Test data files included at compile time
 const LARGE_MAPPING: &str = include_str!("data/large_mapping.yml");
@@ -66,6 +100,22 @@ fn bench_parse_throughput(criterion: &mut Criterion) {
                 bench.iter(|| saphyr::MarkedYaml::load_from_str(data));
             },
         );
+
+	        // Benchmark serde_yaml as an additional reference parser using its
+	        // native `serde_yaml::Value` representation. This is not a strict
+	        // apples-to-apples comparison (serde_yaml does parse+serde in one
+	        // step), but it provides a useful baseline alongside yaml_parser and
+	        // saphyr_marked.
+	        group.bench_with_input(
+	            BenchmarkId::new("serde_yaml", name),
+	            input,
+	            |bench, data| {
+	                bench.iter(|| {
+	                    let value: serde_yaml::Value = serde_yaml::from_str(data).unwrap();
+	                    std::hint::black_box(value);
+	                });
+	            },
+	        );
     }
 
     group.finish();
@@ -155,35 +205,59 @@ fn bench_serde_deserialize_throughput(criterion: &mut Criterion) {
         ("tags", TAGS),
     ];
 
-    let mut group = criterion.benchmark_group("serde_deserialize_throughput");
+		    let mut group = criterion.benchmark_group("serde_deserialize_throughput");
 
     for (name, input) in test_cases {
         // We expect both libraries to successfully deserialize all benchmark
         // corpora. If either panics here, that's a behavioural regression we
         // want to see rather than silently skipping the dataset.
-        group.throughput(Throughput::Bytes(u64::try_from(input.len()).unwrap()));
-
-        // Benchmark yaml-parser's serde-based deserialization into a generic
-        // serde_yaml::Value tree.
+	        group.throughput(Throughput::Bytes(u64::try_from(input.len()).unwrap()));
+	
+	        // Benchmark yaml-parser's serde-based deserialization into our own
+	        // generic `OwnedYamlValue` tree. This uses the streaming
+	        // emitter+parser pipeline under the hood via
+	        // `yaml_parser::serde::from_str`.
         group.bench_with_input(
             BenchmarkId::new("yaml_parser_serde", name),
             input,
             |bench, data| {
                 bench.iter(|| {
-                    let value: serde_yaml::Value = yaml_parser::serde::from_str(data).unwrap();
-                    std::hint::black_box(value);
+	                    let value: OwnedYamlValue =
+	                        yaml_parser::serde::from_str(data).unwrap();
+	                    std::hint::black_box(value);
                 });
             },
         );
 
-        // Benchmark serde_yaml deserialization into its generic Value type.
+	        // Benchmark the experimental event-based serde backend, which drives
+	        // serde visitors directly from the event stream without building an
+	        // intermediate AST. This backend currently does **not** support
+	        // anchors/aliases, so we only run it on corpora that do not depend
+	        // on alias resolution.
+	        if *name != "anchors_aliases" {
+	            group.bench_with_input(
+	                BenchmarkId::new("yaml_parser_events_serde", name),
+	                input,
+	                |bench, data| {
+	                    bench.iter(|| {
+	                        let value: OwnedYamlValue =
+	                            yaml_parser::serde::bench_from_str_events_internal(data).unwrap();
+	                        std::hint::black_box(value);
+	                    });
+	                },
+	            );
+	        }
+
+	        // Benchmark serde_yaml deserialization into the same logical
+	        // `OwnedYamlValue` tree via the generic `Deserialize`
+	        // implementation for `OwnedYamlValue`.
         group.bench_with_input(
             BenchmarkId::new("serde_yaml", name),
             input,
             |bench, data| {
                 bench.iter(|| {
-                    let value: serde_yaml::Value = serde_yaml::from_str(data).unwrap();
-                    std::hint::black_box(value);
+	                    let value: OwnedYamlValue = serde_yaml::from_str(data).unwrap();
+	                    std::hint::black_box(value);
                 });
             },
         );

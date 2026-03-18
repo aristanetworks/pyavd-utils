@@ -98,16 +98,12 @@ pub use value::{Node, Number, Properties, Value};
 /// assert_eq!(nodes.len(), 1);
 /// ```
 pub fn parse(input: &str) -> (Stream<'static>, Vec<ParseError>) {
-    // 1. Lex the input into tokens (borrowing from the input string).
-    let mut lexer = lexer::Lexer::new(input);
-    let tokens: Vec<lexer::RichToken<'_>> = lexer.by_ref().collect();
-    let mut all_errors = lexer.take_errors();
+    // 1. Create emitter with streaming lexer (lexes on demand, no pre-buffering).
+    let mut emitter = emitter::Emitter::new(input);
 
-    // 2. Feed tokens into the emitter and stream events directly into the
-    //    event-to-AST parser. This avoids building an intermediate Vec<Event>
-    //    while still keeping the emitter's internal design (borrowing from the
-    //    token slice) intact.
-    let mut emitter = emitter::Emitter::new(&tokens, input);
+    // 2. Feed events from emitter directly into the event-to-AST parser.
+    //    This avoids building an intermediate Vec<Event>.
+    let mut all_errors = Vec::new();
     let nodes = {
         let mut parser = parser::Parser::new(&mut emitter);
         let nodes = parser.parse();
@@ -146,18 +142,12 @@ pub fn parse(input: &str) -> (Stream<'static>, Vec<ParseError>) {
 /// - `Vec<ParseError>` - Any errors encountered during lexing/parsing
 #[must_use]
 pub fn emit_events(input: &str) -> (Vec<Event<'_>>, Vec<ParseError>) {
-    // Unified single-pass lexing: Lexer handles directives, document
-    // markers, and content in a single pass over the input.
-    let mut lexer = lexer::Lexer::new(input);
-    let tokens: Vec<lexer::RichToken<'_>> = lexer.by_ref().collect();
+    // Create emitter with streaming lexer (lexes on demand, no pre-buffering).
+    let mut emitter = emitter::Emitter::new(input);
 
-    // Collect errors from lexer
-    let mut all_errors = lexer.take_errors();
-
-    // Parse the token stream into events using the emitter
-    let mut emitter = emitter::Emitter::new(&tokens, input);
+    // Collect events and errors
     let events: Vec<Event<'_>> = emitter.by_ref().collect();
-    all_errors.extend(emitter.take_errors());
+    let all_errors = emitter.take_errors();
 
     (events, all_errors)
 }

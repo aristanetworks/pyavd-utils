@@ -115,7 +115,7 @@ mod serde_impls {
 
     struct ValueVisitor;
 
-    impl<'de> Visitor<'de> for ValueVisitor {
+	    impl<'de> Visitor<'de> for ValueVisitor {
         type Value = Value<'de>;
 
         fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -192,6 +192,14 @@ mod serde_impls {
             Ok(Value::String(std::borrow::Cow::Owned(v.to_owned())))
         }
 
+        fn visit_borrowed_str<E>(self, v: &'de str) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            // Zero-copy: borrow from input instead of allocating
+            Ok(Value::String(std::borrow::Cow::Borrowed(v)))
+        }
+
         fn visit_string<E>(self, v: String) -> Result<Self::Value, E>
         where
             E: de::Error,
@@ -235,6 +243,36 @@ mod serde_impls {
             }
             Ok(Value::Mapping(pairs))
         }
+
+	        fn visit_enum<A>(self, data: A) -> Result<Self::Value, A::Error>
+	        where
+	            A: de::EnumAccess<'de>,
+	        {
+	            use de::VariantAccess;
+
+	            // Represent enums as a single-entry mapping from variant name to
+	            // the associated value (or null for unit variants). This matches
+	            // the general "YAML-ish" data model while keeping the
+	            // implementation simple and generic over the underlying
+	            // `Deserializer`.
+	            let (variant, access) = data.variant::<String>()?;
+
+	            // Try to deserialize a newtype variant into `Value<'de>`; this
+	            // covers the common case for tagged scalars like timestamps.
+	            let value: Value<'de> = access.newtype_variant::<Value<'de>>()?;
+
+	            let key_node = Node {
+	                properties: None,
+	                value: Value::String(std::borrow::Cow::Owned(variant)),
+	                span: Span::default(),
+	            };
+	            let value_node = Node {
+	                properties: None,
+	                value,
+	                span: Span::default(),
+	            };
+	            Ok(Value::Mapping(vec![(key_node, value_node)]))
+	        }
     }
 
     impl<'de> Deserialize<'de> for Value<'de> {

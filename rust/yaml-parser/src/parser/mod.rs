@@ -77,51 +77,77 @@ where
         std::mem::take(&mut self.errors)
     }
 
-    /// Parse all documents from the event stream.
-    #[must_use]
-    pub fn parse(&mut self) -> Vec<Node<'input>> {
-        let mut documents = Vec::new();
+	/// Parse all documents from the event stream.
+	#[must_use]
+	pub fn parse(&mut self) -> Vec<Node<'input>> {
+	    let mut documents = Vec::new();
+	    while let Some(node) = self.parse_next_document() {
+	        documents.push(node);
+	    }
+	    documents
+	}
 
-        while let Some(event) = self.peek().cloned() {
-            match event {
-                Event::StreamStart => {
-                    self.advance();
-                }
-                Event::StreamEnd => {
-                    self.advance();
-                    break;
-                }
-                Event::DocumentStart { .. } => {
-                    self.advance();
-                    if let Some(node) = self.parse_node() {
-                        documents.push(node);
-                    }
-                    // Consume DocumentEnd if present
-                    if matches!(self.peek(), Some(Event::DocumentEnd { .. })) {
-                        self.advance();
-                    }
-                }
-                Event::MappingEnd { .. } | Event::SequenceEnd { .. } => {
-                    // Stray end markers - skip them to avoid infinite loop
-                    self.advance();
-                }
-                _ => {
-                    // Content without explicit document start - treat as implicit document
-                    if let Some(node) = self.parse_node() {
-                        documents.push(node);
-                    } else {
-                        // parse_node returned None without consuming - skip to avoid infinite loop
-                        self.advance();
-                    }
-                }
-            }
-        }
+	/// Parse the next document from the event stream, if any.
+	///
+	/// This is a streaming-friendly variant that consumes at most one document
+	/// worth of events and leaves the parser positioned at the start of the
+	/// next document (or end-of-stream). Anchors are scoped per document and
+	/// cleared after each call.
+	pub(crate) fn parse_next_document(&mut self) -> Option<Node<'input>> {
+	    loop {
+	        let event = match self.peek().cloned() {
+	            Some(ev) => ev,
+	            None => return None,
+	        };
+	        match event {
+	            Event::StreamStart => {
+	                // Skip the stream start marker.
+	                self.advance();
+	            }
+	            Event::StreamEnd => {
+	                // Consume the stream end marker and signal EOF.
+	                self.advance();
+	                return None;
+	            }
+	            Event::DocumentStart { .. } => {
+	                // Explicit document: consume the start marker, parse the
+	                // root node, optionally consume a trailing DocumentEnd,
+	                // then clear anchors for the next document.
+	                self.advance();
+	                let node = self.parse_node();
+	                if matches!(self.peek(), Some(Event::DocumentEnd { .. })) {
+	                    self.advance();
+	                }
+	                // Anchors are scoped to a single document.
+	                self.anchors.clear();
+	                return node;
+	            }
+	            Event::MappingEnd { .. } | Event::SequenceEnd { .. } => {
+	                // Stray end markers - skip them to avoid infinite loop.
+	                self.advance();
+	            }
+	            _ => {
+	                // Content without explicit document start - treat as an
+	                // implicit document.
+	                let consumed_before = self.events_consumed;
+	                let node = self.parse_node();
+	                if let Some(node) = node {
+	                    // Anchors are scoped to a single document.
+	                    self.anchors.clear();
+	                    return Some(node);
+	                }
+	                // `parse_node` returned None without consuming - skip the
+	                // current event to avoid an infinite loop.
+	                if self.events_consumed == consumed_before {
+	                    self.advance();
+	                }
+	            }
+	        }
+	    }
+	}
 
-        documents
-    }
-
-    /// Peek at the current event, using an internal one-element buffer.
-    fn peek(&mut self) -> Option<&Event<'input>> {
+	/// Peek at the current event, using an internal one-element buffer.
+	fn peek(&mut self) -> Option<&Event<'input>> {
         if self.peeked.is_none() {
             self.peeked = self.events.next();
         }
@@ -154,13 +180,13 @@ where
                 properties, span, ..
             } => {
                 self.advance();
-                Some(self.parse_mapping(properties, span))
+                Some(self.parse_mapping(*properties, span))
             }
             Event::SequenceStart {
                 properties, span, ..
             } => {
                 self.advance();
-                Some(self.parse_sequence(properties, span))
+                Some(self.parse_sequence(*properties, span))
             }
             Event::Scalar {
                 style,
@@ -169,7 +195,7 @@ where
                 span,
             } => {
                 self.advance();
-                Some(self.build_scalar(style, value, properties, span))
+                Some(self.build_scalar(style, value, *properties, span))
             }
             Event::Alias { name, span } => {
                 self.advance();
@@ -295,7 +321,7 @@ where
         Self::apply_properties(node, props)
     }
 
-    /// Build a scalar node with type inference.
+	    /// Build a scalar node with type inference.
     ///
     /// Note: To match the hybrid parser, type inference is done for plain scalars
     /// BEFORE considering the tag. The hybrid parser does `parse_scalar()` (which
@@ -315,15 +341,16 @@ where
         // Cloning the `Cow` is cheap when it's already borrowed.
         let raw_text_owned = value.clone();
 
-        // Type inference applies to plain scalars (regardless of tag, to match hybrid parser).
-        // We may still record additional errors later if an explicit tag is
-        // incompatible with the scalar's textual representation.
-        let typed_value = if style == ScalarStyle::Plain {
-            Self::infer_type(value)
-        } else {
-            // Quoted/block scalars are always strings
-            Value::String(value)
-        };
+	        // Type inference applies to plain scalars (regardless of tag, to match
+	        // the hybrid parser). We may still record additional errors later if an
+	        // explicit tag is incompatible with the scalar's textual
+	        // representation.
+	        let typed_value = if style == ScalarStyle::Plain {
+	            infer_scalar_type(value)
+	        } else {
+	            // Quoted/block scalars are always strings
+	            Value::String(value)
+	        };
 
         let node = Node::new(typed_value, span);
         let node = Self::apply_properties(node, props);
@@ -403,79 +430,105 @@ where
         node
     }
 
-    /// Infer the type of a plain scalar value.
-    ///
-    /// Per YAML 1.2 Core Schema:
-    /// - null: null, Null, NULL, ~, empty
-    /// - bool: true, True, TRUE, false, False, FALSE
-    /// - int: decimal integers
-    /// - float: decimal floats, .inf, -.inf, .nan
-    /// - everything else is a string
-    ///
-    /// Takes a `Cow<'input, str>` to avoid unnecessary allocations when the value
-    /// is inferred as a string (can return the Cow as-is).
-    fn infer_type(value: Cow<'input, str>) -> Value<'input> {
-        match value.as_ref() {
-            "null" | "Null" | "NULL" | "~" | "" => Value::Null,
-            "true" | "True" | "TRUE" => Value::Bool(true),
-            "false" | "False" | "FALSE" => Value::Bool(false),
-            _ => {
-                // Try integer, widening through i64 -> i128 -> u128. This
-                // allows us to represent a wide range of integer values
-                // directly as numbers.
-                if let Ok(int) = value.parse::<i64>() {
-                    return Value::Int(Number::I64(int));
-                }
-                if let Ok(int) = value.parse::<i128>() {
-                    return Value::Int(Number::I128(int));
-                }
-                if let Ok(uint) = value.parse::<u128>() {
-                    return Value::Int(Number::U128(uint));
-                }
+}
 
-                // If it still looks like a plain decimal integer but does not
-                // fit in i128/u128, store it as a textual big integer.
-                if Self::looks_like_decimal_integer(value.as_ref()) {
-                    return Value::Int(Number::BigIntStr(value));
-                }
+/// Fast check: could this scalar possibly be a number?
+///
+/// Returns `true` if the first character suggests the scalar might be numeric
+/// (digit, sign, or decimal point). This allows us to skip expensive parse
+/// attempts for obvious string values like "localhost", "admin", "value_001".
+#[inline]
+pub(crate) fn could_be_numeric(s: &str) -> bool {
+    match s.as_bytes().first() {
+        Some(b'0'..=b'9' | b'+' | b'-' | b'.') => true,
+        _ => false,
+    }
+}
 
-                // Try float
-                if let Ok(float) = value.parse::<f64>() {
-                    return Value::Float(float);
-                }
-                // Special float values
-                match value.as_ref() {
+/// Infer the type of a plain scalar value.
+///
+/// Per YAML 1.2 Core Schema:
+/// - null: null, Null, NULL, ~, empty
+/// - bool: true, True, TRUE, false, False, FALSE
+/// - int: decimal integers
+/// - float: decimal floats, .inf, -.inf, .nan
+/// - everything else is a string
+///
+/// Takes a `Cow<'input, str>` to avoid unnecessary allocations when the value
+/// is inferred as a string (can return the Cow as-is).
+pub(crate) fn infer_scalar_type<'input>(value: Cow<'input, str>) -> Value<'input> {
+    let s = value.as_ref();
+    match s {
+        "null" | "Null" | "NULL" | "~" | "" => Value::Null,
+        "true" | "True" | "TRUE" => Value::Bool(true),
+        "false" | "False" | "FALSE" => Value::Bool(false),
+        _ => {
+            // Fast path: if the scalar clearly cannot be a number, return String
+            // immediately without attempting any parses.
+            if !could_be_numeric(s) {
+                return Value::String(value);
+            }
+
+            // Check for float indicators (decimal point or exponent) - if present,
+            // skip integer parsing and go straight to float.
+            let has_float_chars = s.bytes().any(|b| b == b'.' || b == b'e' || b == b'E');
+
+            if has_float_chars {
+                // Special float values first (they start with '.')
+                match s {
                     ".inf" | ".Inf" | ".INF" => return Value::Float(f64::INFINITY),
                     "-.inf" | "-.Inf" | "-.INF" => return Value::Float(f64::NEG_INFINITY),
                     ".nan" | ".NaN" | ".NAN" => return Value::Float(f64::NAN),
                     _ => {}
                 }
-                // Default to string - return the Cow as-is (zero-copy if borrowed!)
-                Value::String(value)
-            }
-        }
-    }
+                // Try parsing as float
+                if let Ok(float) = s.parse::<f64>() {
+                    return Value::Float(float);
+                }
+            } else {
+                // No float indicators - try integer parsing
+                if let Ok(int) = s.parse::<i64>() {
+                    return Value::Int(Number::I64(int));
+                }
+                if let Ok(int) = s.parse::<i128>() {
+                    return Value::Int(Number::I128(int));
+                }
+                if let Ok(uint) = s.parse::<u128>() {
+                    return Value::Int(Number::U128(uint));
+                }
 
-    /// Lightweight check to see if a scalar looks like a plain decimal integer
-    /// (optional sign followed by digits only). Used to decide when to
-    /// represent a value as `Number::BigIntStr` if it does not fit in the
-    /// native integer ranges.
-    fn looks_like_decimal_integer(input: &str) -> bool {
-        let trimmed = input.trim();
-        if trimmed.is_empty() {
-            return false;
+                // If it still looks like a plain decimal integer but does not fit in
+                // i128/u128, store it as a textual big integer.
+                if looks_like_decimal_integer(s) {
+                    return Value::Int(Number::BigIntStr(value));
+                }
+            }
+
+            // Default to string - return the Cow as-is (zero-copy if borrowed!).
+            Value::String(value)
         }
-        let bytes = trimmed.as_bytes();
-        let Some((first, rest)) = bytes.split_first() else {
-            return false;
-        };
-        let has_sign = *first == b'+' || *first == b'-';
-        let digit_bytes: &[u8] = if has_sign { rest } else { bytes };
-        if has_sign && digit_bytes.is_empty() {
-            return false;
-        }
-        digit_bytes.iter().all(u8::is_ascii_digit)
     }
+}
+
+/// Lightweight check to see if a scalar looks like a plain decimal integer
+/// (optional sign followed by digits only). Used to decide when to represent a
+/// value as `Number::BigIntStr` if it does not fit in the native integer
+/// ranges.
+pub(crate) fn looks_like_decimal_integer(input: &str) -> bool {
+	let trimmed = input.trim();
+	if trimmed.is_empty() {
+	    return false;
+	}
+	let bytes = trimmed.as_bytes();
+	let Some((first, rest)) = bytes.split_first() else {
+	    return false;
+	};
+	let has_sign = *first == b'+' || *first == b'-';
+	let digit_bytes: &[u8] = if has_sign { rest } else { bytes };
+	if has_sign && digit_bytes.is_empty() {
+	    return false;
+	}
+	digit_bytes.iter().all(u8::is_ascii_digit)
 }
 
 #[cfg(test)]
