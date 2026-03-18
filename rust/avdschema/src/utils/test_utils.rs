@@ -45,17 +45,32 @@ pub(crate) fn get_test_store() -> Store {
         .unwrap(),
         avd_design: AnySchema::deserialize(json!(
             {
-                "type": "dict",
-                "keys": {
-                    "key3": {
-                        "type": "str",
-                        "$ref": "eos_cli_config_gen#/keys/key2",
-                    }
+            "type": "dict",
+            "keys": {
+                "key3": {
+                    "type": "str",
+                    "$ref": "eos_cli_config_gen#/keys/key2",
                 }
+            }
             }
         ))
         .unwrap(),
-        cv_deploy: None,
+        cv_deploy: Some(
+            AnySchema::deserialize(json!({
+                "type": "dict",
+                "keys": {
+                    "key4": {
+                        "type": "str",
+                        "description": "this is from key4",
+                    },
+                    "key5": {
+                        "type": "str",
+                        "$ref": "cv_deploy#/keys/key4",
+                    }
+                }
+            }))
+            .unwrap(),
+        ),
     }
 }
 

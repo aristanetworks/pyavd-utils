@@ -178,8 +178,9 @@ impl SchemaConversionError {
 
     pub fn to_validation_result(&self, store: &Store) -> ValidationResult {
         let mut ctx = Context::new(store, None);
+        let name = self.get_invalid_schema_name();
         ctx.add_error(Violation::InvalidSchema {
-            details: self.get_invalid_schema_name(),
+            details: format!("Schema name '{}' not found in the schema store.", name),
         });
         ctx.result
     }
@@ -246,7 +247,8 @@ mod tests {
             vec![Feedback {
                 path: Default::default(),
                 issue: Violation::InvalidSchema {
-                    details: "invalid_schema".to_string()
+                    details: "Schema name 'invalid_schema' not found in the schema store."
+                        .to_string()
                 }
                 .into()
             },]
@@ -263,7 +265,8 @@ mod tests {
             vec![Feedback {
                 path: Default::default(),
                 issue: Violation::InvalidSchema {
-                    details: "invalid_schema".to_string()
+                    details: "Schema name 'invalid_schema' not found in the schema store."
+                        .to_string()
                 }
                 .into()
             },]
