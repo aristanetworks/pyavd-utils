@@ -2,7 +2,7 @@
 // Use of this source code is governed by the Apache License 2.0
 // that can be found in the LICENSE file.
 
-use avdschema::{Schema, Store};
+use avdschema::{Schema, Store, any::AnySchema};
 use serde_json::Value;
 
 use crate::{
@@ -83,37 +83,19 @@ impl StoreValidate<Schema> for Store {
         configuration: Option<&Configuration>,
     ) -> ValidationResult {
         debug!("Validating serde_json::Value");
-        let mut ctx = Context::new(self, configuration);
-        let schema = match self.get(schema_name) {
-            Ok(schema) => schema,
-            Err(err) => {
-                ctx.add_error(Violation::InvalidSchema {
-                    details: err.to_string(),
-                });
-                return ctx.result;
-            }
-        };
-        schema.coerce(value, &mut ctx);
-        debug!("Validating serde_json::Value Coercion Done");
-        schema.validate_value(value, &mut ctx);
-        debug!("Validating serde_json::Value Done");
-        ctx.result
+        with_schema_and_context(schema_name, self, configuration, |schema, ctx| {
+            schema.coerce(value, ctx);
+            debug!("Validating serde_json::Value Coercion Done");
+            schema.validate_value(value, ctx);
+            debug!("Validating serde_json::Value Done");
+        })
     }
     fn coerce_value(&self, value: &mut Value, schema_name: Schema) -> ValidationResult {
         debug!("Coercing serde_json::Value");
-        let mut ctx = Context::new(self, None);
-        let schema = match self.get(schema_name) {
-            Ok(schema) => schema,
-            Err(err) => {
-                ctx.add_error(Violation::InvalidSchema {
-                    details: err.to_string(),
-                });
-                return ctx.result;
-            }
-        };
-        schema.coerce(value, &mut ctx);
-        debug!("Coercing serde_json::Value Done");
-        ctx.result
+        with_schema_and_context(schema_name, self, None, |schema, ctx| {
+            schema.coerce(value, ctx);
+            debug!("Coercing serde_json::Value Done");
+        })
     }
 }
 
@@ -190,6 +172,29 @@ impl From<ValidationResult> for Result<ValidationResult, StoreValidateError> {
     fn from(result: ValidationResult) -> Self {
         Ok(result)
     }
+}
+
+fn with_schema_and_context<F>(
+    schema_name: Schema,
+    store: &Store,
+    configuration: Option<&Configuration>,
+    func: F,
+) -> ValidationResult
+where
+    F: FnOnce(&AnySchema, &mut Context),
+{
+    let mut ctx = Context::new(store, configuration);
+    let schema = match store.get(schema_name) {
+        Ok(schema) => schema,
+        Err(err) => {
+            ctx.add_error(Violation::InvalidSchema {
+                details: err.to_string(),
+            });
+            return ctx.result;
+        }
+    };
+    func(schema, &mut ctx);
+    ctx.result
 }
 
 fn with_resolved_schema<T: std::convert::From<ValidationResult>, F: FnOnce(Schema) -> T>(
