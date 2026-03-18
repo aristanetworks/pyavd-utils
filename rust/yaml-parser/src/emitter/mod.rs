@@ -2651,8 +2651,12 @@ impl<'input> Emitter<'input> {
         // Secondary handle: !!type
         if let Some(suffix) = tag_str.strip_prefix("!!") {
             if let Some(prefix) = self.tag_handles.get("!!") {
+                // Optimize: avoid format! macro
                 let decoded_suffix = percent_decode(suffix).unwrap_or_else(|| suffix.to_owned());
-                return Cow::Owned(format!("{prefix}{decoded_suffix}"));
+                let mut result = String::with_capacity(prefix.len() + decoded_suffix.len());
+                result.push_str(prefix);
+                result.push_str(&decoded_suffix);
+                return Cow::Owned(result);
             }
             // Default secondary handle if not in tag_handles.
             // This is the common case for core schema tags such as `!!null`,
@@ -2685,8 +2689,13 @@ impl<'input> Emitter<'input> {
                 }
             }
             // Fallback: suffix includes percent-encoding or needs decoding.
+            // Optimize: avoid format! macro
             let decoded_suffix = percent_decode(suffix).unwrap_or_else(|| suffix.to_owned());
-            return Cow::Owned(format!("tag:yaml.org,2002:{decoded_suffix}"));
+            const TAG_PREFIX: &str = "tag:yaml.org,2002:";
+            let mut result = String::with_capacity(TAG_PREFIX.len() + decoded_suffix.len());
+            result.push_str(TAG_PREFIX);
+            result.push_str(&decoded_suffix);
+            return Cow::Owned(result);
         }
 
         // Named handle: !name!suffix
@@ -2702,8 +2711,12 @@ impl<'input> Emitter<'input> {
             let suffix = &tag_str[second_bang_pos + 1..];
             // Look up handle using as_str() since HashMap keys are &str
             if let Some(prefix) = self.tag_handles.get(handle) {
+                // Optimize: avoid format! macro
                 let decoded_suffix = percent_decode(suffix).unwrap_or_else(|| suffix.to_owned());
-                return Cow::Owned(format!("{prefix}{decoded_suffix}"));
+                let mut result = String::with_capacity(prefix.len() + decoded_suffix.len());
+                result.push_str(prefix);
+                result.push_str(&decoded_suffix);
+                return Cow::Owned(result);
             }
             // Handle not declared - emit error and return unexpanded
             self.error(ErrorKind::UndefinedTagHandle, span);
@@ -2714,16 +2727,24 @@ impl<'input> Emitter<'input> {
         if let Some(suffix) = tag_str.strip_prefix('!') {
             // Check if primary handle `!` has been redefined via %TAG ! prefix
             if let Some(prefix) = self.tag_handles.get("!") {
+                // Optimize: avoid format! macro
                 let decoded_suffix = percent_decode(suffix).unwrap_or_else(|| suffix.to_owned());
-                return Cow::Owned(format!("{prefix}{decoded_suffix}"));
+                let mut result = String::with_capacity(prefix.len() + decoded_suffix.len());
+                result.push_str(prefix);
+                result.push_str(&decoded_suffix);
+                return Cow::Owned(result);
             }
             // No redefinition - if no percent-encoding, return as-is (zero-copy!)
             if percent_decode(suffix).is_none() {
                 return tag_cow;
             }
             // Has percent-encoding - need to decode
+            // Optimize: avoid format! macro
             let decoded_suffix = percent_decode(suffix).unwrap();
-            return Cow::Owned(format!("!{decoded_suffix}"));
+            let mut result = String::with_capacity(1 + decoded_suffix.len());
+            result.push('!');
+            result.push_str(&decoded_suffix);
+            return Cow::Owned(result);
         }
 
         // Shouldn't reach here, but return as-is
