@@ -95,7 +95,7 @@ where
 /// This variant is fully streaming: it does not pre-parse the entire input
 /// into a `Vec<Node>`, but instead parses and deserializes each document on
 /// demand from the underlying event stream.
-pub fn stream_from_str_docs<'de, T>(input: &'de str) -> Result<StreamDeserializer<'de, T>, DeError>
+pub fn stream_from_str_docs<T>(input: &str) -> Result<StreamDeserializer<'_, T>, DeError>
 where
     T: DeserializeOwned,
 {

@@ -12,6 +12,14 @@
     clippy::expect_used,
     reason = "panicking on unexpected writer failure is fine in these focused tests"
 )]
+#![allow(
+    clippy::float_cmp,
+    reason = "exact float comparison is intentional for roundtrip equality checks"
+)]
+#![allow(
+    clippy::panic,
+    reason = "panic is expected in test assertions for mismatched value kinds"
+)]
 
 use yaml_parser::{Node, Value, emit_events, parse, writer};
 

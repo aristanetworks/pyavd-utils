@@ -25,6 +25,10 @@
 use super::*;
 
 #[test]
+#[allow(
+    clippy::print_stdout,
+    reason = "this test prints struct sizes for manual inspection"
+)]
 fn check_struct_sizes() {
     use std::mem::size_of;
     println!("\n=== Struct Sizes ===");

@@ -44,7 +44,11 @@ use serde::Deserialize;
 struct OwnedYamlValue(
     // The inner value is only used to ensure all serde backends build the same
     // logical tree; the benchmarks never inspect it directly.
-    #[allow(dead_code)] yaml_parser::Value<'static>,
+    #[allow(
+        dead_code,
+        reason = "inner value ensures all serde backends build the same tree"
+    )]
+    yaml_parser::Value<'static>,
 );
 
 #[cfg(feature = "serde")]

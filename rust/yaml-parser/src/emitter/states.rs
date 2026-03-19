@@ -26,8 +26,18 @@ pub(super) enum ValueKind {
 #[derive(Debug, Clone, Copy)]
 pub(super) struct ValueContext {
     pub min_indent: IndentLevel,
+    /// Column where content starts on the same line as the indicator, if known.
+    /// `Some(col)` when content follows the indicator on the same line (e.g., `- - a` → col 2).
+    /// `None` when content is on a subsequent line or not yet determined.
+    /// Separate from `min_indent` because scalar continuation needs the lower
+    /// bound (`entry_indent + 1`) while nested structures need the actual position.
+    pub content_column: Option<IndentLevel>,
     pub kind: ValueKind,
     pub allow_implicit_mapping: bool,
+    /// True when properties were carried from a prior Value iteration (e.g. via
+    /// Dedent re-entry). `OR`ed with `initial_crossed_line` so that crossing
+    /// history is preserved across re-dispatch.
+    pub prior_crossed_line: bool,
 }
 
 /// Phase within a block sequence.
@@ -54,7 +64,13 @@ pub(super) enum BlockMapPhase {
     /// After key, expect `:` and value.
     /// `is_implicit_scalar_key`: If true, the key was an implicit scalar (like `key:`).
     /// Block sequences on the same line as such keys are invalid (`key: - item`).
-    AfterKey { is_implicit_scalar_key: bool },
+    AfterKey {
+        is_implicit_scalar_key: bool,
+        /// Column after the key ends. Used to compute `content_column` after `:`.
+        /// Set from span width for implicit keys; None for explicit keys (`:` is
+        /// on a new line at `indent`).
+        key_end_column: Option<IndentLevel>,
+    },
     /// After value, check for next pair or end.
     AfterValue,
 }
@@ -95,24 +111,29 @@ pub(super) enum FlowMapPhase {
 /// The stack replaces the call stack from recursive descent parsing.
 #[derive(Debug, Clone)]
 pub(super) enum ParseState<'input> {
-    /// Parse any value with an associated `ValueContext`.
-    ///
-    /// This state is responsible for initial whitespace skipping,
-    /// indentation validation, and property collection. Once properties
-    /// have been collected, control transitions to `ValueAfterProperties`
-    /// for the main dispatch and bridging/empty-value decisions.
+    /// Parse any value: skip initial whitespace/newlines, update
+    /// `ctx.content_column`, then transition to `ValueCollectProperties`.
     Value {
         ctx: ValueContext,
         /// Collected properties (anchor, tag) carried into the value.
         properties: EventProperties<'input>,
     },
-    /// Continue parsing a value after properties have been collected.
+    /// Collect properties (anchor, tag) for a value.
+    /// `ctx.content_column` has been updated for the initial whitespace skip.
+    /// Transitions to `ValueDispatch` after collecting.
+    ValueCollectProperties {
+        ctx: ValueContext,
+        properties: EventProperties<'input>,
+        initial_crossed_line: bool,
+    },
+    /// Dispatch a value after properties have been collected and
+    /// `ctx.content_column` has been updated through each transition.
     ///
     /// This state owns the logic for:
     /// - Bridging properties across dedent to block collections
     /// - Emitting empty scalars when bridging is not allowed
     /// - The main token dispatch for scalars, collections, and aliases.
-    ValueAfterProperties {
+    ValueDispatch {
         ctx: ValueContext,
         /// Properties (anchor, tag) collected for this value.
         properties: EventProperties<'input>,
@@ -136,6 +157,8 @@ pub(super) enum ParseState<'input> {
         is_map: bool,
         span: Span,
         properties: EventProperties<'input>,
+        /// Column of the `[`/`{` token, tracked from the Value dispatch.
+        content_column: Option<IndentLevel>,
     },
 
     /// Handle additional properties after a line boundary before a value,
@@ -198,7 +221,12 @@ pub(super) enum DocState {
     /// Ready to start a new document.
     Ready,
     /// About to emit `DocumentStart`.
-    EmitDocStart { explicit: bool, span: Span },
+    EmitDocStart {
+        explicit: bool,
+        span: Span,
+        /// Tracked column of the first content token after document preparation.
+        initial_col: IndentLevel,
+    },
     /// Parsing document content.
     Content,
     /// About to emit `DocumentEnd`.

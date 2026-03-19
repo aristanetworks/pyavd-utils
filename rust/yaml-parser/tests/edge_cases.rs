@@ -16,6 +16,20 @@
     reason = "expect() in tests provides precise failure messages for invariants \
               like 'exactly one document' and makes assertions more readable"
 )]
+#![allow(clippy::panic, reason = "panic is expected in test assertions")]
+#![allow(
+    clippy::print_stderr,
+    reason = "eprintln is used for diagnostic output in test helpers"
+)]
+#![allow(
+    clippy::use_debug,
+    reason = "Debug formatting is needed for diagnostic output in test helpers"
+)]
+#![allow(
+    clippy::float_cmp,
+    reason = "exact float comparison is intentional for semantic equality checks"
+)]
+#![allow(clippy::indexing_slicing, reason = "panics are acceptable in tests")]
 
 mod support;
 
@@ -210,7 +224,7 @@ fn debug_tags_serde_deserialize_failure() {
     // Also check how saphyr interprets the same document.
     let saphyr_docs = Yaml::load_from_str(input).expect("saphyr failed to parse tags.yml");
     let root = saphyr_docs
-        .get(0)
+        .first()
         .expect("saphyr returned no documents for tags.yml");
     let nulls = &root["nulls"];
     let empty = &nulls["empty"];
@@ -251,8 +265,8 @@ impl<'de> Deserialize<'de> for OwnedYamlValue {
 /// Semantic equality for `Number` that ignores internal signed/unsigned
 /// representation differences and compares the underlying decimal value.
 #[cfg(feature = "serde")]
-fn numbers_semantically_equal(a: &Number<'static>, b: &Number<'static>) -> bool {
-    a.to_decimal_string() == b.to_decimal_string()
+fn numbers_semantically_equal(left: &Number<'static>, right: &Number<'static>) -> bool {
+    left.to_decimal_string() == right.to_decimal_string()
 }
 
 /// Semantic equality for `Value` trees used in serde equivalence tests.
@@ -263,146 +277,156 @@ fn numbers_semantically_equal(a: &Number<'static>, b: &Number<'static>) -> bool 
 /// - Treats integers as equal when their decimal representations match,
 ///   even if they use different `Number` variants (e.g. `I64` vs `U64`).
 #[cfg(feature = "serde")]
-fn values_semantically_equal(a: &Value<'static>, b: &Value<'static>) -> bool {
-    match (a, b) {
+fn values_semantically_equal(left: &Value<'static>, right: &Value<'static>) -> bool {
+    match (left, right) {
         (Value::Null, Value::Null) => true,
-        (Value::Bool(x), Value::Bool(y)) => x == y,
-        (Value::Float(x), Value::Float(y)) => {
-            if x.is_nan() && y.is_nan() {
+        (Value::Bool(lv), Value::Bool(rv)) => lv == rv,
+        (Value::Float(lv), Value::Float(rv)) => {
+            if lv.is_nan() && rv.is_nan() {
                 true
             } else {
-                x == y
+                lv == rv
             }
         }
-        (Value::String(x), Value::String(y)) => x == y,
-        (Value::Int(x), Value::Int(y)) => numbers_semantically_equal(x, y),
-        (Value::Sequence(xs), Value::Sequence(ys)) => {
-            xs.len() == ys.len()
-                && xs
+        (Value::String(lv), Value::String(rv)) | (Value::Alias(lv), Value::Alias(rv)) => lv == rv,
+        (Value::Int(lv), Value::Int(rv)) => numbers_semantically_equal(lv, rv),
+        (Value::Sequence(left_items), Value::Sequence(right_items)) => {
+            left_items.len() == right_items.len()
+                && left_items
                     .iter()
-                    .zip(ys.iter())
-                    .all(|(xn, yn)| values_semantically_equal(&xn.value, &yn.value))
+                    .zip(right_items.iter())
+                    .all(|(ln, rn)| values_semantically_equal(&ln.value, &rn.value))
         }
-        (Value::Mapping(xps), Value::Mapping(yps)) => {
-            xps.len() == yps.len()
-                && xps.iter().zip(yps.iter()).all(|((xk, xv), (yk, yv))| {
-                    values_semantically_equal(&xk.value, &yk.value)
-                        && values_semantically_equal(&xv.value, &yv.value)
-                })
+        (Value::Mapping(left_pairs), Value::Mapping(right_pairs)) => {
+            left_pairs.len() == right_pairs.len()
+                && left_pairs
+                    .iter()
+                    .zip(right_pairs.iter())
+                    .all(|((lk, lval), (rk, rval))| {
+                        values_semantically_equal(&lk.value, &rk.value)
+                            && values_semantically_equal(&lval.value, &rval.value)
+                    })
         }
-        (Value::Alias(x), Value::Alias(y)) => x == y,
         _ => false,
     }
 }
 
 #[cfg(feature = "serde")]
-fn owned_semantically_equal(a: &OwnedYamlValue, b: &OwnedYamlValue) -> bool {
-    values_semantically_equal(&a.0, &b.0)
+fn owned_semantically_equal(left: &OwnedYamlValue, right: &OwnedYamlValue) -> bool {
+    values_semantically_equal(&left.0, &right.0)
 }
 
 /// Debug helper for serde equivalence tests: walk two `Value` trees and
 /// report the first path at which they differ. This is used when a semantic
 /// equivalence check between backends fails, to pinpoint the mismatch.
 #[cfg(feature = "serde")]
-fn debug_first_difference(path: &str, a: &Value<'static>, b: &Value<'static>) -> Option<String> {
+fn debug_first_difference(
+    path: &str,
+    left: &Value<'static>,
+    right: &Value<'static>,
+) -> Option<String> {
     use Value::*;
 
-    match (a, b) {
+    match (left, right) {
         (Null, Null) => None,
-        (Bool(x), Bool(y)) => {
-            if x == y {
+        (Bool(lv), Bool(rv)) => {
+            if lv == rv {
                 None
             } else {
-                eprintln!("diff at {path}: left Bool({x}), right Bool({y})");
+                eprintln!("diff at {path}: left Bool({lv}), right Bool({rv})");
                 Some(path.to_owned())
             }
         }
-        (Float(x), Float(y)) => {
-            let both_nan = x.is_nan() && y.is_nan();
-            if both_nan || x == y {
+        (Float(lv), Float(rv)) => {
+            let both_nan = lv.is_nan() && rv.is_nan();
+            if both_nan || lv == rv {
                 None
             } else {
-                eprintln!("diff at {path}: left Float({x}), right Float({y})");
+                eprintln!("diff at {path}: left Float({lv}), right Float({rv})");
                 Some(path.to_owned())
             }
         }
-        (String(xs), String(ys)) => {
-            if xs == ys {
+        (String(ls), String(rs)) => {
+            if ls == rs {
                 None
             } else {
-                eprintln!("diff at {path}: left String({xs:?}), right String({ys:?})");
+                eprintln!("diff at {path}: left String({ls:?}), right String({rs:?})");
                 Some(path.to_owned())
             }
         }
-        (Int(xn), Int(yn)) => {
-            if numbers_semantically_equal(xn, yn) {
+        (Int(ln), Int(rn)) => {
+            if numbers_semantically_equal(ln, rn) {
                 None
             } else {
-                eprintln!("diff at {path}: left Int({xn:?}), right Int({yn:?})");
+                eprintln!("diff at {path}: left Int({ln:?}), right Int({rn:?})");
                 Some(path.to_owned())
             }
         }
-        (Alias(x), Alias(y)) => {
-            if x == y {
+        (Alias(lv), Alias(rv)) => {
+            if lv == rv {
                 None
             } else {
-                eprintln!("diff at {path}: left Alias({x:?}), right Alias({y:?})");
+                eprintln!("diff at {path}: left Alias({lv:?}), right Alias({rv:?})");
                 Some(path.to_owned())
             }
         }
-        (Sequence(xs), Sequence(ys)) => {
-            if xs.len() != ys.len() {
+        (Sequence(left_items), Sequence(right_items)) => {
+            if left_items.len() != right_items.len() {
                 eprintln!(
                     "diff at {path}: sequence length mismatch (left {}, right {})",
-                    xs.len(),
-                    ys.len()
+                    left_items.len(),
+                    right_items.len()
                 );
                 return Some(path.to_owned());
             }
-            for (idx, (xn, yn)) in xs.iter().zip(ys.iter()).enumerate() {
+            for (idx, (ln, rn)) in left_items.iter().zip(right_items.iter()).enumerate() {
                 let child_path = format!("{path}[{idx}]");
-                if let Some(p) = debug_first_difference(&child_path, &xn.value, &yn.value) {
-                    return Some(p);
+                if let Some(diff_path) = debug_first_difference(&child_path, &ln.value, &rn.value) {
+                    return Some(diff_path);
                 }
             }
             None
         }
-        (Mapping(xps), Mapping(yps)) => {
-            if xps.len() != yps.len() {
+        (Mapping(left_pairs), Mapping(right_pairs)) => {
+            if left_pairs.len() != right_pairs.len() {
                 eprintln!(
                     "diff at {path}: mapping length mismatch (left {}, right {})",
-                    xps.len(),
-                    yps.len()
+                    left_pairs.len(),
+                    right_pairs.len()
                 );
                 return Some(path.to_owned());
             }
-            for (idx, ((xk, xv), (yk, yv))) in xps.iter().zip(yps.iter()).enumerate() {
+            for (idx, ((lk, lval), (rk, rval))) in
+                left_pairs.iter().zip(right_pairs.iter()).enumerate()
+            {
                 let key_path = format!("{path}.<key#{idx}>");
-                if let Some(p) = debug_first_difference(&key_path, &xk.value, &yk.value) {
-                    return Some(p);
+                if let Some(diff_path) = debug_first_difference(&key_path, &lk.value, &rk.value) {
+                    return Some(diff_path);
                 }
 
-                let key_name = match &xk.value {
-                    String(s) => s.as_ref().to_owned(),
+                let key_name = match &lk.value {
+                    String(str_val) => str_val.as_ref().to_owned(),
                     other => format!("<{other:?}>"),
                 };
-                let value_path = format!("{path}.{}", key_name);
-                if let Some(p) = debug_first_difference(&value_path, &xv.value, &yv.value) {
-                    return Some(p);
+                let value_path = format!("{path}.{key_name}");
+                if let Some(diff_path) =
+                    debug_first_difference(&value_path, &lval.value, &rval.value)
+                {
+                    return Some(diff_path);
                 }
             }
             None
         }
         // Different variants (e.g. String vs Int)
         _ => {
-            eprintln!("diff at {path}: left {a:?}, right {b:?}");
+            eprintln!("diff at {path}: left {left:?}, right {right:?}");
             Some(path.to_owned())
         }
     }
 }
 
 /// For each benchmark corpus, verify that the AST-backed serde backend, the
-/// event-based serde backend (where supported), and serde_yaml all deserialize
+/// event-based serde backend (where supported), and `serde_yaml` all deserialize
 /// into the same logical `OwnedYamlValue` tree.
 #[cfg(feature = "serde")]
 #[test]
@@ -438,15 +462,15 @@ fn bench_corpora_serde_equivalence_across_backends() {
     for (name, input) in corpora {
         // AST-backed yaml-parser serde backend.
         let ast: OwnedYamlValue = yaml_parser::serde::from_str(input)
-            .unwrap_or_else(|e| panic!("yaml_parser::serde::from_str failed on {name}: {e:?}"));
+            .unwrap_or_else(|err| panic!("yaml_parser::serde::from_str failed on {name}: {err:?}"));
 
         // Event-based backend: skip corpora that require anchors/aliases, which
         // the event backend does not yet support.
         if *name != "anchors_aliases" {
             let ev: OwnedYamlValue = yaml_parser::serde::bench_from_str_events_internal(input)
-                .unwrap_or_else(|e| {
+                .unwrap_or_else(|err| {
                     panic!(
-                        "yaml_parser::serde::bench_from_str_events_internal failed on {name}: {e:?}",
+                        "yaml_parser::serde::bench_from_str_events_internal failed on {name}: {err:?}",
                     )
                 });
 
@@ -476,7 +500,7 @@ fn bench_corpora_serde_equivalence_across_backends() {
         // `serde_deserialize` throughput benchmarks are comparing equivalent
         // trees across all three libraries.
         let sy: OwnedYamlValue = serde_yaml::from_str(input)
-            .unwrap_or_else(|e| panic!("serde_yaml::from_str failed on {name}: {e:?}"));
+            .unwrap_or_else(|err| panic!("serde_yaml::from_str failed on {name}: {err:?}"));
 
         // For most corpora we expect serde_yaml to produce a value tree that is
         // *semantically* equivalent to yaml-parser's serde backend when
@@ -538,16 +562,16 @@ fn stream_from_str_docs_yields_all_documents() {
 
     assert_eq!(docs.len(), 3);
     match &docs[0] {
-        Ok(v) => assert_eq!(*v, 1),
-        Err(e) => panic!("unexpected error in first document: {e:?}"),
+        Ok(val) => assert_eq!(*val, 1),
+        Err(err) => panic!("unexpected error in first document: {err:?}"),
     }
     match &docs[1] {
-        Ok(v) => assert_eq!(*v, 2),
-        Err(e) => panic!("unexpected error in second document: {e:?}"),
+        Ok(val) => assert_eq!(*val, 2),
+        Err(err) => panic!("unexpected error in second document: {err:?}"),
     }
     match &docs[2] {
-        Ok(v) => assert_eq!(*v, 3),
-        Err(e) => panic!("unexpected error in third document: {e:?}"),
+        Ok(val) => assert_eq!(*val, 3),
+        Err(err) => panic!("unexpected error in third document: {err:?}"),
     }
 }
 

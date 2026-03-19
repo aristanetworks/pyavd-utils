@@ -131,15 +131,12 @@ impl<'input> TokenCursor<'input> {
             }
 
             let mut lexer = self.lexer.borrow_mut();
-            match lexer.next() {
-                Some(rt) => {
-                    drop(lexer);
-                    self.buffer.borrow_mut().push(rt);
-                }
-                None => {
-                    self.eof.set(true);
-                    return;
-                }
+            if let Some(rt) = lexer.next() {
+                drop(lexer);
+                self.buffer.borrow_mut().push(rt);
+            } else {
+                self.eof.set(true);
+                return;
             }
         }
     }
@@ -152,15 +149,12 @@ impl<'input> TokenCursor<'input> {
 
         loop {
             let mut lexer = self.lexer.borrow_mut();
-            match lexer.next() {
-                Some(rt) => {
-                    drop(lexer);
-                    self.buffer.borrow_mut().push(rt);
-                }
-                None => {
-                    self.eof.set(true);
-                    return;
-                }
+            if let Some(rt) = lexer.next() {
+                drop(lexer);
+                self.buffer.borrow_mut().push(rt);
+            } else {
+                self.eof.set(true);
+                return;
             }
         }
     }
@@ -198,25 +192,25 @@ impl<'input> TokenCursor<'input> {
     /// This is more efficient than `peek()` when you don't need to keep
     /// the token, as it avoids cloning `Cow<str>` data.
     #[inline]
-    pub(crate) fn peek_with<F, R>(&self, pos: usize, f: F) -> Option<R>
+    pub(crate) fn peek_with<F, R>(&self, pos: usize, func: F) -> Option<R>
     where
         F: FnOnce(&Token<'input>, Span) -> R,
     {
         self.ensure_available(pos);
         let buffer = self.buffer.borrow();
-        buffer.get(pos).map(|rt| f(&rt.token, rt.span))
+        buffer.get(pos).map(|rt| func(&rt.token, rt.span))
     }
 
     /// Peek at the token `n` ahead and apply a function to it.
     #[inline]
-    pub(crate) fn peek_nth_with<F, R>(&self, pos: usize, n: usize, f: F) -> Option<R>
+    pub(crate) fn peek_nth_with<F, R>(&self, pos: usize, n: usize, func: F) -> Option<R>
     where
         F: FnOnce(&Token<'input>, Span) -> R,
     {
         let index = pos + n;
         self.ensure_available(index);
         let buffer = self.buffer.borrow();
-        buffer.get(index).map(|rt| f(&rt.token, rt.span))
+        buffer.get(index).map(|rt| func(&rt.token, rt.span))
     }
 
     /// Peek at the token kind at `pos` without cloning the token.

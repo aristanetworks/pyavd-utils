@@ -8,6 +8,8 @@
 //     perf record -g ./target/release/examples/profile_serde
 //     perf report
 
+#![allow(clippy::print_stdout, reason = "examples are meant to print to stdout")]
+
 use yaml_parser::Value;
 
 fn main() {
@@ -25,5 +27,5 @@ fn main() {
         }
     }
 
-    println!("Profiling complete: {} total keys processed", total_keys);
+    println!("Profiling complete: {total_keys} total keys processed");
 }

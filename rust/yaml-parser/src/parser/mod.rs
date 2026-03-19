@@ -95,10 +95,7 @@ where
     /// cleared after each call.
     pub(crate) fn parse_next_document(&mut self) -> Option<Node<'input>> {
         loop {
-            let event = match self.peek().cloned() {
-                Some(ev) => ev,
-                None => return None,
-            };
+            let event = self.peek().cloned()?;
             match event {
                 Event::StreamStart => {
                     // Skip the stream start marker.
@@ -130,11 +127,10 @@ where
                     // Content without explicit document start - treat as an
                     // implicit document.
                     let consumed_before = self.events_consumed;
-                    let node = self.parse_node();
-                    if let Some(node) = node {
+                    if let Some(parsed_node) = self.parse_node() {
                         // Anchors are scoped to a single document.
                         self.anchors.clear();
-                        return Some(node);
+                        return Some(parsed_node);
                     }
                     // `parse_node` returned None without consuming - skip the
                     // current event to avoid an infinite loop.
@@ -352,8 +348,8 @@ where
             Value::String(value)
         };
 
-        let node = Node::new(typed_value, span);
-        let node = Self::apply_properties(node, props);
+        let base_node = Node::new(typed_value, span);
+        let node = Self::apply_properties(base_node, props);
 
         // Validate core-schema tags against the scalar's textual form.
         // For now we are conservative and only enforce additional rules for
@@ -373,19 +369,19 @@ where
         // This keeps `!!null str` and similar cases aligned with
         // `serde_yaml`/`saphyr`, but allows "tags on empty scalars" such as
         // those in the FH7J YAML test to remain error-free.
-        if style == ScalarStyle::Plain {
-            if let Some(tag) = node.tag() {
-                let tag_str = tag.as_ref();
-                let text = raw_text_owned.as_ref();
-                if tag_str == "tag:yaml.org,2002:null" && !text.is_empty() && text != "null" {
-                    // Recognised null tag whose textual content is neither
-                    // empty nor the canonical "null" is treated as an
-                    // invalid null scalar. We still keep the inferred
-                    // `Value::Null` in the AST so error-recovery consumers can
-                    // inspect partial data, but callers like `parse_ok` and
-                    // `serde::from_str` will see this as a parse error.
-                    self.error(ErrorKind::InvalidValue, span);
-                }
+        if style == ScalarStyle::Plain
+            && let Some(tag) = node.tag()
+        {
+            let tag_str = tag.as_ref();
+            let raw_text = raw_text_owned.as_ref();
+            if tag_str == "tag:yaml.org,2002:null" && !raw_text.is_empty() && raw_text != "null" {
+                // Recognised null tag whose textual content is neither
+                // empty nor the canonical "null" is treated as an
+                // invalid null scalar. We still keep the inferred
+                // `Value::Null` in the AST so error-recovery consumers can
+                // inspect partial data, but callers like `parse_ok` and
+                // `serde::from_str` will see this as a parse error.
+                self.error(ErrorKind::InvalidValue, span);
             }
         }
 
@@ -435,13 +431,13 @@ where
 ///
 /// Returns `true` if the first character suggests the scalar might be numeric
 /// (digit, sign, or decimal point). This allows us to skip expensive parse
-/// attempts for obvious string values like "localhost", "admin", "value_001".
+/// attempts for obvious string values like "localhost", "admin", `"value_001"`.
 #[inline]
-pub(crate) fn could_be_numeric(s: &str) -> bool {
-    match s.as_bytes().first() {
-        Some(b'0'..=b'9' | b'+' | b'-' | b'.') => true,
-        _ => false,
-    }
+pub(crate) fn could_be_numeric(input: &str) -> bool {
+    matches!(
+        input.as_bytes().first(),
+        Some(b'0'..=b'9' | b'+' | b'-' | b'.')
+    )
 }
 
 /// Infer the type of a plain scalar value.
@@ -455,50 +451,52 @@ pub(crate) fn could_be_numeric(s: &str) -> bool {
 ///
 /// Takes a `Cow<'input, str>` to avoid unnecessary allocations when the value
 /// is inferred as a string (can return the Cow as-is).
-pub(crate) fn infer_scalar_type<'input>(value: Cow<'input, str>) -> Value<'input> {
-    let s = value.as_ref();
-    match s {
+pub(crate) fn infer_scalar_type(value: Cow<'_, str>) -> Value<'_> {
+    let text = value.as_ref();
+    match text {
         "null" | "Null" | "NULL" | "~" | "" => Value::Null,
         "true" | "True" | "TRUE" => Value::Bool(true),
         "false" | "False" | "FALSE" => Value::Bool(false),
         _ => {
             // Fast path: if the scalar clearly cannot be a number, return String
             // immediately without attempting any parses.
-            if !could_be_numeric(s) {
+            if !could_be_numeric(text) {
                 return Value::String(value);
             }
 
             // Check for float indicators (decimal point or exponent) - if present,
             // skip integer parsing and go straight to float.
-            let has_float_chars = s.bytes().any(|b| b == b'.' || b == b'e' || b == b'E');
+            let has_float_chars = text
+                .bytes()
+                .any(|ch| ch == b'.' || ch == b'e' || ch == b'E');
 
             if has_float_chars {
                 // Special float values first (they start with '.')
-                match s {
+                match text {
                     ".inf" | ".Inf" | ".INF" => return Value::Float(f64::INFINITY),
                     "-.inf" | "-.Inf" | "-.INF" => return Value::Float(f64::NEG_INFINITY),
                     ".nan" | ".NaN" | ".NAN" => return Value::Float(f64::NAN),
                     _ => {}
                 }
                 // Try parsing as float
-                if let Ok(float) = s.parse::<f64>() {
+                if let Ok(float) = text.parse::<f64>() {
                     return Value::Float(float);
                 }
             } else {
                 // No float indicators - try integer parsing
-                if let Ok(int) = s.parse::<i64>() {
+                if let Ok(int) = text.parse::<i64>() {
                     return Value::Int(Number::I64(int));
                 }
-                if let Ok(int) = s.parse::<i128>() {
+                if let Ok(int) = text.parse::<i128>() {
                     return Value::Int(Number::I128(int));
                 }
-                if let Ok(uint) = s.parse::<u128>() {
+                if let Ok(uint) = text.parse::<u128>() {
                     return Value::Int(Number::U128(uint));
                 }
 
                 // If it still looks like a plain decimal integer but does not fit in
                 // i128/u128, store it as a textual big integer.
-                if looks_like_decimal_integer(s) {
+                if looks_like_decimal_integer(text) {
                     return Value::Int(Number::BigIntStr(value));
                 }
             }

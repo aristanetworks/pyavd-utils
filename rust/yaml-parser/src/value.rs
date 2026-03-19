@@ -248,7 +248,7 @@ mod serde_impls {
         where
             A: de::EnumAccess<'de>,
         {
-            use de::VariantAccess;
+            use de::VariantAccess as _;
 
             // Represent enums as a single-entry mapping from variant name to
             // the associated value (or null for unit variants). This matches

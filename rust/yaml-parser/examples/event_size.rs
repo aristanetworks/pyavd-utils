@@ -3,6 +3,9 @@
 // that can be found in the LICENSE file.
 
 // Check the size of Event enum
+
+#![allow(clippy::print_stdout, reason = "examples are meant to print to stdout")]
+
 use std::borrow::Cow;
 use std::mem::size_of;
 use yaml_parser::Event;

@@ -6,6 +6,10 @@
     dead_code,
     reason = "test helpers are pulled in as modules by other tests"
 )]
+#![allow(
+    clippy::missing_panics_doc,
+    reason = "test helpers intentionally panic on unexpected errors"
+)]
 
 // Shared test helpers for integration tests in `tests/`.
 //
