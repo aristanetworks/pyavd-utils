@@ -193,7 +193,7 @@ mod tests {
     use super::*;
 
     use crate::{
-        feedback::{Feedback, Type, Violation},
+        feedback::{Feedback, Type},
         validation::test_utils::get_test_store,
     };
 
