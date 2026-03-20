@@ -54,7 +54,7 @@ fn emit_node_events<'input>(
             events.push(Event::Scalar {
                 style: ScalarStyle::Plain,
                 value: "null".to_owned().into(),
-                properties: Box::new(props),
+                properties: props.into_boxed_option(),
                 span: node.span,
             });
             Ok(())
@@ -64,7 +64,7 @@ fn emit_node_events<'input>(
             events.push(Event::Scalar {
                 style: ScalarStyle::Plain,
                 value: text.to_owned().into(),
-                properties: Box::new(props),
+                properties: props.into_boxed_option(),
                 span: node.span,
             });
             Ok(())
@@ -74,7 +74,7 @@ fn emit_node_events<'input>(
             events.push(Event::Scalar {
                 style: ScalarStyle::Plain,
                 value: text,
-                properties: Box::new(props),
+                properties: props.into_boxed_option(),
                 span: node.span,
             });
             Ok(())
@@ -86,7 +86,7 @@ fn emit_node_events<'input>(
             events.push(Event::Scalar {
                 style: ScalarStyle::Plain,
                 value: float_value.to_string().into(),
-                properties: Box::new(props),
+                properties: props.into_boxed_option(),
                 span: node.span,
             });
             Ok(())
@@ -95,7 +95,7 @@ fn emit_node_events<'input>(
             events.push(Event::Scalar {
                 style: ScalarStyle::Plain,
                 value: string_value.clone(),
-                properties: Box::new(props),
+                properties: props.into_boxed_option(),
                 span: node.span,
             });
             Ok(())
@@ -110,7 +110,7 @@ fn emit_node_events<'input>(
         Value::Sequence(items) => {
             events.push(Event::SequenceStart {
                 style: CollectionStyle::Block,
-                properties: Box::new(props),
+                properties: props.into_boxed_option(),
                 span: node.span,
             });
             for item in items {
@@ -122,7 +122,7 @@ fn emit_node_events<'input>(
         Value::Mapping(pairs) => {
             events.push(Event::MappingStart {
                 style: CollectionStyle::Block,
-                properties: Box::new(props),
+                properties: props.into_boxed_option(),
                 span: node.span,
             });
             for (key, value) in pairs {

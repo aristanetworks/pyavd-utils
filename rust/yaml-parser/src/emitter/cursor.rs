@@ -58,8 +58,6 @@ pub(crate) enum TokenKind {
     Whitespace,
     WhitespaceWithTabs,
     Comment,
-    Indent,
-    Dedent,
 }
 
 impl<'input> From<&Token<'input>> for TokenKind {
@@ -92,8 +90,6 @@ impl<'input> From<&Token<'input>> for TokenKind {
             Token::Whitespace => Self::Whitespace,
             Token::WhitespaceWithTabs => Self::WhitespaceWithTabs,
             Token::Comment(_) => Self::Comment,
-            Token::Indent(_) => Self::Indent,
-            Token::Dedent => Self::Dedent,
         }
     }
 }
@@ -171,8 +167,8 @@ impl<'input> TokenCursor<'input> {
     /// Take ownership of the token at `pos`, replacing it with a dummy.
     ///
     /// This is more efficient than `peek()` when you're consuming the token
-    /// and won't need it again. The token is replaced with `Token::Dedent`
-    /// (a zero-size sentinel) to avoid leaving uninitialized memory.
+    /// and won't need it again. The token is replaced with `Token::Whitespace`
+    /// as a cheap sentinel to avoid leaving uninitialized memory.
     ///
     /// # Panics
     /// Panics if `pos` is out of bounds.
@@ -182,7 +178,7 @@ impl<'input> TokenCursor<'input> {
         let mut buffer = self.buffer.borrow_mut();
         buffer.get_mut(pos).map(|rt| {
             // Replace with a zero-size sentinel token
-            let token = std::mem::replace(&mut rt.token, Token::Dedent);
+            let token = std::mem::replace(&mut rt.token, Token::Whitespace);
             (token, rt.span)
         })
     }

@@ -2,12 +2,12 @@
 // Use of this source code is governed by the Apache License 2.0
 // that can be found in the LICENSE file.
 
-//! Experimental event-based serde deserializer (Option A).
+//! Event-driven serde deserializer.
 //!
-//! This module prototypes a serde `Deserializer` that reads directly from
-//! the YAML event stream emitted by `Emitter`, without building the
-//! `Node` / `Value` AST. It supports single-document inputs including
-//! anchors and aliases (YAML 1.2 style, not YAML 1.1 merge keys).
+//! This module implements the crate's serde `Deserializer` directly on top of
+//! the YAML event stream emitted by `Emitter`, without building the `Node` /
+//! `Value` AST first. It supports single-document inputs including anchors and
+//! aliases (YAML 1.2 style, not YAML 1.1 merge keys).
 
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -17,7 +17,6 @@ use serde::forward_to_deserialize_any;
 
 use crate::emitter::Emitter;
 use crate::event::{Event, ScalarStyle};
-use crate::parser::{could_be_numeric, looks_like_decimal_integer};
 use crate::value::Number;
 
 use super::DeError;
@@ -96,7 +95,10 @@ impl<'de> EventStream<'de> {
                 Event::Scalar { properties, .. }
                 | Event::MappingStart { properties, .. }
                 | Event::SequenceStart { properties, .. } => {
-                    if let Some(anchor) = &properties.anchor {
+                    if let Some(anchor) = properties
+                        .as_ref()
+                        .and_then(|event_props| event_props.anchor.as_ref())
+                    {
                         // Start recording
                         let anchor_name = anchor.value.to_string();
                         let initial_depth = match &event {
@@ -162,8 +164,8 @@ impl<'de> EventStream<'de> {
             Event::Scalar { properties, .. }
             | Event::MappingStart { properties, .. }
             | Event::SequenceStart { properties, .. } => properties
-                .anchor
                 .as_ref()
+                .and_then(|event_props| event_props.anchor.as_ref())
                 .map(|prop| prop.value.to_string()),
             _ => None,
         };
@@ -310,94 +312,109 @@ enum ScalarKind<'de> {
     String(Cow<'de, str>),
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NumericKind {
+    Integer,
+    Float,
+    NotNumeric,
+}
+
+#[inline]
+fn classify_numeric(input: &str) -> NumericKind {
+    let bytes = input.as_bytes();
+    if bytes.is_empty() {
+        return NumericKind::NotNumeric;
+    }
+
+    let mut idx = 0;
+    if matches!(bytes.get(idx), Some(b'+' | b'-')) {
+        idx += 1;
+        if idx == bytes.len() {
+            return NumericKind::NotNumeric;
+        }
+    }
+
+    let mut saw_digit = false;
+    let mut saw_dot = false;
+    let mut saw_exp = false;
+    let mut expect_exp_digit = false;
+
+    while idx < bytes.len() {
+        match bytes.get(idx) {
+            Some(b'0'..=b'9') => {
+                saw_digit = true;
+                expect_exp_digit = false;
+            }
+            Some(b'.') if !saw_dot && !saw_exp => {
+                saw_dot = true;
+            }
+            Some(b'e' | b'E') if saw_digit && !saw_exp => {
+                saw_exp = true;
+                expect_exp_digit = true;
+                saw_digit = false;
+                if matches!(bytes.get(idx + 1), Some(b'+' | b'-')) {
+                    idx += 1;
+                }
+            }
+            _ => return NumericKind::NotNumeric,
+        }
+        idx += 1;
+    }
+
+    if !saw_digit || expect_exp_digit {
+        return NumericKind::NotNumeric;
+    }
+    if saw_dot || saw_exp {
+        NumericKind::Float
+    } else {
+        NumericKind::Integer
+    }
+}
+
 fn infer_scalar_kind(value: Cow<'_, str>) -> ScalarKind<'_> {
     let text = value.as_ref();
 
-    // Fast path: check first byte to quickly categorize the scalar
-    let Some(first_byte) = text.bytes().next() else {
-        return ScalarKind::Null; // Empty string is null
-    };
-
-    // Dispatch based on first character for maximum efficiency
-    match first_byte {
-        // Numeric indicators - could be int or float
-        b'0'..=b'9' | b'+' | b'-' => {
-            // Check for float indicators (decimal point or exponent)
-            let has_float_chars = text
-                .bytes()
-                .any(|ch| ch == b'.' || ch == b'e' || ch == b'E');
-
-            if has_float_chars {
-                // Special float values starting with '-'
-                if first_byte == b'-' {
-                    match text {
-                        "-.inf" | "-.Inf" | "-.INF" => return ScalarKind::Float(f64::NEG_INFINITY),
-                        _ => {}
-                    }
-                }
-                // Try parsing as float
-                if let Ok(float) = text.parse::<f64>() {
-                    return ScalarKind::Float(float);
-                }
-            } else {
-                // No float indicators - try integer parsing
-                if let Ok(int) = text.parse::<i64>() {
-                    return ScalarKind::Int(Number::I64(int));
-                }
-                if let Ok(int) = text.parse::<i128>() {
-                    return ScalarKind::Int(Number::I128(int));
-                }
-                if let Ok(uint) = text.parse::<u128>() {
-                    return ScalarKind::Int(Number::U128(uint));
-                }
-
-                // If it still looks like a plain decimal integer but does not fit in
-                // i128/u128, store it as a textual big integer.
-                if looks_like_decimal_integer(text) {
-                    return ScalarKind::Int(Number::BigIntStr(value));
-                }
-            }
-            // Failed to parse as number - fall through to string
-        }
-
-        // Special float values starting with '.'
-        b'.' => {
+    match text.as_bytes().first() {
+        None => return ScalarKind::Null,
+        Some(b'~') if text.len() == 1 => return ScalarKind::Null,
+        Some(b'n') if text == "null" => return ScalarKind::Null,
+        Some(b'N') if matches!(text, "Null" | "NULL") => return ScalarKind::Null,
+        Some(b't') if text == "true" => return ScalarKind::Bool(true),
+        Some(b'T') if matches!(text, "True" | "TRUE") => return ScalarKind::Bool(true),
+        Some(b'f') if text == "false" => return ScalarKind::Bool(false),
+        Some(b'F') if matches!(text, "False" | "FALSE") => return ScalarKind::Bool(false),
+        Some(b'0'..=b'9' | b'+' | b'-' | b'.') => {
             match text {
                 ".inf" | ".Inf" | ".INF" => return ScalarKind::Float(f64::INFINITY),
+                "-.inf" | "-.Inf" | "-.INF" => return ScalarKind::Float(f64::NEG_INFINITY),
                 ".nan" | ".NaN" | ".NAN" => return ScalarKind::Float(f64::NAN),
-                _ => {
-                    // Could be a float like ".5" - try parsing
+                _ => {}
+            }
+
+            match classify_numeric(text) {
+                NumericKind::Float => {
                     if let Ok(float) = text.parse::<f64>() {
                         return ScalarKind::Float(float);
                     }
                 }
+                NumericKind::Integer => {
+                    if let Ok(int) = text.parse::<i64>() {
+                        return ScalarKind::Int(Number::I64(int));
+                    }
+                    if let Ok(int) = text.parse::<i128>() {
+                        return ScalarKind::Int(Number::I128(int));
+                    }
+                    if let Ok(uint) = text.parse::<u128>() {
+                        return ScalarKind::Int(Number::U128(uint));
+                    }
+                    return ScalarKind::Int(Number::BigIntStr(value));
+                }
+                NumericKind::NotNumeric => {}
             }
         }
-
-        // Boolean and null values
-        b'n' | b'N' => match text {
-            "null" | "Null" | "NULL" => return ScalarKind::Null,
-            _ => {}
-        },
-        b't' | b'T' => match text {
-            "true" | "True" | "TRUE" => return ScalarKind::Bool(true),
-            _ => {}
-        },
-        b'f' | b'F' => match text {
-            "false" | "False" | "FALSE" => return ScalarKind::Bool(false),
-            _ => {}
-        },
-        b'~' => {
-            if text == "~" {
-                return ScalarKind::Null;
-            }
-        }
-
-        // Everything else is a string
         _ => {}
     }
 
-    // Default to string - return the Cow as-is (zero-copy if borrowed!).
     ScalarKind::String(value)
 }
 
@@ -611,7 +628,7 @@ impl<'de> de::Deserializer<'de> for &mut EventStream<'de> {
                         | "false"
                         | "False"
                         | "FALSE"
-                ) && !could_be_numeric(value.as_ref())
+                ) && matches!(classify_numeric(value.as_ref()), NumericKind::NotNumeric)
             } else {
                 true
             };
@@ -959,11 +976,9 @@ impl<'de> de::Deserializer<'de> for &mut EventStream<'de> {
 
 /// Internal helper: deserialize a single document via the event-based backend.
 ///
-/// This is exposed publicly only for tests and benchmarks. It is not a stable
-/// part of the public API and may change or be removed at any time. Public
-/// serde entrypoints (`from_str`, `stream_from_str_docs`) continue to use the
-/// AST-backed path for now.
-pub fn from_str_events_internal<'de, T>(input: &'de str) -> Result<T, DeError>
+/// The public serde entrypoints (`from_str`, `from_reader`,
+/// `stream_from_str_docs`) all route through this implementation.
+pub(super) fn from_str_internal<'de, T>(input: &'de str) -> Result<T, DeError>
 where
     T: Deserialize<'de>,
 {
@@ -1087,40 +1102,35 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::super::de;
-    use super::from_str_events_internal;
+    use super::from_str_internal;
     use serde::Deserialize;
-    use std::collections::BTreeMap;
 
     #[test]
-    fn event_backend_matches_ast_for_simple_scalars() {
+    fn deserializes_simple_scalars() {
         let yaml_i64 = "42\n";
-        let ast_i64: i64 = de::from_str(yaml_i64).unwrap();
-        let ev_i64: i64 = from_str_events_internal(yaml_i64).unwrap();
-        assert_eq!(ast_i64, ev_i64);
+        let value_i64: i64 = from_str_internal(yaml_i64).unwrap();
+        assert_eq!(value_i64, 42);
 
         let yaml_bool = "true\n";
-        let ast_bool: bool = de::from_str(yaml_bool).unwrap();
-        let ev_bool: bool = from_str_events_internal(yaml_bool).unwrap();
-        assert_eq!(ast_bool, ev_bool);
+        let value_bool: bool = from_str_internal(yaml_bool).unwrap();
+        assert!(value_bool);
 
         let yaml_str = "hello\n";
-        let ast_str: String = de::from_str(yaml_str).unwrap();
-        let ev_str: String = from_str_events_internal(yaml_str).unwrap();
-        assert_eq!(ast_str, ev_str);
+        let value_str: String = from_str_internal(yaml_str).unwrap();
+        assert_eq!(value_str, "hello");
     }
 
     #[test]
-    fn event_backend_matches_ast_for_seq_and_map() {
+    fn deserializes_sequences_and_mappings() {
         let yaml_seq = "- 1\n- 2\n- 3\n";
-        let ast_seq: Vec<i64> = de::from_str(yaml_seq).unwrap();
-        let ev_seq: Vec<i64> = from_str_events_internal(yaml_seq).unwrap();
-        assert_eq!(ast_seq, ev_seq);
+        let value_seq: Vec<i64> = from_str_internal(yaml_seq).unwrap();
+        assert_eq!(value_seq, vec![1, 2, 3]);
 
         let yaml_map = "a: 1\nb: 2\n";
-        let ast_map: BTreeMap<String, i64> = de::from_str(yaml_map).unwrap();
-        let ev_map: BTreeMap<String, i64> = from_str_events_internal(yaml_map).unwrap();
-        assert_eq!(ast_map, ev_map);
+        let value_map: std::collections::BTreeMap<String, i64> =
+            from_str_internal(yaml_map).unwrap();
+        assert_eq!(value_map.get("a"), Some(&1));
+        assert_eq!(value_map.get("b"), Some(&2));
     }
 
     #[derive(Debug, PartialEq, Deserialize)]
@@ -1130,21 +1140,24 @@ mod tests {
     }
 
     #[test]
-    fn event_backend_matches_ast_for_struct() {
+    fn deserializes_structs() {
         let yaml = "num: 10\ntext: foo\n";
-        let ast: Foo = de::from_str(yaml).unwrap();
-        let ev: Foo = from_str_events_internal(yaml).unwrap();
-        assert_eq!(ast, ev);
+        let value: Foo = from_str_internal(yaml).unwrap();
+        assert_eq!(
+            value,
+            Foo {
+                num: 10,
+                text: "foo".to_owned(),
+            }
+        );
     }
 
     #[test]
-    fn event_backend_supports_simple_anchor_alias() {
+    fn supports_simple_anchor_alias() {
         // Simple scalar anchor and alias
         let yaml = "- &anchor hello\n- *anchor\n";
-        let ast: Vec<String> = de::from_str(yaml).unwrap();
-        let ev: Vec<String> = from_str_events_internal(yaml).unwrap();
-        assert_eq!(ast, ev);
-        assert_eq!(ev, vec!["hello", "hello"]);
+        let value: Vec<String> = from_str_internal(yaml).unwrap();
+        assert_eq!(value, vec!["hello", "hello"]);
     }
 
     #[derive(Debug, PartialEq, Deserialize)]
@@ -1160,13 +1173,11 @@ mod tests {
     }
 
     #[test]
-    fn event_backend_supports_sequence_anchor_alias() {
+    fn supports_sequence_anchor_alias() {
         // Sequence with anchor and alias
         let yaml = "tags: &tags\n  - web\n  - api\nservice:\n  name: auth\n  tags: *tags\n";
 
-        let ast: Config = de::from_str(yaml).unwrap();
-        let ev: Config = from_str_events_internal(yaml).unwrap();
-        assert_eq!(ast, ev);
-        assert_eq!(ev.service.tags, vec!["web", "api"]);
+        let value: Config = from_str_internal(yaml).unwrap();
+        assert_eq!(value.service.tags, vec!["web", "api"]);
     }
 }

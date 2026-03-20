@@ -1214,16 +1214,28 @@ fn library_events_to_test_events(events: &[yaml_parser::Event<'_>]) -> Vec<Event
                 style, properties, ..
             } => Event::MappingStart {
                 flow: matches!(style, yaml_parser::CollectionStyle::Flow),
-                anchor: properties.anchor.as_ref().map(|p| p.value.to_string()),
-                tag: properties.tag.as_ref().map(|p| p.value.to_string()),
+                anchor: properties
+                    .as_ref()
+                    .and_then(|event_props| event_props.anchor.as_ref())
+                    .map(|p| p.value.to_string()),
+                tag: properties
+                    .as_ref()
+                    .and_then(|event_props| event_props.tag.as_ref())
+                    .map(|p| p.value.to_string()),
             },
             yaml_parser::Event::MappingEnd { .. } => Event::MappingEnd,
             yaml_parser::Event::SequenceStart {
                 style, properties, ..
             } => Event::SequenceStart {
                 flow: matches!(style, yaml_parser::CollectionStyle::Flow),
-                anchor: properties.anchor.as_ref().map(|p| p.value.to_string()),
-                tag: properties.tag.as_ref().map(|p| p.value.to_string()),
+                anchor: properties
+                    .as_ref()
+                    .and_then(|event_props| event_props.anchor.as_ref())
+                    .map(|p| p.value.to_string()),
+                tag: properties
+                    .as_ref()
+                    .and_then(|event_props| event_props.tag.as_ref())
+                    .map(|p| p.value.to_string()),
             },
             yaml_parser::Event::SequenceEnd { .. } => Event::SequenceEnd,
             yaml_parser::Event::Scalar {
@@ -1240,8 +1252,14 @@ fn library_events_to_test_events(events: &[yaml_parser::Event<'_>]) -> Vec<Event
                     yaml_parser::ScalarStyle::Folded => ScalarStyle::Folded,
                 },
                 value: value.to_string(),
-                anchor: properties.anchor.as_ref().map(|p| p.value.to_string()),
-                tag: properties.tag.as_ref().map(|p| p.value.to_string()),
+                anchor: properties
+                    .as_ref()
+                    .and_then(|event_props| event_props.anchor.as_ref())
+                    .map(|p| p.value.to_string()),
+                tag: properties
+                    .as_ref()
+                    .and_then(|event_props| event_props.tag.as_ref())
+                    .map(|p| p.value.to_string()),
             },
             yaml_parser::Event::Alias { name, .. } => Event::Alias {
                 name: name.to_string(),

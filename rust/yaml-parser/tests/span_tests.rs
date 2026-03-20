@@ -278,7 +278,13 @@ fn test_anchor_and_alias_spans() {
                 span,
                 properties,
                 ..
-            } if properties.anchor.is_some() => Some((value, span)),
+            } if properties
+                .as_ref()
+                .and_then(|event_props| event_props.anchor.as_ref())
+                .is_some() =>
+            {
+                Some((value, span))
+            }
             _ => None,
         })
         .expect("Should have scalar with anchor");
@@ -321,7 +327,13 @@ fn test_tag_spans() {
                 span,
                 properties,
                 ..
-            } => Some((value, span, &properties.tag)),
+            } => Some((
+                value,
+                span,
+                properties
+                    .as_ref()
+                    .and_then(|event_props| event_props.tag.as_ref()),
+            )),
             _ => None,
         })
         .expect("Should have scalar with tag");

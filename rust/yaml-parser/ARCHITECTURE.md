@@ -6,10 +6,10 @@
 
 # YAML Parser Architecture Documentation
 
-**Version:** 0.0.3
-**Date:** 2026-03-10
+**Version:** workspace version (`yaml-parser`)
+**Date:** 2026-03-20
 **Status:** Production-ready, YAML 1.2 compliant
-**Dependencies:** Zero external dependencies
+**Dependencies:** Minimal dependency surface (`derive_more`; optional `serde`)
 
 ---
 
@@ -35,11 +35,12 @@ This is a YAML 1.2 parser written in Rust with the following key features:
 - **Error Recovery**: Continues parsing after errors, collecting multiple errors in a single pass
 - **Span Tracking**: Every parsed value includes its source location (byte range)
 - **YAML 1.2 Compliance**: Passes all 496 unique tests from the YAML Test Suite (402 positive + 94 negative)
-- **Zero Dependencies**: Self-contained with custom span/error handling
+- **Minimal Dependencies**: Custom span/error handling with a small dependency surface
 - **Zero-Copy Design**: Uses `Cow<'input, str>` throughout to minimize allocations
 - **Layered Architecture**: Separates tokenization, event emission, and AST construction
 - **Context-Aware Lexing**: Tracks flow depth and quote state to correctly tokenize context-dependent characters
-- **High Performance**: Competitive with or faster than saphyr in most benchmarks (see `BENCHMARKS.md`)
+- **State-Driven Emission**: The emitter owns indentation, multiline scalar continuation, and deferred event bridging through explicit states
+- **High Performance**: Tuned for low-allocation parsing with benchmark results tracked in `BENCHMARKS.md`
 
 ### Key Capabilities
 
@@ -51,7 +52,7 @@ This is a YAML 1.2 parser written in Rust with the following key features:
 - ✅ Directives (`%YAML`, `%TAG`)
 - ✅ Multi-document streams
 - ✅ Error recovery with partial output
-- ✅ Indentation validation (INDENT/DEDENT tokens)
+- ✅ Indentation validation driven by `LineStart(indent)` + emitter state
 - ✅ Flow context column tracking
 
 ---
@@ -72,7 +73,7 @@ The parser uses a **three-layer architecture** with unified streaming tokenizati
 │  - Handles directives (%YAML, %TAG) inline                  │
 │  - Tracks document boundaries (---, ...)                    │
 │  - Tracks flow depth (nested {}/[])                         │
-│  - Emits INDENT/DEDENT tokens                               │
+│  - Emits `LineStart(indent)` as the indentation signal      │
 │  - Context-aware: ,[]{} are delimiters in flow,             │
 │                   part of plain scalars in block            │
 │  - Phase tracking: DirectivePrologue vs InDocument          │
@@ -86,11 +87,11 @@ The parser uses a **three-layer architecture** with unified streaming tokenizati
                            ▼
 ┌─────────────────────────────────────────────────────────────┐
 │  Layer 2: Event Emitter (emitter::Emitter)                  │
-│  - Consumes an iterator of RichToken<'input> + &str         │
+│  - Consumes a buffered token cursor over the lexer          │
 │  - Emits YAML events (StreamStart, Scalar, MappingStart,    │
 │    SequenceStart, Alias, etc.)                              │
 │  - Handles YAML structure (indentation, flow vs block,      │
-│    complex keys, block scalars, properties)                 │
+│    explicit/implicit keys, block scalars, properties)       │
 │  - Performs structural validation and error recovery        │
 │  Output: Iterator<Item = Event<'input>>                     │
 └──────────────────────────┬──────────────────────────────────┘
@@ -305,13 +306,12 @@ The parser uses a **three-layer architecture** with unified streaming tokenizati
   - `LexerPhase`: `DirectivePrologue` (before document content) or `InDocument` (processing content)
 - **State Tracking**:
   - `flow_depth`: Nesting level of `{}`/`[]`
-  - `indent_stack`: Stack of indentation levels
   - `in_quoted_string`: Inside quoted string?
   - `prev_was_json_like`: For colon detection after JSON-like values
   - `prev_was_separator`: For comment validation (# after whitespace)
   - `byte_pos`: Current position in input (direct string slicing, no Vec<char>)
   - `pending_tokens`: Queue for multi-token constructs
-  - `lexer_phase`: Tracks whether directives are valid at current position
+  - `phase_state`: Tracks whether directives are valid at current position
   - `has_yaml_directive`: Tracks if `%YAML` was seen (for duplicate detection)
   - `has_directive_in_prologue`: For "directive without document" error
 - **Unified Stream Handling**:
@@ -322,9 +322,10 @@ The parser uses a **three-layer architecture** with unified streaming tokenizati
 - **Key Innovation**: Context-aware character interpretation
   - In **block context**: `,[]{}` are part of plain scalars
   - In **flow context**: `,[]{}` are delimiters
-- **INDENT/DEDENT Tokens**: Python-style indentation tracking
-  - Emitted after `LineStart` in block context
-  - Used by the emitter to determine block structure boundaries when producing events
+- **Indentation Signal**: `LineStart(indent)` is the only structural indentation token
+  - The lexer reports the indentation width of each new logical line
+  - The emitter owns collection lifetime and dedent decisions using `current_indent`,
+    `indent_stack`, and explicit parser states
 - **Modular Token Lexing**: The main `next_token()` method delegates to helper methods:
   - `try_lex_directive()` - Directives (`%YAML`, `%TAG`, reserved)
   - `try_lex_document_marker()` - Document start/end markers (`---`, `...`)
@@ -364,13 +365,45 @@ The parser uses a **three-layer architecture** with unified streaming tokenizati
 - **Error Handling**: Errors during lexing are collected by the lexer itself
   (`Lexer::take_errors`) rather than attached to individual `RichToken`s.
 - **Usage**: The lexer implements `Iterator<Item = RichToken<'input>>`. The
-  high-level `emit_events` API collects these into a `Vec<RichToken<'_>>`
-  before passing them to the emitter.
+  emitter reads from it lazily through `TokenCursor<'input>`, so neither
+  `parse()` nor `emit_events()` needs to materialize a `Vec<RichToken<'_>>`.
 
 ### Layer 2: Event Emitter
 
-> NOTE: The current implementation uses the `emitter` module as the second
-> layer between the lexer and the AST parser.
+- **Purpose**: Convert lexer tokens into YAML serialization-tree events while
+  owning indentation, block/flow structure, properties, and error recovery.
+- **Key Types**:
+  - `Emitter<'input>`: Streaming iterator over `Event<'input>`
+  - `TokenCursor<'input>`: Buffered token source over the lexer, providing cheap
+    `peek`/`take` access without forcing broad rescans
+  - `ParseState<'input>`: Explicit state machine for values, collections,
+    properties, and multiline scalar continuations
+  - `EmitterProperties<'input>`: Sparse emitter-only property carrier that keeps
+    the common no-anchor/no-tag case off the hot state payload
+  - `ValueContext`: Carries `min_indent`, `content_column`, key/value kind, and
+    implicit-mapping permissions between value states
+- **Indentation Model**:
+  - `LineStart(indent)` is the authoritative indentation signal
+  - `Emitter` tracks `current_indent`, `last_line_start_span`, and an emitter-owned
+    `indent_stack` for active block structure levels
+  - Block collections are advanced by explicit phases such as
+    `BlockSeqPhase::BeforeEntryScan` / `BeforeEntryDispatch` and
+    `BlockMapPhase::BeforeKeyScan` / `BeforeKeyDispatch`
+- **Value-State Model**:
+  - Value parsing is split into `Value`, `ValueCollectProperties`,
+    `ValueDispatch`, and `ValueDispatchToken`
+  - Multiline scalar slow paths are resumable states:
+    `PlainScalarBlock`, `PlainScalarFlow`, `QuotedScalar`, and `BlockScalar`
+  - Explicit `?` keys and implicit keys are distinguished in `ValueKind`, so
+    only implicit keys enforce single-line key restrictions
+- **Deferred Emission Model**:
+  - `Emitter` has a single `pending_event: Option<Event<'input>>` slot for the
+    hot transitions that must emit two events across consecutive `next()` calls
+  - This replaced the old standalone `Emit*` parse states for value/collection
+    bridging, while document start/end emission remains in `DocState`
+- **Usage**:
+  - `parse()` wires `Emitter` directly into `Parser`
+  - `emit_events()` simply collects the streaming `Event<'input>` iterator
 
 ### Layer 3: Event Parser
 
@@ -378,12 +411,12 @@ The parser uses a **three-layer architecture** with unified streaming tokenizati
 
 - **Purpose**: Define SAX-style event types for YAML parsing
 - **Key Types**:
-  - `Event<'input>`: 13 event variants for stream structure
+  - `Event<'input>`: 10 event variants for stream structure
     - `StreamStart`, `StreamEnd` - Stream boundaries
     - `DocumentStart`, `DocumentEnd` - Document boundaries with explicit flag
     - `MappingStart`, `MappingEnd` - Mapping boundaries with style
     - `SequenceStart`, `SequenceEnd` - Sequence boundaries with style
-    - `Scalar` - Scalar value with style, anchor, tag
+    - `Scalar` - Scalar value with style and boxed event-level properties
     - `Alias` - Reference to anchor
   - `CollectionStyle`: `Block` or `Flow`
   - `ScalarStyle`: `Plain`, `SingleQuoted`, `DoubleQuoted`, `Literal`, `Folded`
@@ -394,13 +427,15 @@ The parser uses a **three-layer architecture** with unified streaming tokenizati
 
 - **Purpose**: Reconstruct AST from event stream
 - **Key Types**:
-  - `Parser<'input>`: Stack-based parser for events
-  - Tracks in-progress collections (mapping key/value, sequence)
-- **Main Function**: `Parser::parse() -> Vec<Node>`
+  - `Parser<'input, I>`: Event-to-AST parser over any `Iterator<Item = Event<'input>>`
+  - One-element lookahead buffer for streaming consumption
+- **Main Functions**:
+  - `Parser::parse() -> Vec<Node<'input>>`
+  - `Parser::parse_next_document() -> Option<Node<'input>>`
 - **Responsibilities**:
   - Build `Node` tree from flat event stream
-  - Track anchors via `HashSet<String>`
-  - Resolve aliases by cloning anchored nodes
+  - Track anchor names for alias validation
+  - Scope anchors per document
   - Validate structure (balanced start/end events)
   - Apply type inference to scalars (bool, int, float, null)
 - **Error Handling**: Reports `UndefinedAlias` for unknown anchor references
@@ -438,29 +473,28 @@ age: 30
 ]
 ```
 
-**Layer 2 (Event-Based Parser) Output:**
+**Layer 2 (Event Emitter) Output:**
 
 ```rust
 [
   StreamStart,
-  DocumentStart { explicit: true, version: None },
-  MappingStart { anchor: None, tag: None, style: Block },
+  DocumentStart { explicit: true, span: ... },
+  MappingStart { style: Block, properties: Box::default(), span: ... },
   Scalar { value: "name", style: Plain, ... },
   Scalar { value: "Alice", style: Plain, ... },
   Scalar { value: "age", style: Plain, ... },
   Scalar { value: "30", style: Plain, ... },
   MappingEnd,
-  DocumentEnd { explicit: false },
+  DocumentEnd { explicit: false, span: ... },
   StreamEnd,
 ]
 ```
 
-**Layer 3 (Event Parser) Output:**
+**Layer 3 (Event-to-AST Parser) Output:**
 
 ```rust
 Node {
-  anchor: None,
-  tag: None,
+  properties: None,
   value: Mapping([
     (
       Node { value: String("name"), ... },
@@ -468,7 +502,7 @@ Node {
     ),
     (
       Node { value: String("age"), ... },
-      Node { value: Int(30), ... }
+      Node { value: Int(Number::U64(30)), ... }
     )
   ]),
   span: 4..24
@@ -519,7 +553,7 @@ items: [apple, banana, {color: red}]
 ]
 ```
 
-### INDENT/DEDENT Example
+### LineStart-Based Indentation Example
 
 **Input:**
 
@@ -537,8 +571,7 @@ sibling: value3
   (LineStart(0), ...),
   (Plain("parent"), ...),
   (Colon, ...),
-  (LineStart(2), ...),      // Indentation increased from 0 to 2
-  (Indent(2), ...),         // INDENT token emitted
+  (LineStart(2), ...),      // Nested block content begins at indent 2
   (Plain("child1"), ...),
   (Colon, ...),
   (Plain("value1"), ...),
@@ -546,15 +579,16 @@ sibling: value3
   (Plain("child2"), ...),
   (Colon, ...),
   (Plain("value2"), ...),
-  (LineStart(0), ...),      // Indentation decreased from 2 to 0
-  (Dedent, ...),            // DEDENT token emitted
+  (LineStart(0), ...),      // Dedent back to the parent line
   (Plain("sibling"), ...),
   (Colon, ...),
   (Plain("value3"), ...),
 ]
 ```
 
-The parser uses `Indent` and `Dedent` tokens to determine when block collections end.
+The emitter uses the `LineStart(indent)` tokens, plus its own collection state,
+to decide when block collections continue, terminate, or report orphan-indent
+errors.
 
 ---
 
@@ -606,18 +640,17 @@ The `Token` enum (defined in `token.rs`) has 20+ variants:
 
 **Whitespace and Structure:**
 
-- `LineStart(usize)` - Newline + indentation count (spaces only, not tabs)
+- `LineStart(IndentLevel)` - Newline + indentation count (spaces only, not tabs)
 - `Whitespace` - Inline whitespace (spaces only)
 - `WhitespaceWithTabs` - Inline whitespace containing at least one tab
 - `Comment(String)` - `# comment`
-- `Indent(usize)` - INDENT token (emitted by the lexer)
-- `Dedent` - DEDENT token (emitted by the lexer)
 
 **Note on Whitespace Tokens**: The `Whitespace` / `WhitespaceWithTabs` split enables O(1) tab detection in the parser. YAML forbids tabs for indentation but allows them for separation. The parser checks for `WhitespaceWithTabs` after `LineStart` to detect invalid tab indentation.
 
 **Error Recovery:**
 
-- `Invalid` - Invalid token (for error recovery)
+- The lexer records `ParseError`s and keeps producing tokens from the next safe
+  point; it does not emit a dedicated `Invalid` token.
 
 ### Node and Value Types
 
@@ -625,8 +658,7 @@ The `Token` enum (defined in `token.rs`) has 20+ variants:
 
 ```rust
 pub struct Node<'input> {
-    pub anchor: Option<Cow<'input, str>>,  // Optional anchor name (&name)
-    pub tag: Option<Cow<'input, str>>,     // Optional tag (!tag)
+    pub properties: Option<Box<Properties<'input>>>,
     pub value: Value<'input>,              // The actual YAML value
     pub span: Span,                        // Source location (byte range)
 }
@@ -638,13 +670,12 @@ pub struct Node<'input> {
 pub enum Value<'input> {
     Null,                                  // null, ~, or empty
     Bool(bool),                            // true, false
-    Int(i64),                              // 42, -17, 0o77, 0xFF
+    Int(Number<'input>),                   // 42, -17, 0o77, 0xFF, very large ints
     Float(f64),                            // 3.14, -0.5, .inf, .nan
     String(Cow<'input, str>),              // Any string content (zero-copy)
     Sequence(Vec<Node<'input>>),           // Array/list of nodes
     Mapping(Vec<(Node<'input>, Node<'input>)>),  // Key-value pairs
     Alias(Cow<'input, str>),               // *anchor_name (zero-copy)
-    Invalid,                               // Error recovery placeholder
 }
 ```
 
@@ -685,23 +716,26 @@ pub enum Value<'input> {
 **Previous Design (removed):** Earlier revisions experimented with a separate stream-level pass, but
 the current design uses a single unified lexer that handles directives and document markers inline.
 
-### 2. INDENT/DEDENT Tokens
+### 2. LineStart-Driven Indentation
 
-**Why Python-style indentation tokens?**
+**Why keep indentation ownership in the emitter?**
 
-- **Simplifies Parser**: Parser doesn't need to track indentation itself
-- **Clear Structure Boundaries**: DEDENT tokens explicitly mark where block collections end
-- **Error Recovery**: Easier to recover from indentation errors
-- **Matches YAML Semantics**: YAML's block structure is indentation-based
+- **Fewer repeated rescans**: collection phases can carry line-transition state
+  instead of rediscovering indentation by repeated broad lookahead
+- **Clear structure ownership**: the lexer reports line starts; the emitter owns
+  block collection lifetime and indentation validation
+- **Better explicit state transitions**: block sequences, block mappings, values,
+  and multiline scalars each make their own line-ownership decisions
+- **Matches current implementation**: `Indent` and `Dedent` have been removed
 
 **How it works:**
 
-1. The lexer maintains an `indent_stack`
-2. After each `LineStart(n)` token in block context:
-   - If `n > current_indent`: Emit `Indent(n)`, push to stack
-   - If `n < current_indent`: Emit `Dedent` for each popped level
-   - If `n == current_indent`: No change
-3. The emitter uses `Dedent` to know when to stop a block collection when emitting events
+1. The lexer emits `LineStart(indent)` for each logical line in block context.
+2. The emitter updates `current_indent` when consuming `LineStart`.
+3. Block collection phases compare `current_indent` with their stored collection
+   indent to decide whether to continue, end, or report an orphan-indent error.
+4. Value states carry `min_indent` and `content_column` through explicit states
+   rather than inferring ownership from ad-hoc indentation helpers.
 
 ### 3. Context-Aware Lexing
 
@@ -742,7 +776,23 @@ This matches the YAML 1.2 specification's data model:
 
 - **Rejected because**: Doesn't match YAML spec, complicates type handling
 
-### 5. Hand-Written Parser (No External Dependencies)
+### 5. Sparse Emitter Properties
+
+**Why does the emitter use a separate sparse property carrier?**
+
+- Anchors and tags are rare on most real inputs, but emitter parse states are on
+  the hot path for every value and collection transition.
+- Keeping full event-layer `Properties` inline in many `ParseState` variants
+  makes the state stack larger and increases clone/merge pressure even when no
+  properties are present.
+- `EmitterProperties<'input>` keeps the empty case as `None` and only
+  materializes a boxed property payload when an anchor or tag is actually seen.
+
+**Result:** The public `Event` API stays unchanged, while the emitter can pass
+around a smaller hot-path payload and convert back to boxed event properties only
+at emission boundaries.
+
+### 6. Hand-Written Parser (No Parser-Combinator Dependency)
 
 **Why not use a parser combinator library like chumsky?**
 
@@ -751,16 +801,16 @@ After analysis, we chose a hand-written recursive descent parser because:
 - **Context Sensitivity**: YAML's grammar is highly context-sensitive (flow vs block context, indentation-based structure). Parser combinators struggle with stateful parsing.
 - **Performance**: Direct control over memory allocation and iteration (zero-copy `Cow<'input, str>`)
 - **Error Recovery**: Custom recovery logic tailored to YAML's specific error patterns
-- **Zero Dependencies**: The entire crate has zero external dependencies, simplifying auditing and deployment
+- **Tight Dependency Surface**: The parsing core stays hand-written and does not depend on parser-combinator or YAML runtime libraries
 
 **Error Recovery Strategy:**
 
 - Parser continues after errors, collecting all errors in a single pass
-- Invalid nodes are marked with `Value::Invalid`
-- Partial output is still produced (useful for IDE features)
-- Specific error kinds (23 variants) provide actionable error messages
+- Partial output is still produced whenever the remaining structure can be recovered
+- Missing or malformed values typically recover as empty/null-like scalar events at the emitter layer
+- Specific error kinds provide actionable error messages
 
-### 6. Span Tracking
+### 7. Span Tracking
 
 **Why track source locations for every token and node?**
 
@@ -811,8 +861,8 @@ where needed (e.g., `InvalidIndentationContext { expected: u16, found: u16 }`).
 
 1. **Lexer-level errors**: When the lexer encounters invalid input, it records a `ParseError`
    and attempts to continue tokenizing from the next safe point.
-    2. **Continue Parsing**: After an error, the parser skips to the next reasonable boundary and continues.
-    3. **Partial Collections**: Collections with errors still include valid elements.
+2. **Continue Parsing**: After an error, the parser skips to the next reasonable boundary and continues.
+3. **Partial Collections**: Collections with errors still include valid elements.
 
 ### Example
 
@@ -863,8 +913,9 @@ The test runner (`run_test_suite()`) parses these events and compares them to th
 
 Each layer has unit tests for specific functionality:
 
-- Lexer tests: tokenization, flow depth tracking, INDENT/DEDENT
-- Emitter tests: event generation, structural validation, block scalar handling
+- Lexer tests: tokenization, flow depth tracking, directives, line starts
+- Emitter tests: event generation, structural validation, block scalar handling,
+  explicit/implicit key behaviour
 - Parser tests: AST building from events, error recovery, anchor resolution
 
 ### Test Organization
@@ -883,15 +934,12 @@ Key limitations:
 
 ### 1. Performance
 
-The parser is competitive with or faster than `saphyr` (a mature Rust YAML parser) in most benchmarks:
-
-- **Mappings**: 34-49% faster
-- **Sequences**: 14% faster
-- **Flow collections**: 269% faster
-- **Latency**: 16-40% faster for small/medium/large documents
-- **Block scalars**: ~6% slower (due to token-based architecture overhead)
-
-See `BENCHMARKS.md` for detailed performance data and instructions.
+- The crate is tuned for low-allocation parsing and good event/AST throughput,
+  but benchmark leadership depends heavily on corpus shape.
+- Current benchmark results are tracked in `BENCHMARKS.md`; recent runs show a
+  mixed picture rather than a blanket win over `saphyr` or `serde_yaml`.
+- Performance-sensitive areas today are block scalars, large flow-heavy inputs,
+  and indentation-heavy block structure handling.
 
 ### 2. Memory Usage
 
@@ -908,6 +956,7 @@ The parser uses optimized type sizes to reduce memory footprint. This introduces
 | `Span` | Uses `BytePosition` (`u32`) for `start` and `end` | **Maximum file size: 4GB** (2³² bytes). Files larger than 4GB will have truncated span offsets. |
 | `IndentLevel` | Uses `u16` for all indentation values | **Maximum indentation level: 65,535**. Indentation values above 65,535 will saturate. |
 | `Node` | Anchors and tags stored in `Option<Box<Properties>>` | **Heap allocation for anchors/tags**: Nodes with anchors or tags incur one additional heap allocation. This is a trade-off for reducing base `Node` size from 96 to 48 bytes. |
+| `EmitterProperties` | Stores event properties as `Option<Box<...>>` internally | **Rare-property heap allocation**: emitter-side anchors/tags allocate only when present, trading a tiny rare-case cost for a smaller hot-path state stack. |
 
 **Size reductions achieved:**
 
@@ -931,8 +980,11 @@ The parser uses optimized type sizes to reduce memory footprint. This introduces
 
 ### 5. Streaming
 
-- Currently parses entire input at once
-- Could support streaming for large files
+- The lexer, emitter, and event-to-AST parser are already streaming over an
+  in-memory `&str`
+- The public `parse()` API still returns an owned `Stream<'static>` for
+  convenience
+- True `Read`/`BufRead` streaming for arbitrarily large inputs is still future work
 
 ---
 
@@ -941,7 +993,7 @@ The parser uses optimized type sizes to reduce memory footprint. This introduces
 ### Short-Term (Performance & Testing)
 
 1. **Block Scalar Pipeline Refinement (Lexer vs Emitter responsibilities)**
-   - **Current State**: Block scalar headers (`|`, `>`) are recognized in the lexer, but line collection, folding, and chomping are handled in the emitter's `parse_block_scalar` using lexer tokens (`LineStart`, `Indent`/`Dedent`, `Plain`, `Whitespace`, `Comment`, flow tokens).
+   - **Current State**: Block scalar headers (`|`, `>`) are recognized in the lexer, but line collection, folding, and chomping are handled in the emitter's `BlockScalar` state using lexer tokens (`LineStart`, `Plain`, `Whitespace`, `Comment`, flow tokens).
    - **Observation**: Recent optimizations made `parse_block_scalar` a streaming builder (single `String` plus small per-line scratch) and brought block-scalar throughput close to Saphyr while preserving the layered architecture.
    - **Potential Future Direction**:
      - Evaluate whether some block-scalar concerns (e.g., more precise comment vs content handling, or preclassification of block-scalar content lines) should move into the lexer to further simplify the emitter.
@@ -967,20 +1019,21 @@ The parser uses optimized type sizes to reduce memory footprint. This introduces
 
 ## Conclusion
 
-This YAML parser achieves **full YAML 1.2 compliance** through a carefully designed three-layer architecture with **zero external dependencies**:
+This YAML parser achieves **full YAML 1.2 compliance** through a carefully designed three-layer architecture with a **small, non-parser-specific dependency surface**:
 
 1. **Unified Lexer**: Tokenizes entire stream with phase tracking (directives, markers, content)
-2. **Event-Based Parser**: Emits SAX-style events, validates structure and indentation
+2. **Event Emitter**: Emits SAX-style events, owns indentation and structural validation
 3. **AST Builder**: Reconstructs typed AST from events, resolves anchors and aliases
 
 **Key achievements:**
 
-- **Zero dependencies**: Self-contained crate with custom `Span` implementation
+- **Minimal dependencies**: Hand-written lexer/emitter/parser pipeline with custom `Span` implementation
 - **Zero-copy parsing**: `Cow<'input, str>` throughout for minimal allocations
-- **Streaming-ready lexer**: `Lexer<'input>` implements `Iterator<Item = RichToken<'input>>` for lazy tokenization
+- **Streaming pipeline**: Lexer, emitter, and parser can all operate lazily over an in-memory `&str`
 - **Actionable errors**: Rich `ErrorKind` variants with specific suggestions (no generic fallback errors)
 - **Structured error collection**: Lexer, emitter, and parser all report `ParseError` values that are merged by `emit_events`/`parse`.
-- **High performance**: Faster than saphyr in most benchmarks while always providing spans
+- **State-machine indentation model**: `LineStart(indent)` plus emitter-owned phases now fully replace lexer `Indent`/`Dedent` tokens
+- **Measured performance**: Benchmark results are tracked in `BENCHMARKS.md`, with the crate optimized around spans, error recovery, and event/AST throughput
 
 The architecture achieves both **correctness** and **performance**, making it suitable for IDE integration and user-facing tools where helpful error messages are crucial, as well as for high-throughput parsing scenarios.
 

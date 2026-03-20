@@ -27,7 +27,7 @@ pub enum QuoteStyle {
 }
 
 /// Block scalar header information.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BlockScalarHeader {
     /// Explicit indentation indicator (1-9), or None for auto-detect.
     pub indent: Option<u8>,
@@ -156,12 +156,4 @@ pub enum Token<'input> {
     /// Comment content (after `#`, without the `#` prefix)
     #[display("comment '{_0}'")]
     Comment(Cow<'input, str>),
-
-    // Indentation structure (Python-style INDENT/DEDENT)
-    /// Indentation increased to this level (emitted after `LineStart` when indent > stack.top)
-    #[display("INDENT({_0})")]
-    Indent(IndentLevel),
-    /// Indentation decreased by one level (emitted when indent < stack.top, one per level popped)
-    #[display("DEDENT")]
-    Dedent,
 }

@@ -75,7 +75,7 @@ pub fn from_str<T>(input: &str) -> Result<T, DeError>
 where
     T: DeserializeOwned,
 {
-    super::event_de::from_str_events_internal(input)
+    super::event_de::from_str_internal(input)
 }
 
 /// Deserialize a single YAML document from a reader into `T`.

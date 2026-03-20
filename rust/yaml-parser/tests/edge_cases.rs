@@ -425,12 +425,11 @@ fn debug_first_difference(
     }
 }
 
-/// For each benchmark corpus, verify that the AST-backed serde backend, the
-/// event-based serde backend (where supported), and `serde_yaml` all deserialize
-/// into the same logical `OwnedYamlValue` tree.
+/// For each benchmark corpus, verify that yaml-parser's serde API and
+/// `serde_yaml` deserialize into the same logical `OwnedYamlValue` tree.
 #[cfg(feature = "serde")]
 #[test]
-fn bench_corpora_serde_equivalence_across_backends() {
+fn bench_corpora_serde_equivalence_against_serde_yaml() {
     let corpora: &[(&str, &str)] = &[
         (
             "large_mapping",
@@ -460,45 +459,12 @@ fn bench_corpora_serde_equivalence_across_backends() {
     ];
 
     for (name, input) in corpora {
-        // AST-backed yaml-parser serde backend.
-        let ast: OwnedYamlValue = yaml_parser::serde::from_str(input)
+        let parsed: OwnedYamlValue = yaml_parser::serde::from_str(input)
             .unwrap_or_else(|err| panic!("yaml_parser::serde::from_str failed on {name}: {err:?}"));
-
-        // Event-based backend: skip corpora that require anchors/aliases, which
-        // the event backend does not yet support.
-        if *name != "anchors_aliases" {
-            let ev: OwnedYamlValue = yaml_parser::serde::bench_from_str_events_internal(input)
-                .unwrap_or_else(|err| {
-                    panic!(
-                        "yaml_parser::serde::bench_from_str_events_internal failed on {name}: {err:?}",
-                    )
-                });
-
-            // Use the same *semantic* equality that we use for serde_yaml
-            // comparisons: this treats NaN == NaN and compares integers via
-            // their decimal representation, ignoring spans and properties.
-            if !owned_semantically_equal(&ast, &ev) {
-                eprintln!(
-                    "AST-backed and event-based serde backends produced semantically different values on {name}; locating first differing path...",
-                );
-                if let Some(path) = debug_first_difference("root", &ast.0, &ev.0) {
-                    panic!(
-                        "event backend produced a semantically different value on {name}; first differing path: {path}",
-                    );
-                }
-                // Fallback assertion if the debug helper somehow failed to
-                // locate a difference but the semantic check still says they
-                // differ.
-                assert!(
-                    owned_semantically_equal(&ast, &ev),
-                    "event backend produced a semantically different value on {name}",
-                );
-            }
-        }
 
         // serde_yaml using the same logical target type. This ensures that the
         // `serde_deserialize` throughput benchmarks are comparing equivalent
-        // trees across all three libraries.
+        // trees across both libraries.
         let sy: OwnedYamlValue = serde_yaml::from_str(input)
             .unwrap_or_else(|err| panic!("serde_yaml::from_str failed on {name}: {err:?}"));
 
@@ -520,11 +486,11 @@ fn bench_corpora_serde_equivalence_across_backends() {
             continue;
         }
 
-        if !owned_semantically_equal(&ast, &sy) {
+        if !owned_semantically_equal(&parsed, &sy) {
             eprintln!(
-                "yaml_parser (AST-backed) and serde_yaml produced semantically different values on {name}; locating first differing path...",
+                "yaml_parser::serde::from_str and serde_yaml produced semantically different values on {name}; locating first differing path...",
             );
-            if let Some(path) = debug_first_difference("root", &ast.0, &sy.0) {
+            if let Some(path) = debug_first_difference("root", &parsed.0, &sy.0) {
                 panic!(
                     "serde_yaml produced a semantically different value on {name}; first differing path: {path}",
                 );
@@ -532,7 +498,7 @@ fn bench_corpora_serde_equivalence_across_backends() {
             // Fallback assertion if the debug helper somehow failed to locate
             // a difference but the semantic check still says they differ.
             assert!(
-                owned_semantically_equal(&ast, &sy),
+                owned_semantically_equal(&parsed, &sy),
                 "serde_yaml produced a semantically different value on {name}",
             );
         }

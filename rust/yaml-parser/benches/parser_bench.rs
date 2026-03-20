@@ -16,7 +16,7 @@
 //! Both parsers include span tracking, making this a fair comparison.
 //!
 //! When the `serde` feature is enabled on `yaml-parser`, we also compare
-//! serde-based deserialization performance against `serde_yaml`.
+//! its serde-based deserialization performance against `serde_yaml`.
 //!
 //! To make this a fair comparison, **all** serde-based benchmarks deserialize
 //! into the same logical target type: our own `yaml_parser::Value<'static>`,
@@ -25,8 +25,8 @@
 //! `yaml_parser::Value<'de>` using its generic `Deserialize` impl and then
 //! calling `into_owned()` to obtain `yaml_parser::Value<'static>`.
 //!
-//! All three backends (`yaml_parser` AST, `yaml_parser` event backend, and
-//! `serde_yaml`) therefore build the same `OwnedYamlValue` tree.
+//! Both serde implementations in the benchmark (`yaml_parser::serde::from_str`
+//! and `serde_yaml`) therefore build the same `OwnedYamlValue` tree.
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use saphyr::LoadableYamlNode as _;
@@ -222,31 +222,14 @@ fn bench_serde_deserialize_throughput(criterion: &mut Criterion) {
         group.throughput(Throughput::Bytes(u64::try_from(input.len()).unwrap()));
 
         // Benchmark yaml-parser's serde-based deserialization into our own
-        // generic `OwnedYamlValue` tree. This uses the streaming
-        // emitter+parser pipeline under the hood via
-        // `yaml_parser::serde::from_str`.
+        // generic `OwnedYamlValue` tree. This uses the streaming event-driven
+        // serde pipeline under the hood via `yaml_parser::serde::from_str`.
         group.bench_with_input(
             BenchmarkId::new("yaml_parser_serde", name),
             input,
             |bench, data| {
                 bench.iter(|| {
                     let value: OwnedYamlValue = yaml_parser::serde::from_str(data).unwrap();
-                    std::hint::black_box(value);
-                });
-            },
-        );
-
-        // Benchmark the experimental event-based serde backend, which drives
-        // serde visitors directly from the event stream without building an
-        // intermediate AST. This backend now supports anchors/aliases (YAML 1.2
-        // style, not YAML 1.1 merge keys).
-        group.bench_with_input(
-            BenchmarkId::new("yaml_parser_events_serde", name),
-            input,
-            |bench, data| {
-                bench.iter(|| {
-                    let value: OwnedYamlValue =
-                        yaml_parser::serde::bench_from_str_events_internal(data).unwrap();
                     std::hint::black_box(value);
                 });
             },

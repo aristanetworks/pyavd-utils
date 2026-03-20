@@ -31,6 +31,7 @@ use super::*;
 )]
 fn check_struct_sizes() {
     use std::mem::size_of;
+    let (emitter_properties_size, parse_state_size) = crate::emitter::internal_type_sizes();
     println!("\n=== Struct Sizes ===");
     println!("Event: {} bytes", size_of::<crate::Event>());
     println!("Token: {} bytes", size_of::<crate::lexer::Token>());
@@ -45,6 +46,8 @@ fn check_struct_sizes() {
         "Option<Property>: {} bytes",
         size_of::<Option<crate::event::Property>>()
     );
+    println!("EmitterProperties: {emitter_properties_size} bytes");
+    println!("ParseState: {parse_state_size} bytes");
     println!("===================\n");
 }
 
@@ -440,6 +443,7 @@ mod error_recovery {
 #[test]
 fn measure_type_sizes() {
     use std::mem::size_of;
+    let (emitter_properties_size, parse_state_size) = crate::emitter::internal_type_sizes();
 
     // Verify the optimizations are effective
     assert!(
@@ -456,6 +460,14 @@ fn measure_type_sizes() {
         size_of::<ErrorKind>() <= 16,
         "ErrorKind should be 16 bytes or less with u16 indentation, got {}",
         size_of::<ErrorKind>()
+    );
+    assert!(
+        emitter_properties_size <= 8,
+        "EmitterProperties should stay pointer-sized, got {emitter_properties_size}"
+    );
+    assert!(
+        parse_state_size <= 88,
+        "ParseState should stay 88 bytes or less after sparse property optimization, got {parse_state_size}"
     );
 }
 

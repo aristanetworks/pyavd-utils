@@ -25,7 +25,7 @@ use std::borrow::Cow;
 use std::collections::VecDeque;
 
 use crate::error::{ErrorKind, ParseError};
-use crate::span::{IndentLevel, Span, Spanned};
+use crate::span::{Span, Spanned};
 
 /// Check if a character is valid in an anchor/alias name.
 /// Per YAML 1.2 spec, ns-anchor-char is any non-whitespace char
@@ -50,8 +50,6 @@ enum IteratorPhase {
     Initial,
     /// Normal tokenization
     Running,
-    /// Emitting final Dedent tokens at EOF
-    FinalDedents,
     /// Iterator exhausted
     Done,
 }
@@ -93,14 +91,10 @@ pub struct Lexer<'input> {
     /// Track if previous token was whitespace or line start - for comment validation.
     /// A `#` can only start a comment if preceded by whitespace or at line start.
     prev_was_separator: bool,
-    /// Indentation stack for INDENT/DEDENT tokens (like Python).
-    /// Starts with [0] representing the base indentation level.
-    indent_stack: Vec<IndentLevel>,
-    /// Pending tokens to be returned (used for multi-token constructs like quoted strings,
-    /// and for INDENT/DEDENT tokens after `LineStart`)
+    /// Pending tokens to be returned (used for multi-token constructs like quoted strings)
     pending_tokens: VecDeque<RichToken<'input>>,
     /// Whether we're currently inside a quoted string (between `StringStart` and `StringEnd`).
-    /// When true, we suppress INDENT/DEDENT emission for `LineStart` tokens.
+    /// Kept so the lexer can preserve quoted-string tokenization rules.
     in_quoted_string: bool,
     /// Current phase of the iterator state machine
     phase: IteratorPhase,
@@ -126,7 +120,6 @@ impl<'input> Lexer<'input> {
             flow_depth: 0,
             prev_was_json_like: false,
             prev_was_separator: true, // At start, we're at "line start"
-            indent_stack: vec![0],    // Base indentation level
             pending_tokens: VecDeque::new(),
             in_quoted_string: false,
             phase: IteratorPhase::Initial,
@@ -224,7 +217,6 @@ impl<'input> Lexer<'input> {
         }
 
         // Track quoted string context (between StringStart and StringEnd).
-        // Inside quoted strings, we don't emit INDENT/DEDENT tokens.
         match token {
             Token::StringStart(_) => {
                 self.in_quoted_string = true;
@@ -245,8 +237,6 @@ impl<'input> Lexer<'input> {
             | Token::Comment(_)
             | Token::StringStart(_)
             | Token::StringContent(_)
-            | Token::Indent(_)
-            | Token::Dedent
             | Token::YamlDirective(_)
             | Token::TagDirective(..)
             | Token::ReservedDirective(_) => {
@@ -284,9 +274,7 @@ impl<'input> Lexer<'input> {
                     | Token::Comment(_)
                     | Token::Whitespace
                     | Token::WhitespaceWithTabs
-                    | Token::LineStart(_)
-                    | Token::Indent(_)
-                    | Token::Dedent => {
+                    | Token::LineStart(_) => {
                         // These don't end the prologue
                     }
                     _ => {
@@ -312,46 +300,7 @@ impl<'input> Lexer<'input> {
         }
     }
 
-    /// Queue INDENT/DEDENT tokens based on indentation change.
-    /// Called after a LineStart(n) token is produced.
-    /// Tokens are added to `pending_tokens` for subsequent iteration.
-    ///
-    /// Note: When `new_indent` doesn't match any level in the stack after dedenting,
-    /// we push it as a new level without emitting an error. This is intentional because:
-    /// - Block scalar content may have irregular indentation
-    /// - Implicit block mappings inside sequences may not be tracked in the stack
-    ///
-    /// The parser is responsible for detecting semantically invalid indentation.
-    fn queue_indent_dedent_tokens(&mut self, new_indent: IndentLevel, span: Span) {
-        let current_indent = *self.indent_stack.last().unwrap_or(&0);
-
-        if new_indent > current_indent {
-            // Indent increased - push new level
-            self.indent_stack.push(new_indent);
-            self.pending_tokens
-                .push_back(RichToken::new(Token::Indent(new_indent), span));
-        } else if new_indent < current_indent {
-            // Indent decreased - pop levels and emit Dedent for each
-            while let Some(&top) = self.indent_stack.last() {
-                if top <= new_indent {
-                    break;
-                }
-                self.indent_stack.pop();
-                self.pending_tokens
-                    .push_back(RichToken::new(Token::Dedent, span));
-            }
-
-            // If new_indent doesn't match any level, push it as a new level.
-            // This handles cases like block scalar content returning to parent level.
-            let final_indent = *self.indent_stack.last().unwrap_or(&0);
-            if new_indent != final_indent && new_indent > 0 {
-                self.indent_stack.push(new_indent);
-            }
-        }
-        // If new_indent == current_indent, no INDENT/DEDENT needed
-    }
-
-    /// Produce the next raw token (without INDENT/DEDENT processing).
+    /// Produce the next raw token.
     fn produce_next_token(&mut self) -> Option<RichToken<'input>> {
         let (token, span) = self.next_token()?;
         Some(RichToken::new(token, span))
@@ -1546,7 +1495,7 @@ impl<'input> Iterator for Lexer<'input> {
                 }
 
                 IteratorPhase::Running => {
-                    // Check pending tokens first (INDENT/DEDENT, string parts)
+                    // Check pending tokens first (DEDENT, string parts)
                     if let Some(pending) = self.pending_tokens.pop_front() {
                         // Process state for pending tokens too (e.g., StringEnd sets prev_was_json_like)
                         self.process_token(&pending.token);
@@ -1558,30 +1507,10 @@ impl<'input> Iterator for Lexer<'input> {
                         // Update state based on token
                         self.process_token(&rich_token.token);
 
-                        // If this is a LineStart in block context, queue INDENT/DEDENT tokens
-                        if let Token::LineStart(indent) = &rich_token.token
-                            && self.flow_depth == 0
-                            && !self.in_quoted_string
-                        {
-                            self.queue_indent_dedent_tokens(*indent, rich_token.span);
-                        }
-
                         return Some(rich_token);
                     }
 
-                    // No more tokens from input, move to final dedents
-                    self.phase = IteratorPhase::FinalDedents;
-                }
-
-                IteratorPhase::FinalDedents => {
-                    // Emit final Dedent tokens for remaining indent stack
-                    if self.flow_depth == 0 && self.indent_stack.len() > 1 {
-                        self.indent_stack.pop();
-                        let end_span = Span::from_usize_range(self.byte_pos..self.byte_pos);
-                        return Some(RichToken::new(Token::Dedent, end_span));
-                    }
-
-                    // All done
+                    // No more tokens from input: all done.
                     self.phase = IteratorPhase::Done;
                 }
 

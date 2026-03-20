@@ -18,6 +18,11 @@ use std::io::{self, Write};
 
 use crate::event::{CollectionStyle, Event, Properties, ScalarStyle};
 
+const EMPTY_PROPERTIES: Properties<'static> = Properties {
+    anchor: None,
+    tag: None,
+};
+
 /// Write YAML text from a sequence of events.
 ///
 /// This function currently materializes the full event stream and emits a
@@ -43,6 +48,12 @@ struct WriterState<'a, 'input, W: Write> {
 }
 
 impl<'a, 'input, W: Write> WriterState<'a, 'input, W> {
+    fn properties_or_empty<'b>(
+        properties: Option<&'b Properties<'input>>,
+    ) -> &'b Properties<'input> {
+        properties.unwrap_or(&EMPTY_PROPERTIES)
+    }
+
     fn new(out: &'a mut W, events: &'a [Event<'input>]) -> Self {
         Self {
             out,
@@ -136,12 +147,12 @@ impl<'a, 'input, W: Write> WriterState<'a, 'input, W> {
                 style,
                 ref properties,
                 ..
-            } => self.write_mapping(style, properties),
+            } => self.write_mapping(style, properties.as_deref()),
             Event::SequenceStart {
                 style,
                 ref properties,
                 ..
-            } => self.write_sequence(style, properties),
+            } => self.write_sequence(style, properties.as_deref()),
             Event::Scalar {
                 style,
                 ref properties,
@@ -151,7 +162,7 @@ impl<'a, 'input, W: Write> WriterState<'a, 'input, W> {
                 // The scalar writer is responsible for choosing an appropriate
                 // YAML presentation (plain / quoted / block) based solely on
                 // the scalar value and properties.
-                self.write_scalar(style, properties, None)
+                self.write_scalar(style, properties.as_deref(), None)
             }
             Event::Alias { .. } => self.write_alias(),
             Event::DocumentEnd { .. }
@@ -169,22 +180,24 @@ impl<'a, 'input, W: Write> WriterState<'a, 'input, W> {
     fn write_mapping(
         &mut self,
         style: CollectionStyle,
-        properties: &Properties<'input>,
+        properties: Option<&Properties<'input>>,
     ) -> io::Result<()> {
+        let mapping_props = Self::properties_or_empty(properties);
         match style {
-            CollectionStyle::Block => self.write_block_mapping(properties),
-            CollectionStyle::Flow => self.write_flow_mapping(properties),
+            CollectionStyle::Block => self.write_block_mapping(mapping_props),
+            CollectionStyle::Flow => self.write_flow_mapping(mapping_props),
         }
     }
 
     fn write_sequence(
         &mut self,
         style: CollectionStyle,
-        properties: &Properties<'input>,
+        properties: Option<&Properties<'input>>,
     ) -> io::Result<()> {
+        let sequence_props = Self::properties_or_empty(properties);
         match style {
-            CollectionStyle::Block => self.write_block_sequence(properties),
-            CollectionStyle::Flow => self.write_flow_sequence(properties),
+            CollectionStyle::Block => self.write_block_sequence(sequence_props),
+            CollectionStyle::Flow => self.write_flow_sequence(sequence_props),
         }
     }
 
@@ -235,7 +248,7 @@ impl<'a, 'input, W: Write> WriterState<'a, 'input, W> {
                     self.at_line_start = true;
                     // Key block (sequence) indented one level further
                     self.indent = base_indent + 2;
-                    self.write_sequence(seq_style, &seq_props)?;
+                    self.write_sequence(seq_style, seq_props.as_deref())?;
                     self.indent = base_indent;
                     // Now emit the value header ':' at the mapping indent.
                     if !self.at_line_start {
@@ -254,7 +267,7 @@ impl<'a, 'input, W: Write> WriterState<'a, 'input, W> {
                             self.out.write_all(b"\n")?;
                             self.at_line_start = true;
                             self.indent = base_indent + 2;
-                            self.write_mapping(map_style, &map_props)?;
+                            self.write_mapping(map_style, map_props.as_deref())?;
                             self.indent = base_indent;
                         }
                         Some(Event::SequenceStart {
@@ -265,7 +278,7 @@ impl<'a, 'input, W: Write> WriterState<'a, 'input, W> {
                             self.out.write_all(b"\n")?;
                             self.at_line_start = true;
                             self.indent = base_indent + 2;
-                            self.write_sequence(seq_style2, &seq_props2)?;
+                            self.write_sequence(seq_style2, seq_props2.as_deref())?;
                             self.indent = base_indent;
                         }
                         Some(Event::Scalar {
@@ -276,7 +289,7 @@ impl<'a, 'input, W: Write> WriterState<'a, 'input, W> {
                             // Scalar value for a complex sequence key.
                             self.out.write_all(b" ")?;
                             self.at_line_start = false;
-                            self.write_scalar(scalar_style, &scalar_props, None)?;
+                            self.write_scalar(scalar_style, scalar_props.as_deref(), None)?;
                         }
                         Some(Event::Alias { .. }) => {
                             self.out.write_all(b" ")?;
@@ -305,7 +318,7 @@ impl<'a, 'input, W: Write> WriterState<'a, 'input, W> {
                     self.out.write_all(b"\n")?;
                     self.at_line_start = true;
                     self.indent = base_indent + 2;
-                    self.write_mapping(map_style, &map_props)?;
+                    self.write_mapping(map_style, map_props.as_deref())?;
                     self.indent = base_indent;
                     if !self.at_line_start {
                         self.out.write_all(b"\n")?;
@@ -322,7 +335,7 @@ impl<'a, 'input, W: Write> WriterState<'a, 'input, W> {
                             self.out.write_all(b"\n")?;
                             self.at_line_start = true;
                             self.indent = base_indent + 2;
-                            self.write_mapping(value_map_style, &value_map_props)?;
+                            self.write_mapping(value_map_style, value_map_props.as_deref())?;
                             self.indent = base_indent;
                         }
                         Some(Event::SequenceStart {
@@ -333,7 +346,7 @@ impl<'a, 'input, W: Write> WriterState<'a, 'input, W> {
                             self.out.write_all(b"\n")?;
                             self.at_line_start = true;
                             self.indent = base_indent + 2;
-                            self.write_sequence(value_seq_style, &value_seq_props)?;
+                            self.write_sequence(value_seq_style, value_seq_props.as_deref())?;
                             self.indent = base_indent;
                         }
                         Some(Event::Scalar {
@@ -343,7 +356,11 @@ impl<'a, 'input, W: Write> WriterState<'a, 'input, W> {
                         }) => {
                             self.out.write_all(b" ")?;
                             self.at_line_start = false;
-                            self.write_scalar(value_scalar_style, &value_scalar_props, None)?;
+                            self.write_scalar(
+                                value_scalar_style,
+                                value_scalar_props.as_deref(),
+                                None,
+                            )?;
                         }
                         Some(Event::Alias { .. }) => {
                             self.out.write_all(b" ")?;
@@ -370,7 +387,7 @@ impl<'a, 'input, W: Write> WriterState<'a, 'input, W> {
                             ..
                         }) => {
                             // Simple scalar key rendered inline as `key:`.
-                            self.write_scalar(key_style, &key_props, Some(':'))?;
+                            self.write_scalar(key_style, key_props.as_deref(), Some(':'))?;
                         }
                         Some(Event::Alias { .. }) => {
                             // Alias used as a simple mapping key, e.g. `*b : *a`.
@@ -395,7 +412,7 @@ impl<'a, 'input, W: Write> WriterState<'a, 'input, W> {
                             self.out.write_all(b"\n")?;
                             self.at_line_start = true;
                             self.indent = base_indent + 2;
-                            self.write_mapping(map_style, &map_props)?;
+                            self.write_mapping(map_style, map_props.as_deref())?;
                             self.indent = base_indent;
                         }
                         Some(Event::SequenceStart {
@@ -406,7 +423,7 @@ impl<'a, 'input, W: Write> WriterState<'a, 'input, W> {
                             self.out.write_all(b"\n")?;
                             self.at_line_start = true;
                             self.indent = base_indent + 2;
-                            self.write_sequence(seq_style, &seq_props)?;
+                            self.write_sequence(seq_style, seq_props.as_deref())?;
                             self.indent = base_indent;
                         }
                         Some(Event::Scalar {
@@ -418,7 +435,9 @@ impl<'a, 'input, W: Write> WriterState<'a, 'input, W> {
                             // Simple scalar value rendered inline after `key:`.
                             self.out.write_all(b" ")?;
                             self.at_line_start = false;
-                            if value.is_empty() && scalar_props.is_empty() {
+                            if value.is_empty()
+                                && Self::properties_or_empty(scalar_props.as_deref()).is_empty()
+                            {
                                 // Represent an empty scalar value explicitly as "" to
                                 // avoid the ambiguous `key:` form that can confuse
                                 // the emitter when followed by lines that start with
@@ -426,7 +445,7 @@ impl<'a, 'input, W: Write> WriterState<'a, 'input, W> {
                                 self.out.write_all(b"\"\"")?;
                                 self.advance();
                             } else {
-                                self.write_scalar(scalar_style, &scalar_props, None)?;
+                                self.write_scalar(scalar_style, scalar_props.as_deref(), None)?;
                             }
                         }
                         Some(Event::Alias { .. }) => {
@@ -481,7 +500,7 @@ impl<'a, 'input, W: Write> WriterState<'a, 'input, W> {
                             ..
                         }) => {
                             self.indent = base_indent + 2;
-                            self.write_mapping(map_style, &map_props)?;
+                            self.write_mapping(map_style, map_props.as_deref())?;
                             // Restore indentation for the next sequence item.
                             self.indent = base_indent;
                         }
@@ -491,7 +510,7 @@ impl<'a, 'input, W: Write> WriterState<'a, 'input, W> {
                             ..
                         }) => {
                             self.indent = base_indent + 2;
-                            self.write_sequence(seq_style, &seq_props)?;
+                            self.write_sequence(seq_style, seq_props.as_deref())?;
                             self.indent = base_indent;
                         }
                         _ => {
@@ -596,24 +615,25 @@ impl<'a, 'input, W: Write> WriterState<'a, 'input, W> {
     fn write_scalar(
         &mut self,
         style: ScalarStyle,
-        properties: &Properties<'input>,
+        properties: Option<&Properties<'input>>,
         suffix: Option<char>,
     ) -> io::Result<()> {
+        let scalar_props = Self::properties_or_empty(properties);
         if let Some(Event::Scalar { value, .. }) = self.peek().cloned() {
             self.advance();
             let mut buf = String::new();
-            if !properties.is_empty() {
+            if !scalar_props.is_empty() {
                 // Anchors and tags precede the scalar.
                 // We build them into `buf` first and add a separating space.
                 // This is only used in flow style or inline block contexts.
                 // For block mappings/sequences, caller emits properties on their own line.
                 // For simplicity we only format global tags as `!<tag>`.
-                if let Some(anchor) = &properties.anchor {
+                if let Some(anchor) = &scalar_props.anchor {
                     buf.push('&');
                     buf.push_str(anchor.value.as_ref());
                     buf.push(' ');
                 }
-                if let Some(tag) = &properties.tag {
+                if let Some(tag) = &scalar_props.tag {
                     let tag_value = tag.value.as_ref();
                     if tag_value.starts_with('!') {
                         buf.push_str(tag_value);

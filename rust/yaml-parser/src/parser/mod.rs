@@ -163,6 +163,19 @@ where
         }
     }
 
+    /// Consume and return the current event by ownership.
+    fn next_event(&mut self) -> Option<Event<'input>> {
+        let event = if let Some(event) = self.peeked.take() {
+            Some(event)
+        } else {
+            self.events.next()
+        };
+        if event.is_some() {
+            self.events_consumed += 1;
+        }
+        event
+    }
+
     /// Record an error.
     fn error(&mut self, kind: ErrorKind, span: Span) {
         self.errors.push(ParseError::new(kind, span));
@@ -170,33 +183,25 @@ where
 
     /// Parse a single node from events.
     fn parse_node(&mut self) -> Option<Node<'input>> {
-        let event = self.peek()?.clone();
-        match event {
+        match self.next_event()? {
             Event::MappingStart {
                 properties, span, ..
-            } => {
-                self.advance();
-                Some(self.parse_mapping(*properties, span))
-            }
+            } => Some(self.parse_mapping(properties.map(|event_props| *event_props), span)),
             Event::SequenceStart {
                 properties, span, ..
-            } => {
-                self.advance();
-                Some(self.parse_sequence(*properties, span))
-            }
+            } => Some(self.parse_sequence(properties.map(|event_props| *event_props), span)),
             Event::Scalar {
                 style,
                 value,
                 properties,
                 span,
-            } => {
-                self.advance();
-                Some(self.build_scalar(style, value, *properties, span))
-            }
-            Event::Alias { name, span } => {
-                self.advance();
-                Some(self.build_alias(name, span))
-            }
+            } => Some(self.build_scalar(
+                style,
+                value,
+                properties.map(|event_props| *event_props),
+                span,
+            )),
+            Event::Alias { name, span } => Some(self.build_alias(name, span)),
             // Skip document markers, stream markers
             Event::StreamStart
             | Event::StreamEnd
@@ -212,17 +217,24 @@ where
     /// Note: To match the hybrid parser, span calculation differs by style:
     /// - Block mappings: `start..last_value.end`
     /// - Flow mappings: `start..closing_brace.end`
-    fn parse_mapping(&mut self, props: EventProperties<'input>, start_span: Span) -> Node<'input> {
-        // Register anchor if present
-        self.register_anchor(props.anchor.as_ref());
+    fn parse_mapping(
+        &mut self,
+        props: Option<EventProperties<'input>>,
+        start_span: Span,
+    ) -> Node<'input> {
+        self.register_anchor(
+            props
+                .as_ref()
+                .and_then(|event_props| event_props.anchor.as_ref()),
+        );
 
-        let mut pairs: Vec<(Node<'input>, Node<'input>)> = Vec::new();
+        let mut pairs: Vec<(Node<'input>, Node<'input>)> = Vec::with_capacity(8);
         let mut end_span = start_span;
 
         loop {
-            match self.peek().cloned() {
+            match self.peek() {
                 Some(Event::MappingEnd { span }) => {
-                    end_span = span;
+                    end_span = *span;
                     self.advance();
                     break;
                 }
@@ -268,17 +280,24 @@ where
     /// Note: To match the hybrid parser, span calculation differs by style:
     /// - Block sequences: `start..last_item.end`
     /// - Flow sequences: `start..closing_bracket.end`
-    fn parse_sequence(&mut self, props: EventProperties<'input>, start_span: Span) -> Node<'input> {
-        // Register anchor if present
-        self.register_anchor(props.anchor.as_ref());
+    fn parse_sequence(
+        &mut self,
+        props: Option<EventProperties<'input>>,
+        start_span: Span,
+    ) -> Node<'input> {
+        self.register_anchor(
+            props
+                .as_ref()
+                .and_then(|event_props| event_props.anchor.as_ref()),
+        );
 
-        let mut items: Vec<Node<'input>> = Vec::new();
+        let mut items: Vec<Node<'input>> = Vec::with_capacity(16);
         let mut end_span = start_span;
 
         loop {
-            match self.peek().cloned() {
+            match self.peek() {
                 Some(Event::SequenceEnd { span }) => {
-                    end_span = span;
+                    end_span = *span;
                     self.advance();
                     break;
                 }
@@ -327,15 +346,24 @@ where
         &mut self,
         style: ScalarStyle,
         value: Cow<'input, str>,
-        props: EventProperties<'input>,
+        props: Option<EventProperties<'input>>,
         span: Span,
     ) -> Node<'input> {
-        // Register anchor if present
-        self.register_anchor(props.anchor.as_ref());
+        self.register_anchor(
+            props
+                .as_ref()
+                .and_then(|event_props| event_props.anchor.as_ref()),
+        );
 
-        // Keep a copy of the raw scalar text for tag validation before we move `value`.
-        // Cloning the `Cow` is cheap when it's already borrowed.
-        let raw_text_owned = value.clone();
+        let invalid_explicit_null = style == ScalarStyle::Plain
+            && props
+                .as_ref()
+                .and_then(|event_props| event_props.tag.as_ref())
+                .is_some_and(|tag| {
+                    tag.value == "tag:yaml.org,2002:null"
+                        && !value.is_empty()
+                        && value.as_ref() != "null"
+                });
 
         // Type inference applies to plain scalars (regardless of tag, to match
         // the hybrid parser). We may still record additional errors later if an
@@ -369,20 +397,14 @@ where
         // This keeps `!!null str` and similar cases aligned with
         // `serde_yaml`/`saphyr`, but allows "tags on empty scalars" such as
         // those in the FH7J YAML test to remain error-free.
-        if style == ScalarStyle::Plain
-            && let Some(tag) = node.tag()
-        {
-            let tag_str = tag.as_ref();
-            let raw_text = raw_text_owned.as_ref();
-            if tag_str == "tag:yaml.org,2002:null" && !raw_text.is_empty() && raw_text != "null" {
-                // Recognised null tag whose textual content is neither
-                // empty nor the canonical "null" is treated as an
-                // invalid null scalar. We still keep the inferred
-                // `Value::Null` in the AST so error-recovery consumers can
-                // inspect partial data, but callers like `parse_ok` and
-                // `serde::from_str` will see this as a parse error.
-                self.error(ErrorKind::InvalidValue, span);
-            }
+        if invalid_explicit_null {
+            // Recognised null tag whose textual content is neither
+            // empty nor the canonical "null" is treated as an
+            // invalid null scalar. We still keep the inferred
+            // `Value::Null` in the AST so error-recovery consumers can
+            // inspect partial data, but callers like `parse_ok` and
+            // `serde::from_str` will see this as a parse error.
+            self.error(ErrorKind::InvalidValue, span);
         }
 
         node
@@ -415,29 +437,82 @@ where
     /// Note: We intentionally do NOT extend the node span to include property spans.
     /// The node span should cover only the value itself, so that span-based extraction
     /// (used by tests) returns just the value text without anchor/tag syntax.
-    fn apply_properties(mut node: Node<'input>, props: EventProperties<'input>) -> Node<'input> {
-        if props.anchor.is_some() || props.tag.is_some() {
+    fn apply_properties(
+        mut node: Node<'input>,
+        props: Option<EventProperties<'input>>,
+    ) -> Node<'input> {
+        if let Some(node_props) = props
+            && (node_props.anchor.is_some() || node_props.tag.is_some())
+        {
             // Store just the values (without spans) in the node properties
             node.properties = Some(Box::new(NodeProperties {
-                anchor: props.anchor.map(|prop| prop.value),
-                tag: props.tag.map(|prop| prop.value),
+                anchor: node_props.anchor.map(|prop| prop.value),
+                tag: node_props.tag.map(|prop| prop.value),
             }));
         }
         node
     }
 }
 
-/// Fast check: could this scalar possibly be a number?
-///
-/// Returns `true` if the first character suggests the scalar might be numeric
-/// (digit, sign, or decimal point). This allows us to skip expensive parse
-/// attempts for obvious string values like "localhost", "admin", `"value_001"`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NumericKind {
+    Integer,
+    Float,
+    NotNumeric,
+}
+
+/// Classify whether a scalar is a plausible integer, a plausible float, or
+/// definitely not numeric using a single byte scan.
 #[inline]
-pub(crate) fn could_be_numeric(input: &str) -> bool {
-    matches!(
-        input.as_bytes().first(),
-        Some(b'0'..=b'9' | b'+' | b'-' | b'.')
-    )
+fn classify_numeric(input: &str) -> NumericKind {
+    let bytes = input.as_bytes();
+    if bytes.is_empty() {
+        return NumericKind::NotNumeric;
+    }
+
+    let mut idx = 0;
+    if matches!(bytes.get(idx), Some(b'+' | b'-')) {
+        idx += 1;
+        if idx == bytes.len() {
+            return NumericKind::NotNumeric;
+        }
+    }
+
+    let mut saw_digit = false;
+    let mut saw_dot = false;
+    let mut saw_exp = false;
+    let mut expect_exp_digit = false;
+
+    while idx < bytes.len() {
+        match bytes.get(idx) {
+            Some(b'0'..=b'9') => {
+                saw_digit = true;
+                expect_exp_digit = false;
+            }
+            Some(b'.') if !saw_dot && !saw_exp => {
+                saw_dot = true;
+            }
+            Some(b'e' | b'E') if saw_digit && !saw_exp => {
+                saw_exp = true;
+                expect_exp_digit = true;
+                saw_digit = false;
+                if matches!(bytes.get(idx + 1), Some(b'+' | b'-')) {
+                    idx += 1;
+                }
+            }
+            _ => return NumericKind::NotNumeric,
+        }
+        idx += 1;
+    }
+
+    if !saw_digit || expect_exp_digit {
+        return NumericKind::NotNumeric;
+    }
+    if saw_dot || saw_exp {
+        NumericKind::Float
+    } else {
+        NumericKind::Integer
+    }
 }
 
 /// Infer the type of a plain scalar value.
@@ -453,79 +528,48 @@ pub(crate) fn could_be_numeric(input: &str) -> bool {
 /// is inferred as a string (can return the Cow as-is).
 pub(crate) fn infer_scalar_type(value: Cow<'_, str>) -> Value<'_> {
     let text = value.as_ref();
-    match text {
-        "null" | "Null" | "NULL" | "~" | "" => Value::Null,
-        "true" | "True" | "TRUE" => Value::Bool(true),
-        "false" | "False" | "FALSE" => Value::Bool(false),
-        _ => {
-            // Fast path: if the scalar clearly cannot be a number, return String
-            // immediately without attempting any parses.
-            if !could_be_numeric(text) {
-                return Value::String(value);
+    match text.as_bytes().first() {
+        None => Value::Null,
+        Some(b'~') if text.len() == 1 => Value::Null,
+        Some(b'n') if matches!(text, "null") => Value::Null,
+        Some(b'N') if matches!(text, "Null" | "NULL") => Value::Null,
+        Some(b't') if text == "true" => Value::Bool(true),
+        Some(b'T') if matches!(text, "True" | "TRUE") => Value::Bool(true),
+        Some(b'f') if text == "false" => Value::Bool(false),
+        Some(b'F') if matches!(text, "False" | "FALSE") => Value::Bool(false),
+        Some(b'0'..=b'9' | b'+' | b'-' | b'.') => {
+            match text {
+                ".inf" | ".Inf" | ".INF" => return Value::Float(f64::INFINITY),
+                "-.inf" | "-.Inf" | "-.INF" => return Value::Float(f64::NEG_INFINITY),
+                ".nan" | ".NaN" | ".NAN" => return Value::Float(f64::NAN),
+                _ => {}
             }
 
-            // Check for float indicators (decimal point or exponent) - if present,
-            // skip integer parsing and go straight to float.
-            let has_float_chars = text
-                .bytes()
-                .any(|ch| ch == b'.' || ch == b'e' || ch == b'E');
-
-            if has_float_chars {
-                // Special float values first (they start with '.')
-                match text {
-                    ".inf" | ".Inf" | ".INF" => return Value::Float(f64::INFINITY),
-                    "-.inf" | "-.Inf" | "-.INF" => return Value::Float(f64::NEG_INFINITY),
-                    ".nan" | ".NaN" | ".NAN" => return Value::Float(f64::NAN),
-                    _ => {}
+            match classify_numeric(text) {
+                NumericKind::Float => {
+                    if let Ok(float) = text.parse::<f64>() {
+                        return Value::Float(float);
+                    }
                 }
-                // Try parsing as float
-                if let Ok(float) = text.parse::<f64>() {
-                    return Value::Float(float);
-                }
-            } else {
-                // No float indicators - try integer parsing
-                if let Ok(int) = text.parse::<i64>() {
-                    return Value::Int(Number::I64(int));
-                }
-                if let Ok(int) = text.parse::<i128>() {
-                    return Value::Int(Number::I128(int));
-                }
-                if let Ok(uint) = text.parse::<u128>() {
-                    return Value::Int(Number::U128(uint));
-                }
-
-                // If it still looks like a plain decimal integer but does not fit in
-                // i128/u128, store it as a textual big integer.
-                if looks_like_decimal_integer(text) {
+                NumericKind::Integer => {
+                    if let Ok(int) = text.parse::<i64>() {
+                        return Value::Int(Number::I64(int));
+                    }
+                    if let Ok(int) = text.parse::<i128>() {
+                        return Value::Int(Number::I128(int));
+                    }
+                    if let Ok(uint) = text.parse::<u128>() {
+                        return Value::Int(Number::U128(uint));
+                    }
                     return Value::Int(Number::BigIntStr(value));
                 }
+                NumericKind::NotNumeric => {}
             }
 
-            // Default to string - return the Cow as-is (zero-copy if borrowed!).
             Value::String(value)
         }
+        _ => Value::String(value),
     }
-}
-
-/// Lightweight check to see if a scalar looks like a plain decimal integer
-/// (optional sign followed by digits only). Used to decide when to represent a
-/// value as `Number::BigIntStr` if it does not fit in the native integer
-/// ranges.
-pub(crate) fn looks_like_decimal_integer(input: &str) -> bool {
-    let trimmed = input.trim();
-    if trimmed.is_empty() {
-        return false;
-    }
-    let bytes = trimmed.as_bytes();
-    let Some((first, rest)) = bytes.split_first() else {
-        return false;
-    };
-    let has_sign = *first == b'+' || *first == b'-';
-    let digit_bytes: &[u8] = if has_sign { rest } else { bytes };
-    if has_sign && digit_bytes.is_empty() {
-        return false;
-    }
-    digit_bytes.iter().all(u8::is_ascii_digit)
 }
 
 #[cfg(test)]

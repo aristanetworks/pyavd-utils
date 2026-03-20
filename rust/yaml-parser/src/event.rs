@@ -38,6 +38,11 @@ use std::borrow::Cow;
 
 use crate::span::Span;
 
+const EMPTY_PROPERTIES: Properties<'static> = Properties {
+    anchor: None,
+    tag: None,
+};
+
 /// A node property (anchor or tag) with its source span.
 ///
 /// This pairs the raw property text (usually borrowed from the input) with the
@@ -110,6 +115,12 @@ impl<'input> Properties<'input> {
     pub fn updated(mut self, other: Properties<'input>) -> Properties<'input> {
         self.update(other);
         self
+    }
+
+    /// Return boxed properties only when at least one property is present.
+    #[must_use]
+    pub fn into_boxed_option(self) -> Option<Box<Properties<'input>>> {
+        (!self.is_empty()).then_some(Box::new(self))
     }
 }
 
@@ -191,8 +202,9 @@ pub enum Event<'input> {
         /// Block or flow style.
         style: CollectionStyle,
         /// Collected properties (anchor, tag) for this mapping.
-        /// Boxed to reduce `Event` enum size from 104 bytes to ~40 bytes.
-        properties: Box<Properties<'input>>,
+        /// Boxed only when present so the common empty-properties case avoids
+        /// an allocation while keeping the enum compact.
+        properties: Option<Box<Properties<'input>>>,
         /// Span covering the mapping start (indicator or first key).
         span: Span,
     },
@@ -208,8 +220,9 @@ pub enum Event<'input> {
         /// Block or flow style.
         style: CollectionStyle,
         /// Collected properties (anchor, tag) for this sequence.
-        /// Boxed to reduce `Event` enum size from 104 bytes to ~40 bytes.
-        properties: Box<Properties<'input>>,
+        /// Boxed only when present so the common empty-properties case avoids
+        /// an allocation while keeping the enum compact.
+        properties: Option<Box<Properties<'input>>>,
         /// Span covering the sequence start (indicator or bracket).
         span: Span,
     },
@@ -227,8 +240,9 @@ pub enum Event<'input> {
         /// The scalar's content (original text for plain, processed for others).
         value: Cow<'input, str>,
         /// Collected properties (anchor, tag) for this scalar.
-        /// Boxed to reduce `Event` enum size from 104 bytes to ~40 bytes.
-        properties: Box<Properties<'input>>,
+        /// Boxed only when present so the common empty-properties case avoids
+        /// an allocation while keeping the enum compact.
+        properties: Option<Box<Properties<'input>>>,
         /// Span covering the scalar content only.
         span: Span,
     },
@@ -244,6 +258,29 @@ pub enum Event<'input> {
 }
 
 impl Event<'_> {
+    /// Borrow this event's properties, if it carries any.
+    #[must_use]
+    pub fn properties(&self) -> Option<&Properties<'_>> {
+        match self {
+            Self::MappingStart { properties, .. }
+            | Self::SequenceStart { properties, .. }
+            | Self::Scalar { properties, .. } => properties.as_deref(),
+            Self::StreamStart
+            | Self::StreamEnd
+            | Self::DocumentStart { .. }
+            | Self::DocumentEnd { .. }
+            | Self::MappingEnd { .. }
+            | Self::SequenceEnd { .. }
+            | Self::Alias { .. } => None,
+        }
+    }
+
+    /// Borrow this event's properties, or an empty shared value when absent.
+    #[must_use]
+    pub fn properties_or_empty(&self) -> &Properties<'_> {
+        self.properties().unwrap_or(&EMPTY_PROPERTIES)
+    }
+
     /// Get the span of this event, if applicable.
     #[must_use]
     pub fn span(&self) -> Option<Span> {
@@ -276,7 +313,7 @@ impl Event<'_> {
                 span,
             } => Event::MappingStart {
                 style,
-                properties: Box::new((*properties).into_owned()),
+                properties: properties.map(|event_props| Box::new((*event_props).into_owned())),
                 span,
             },
             Self::MappingEnd { span } => Event::MappingEnd { span },
@@ -286,7 +323,7 @@ impl Event<'_> {
                 span,
             } => Event::SequenceStart {
                 style,
-                properties: Box::new((*properties).into_owned()),
+                properties: properties.map(|event_props| Box::new((*event_props).into_owned())),
                 span,
             },
             Self::SequenceEnd { span } => Event::SequenceEnd { span },
@@ -298,7 +335,7 @@ impl Event<'_> {
             } => Event::Scalar {
                 style,
                 value: Cow::Owned(value.into_owned()),
-                properties: Box::new((*properties).into_owned()),
+                properties: properties.map(|event_props| Box::new((*event_props).into_owned())),
                 span,
             },
             Self::Alias { name, span } => Event::Alias {
@@ -328,49 +365,58 @@ impl std::fmt::Display for Event<'_> {
                     write!(f, "-DOC")
                 }
             }
-            Self::MappingStart {
-                style, properties, ..
-            } => {
+            Self::MappingStart { style, .. } => {
                 write!(f, "+MAP")?;
                 if *style == CollectionStyle::Flow {
                     write!(f, " {{}}")?;
                 }
-                if let Some(prop) = &properties.anchor {
+                if let Some(prop) = self
+                    .properties()
+                    .and_then(|properties| properties.anchor.as_ref())
+                {
                     write!(f, " &{}", prop.value)?;
                 }
-                if let Some(prop) = &properties.tag {
+                if let Some(prop) = self
+                    .properties()
+                    .and_then(|properties| properties.tag.as_ref())
+                {
                     write!(f, " <{}>", prop.value)?;
                 }
                 Ok(())
             }
             Self::MappingEnd { .. } => write!(f, "-MAP"),
-            Self::SequenceStart {
-                style, properties, ..
-            } => {
+            Self::SequenceStart { style, .. } => {
                 write!(f, "+SEQ")?;
                 if *style == CollectionStyle::Flow {
                     write!(f, " []")?;
                 }
-                if let Some(prop) = &properties.anchor {
+                if let Some(prop) = self
+                    .properties()
+                    .and_then(|properties| properties.anchor.as_ref())
+                {
                     write!(f, " &{}", prop.value)?;
                 }
-                if let Some(prop) = &properties.tag {
+                if let Some(prop) = self
+                    .properties()
+                    .and_then(|properties| properties.tag.as_ref())
+                {
                     write!(f, " <{}>", prop.value)?;
                 }
                 Ok(())
             }
             Self::SequenceEnd { .. } => write!(f, "-SEQ"),
-            Self::Scalar {
-                style,
-                value,
-                properties,
-                ..
-            } => {
+            Self::Scalar { style, value, .. } => {
                 write!(f, "=VAL")?;
-                if let Some(prop) = &properties.anchor {
+                if let Some(prop) = self
+                    .properties()
+                    .and_then(|properties| properties.anchor.as_ref())
+                {
                     write!(f, " &{}", prop.value)?;
                 }
-                if let Some(prop) = &properties.tag {
+                if let Some(prop) = self
+                    .properties()
+                    .and_then(|properties| properties.tag.as_ref())
+                {
                     write!(f, " <{}>", prop.value)?;
                 }
                 let style_char = match style {

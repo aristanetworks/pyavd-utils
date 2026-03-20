@@ -45,7 +45,7 @@ pub const fn usize_to_pos(val: usize) -> BytePosition {
 /// Used for:
 /// - Indentation levels in block structures (e.g., `min_indent`, `map_indent`)
 /// - Column positions from `column_of_position()` and `current_token_column()`
-/// - Token payloads like `LineStart(n)` and `Indent(n)`
+/// - Token payloads like `LineStart(n)`
 ///
 /// Uses `u16` for memory efficiency. Maximum indentation level is 65,535.
 pub type IndentLevel = u16;
