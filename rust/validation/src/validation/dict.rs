@@ -978,7 +978,7 @@ mod tests {
             ..Default::default()
         };
         let mut ctx = Context::new(&store, Some(&configuration));
-        let schema = store.get(Schema::AVDDesign).unwrap();
+        let schema = store.get(Schema::AVDDesign);
         schema.validate_value(&input, &mut ctx);
 
         // Should have warnings for key1 and key2
@@ -1005,7 +1005,7 @@ mod tests {
             ..Default::default()
         };
         let mut ctx = Context::new(&store, Some(&configuration));
-        let schema = store.get(Schema::AVDDesign).unwrap();
+        let schema = store.get(Schema::AVDDesign);
         schema.validate_value(&input, &mut ctx);
 
         // Should have no warnings
@@ -1026,7 +1026,7 @@ mod tests {
 
         // Don't set warn_eos_config_keys since we're validating eos_config
         let mut ctx = Context::new(&store, None);
-        let schema = store.get(Schema::EOSConfig).unwrap();
+        let schema = store.get(Schema::EOSConfig);
         schema.validate_value(&input, &mut ctx);
 
         // Should have no warnings
@@ -1047,7 +1047,7 @@ mod tests {
             ..Default::default()
         };
         let mut ctx = Context::new(&store, Some(&configuration));
-        let schema = store.get(Schema::AVDDesign).unwrap();
+        let schema = store.get(Schema::AVDDesign);
         schema.validate_value(&input, &mut ctx);
 
         // Should have no warnings since key3 exists in both schemas
@@ -1075,7 +1075,7 @@ mod tests {
             ..Default::default()
         };
         let mut ctx = Context::new(&store, Some(&configuration));
-        let schema = store.get(Schema::AVDDesign).unwrap();
+        let schema = store.get(Schema::AVDDesign);
         schema.validate_value(&input, &mut ctx);
 
         // Should have no warnings - these special keys are silently ignored

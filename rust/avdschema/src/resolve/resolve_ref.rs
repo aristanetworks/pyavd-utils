@@ -35,7 +35,7 @@ pub fn resolve_ref<'a>(ref_: &str, store: &'a Store) -> Result<&'a AnySchema, Sc
         .as_str();
 
     let path_iter = schema_path.split('/').skip(1).peekable();
-    let schema = store.get(schema_name.try_into()?)?;
+    let schema = store.get(schema_name.try_into()?);
     Ok(schema.walk(path_iter)?)
 }
 
@@ -133,19 +133,6 @@ mod tests {
         assert!(matches!(
             result.unwrap_err(),
             SchemaResolverError::SchemaStoreError(SchemaStoreError::SchemaName(_))
-        ))
-    }
-
-    #[test]
-    fn resolve_ref_err_cv_deploy_not_available() {
-        let mut test_store = get_test_store();
-        test_store.cv_deploy = None;
-        let ref_ = "cv_deploy#/keys/key4";
-        let result = resolve_ref(ref_, &test_store);
-        assert!(result.is_err());
-        assert!(matches!(
-            result.unwrap_err(),
-            SchemaResolverError::SchemaStoreError(SchemaStoreError::SchemaNotAvailable(_))
         ))
     }
 }

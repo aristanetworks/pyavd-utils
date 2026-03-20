@@ -25,15 +25,14 @@ pub struct Store {
     pub cv_deploy: Option<AnySchema>,
 }
 impl Store {
-    /// Get the schema for the given schema type, returning an error if the schema is not available in the store.
-    pub fn get(&self, schema: Schema) -> Result<&AnySchema, SchemaStoreError> {
+    pub fn get(&self, schema: Schema) -> &AnySchema {
         match schema {
-            Schema::AVDDesign => Ok(&self.avd_design),
-            Schema::EOSConfig => Ok(&self.eos_config),
+            Schema::AVDDesign => &self.avd_design,
+            Schema::EOSConfig => &self.eos_config,
             Schema::CVDeploy => self
                 .cv_deploy
                 .as_ref()
-                .ok_or_else(|| SchemaNotAvailable::new("cv_deploy".into()).into()),
+                .expect("cv_deploy schema is not available in the store"),
         }
     }
     pub fn as_resolved(mut self) -> Self {
@@ -117,18 +116,11 @@ impl From<Schema> for String {
 #[derive(Debug, derive_more::Display, derive_more::From)]
 pub enum SchemaStoreError {
     SchemaName(SchemaName),
-    SchemaNotAvailable(SchemaNotAvailable),
 }
 
 #[derive(Debug, derive_more::Constructor, derive_more::Display)]
 #[display("Schema name '{name}' not found in the schema store.")]
 pub struct SchemaName {
-    pub name: String,
-}
-
-#[derive(Debug, derive_more::Constructor, derive_more::Display)]
-#[display("Schema name '{name}' found in the schema store, but is not available.")]
-pub struct SchemaNotAvailable {
     pub name: String,
 }
 

@@ -2,7 +2,7 @@
 // Use of this source code is governed by the Apache License 2.0
 // that can be found in the LICENSE file.
 
-use avdschema::{Schema, Store, any::AnySchema};
+use avdschema::{Schema, Store};
 use serde_json::Value;
 
 use crate::{
@@ -83,19 +83,21 @@ impl StoreValidate<Schema> for Store {
         configuration: Option<&Configuration>,
     ) -> ValidationResult {
         debug!("Validating serde_json::Value");
-        with_schema_and_context(schema_name, self, configuration, |schema, ctx| {
-            schema.coerce(value, ctx);
-            debug!("Validating serde_json::Value Coercion Done");
-            schema.validate_value(value, ctx);
-            debug!("Validating serde_json::Value Done");
-        })
+        let mut ctx = Context::new(self, configuration);
+        let schema = self.get(schema_name);
+        schema.coerce(value, &mut ctx);
+        debug!("Validating serde_json::Value Coercion Done");
+        schema.validate_value(value, &mut ctx);
+        debug!("Validating serde_json::Value Done");
+        ctx.result
     }
     fn coerce_value(&self, value: &mut Value, schema_name: Schema) -> ValidationResult {
         debug!("Coercing serde_json::Value");
-        with_schema_and_context(schema_name, self, None, |schema, ctx| {
-            schema.coerce(value, ctx);
-            debug!("Coercing serde_json::Value Done");
-        })
+        let mut ctx = Context::new(self, None);
+        let schema = self.get(schema_name);
+        schema.coerce(value, &mut ctx);
+        debug!("Coercing serde_json::Value Done");
+        ctx.result
     }
 }
 
@@ -160,9 +162,8 @@ impl SchemaConversionError {
 
     pub fn to_validation_result(&self, store: &Store) -> ValidationResult {
         let mut ctx = Context::new(store, None);
-        let name = self.get_invalid_schema_name();
         ctx.add_error(Violation::InvalidSchema {
-            details: format!("Schema name '{}' not found in the schema store.", name),
+            schema: self.get_invalid_schema_name(),
         });
         ctx.result
     }
@@ -172,29 +173,6 @@ impl From<ValidationResult> for Result<ValidationResult, StoreValidateError> {
     fn from(result: ValidationResult) -> Self {
         Ok(result)
     }
-}
-
-fn with_schema_and_context<F>(
-    schema_name: Schema,
-    store: &Store,
-    configuration: Option<&Configuration>,
-    func: F,
-) -> ValidationResult
-where
-    F: FnOnce(&AnySchema, &mut Context),
-{
-    let mut ctx = Context::new(store, configuration);
-    let schema = match store.get(schema_name) {
-        Ok(schema) => schema,
-        Err(err) => {
-            ctx.add_error(Violation::InvalidSchema {
-                details: err.to_string(),
-            });
-            return ctx.result;
-        }
-    };
-    func(schema, &mut ctx);
-    ctx.result
 }
 
 fn with_resolved_schema<T: std::convert::From<ValidationResult>, F: FnOnce(Schema) -> T>(
@@ -215,7 +193,7 @@ mod tests {
     use super::*;
 
     use crate::{
-        feedback::{ErrorIssue, Feedback, Type, Violation},
+        feedback::{Feedback, Type, Violation},
         validation::test_utils::get_test_store,
     };
 
@@ -252,8 +230,7 @@ mod tests {
             vec![Feedback {
                 path: Default::default(),
                 issue: Violation::InvalidSchema {
-                    details: "Schema name 'invalid_schema' not found in the schema store."
-                        .to_string()
+                    schema: "invalid_schema".to_string()
                 }
                 .into()
             },]
@@ -270,31 +247,10 @@ mod tests {
             vec![Feedback {
                 path: Default::default(),
                 issue: Violation::InvalidSchema {
-                    details: "Schema name 'invalid_schema' not found in the schema store."
-                        .to_string()
+                    schema: "invalid_schema".to_string()
                 }
                 .into()
             },]
         )
-    }
-
-    #[test]
-    fn validate_value_cv_deploy_not_available() {
-        let mut input = serde_json::json!({});
-        let mut store = get_test_store();
-
-        // Explicitly remove cv_deploy from the store for this test.
-        store.cv_deploy = None;
-
-        let validation_result = store.validate_value(&mut input, "cv_deploy", None);
-        assert!(validation_result.warnings.is_empty());
-        assert_eq!(validation_result.errors.len(), 1);
-        assert!(matches!(
-            &validation_result.errors[0].issue,
-            ErrorIssue::Violation(Violation::InvalidSchema { details })
-                if details.contains("cv_deploy")
-                    && details.contains("found in the schema store")
-                    && details.contains("not available")
-        ));
     }
 }

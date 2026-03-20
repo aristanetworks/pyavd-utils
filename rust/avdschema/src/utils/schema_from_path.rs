@@ -101,7 +101,6 @@ pub enum SchemaKeysError {
 pub enum GetSchemaFromPathError {
     SchemaKeys(SchemaKeysError),
     SchemaResolve(SchemaResolverError),
-    SchemaStore(crate::store::SchemaStoreError),
 }
 /// Given a data path return the schema covering this.
 /// Assumes that dynamic keys can only exist at the root level.
@@ -113,7 +112,7 @@ pub fn get_schema_from_path<'a>(
     data_value: &'_ Value,
 ) -> Result<Option<&'a AnySchema>, GetSchemaFromPathError> {
     let mut path = data_path.iter();
-    let schema = store.get(schema_id)?;
+    let schema = store.get(schema_id);
     match path.next() {
         None => Ok(Some(schema)),
         Some(root_key) => {
