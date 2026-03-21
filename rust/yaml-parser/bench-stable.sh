@@ -8,7 +8,7 @@ set -e
 CPU_CORE=0
 
 # Benchmark filter (default: a representative serde comparison subset)
-FILTER="${1:-serde_deserialize_throughput/(yaml_parser_serde|serde_yaml)/(large_mapping|nested_mapping|tags|block_scalars)}"
+FILTER="${1:-serde_deserialize_throughput/(yaml_parser|serde_yaml)/(large_mapping|nested_mapping|tags|block_scalars)}"
 
 echo "=========================================="
 echo "Running stable benchmarks"

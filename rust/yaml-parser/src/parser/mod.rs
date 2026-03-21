@@ -5,12 +5,12 @@
 //! Event-to-AST parser.
 //!
 //! This module implements the `Parser` that consumes events emitted by the
-//! [`Emitter`](crate::emitter::Emitter) and builds the AST (`Node`/`Value`).
+//! YAML emitter and builds the AST (`Node` / `Value`).
 //!
 //! # Architecture
 //!
 //! ```text
-//! Tokens → Emitter (emits Events) → Parser → AST (Vec<Node>)
+//! Lexer -> Emitter (Event stream) -> Parser -> AST
 //! ```
 //!
 //! The `Parser` is much simpler than a token-based parser because
@@ -30,8 +30,9 @@ use crate::value::{Node, Number, Properties as NodeProperties, Value};
 
 /// Parser that builds AST from a streaming source of events.
 ///
-/// This is a simplified parser that consumes events and builds the AST.
-/// Structural complexity is handled by the `Emitter`.
+/// This parser consumes events and builds the AST.
+/// Structural complexity such as indentation and block/flow handling is
+/// resolved earlier by the emitter.
 ///
 /// The parser operates over any `Iterator<Item = Event<'input>>`, using an
 /// internal one-element lookahead buffer. This keeps behaviour identical to
@@ -214,9 +215,9 @@ where
 
     /// Parse a mapping node.
     ///
-    /// Note: To match the hybrid parser, span calculation differs by style:
-    /// - Block mappings: `start..last_value.end`
-    /// - Flow mappings: `start..closing_brace.end`
+    /// Span policy:
+    /// - block mappings use `start..last_value.end`
+    /// - flow mappings use `start..closing_brace.end`
     fn parse_mapping(
         &mut self,
         props: Option<EventProperties<'input>>,
@@ -258,9 +259,8 @@ where
             }
         }
 
-        // Span calculation to match hybrid parser:
-        // - Flow collections: end_span has non-zero length (closing brace), use it
-        // - Block collections: end_span has zero length, use last_value.end
+        // Flow collections end at the closing brace. Block collections end at
+        // the last successfully parsed value.
         let start = start_span.start_usize();
         let end = if end_span.start == end_span.end {
             // Block: use last value's end
@@ -277,9 +277,9 @@ where
 
     /// Parse a sequence node.
     ///
-    /// Note: To match the hybrid parser, span calculation differs by style:
-    /// - Block sequences: `start..last_item.end`
-    /// - Flow sequences: `start..closing_bracket.end`
+    /// Span policy:
+    /// - block sequences use `start..last_item.end`
+    /// - flow sequences use `start..closing_bracket.end`
     fn parse_sequence(
         &mut self,
         props: Option<EventProperties<'input>>,
@@ -319,9 +319,8 @@ where
             }
         }
 
-        // Span calculation to match hybrid parser:
-        // - Flow collections: end_span has non-zero length (closing bracket), use it
-        // - Block collections: end_span has zero length, use last_item.end
+        // Flow collections end at the closing bracket. Block collections end
+        // at the last successfully parsed item.
         let start = start_span.start_usize();
         let end = if end_span.start == end_span.end {
             // Block: use last item's end
@@ -338,10 +337,9 @@ where
 
     /// Build a scalar node with type inference.
     ///
-    /// Note: To match the hybrid parser, type inference is done for plain scalars
-    /// BEFORE considering the tag. The hybrid parser does `parse_scalar()` (which
-    /// calls `scalar_to_value`) first, then applies properties including tags.
-    /// This means `!!str 42` results in `Int(42)` with a `!!str` tag.
+    /// Plain scalars are inferred before explicit tags are interpreted as
+    /// annotations, so `!!str 42` currently becomes `Int(42)` with a `!!str`
+    /// tag attached to the node.
     fn build_scalar(
         &mut self,
         style: ScalarStyle,
@@ -365,10 +363,9 @@ where
                         && value.as_ref() != "null"
                 });
 
-        // Type inference applies to plain scalars (regardless of tag, to match
-        // the hybrid parser). We may still record additional errors later if an
-        // explicit tag is incompatible with the scalar's textual
-        // representation.
+        // Type inference applies to plain scalars regardless of tag. We may
+        // still record additional errors later if an explicit tag is
+        // incompatible with the scalar's textual representation.
         let typed_value = if style == ScalarStyle::Plain {
             infer_scalar_type(value)
         } else {
@@ -381,8 +378,8 @@ where
 
         // Validate core-schema tags against the scalar's textual form.
         // For now we are conservative and only enforce additional rules for
-        // the `!!null` tag. Other core tags continue to follow the previous
-        // behaviour (type inference first, tags as annotations).
+        // the `!!null` tag. Other core tags currently continue to follow the
+        // "type inference first, tags as annotations" behaviour.
         //
         // NOTE: We adopt a *mostly strict* policy for explicit `!!null` to
         // match the behaviour of `serde_yaml` and `saphyr` while still staying
@@ -732,11 +729,10 @@ mod tests {
             .collect()
     }
 
-    /// Test that Parser produces identical output to the hybrid parser.
-    /// This is the key test ensuring we can remove node-building from the hybrid parser.
+    /// Test that parsing through collected events matches the public AST path.
     #[test]
     #[allow(clippy::print_stderr, reason = "Debug output on failure")]
-    fn test_event_parser_matches_hybrid_parser() {
+    fn test_event_parser_matches_public_parse_pipeline() {
         let test_cases = [
             // Simple scalars
             "hello",
@@ -788,26 +784,26 @@ mod tests {
         let mut failures = Vec::new();
 
         for input in test_cases {
-            let (hybrid_nodes, _hybrid_errors) = crate::parse(input);
+            let (parsed_nodes, _parse_errors) = crate::parse(input);
             let via_events_nodes = parse_via_events(input);
 
             // Compare node counts
-            if hybrid_nodes.len() != via_events_nodes.len() {
+            if parsed_nodes.len() != via_events_nodes.len() {
                 failures.push(format!(
-                    "Input: {input:?}\n  Node count mismatch: hybrid={}, via_events={}",
-                    hybrid_nodes.len(),
+                    "Input: {input:?}\n  Node count mismatch: parse={}, via_events={}",
+                    parsed_nodes.len(),
                     via_events_nodes.len()
                 ));
                 continue;
             }
 
             // Compare each node
-            for (i, (hybrid, via_events)) in
-                hybrid_nodes.iter().zip(via_events_nodes.iter()).enumerate()
+            for (i, (parsed, via_events)) in
+                parsed_nodes.iter().zip(via_events_nodes.iter()).enumerate()
             {
-                if hybrid != via_events {
+                if parsed != via_events {
                     failures.push(format!(
-                        "Input: {input:?}\n  Document {i} mismatch:\n    hybrid:     {hybrid:?}\n    via_events: {via_events:?}"
+                        "Input: {input:?}\n  Document {i} mismatch:\n    parse:      {parsed:?}\n    via_events: {via_events:?}"
                     ));
                 }
             }
@@ -818,12 +814,12 @@ mod tests {
         }
 
         if !failures.is_empty() {
-            eprintln!("\n=== Parser vs Hybrid Parser Mismatches ===");
+            eprintln!("\n=== Parse vs Event-Pipeline Mismatches ===");
             for failure in &failures {
                 eprintln!("{failure}\n");
             }
             panic!(
-                "{} test case(s) failed - Parser output differs from hybrid parser",
+                "{} test case(s) failed - parse() output differs from the event pipeline",
                 failures.len()
             );
         }

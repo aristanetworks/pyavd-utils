@@ -164,8 +164,6 @@ pub(super) enum BlockSeqPhase {
     BeforeEntryScan,
     /// Dispatch the next entry/end action after line scanning is complete.
     BeforeEntryDispatch,
-    /// After parsing entry value - check for next entry or end.
-    AfterEntry,
 }
 
 /// Phase within a block mapping.

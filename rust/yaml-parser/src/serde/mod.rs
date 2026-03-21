@@ -4,10 +4,13 @@
 
 //! Serde integration for `yaml-parser`.
 //!
-//! This module provides helper functions to deserialize YAML input using
-//! `serde`. The public API now uses an event-based backend that drives serde
-//! visitors directly from the YAML event stream without building an intermediate
-//! AST, providing better performance and lower memory usage.
+//! This module exposes the crate's public serde entrypoints for both:
+//! - deserialization from YAML text into `T`
+//! - serialization from `T` back to YAML text
+//!
+//! Deserialization uses the shared lexer/emitter pipeline and drives serde
+//! visitors directly from the YAML event stream instead of building an
+//! intermediate AST first.
 
 mod de;
 mod event_de;

@@ -23,74 +23,29 @@
 use std::cell::{Cell, RefCell};
 
 use crate::error::ParseError;
-use crate::lexer::{Lexer, RichToken, Token};
+use crate::lexer::{Lexer, RichToken, Token, TokenKind};
 use crate::span::Span;
 
-/// Token discriminant for cheap pattern matching without cloning.
+/// Borrowed lookahead window over buffered tokens.
 ///
-/// This enum mirrors the variants of `Token` but contains no data,
-/// allowing O(1) comparisons without allocating or cloning strings.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum TokenKind {
-    BlockSeqIndicator,
-    MappingKey,
-    Colon,
-    FlowMapStart,
-    FlowMapEnd,
-    FlowSeqStart,
-    FlowSeqEnd,
-    Comma,
-    DocStart,
-    DocEnd,
-    Plain,
-    StringStart,
-    StringEnd,
-    StringContent,
-    LiteralBlockHeader,
-    FoldedBlockHeader,
-    Anchor,
-    Alias,
-    Tag,
-    YamlDirective,
-    TagDirective,
-    ReservedDirective,
-    LineStart,
-    Whitespace,
-    WhitespaceWithTabs,
-    Comment,
+/// This lets hot emitter scanners inspect a small token run while paying the
+/// `RefCell` borrow cost only once for the whole scan instead of once per
+/// `peek_kind_nth()` / `peek_nth_with()` step.
+pub(crate) struct LookaheadWindow<'a, 'input> {
+    tokens: &'a [RichToken<'input>],
 }
 
-impl<'input> From<&Token<'input>> for TokenKind {
+impl<'input> LookaheadWindow<'_, 'input> {
     #[inline]
-    fn from(token: &Token<'input>) -> Self {
-        match token {
-            Token::BlockSeqIndicator => Self::BlockSeqIndicator,
-            Token::MappingKey => Self::MappingKey,
-            Token::Colon => Self::Colon,
-            Token::FlowMapStart => Self::FlowMapStart,
-            Token::FlowMapEnd => Self::FlowMapEnd,
-            Token::FlowSeqStart => Self::FlowSeqStart,
-            Token::FlowSeqEnd => Self::FlowSeqEnd,
-            Token::Comma => Self::Comma,
-            Token::DocStart => Self::DocStart,
-            Token::DocEnd => Self::DocEnd,
-            Token::Plain(_) => Self::Plain,
-            Token::StringStart(_) => Self::StringStart,
-            Token::StringEnd(_) => Self::StringEnd,
-            Token::StringContent(_) => Self::StringContent,
-            Token::LiteralBlockHeader(_) => Self::LiteralBlockHeader,
-            Token::FoldedBlockHeader(_) => Self::FoldedBlockHeader,
-            Token::Anchor(_) => Self::Anchor,
-            Token::Alias(_) => Self::Alias,
-            Token::Tag(_) => Self::Tag,
-            Token::YamlDirective(_) => Self::YamlDirective,
-            Token::TagDirective(_, _) => Self::TagDirective,
-            Token::ReservedDirective(_) => Self::ReservedDirective,
-            Token::LineStart(_) => Self::LineStart,
-            Token::Whitespace => Self::Whitespace,
-            Token::WhitespaceWithTabs => Self::WhitespaceWithTabs,
-            Token::Comment(_) => Self::Comment,
-        }
+    #[must_use]
+    pub(crate) fn kind(&self, offset: usize) -> Option<TokenKind> {
+        self.tokens.get(offset).map(|rt| TokenKind::from(&rt.token))
+    }
+
+    #[inline]
+    #[must_use]
+    pub(crate) fn token(&self, offset: usize) -> Option<&Token<'input>> {
+        self.tokens.get(offset).map(|rt| &rt.token)
     }
 }
 
@@ -162,6 +117,23 @@ impl<'input> TokenCursor<'input> {
         self.ensure_available(pos);
         let buffer = self.buffer.borrow();
         buffer.get(pos).map(|rt| (rt.token.clone(), rt.span))
+    }
+
+    /// Borrow a buffered lookahead window starting at `pos`.
+    ///
+    /// Callers provide the furthest offset they may inspect so the cursor can
+    /// fill the buffer before taking a shared borrow across the window.
+    #[inline]
+    pub(crate) fn with_window<F, R>(&self, pos: usize, max_offset: usize, func: F) -> R
+    where
+        F: FnOnce(LookaheadWindow<'_, 'input>) -> R,
+    {
+        self.ensure_available(pos.saturating_add(max_offset));
+        let buffer = self.buffer.borrow();
+        let start = pos.min(buffer.len());
+        func(LookaheadWindow {
+            tokens: buffer.get(start..).unwrap_or(&[]),
+        })
     }
 
     /// Take ownership of the token at `pos`, replacing it with a dummy.

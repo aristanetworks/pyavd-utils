@@ -2,7 +2,7 @@
 // Use of this source code is governed by the Apache License 2.0
 // that can be found in the LICENSE file.
 
-//! A YAML 1.2 parser with error recovery.
+//! A YAML 1.2 parser with error recovery, span tracking, and optional serde support.
 //!
 //! This crate provides a YAML parser that:
 //! - Recovers from syntax errors and continues parsing
@@ -62,12 +62,13 @@ pub use value::{Node, Number, Properties, Value};
 /// Parse YAML input and return the parsed documents and any errors encountered.
 ///
 /// This function implements error recovery, so it may return partial values
-/// even when errors are present. Each document in the stream is a separate
-/// `Spanned<Value>`.
+/// even when errors are present. Each top-level item in the returned stream is
+/// a separate YAML document represented as a [`Node`].
 ///
-/// This function returns owned data (`Node<'static>`) for convenience. The returned
-/// nodes can outlive the input string. If you need streaming/event-level access,
-/// use the lower-level [`emit_events`] API.
+/// This function returns owned data (`Node<'static>`) for convenience. The
+/// returned nodes can outlive the input string. If you need event-level access
+/// without building the AST, use [`emit_events`]. If you need serde-driven
+/// deserialization, use [`serde::from_str`] when the `serde` feature is enabled.
 ///
 /// # Arguments
 ///
@@ -76,8 +77,8 @@ pub use value::{Node, Number, Properties, Value};
 /// # Returns
 ///
 /// A tuple of:
-/// - `Stream<'static>` (Vec<Node<'static>>) - The parsed documents with owned data
-/// - `Vec<ParseError>` - Any errors encountered during parsing (from both lexer and parser)
+/// - `Stream<'static>` (`Vec<Node<'static>>`) containing the parsed documents
+/// - `Vec<ParseError>` containing any errors reported by the lexer, emitter, or AST parser
 ///
 /// # Architecture
 ///
@@ -122,8 +123,8 @@ pub fn parse(input: &str) -> (Stream<'static>, Vec<ParseError>) {
 /// Emit raw YAML events from input without building an AST.
 ///
 /// This is an advanced API intended primarily for tests and tooling.
-/// Typical library users should prefer [`parse`], which builds a typed AST
-/// (`Stream<Node>`). Use `emit_events` when you need:
+/// Typical library users should prefer [`parse`], which builds a typed AST.
+/// Use `emit_events` when you need:
 /// - Direct access to the YAML event stream (SAX-style processing)
 /// - Integration with the YAML Test Suite event format
 /// - Custom tooling for round-tripping or formatting based on events
@@ -131,9 +132,9 @@ pub fn parse(input: &str) -> (Stream<'static>, Vec<ParseError>) {
 /// The event stream follows the YAML Test Suite format:
 /// `StreamStart`, `DocumentStart`, content events, `DocumentEnd`, `StreamEnd`
 ///
-/// This function performs zero-copy parsing where possible - events borrow string
-/// data directly from the input. Escaped strings and processed block scalars will
-/// be allocated as needed.
+/// This function performs zero-copy parsing where possible: event payloads
+/// borrow string data directly from the input. Escaped strings and processed
+/// block scalars allocate only when transformation is required.
 ///
 /// # Returns
 ///

@@ -11,8 +11,7 @@
 //! The current implementation focuses on the common configuration-shaped
 //! data seen in this repository. Some edge cases (very large integers,
 //! non-finite floats, custom enum representations) are reported as
-//! `SerError` variants rather than being fully supported. See the
-//! documentation of `SerError` and the serde streaming plan for details.
+//! `SerError` variants rather than being fully supported.
 
 use std::fmt;
 use std::io::{self, Write};
@@ -454,11 +453,10 @@ impl SerializeStructVariant for StructVariantSerializer {
 }
 
 /// Internal helper: build a `Node<'static>` from a `Value<'static>` using a
-/// dummy span and no properties. This is sufficient for serialization where
-/// we no longer have access to the original source locations.
-/// Internal helper: build a `Node<'static>` from a `Value<'static>` using a
-/// dummy span and no properties. This is sufficient for serialization where
-/// we no longer have access to the original source locations.
+/// dummy span and no properties.
+///
+/// This is sufficient for serialization, where we no longer have access to
+/// original source locations.
 fn node_from_value(value: Value<'static>) -> Node<'static> {
     Node {
         properties: None,

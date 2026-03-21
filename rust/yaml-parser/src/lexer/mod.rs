@@ -19,6 +19,7 @@ mod token;
 
 // Re-export main types
 pub use rich_token::RichToken;
+pub(crate) use rich_token::TokenKind;
 pub use token::{BlockScalarHeader, Chomping, QuoteStyle, Token};
 
 use std::borrow::Cow;
@@ -162,6 +163,33 @@ impl<'input> Lexer<'input> {
         self.input.get(self.byte_pos..)?.chars().nth(n)
     }
 
+    /// Peek an ASCII byte at a small fixed offset from the current position.
+    ///
+    /// This is intended for structural ASCII probes like `---` / `...`, where
+    /// repeatedly re-walking `chars().nth(n)` would touch the same input bytes
+    /// multiple times.
+    #[inline]
+    fn peek_ascii_byte(&self, offset: usize) -> Option<u8> {
+        self.input.as_bytes().get(self.byte_pos + offset).copied()
+    }
+
+    #[inline]
+    fn starts_with_bytes_at_current(&self, prefix: &[u8]) -> bool {
+        self.input
+            .as_bytes()
+            .get(self.byte_pos..)
+            .is_some_and(|tail| tail.starts_with(prefix))
+    }
+
+    /// Peek the next Unicode scalar after the current ASCII punctuation.
+    ///
+    /// This avoids re-walking the current byte via `chars().nth(1)` in hot
+    /// punctuation-driven lexer branches.
+    #[inline]
+    fn peek_char_after_current_ascii(&self) -> Option<char> {
+        self.input.get(self.byte_pos + 1..)?.chars().next()
+    }
+
     /// Advance to the next character and return the current one.
     #[inline]
     fn advance(&mut self) -> Option<char> {
@@ -173,6 +201,23 @@ impl<'input> Lexer<'input> {
     #[inline]
     fn current_span(&self, start: usize) -> Span {
         Span::from_usize_range(start..self.byte_pos)
+    }
+
+    #[inline]
+    fn marker_followed_by_break_or_eof(&self, offset: usize) -> bool {
+        match self.peek_ascii_byte(offset) {
+            None | Some(b' ' | b'\t' | b'\n' | b'\r') => true,
+            Some(_) => self
+                .input
+                .get(self.byte_pos + offset..)
+                .and_then(|tail| tail.chars().next())
+                .is_some_and(Self::is_newline),
+        }
+    }
+
+    #[inline]
+    fn matches_ascii_document_marker(&self, marker: [u8; 3]) -> bool {
+        self.starts_with_bytes_at_current(&marker) && self.marker_followed_by_break_or_eof(3)
     }
 
     /// Skip inline whitespace and return whether any tabs were found.
@@ -335,43 +380,29 @@ impl<'input> Lexer<'input> {
         }
 
         // Check for `---` followed by whitespace/newline/EOF
-        if ch == '-' && self.peek_n(1) == Some('-') && self.peek_n(2) == Some('-') {
-            let after = self.peek_n(3);
-            if after.is_none()
-                || after == Some(' ')
-                || after == Some('\t')
-                || Self::is_newline(after.unwrap_or('\n'))
-            {
-                self.advance(); // -
-                self.advance(); // -
-                self.advance(); // -
-                let span = self.current_span(start);
-                // Document markers are invalid in flow context
-                if self.mode() == LexMode::Flow {
-                    self.add_error(ErrorKind::DocumentMarkerInFlow, span);
-                }
-                return Some((Token::DocStart, span));
+        if ch == '-' && self.matches_ascii_document_marker(*b"---") {
+            self.advance(); // -
+            self.advance(); // -
+            self.advance(); // -
+            let span = self.current_span(start);
+            // Document markers are invalid in flow context
+            if self.mode() == LexMode::Flow {
+                self.add_error(ErrorKind::DocumentMarkerInFlow, span);
             }
+            return Some((Token::DocStart, span));
         }
 
         // Check for `...` followed by whitespace/newline/EOF
-        if ch == '.' && self.peek_n(1) == Some('.') && self.peek_n(2) == Some('.') {
-            let after = self.peek_n(3);
-            if after.is_none()
-                || after == Some(' ')
-                || after == Some('\t')
-                || Self::is_newline(after.unwrap_or('\n'))
-            {
-                self.advance(); // .
-                self.advance(); // .
-                self.advance(); // .
-                let span = self.current_span(start);
-                // Document markers are invalid in flow context
-                if self.mode() == LexMode::Flow {
-                    self.add_error(ErrorKind::DocumentMarkerInFlow, span);
-                }
-                return Some((Token::DocEnd, span));
+        if ch == '.' && self.matches_ascii_document_marker(*b"...") {
+            self.advance(); // .
+            self.advance(); // .
+            self.advance(); // .
+            let span = self.current_span(start);
+            // Document markers are invalid in flow context
+            if self.mode() == LexMode::Flow {
+                self.add_error(ErrorKind::DocumentMarkerInFlow, span);
             }
+            return Some((Token::DocEnd, span));
         }
 
         None
@@ -606,7 +637,7 @@ impl<'input> Lexer<'input> {
     ) -> Option<Spanned<Token<'input>>> {
         // Block sequence indicator: - followed by whitespace/newline
         if ch == '-' {
-            if let Some(next) = self.peek_n(1) {
+            if let Some(next) = self.peek_char_after_current_ascii() {
                 if next == ' ' || next == '\t' || Self::is_newline(next) {
                     self.advance();
                     return Some((Token::BlockSeqIndicator, self.current_span(start)));
@@ -620,7 +651,7 @@ impl<'input> Lexer<'input> {
 
         // Explicit key indicator: ? followed by whitespace/newline
         if ch == '?' {
-            if let Some(next) = self.peek_n(1) {
+            if let Some(next) = self.peek_char_after_current_ascii() {
                 if next == ' ' || next == '\t' || Self::is_newline(next) {
                     self.advance();
                     return Some((Token::MappingKey, self.current_span(start)));
@@ -640,7 +671,7 @@ impl<'input> Lexer<'input> {
             return None;
         }
 
-        let next = self.peek_n(1);
+        let next = self.peek_char_after_current_ascii();
         let is_indicator = if self.prev_was_json_like && self.mode() == LexMode::Flow {
             // After a JSON-like value, : is ALWAYS an indicator in flow context
             true
@@ -680,7 +711,7 @@ impl<'input> Lexer<'input> {
     ) -> Option<Spanned<Token<'input>>> {
         // Anchors: &name
         if ch == '&'
-            && let Some(next) = self.peek_n(1)
+            && let Some(next) = self.peek_char_after_current_ascii()
             && is_anchor_char(next)
         {
             self.advance(); // consume &
@@ -690,7 +721,7 @@ impl<'input> Lexer<'input> {
 
         // Aliases: *name
         if ch == '*'
-            && let Some(next) = self.peek_n(1)
+            && let Some(next) = self.peek_char_after_current_ascii()
             && is_anchor_char(next)
         {
             self.advance(); // consume *
@@ -1027,35 +1058,16 @@ impl<'input> Lexer<'input> {
         // Only check at column 0 (indent 0, no leading spaces consumed yet)
         // The caller should check that we're at column 0 before calling this.
 
-        // Check for `---` or `...` followed by whitespace/newline/EOF
-        let ch0 = self.peek();
-        let ch1 = self.peek_n(1);
-        let ch2 = self.peek_n(2);
-        let ch3 = self.peek_n(3);
-
-        let is_marker = matches!(
-            (ch0, ch1, ch2),
-            (Some('-'), Some('-'), Some('-')) | (Some('.'), Some('.'), Some('.'))
-        );
-
-        if !is_marker {
+        if !self.matches_ascii_document_marker(*b"---")
+            && !self.matches_ascii_document_marker(*b"...")
+        {
             return false;
         }
 
-        // Check that the marker is followed by whitespace, newline, or EOF
-        let followed_by_break = ch3.is_none()
-            || ch3 == Some(' ')
-            || ch3 == Some('\t')
-            || Self::is_newline(ch3.unwrap_or('\0'));
-
-        if followed_by_break {
-            // Report the error - this is a forbidden marker inside a quoted string
-            let span = Span::from_usize_range(self.byte_pos..self.byte_pos + 3);
-            self.add_error(ErrorKind::DocumentMarkerInScalar, span);
-            return true;
-        }
-
-        false
+        // Report the error - this is a forbidden marker inside a quoted string
+        let span = Span::from_usize_range(self.byte_pos..self.byte_pos + 3);
+        self.add_error(ErrorKind::DocumentMarkerInScalar, span);
+        true
     }
 
     /// Shared tail logic for handling a newline in quoted strings.
@@ -1379,7 +1391,7 @@ impl<'input> Lexer<'input> {
             // These can only start a plain scalar if followed by a "safe" character
             // In flow context, flow indicators are not safe
             if at_start && (ch == '-' || ch == '?' || ch == ':') {
-                let next = self.peek_n(1);
+                let next = self.peek_char_after_current_ascii();
                 // Check if next is "safe" for plain scalar start
                 let is_safe = match next {
                     None => false, // EOF not safe
@@ -1411,7 +1423,7 @@ impl<'input> Lexer<'input> {
                     // - At the start of plain scalar, : can be included if followed by
                     //   non-whitespace and non-flow-indicator (e.g., :x, ://, etc.)
                     // - In the middle, : terminates if followed by whitespace/flow-indicator/EOF
-                    let next = self.peek_n(1);
+                    let next = self.peek_char_after_current_ascii();
                     let colon_terminates = next.is_none()
                         || next == Some(' ')
                         || next == Some('\t')
@@ -1428,7 +1440,7 @@ impl<'input> Lexer<'input> {
                     // Otherwise, : is followed by non-terminator, consume it
                 } else {
                     // In block mode, only stop if followed by whitespace/newline/EOF
-                    if let Some(next) = self.peek_n(1) {
+                    if let Some(next) = self.peek_char_after_current_ascii() {
                         if next == ' ' || next == '\t' || Self::is_newline(next) {
                             break;
                         }
@@ -1440,7 +1452,7 @@ impl<'input> Lexer<'input> {
             }
 
             // Space followed by # is a comment start
-            if (ch == ' ' || ch == '\t') && self.peek_n(1) == Some('#') {
+            if (ch == ' ' || ch == '\t') && self.peek_ascii_byte(1) == Some(b'#') {
                 break;
             }
 

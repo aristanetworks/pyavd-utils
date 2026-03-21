@@ -1268,19 +1268,12 @@ fn library_events_to_test_events(events: &[yaml_parser::Event<'_>]) -> Vec<Event
         .collect()
 }
 
-/// Tests where the emitter produces intentionally different (more correct) spans.
+/// Tests where the emitter produces intentionally different spans.
 /// These are whitelisted to differ only in spans, not structure.
-///
-/// Emitter span improvements over the previous parser implementation:
-/// - `DocumentEnd`: emitter returns actual EOF position, previous parser returned 0..0
-/// - `MappingStart`/`End`: emitter uses more precise span boundaries
-/// - Block scalar end spans: emitter tracks actual content end
 #[allow(dead_code, reason = "kept for future span comparison testing")]
 const SPAN_DIFF_WHITELIST: &[&str] = &[
     // TODO: Populate this list as we identify intentional span differences
 ];
 
-// NOTE: emitter_equivalence, debug_3alj, and debug_26dv tests removed because they
-// compared a legacy parser with the Emitter. Since we've removed that older
-// implementation and promoted the Emitter to be the primary parser, these
-// tests are no longer relevant.
+// NOTE: one-off investigative tests were removed once their coverage moved
+// into focused parser/emitter assertions or corpus-based integration tests.

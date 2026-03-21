@@ -2,18 +2,20 @@
 // Use of this source code is governed by the Apache License 2.0
 // that can be found in the LICENSE file.
 
-//! Benchmarks for yaml-parser comparing against saphyr.
+//! Benchmarks for yaml-parser against current reference implementations.
 //!
 //! Run with: `cargo bench`
 //!
 //! This benchmark suite measures parsing throughput (MB/s) and latency
 //! for various YAML document types.
 //!
-//! We compare two configurations:
+//! Parse-oriented groups compare:
 //! - `yaml_parser`: Our parser (always includes spans)
 //! - `saphyr_marked`: Saphyr with span tracking (`MarkedYaml` type)
+//! - `serde_yaml`: `serde_yaml` as an additional reference parser
 //!
-//! Both parsers include span tracking, making this a fair comparison.
+//! The yaml-parser vs saphyr comparison is the closest parse-only comparison
+//! because both include span tracking.
 //!
 //! When the `serde` feature is enabled on `yaml-parser`, we also compare
 //! its serde-based deserialization performance against `serde_yaml`.
@@ -222,10 +224,10 @@ fn bench_serde_deserialize_throughput(criterion: &mut Criterion) {
         group.throughput(Throughput::Bytes(u64::try_from(input.len()).unwrap()));
 
         // Benchmark yaml-parser's serde-based deserialization into our own
-        // generic `OwnedYamlValue` tree. This uses the streaming event-driven
-        // serde pipeline under the hood via `yaml_parser::serde::from_str`.
+        // generic `OwnedYamlValue` tree. This uses the crate's only serde
+        // deserializer implementation via `yaml_parser::serde::from_str`.
         group.bench_with_input(
-            BenchmarkId::new("yaml_parser_serde", name),
+            BenchmarkId::new("yaml_parser", name),
             input,
             |bench, data| {
                 bench.iter(|| {

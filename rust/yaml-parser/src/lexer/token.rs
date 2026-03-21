@@ -4,8 +4,8 @@
 
 //! Token types for the YAML lexer.
 //!
-//! This module defines all token types produced by the document lexer
-//! (`document.rs`).
+//! This module defines all token types produced by the unified lexer in
+//! [`super::Lexer`].
 //!
 //! Token content uses `Cow<'input, str>` for zero-copy tokenization:
 //! - `Borrowed`: Token content is a slice of the input (no allocation)

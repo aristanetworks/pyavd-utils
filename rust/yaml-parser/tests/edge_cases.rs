@@ -165,13 +165,6 @@ fn test_very_large_integer_as_bigintstr() {
 }
 
 #[test]
-fn test_flow_collections_bench_file_has_no_parse_errors() {
-    let input = include_str!("../benches/data/flow_collections.yml");
-    // Use parse_ok to enforce the no-error invariant for this positive corpus.
-    let _docs = parse_ok(input);
-}
-
-#[test]
 fn test_json_style_flow_mapping_line_has_no_parse_errors() {
     let input = r#"json_style: {"key":"value","number":42,"nested":{"a":"b"}}"#;
     let _docs = parse_ok(input);
@@ -215,7 +208,7 @@ fn test_bench_corpora_have_no_parse_errors() {
 
 #[cfg(feature = "serde")]
 #[test]
-fn debug_tags_serde_deserialize_failure() {
+fn tags_corpus_serde_deserializes_across_backends() {
     let input = include_str!("../benches/data/tags.yml");
 
     let yaml_parser_result: Result<serde_yaml::Value, _> = yaml_parser::serde::from_str(input);
@@ -316,11 +309,11 @@ fn owned_semantically_equal(left: &OwnedYamlValue, right: &OwnedYamlValue) -> bo
     values_semantically_equal(&left.0, &right.0)
 }
 
-/// Debug helper for serde equivalence tests: walk two `Value` trees and
-/// report the first path at which they differ. This is used when a semantic
-/// equivalence check between backends fails, to pinpoint the mismatch.
+/// Walk two `Value` trees and report the first path at which they differ.
+///
+/// This is only used to improve failure messages in serde equivalence tests.
 #[cfg(feature = "serde")]
-fn debug_first_difference(
+fn first_difference_path(
     path: &str,
     left: &Value<'static>,
     right: &Value<'static>,
@@ -381,7 +374,7 @@ fn debug_first_difference(
             }
             for (idx, (ln, rn)) in left_items.iter().zip(right_items.iter()).enumerate() {
                 let child_path = format!("{path}[{idx}]");
-                if let Some(diff_path) = debug_first_difference(&child_path, &ln.value, &rn.value) {
+                if let Some(diff_path) = first_difference_path(&child_path, &ln.value, &rn.value) {
                     return Some(diff_path);
                 }
             }
@@ -400,7 +393,7 @@ fn debug_first_difference(
                 left_pairs.iter().zip(right_pairs.iter()).enumerate()
             {
                 let key_path = format!("{path}.<key#{idx}>");
-                if let Some(diff_path) = debug_first_difference(&key_path, &lk.value, &rk.value) {
+                if let Some(diff_path) = first_difference_path(&key_path, &lk.value, &rk.value) {
                     return Some(diff_path);
                 }
 
@@ -410,7 +403,7 @@ fn debug_first_difference(
                 };
                 let value_path = format!("{path}.{key_name}");
                 if let Some(diff_path) =
-                    debug_first_difference(&value_path, &lval.value, &rval.value)
+                    first_difference_path(&value_path, &lval.value, &rval.value)
                 {
                     return Some(diff_path);
                 }
@@ -490,7 +483,7 @@ fn bench_corpora_serde_equivalence_against_serde_yaml() {
             eprintln!(
                 "yaml_parser::serde::from_str and serde_yaml produced semantically different values on {name}; locating first differing path...",
             );
-            if let Some(path) = debug_first_difference("root", &parsed.0, &sy.0) {
+            if let Some(path) = first_difference_path("root", &parsed.0, &sy.0) {
                 panic!(
                     "serde_yaml produced a semantically different value on {name}; first differing path: {path}",
                 );

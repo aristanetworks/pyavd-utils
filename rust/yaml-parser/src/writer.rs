@@ -4,15 +4,13 @@
 
 //! Event-based YAML writer.
 //!
-//! This module implements the first cut of a YAML serializer that operates
-//! directly on the `Event` stream produced by the emitter. The goal is to
-//! provide a structurally correct, block-style YAML output that can be
-//! round-tripped through the existing lexer + emitter pipeline.
+//! This module implements a YAML serializer that operates directly on the
+//! `Event` stream produced by the emitter.
 //!
-//! The implementation is intentionally conservative and focuses on
-//! correctness over preserving all presentation details. Later iterations
-//! will tighten the behaviour and expand coverage using the YAML test
-//! suite.
+//! The writer is intentionally conservative: it prioritizes structurally
+//! correct output and successful round-tripping through the lexer + emitter
+//! pipeline over preserving every presentation detail from the original
+//! source.
 
 use std::io::{self, Write};
 
@@ -25,8 +23,8 @@ const EMPTY_PROPERTIES: Properties<'static> = Properties {
 
 /// Write YAML text from a sequence of events.
 ///
-/// This function currently materializes the full event stream and emits a
-/// single YAML document stream in a simple block style.
+/// This function consumes an in-memory event slice and emits a single YAML
+/// stream using a simple, mostly block-style presentation.
 pub fn write_yaml_from_events<W>(mut writer: W, events: &[Event<'_>]) -> io::Result<()>
 where
     W: Write,

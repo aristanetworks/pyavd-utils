@@ -79,6 +79,9 @@ where
 }
 
 /// Deserialize a single YAML document from a reader into `T`.
+///
+/// This helper currently reads the entire reader into a `String` and then
+/// forwards to [`from_str`]. It is convenient, but it is not incremental I/O.
 pub fn from_reader<R, T>(mut reader: R) -> Result<T, DeError>
 where
     R: Read,
@@ -92,9 +95,9 @@ where
 /// Deserialize zero or more YAML documents from a string into a streaming
 /// iterator of `T`.
 ///
-/// This variant is fully streaming: it does not pre-parse the entire input
-/// into a `Vec<Node>`, but instead parses and deserializes each document on
-/// demand from the underlying event stream.
+/// This variant streams at the document level: it does not build a
+/// `Vec<Node>` for the whole input, but instead parses and deserializes one
+/// document at a time from the underlying event stream.
 pub fn stream_from_str_docs<T>(input: &str) -> Result<StreamDeserializer<'_, T>, DeError>
 where
     T: DeserializeOwned,
