@@ -35,9 +35,7 @@ use crate::value::{Node, Number, Properties as NodeProperties, Value};
 /// resolved earlier by the emitter.
 ///
 /// The parser operates over any `Iterator<Item = Event<'input>>`, using an
-/// internal one-element lookahead buffer. This keeps behaviour identical to
-/// the previous slice+index based implementation while allowing future
-/// integration with a truly streaming event source.
+/// internal one-element lookahead buffer.
 pub struct Parser<'input, I>
 where
     I: Iterator<Item = Event<'input>>,
@@ -47,7 +45,7 @@ where
     /// Buffered lookahead event (result of the most recent `peek()`).
     peeked: Option<Event<'input>>,
     /// Count of events that have been logically consumed via `advance()`.
-    /// Used to preserve the previous implementation's progress checks.
+    /// Used for progress tracking in recovery paths.
     events_consumed: usize,
     /// Collected errors
     errors: Vec<ParseError>,

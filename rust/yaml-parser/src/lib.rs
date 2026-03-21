@@ -8,7 +8,7 @@
 //! - Recovers from syntax errors and continues parsing
 //! - Reports multiple errors in a single pass
 //! - Tracks source spans for all values
-//! - Aims for full YAML 1.2 compliance
+//! - Targets broad YAML 1.2 compatibility for parsing, tooling, and serde use
 //!
 //! # Example
 //!

@@ -4,5 +4,5 @@
 
 use crate::Node;
 
-/// A stream of YAML documents.
+/// A parsed YAML stream represented as `Vec<Node<'input>>`.
 pub type Stream<'input> = Vec<Node<'input>>;

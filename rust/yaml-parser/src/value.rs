@@ -287,12 +287,11 @@ mod serde_impls {
 
 /// Optional properties (anchor, tag) for a YAML node.
 ///
-/// This is boxed within `Node` to reduce memory footprint since most nodes
-/// don't have anchors or tags. The box adds 8 bytes per node (Option<Box<_>>)
-/// but saves ~40 bytes compared to inlining two `Option<Cow<str>>` fields.
+/// This is boxed within `Node` to keep the common no-properties case compact,
+/// since most nodes do not carry anchors or tags.
 ///
-/// Anchors use `Cow<'input, str>` (usually borrowed) since they are rarely transformed.
-/// Tags use `Cow` because they may need expansion (e.g., `!!str` → full URI).
+/// Anchors use `Cow<'input, str>` and are usually borrowed from the input.
+/// Tags also use `Cow` because they may be expanded or normalized.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Properties<'input> {
     /// Optional anchor name (from `&name`) - usually borrowed from input
@@ -339,9 +338,8 @@ impl<'input> Properties<'input> {
 /// The lifetime `'input` refers to the input string being parsed. String content
 /// uses `Cow<'input, str>` for zero-copy when possible.
 ///
-/// Properties (anchor, tag) are boxed to reduce the base size of each node,
-/// since most nodes don't have these properties. This trades a heap allocation
-/// for nodes with properties against smaller inline size for all nodes.
+/// Properties (anchor, tag) are boxed so nodes without properties stay small,
+/// trading an occasional heap allocation for a more compact base node layout.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Node<'input> {
     /// Optional properties (anchor, tag) - boxed to reduce node size

@@ -9,7 +9,8 @@ use std::ops::Range;
 /// Type alias for byte positions/offsets in the source.
 ///
 /// Uses `u32` for compact storage, supporting files up to 4GB.
-/// This can be changed to `usize` via feature flag if larger files are needed.
+/// Values beyond that range are truncated by the explicit conversion helpers in
+/// this module.
 pub type BytePosition = u32;
 
 /// Convert a `BytePosition` to `usize` for string indexing.
@@ -68,10 +69,12 @@ pub const fn usize_to_indent(n: usize) -> IndentLevel {
 
 /// A span representing a range in the data.
 ///
-/// This is a simple span type that tracks byte offsets as a half-open range `[start, end)`.
-/// The span is used throughout the parser to track source locations for error reporting.
+/// This is a simple span type that tracks byte offsets as a half-open range
+/// `[start, end)`. The span is used throughout the parser to track source
+/// locations for error reporting.
 ///
-/// Uses [`BytePosition`] for compact storage (8 bytes instead of 16), supporting files up to 4GB.
+/// Uses [`BytePosition`] for compact storage while still covering realistic
+/// YAML inputs comfortably.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct Span {
     /// The start byte offset (inclusive).

@@ -275,38 +275,6 @@ fn unescape_event_value(input: &str) -> String {
 // AST to Event conversion
 // ============================================================================
 
-/// Compare two event streams, ignoring style differences.
-///
-/// Returns Ok(()) if the events match structurally, or Err with a description
-/// of the first mismatch.
-#[allow(dead_code, reason = "utility function for debugging test failures")]
-fn compare_events(actual: &[Event], expected: &[Event]) -> Result<(), String> {
-    let actual_filtered: Vec<_> = actual.iter().collect();
-    let expected_filtered: Vec<_> = expected.iter().collect();
-
-    if actual_filtered.len() != expected_filtered.len() {
-        return Err(format!(
-            "Event count mismatch: got {} events, expected {}",
-            actual_filtered.len(),
-            expected_filtered.len()
-        ));
-    }
-
-    for (i, (actual_ev, expected_ev)) in actual_filtered
-        .iter()
-        .zip(expected_filtered.iter())
-        .enumerate()
-    {
-        if !events_match(actual_ev, expected_ev) {
-            return Err(format!(
-                "Event mismatch at index {i}:\n  actual:   {actual_ev:?}\n  expected: {expected_ev:?}"
-            ));
-        }
-    }
-
-    Ok(())
-}
-
 /// Check if two events match, ignoring style differences.
 fn events_match(actual: &Event, expected: &Event) -> bool {
     match (actual, expected) {
@@ -1162,41 +1130,6 @@ fn compare_events_with_context(
     ))
 }
 
-// NOTE: streaming_parser_equivalence test removed because it compared an older
-// parser implementation with StreamingParser. Since we've removed that legacy
-// implementation and promoted the Emitter to be the primary parser, this test
-// is no longer relevant.
-
-/// Find the first difference between two event sequences.
-#[allow(dead_code, reason = "utility function for debugging test failures")]
-fn find_first_diff(a: &[Event], b: &[Event]) -> String {
-    for (i, (ea, eb)) in a.iter().zip(b.iter()).enumerate() {
-        if ea != eb {
-            return format!("index {i}: {ea:?} vs {eb:?}");
-        }
-    }
-    if a.len() == b.len() {
-        "no diff found".to_owned()
-    } else {
-        format!("length {} vs {}", a.len(), b.len())
-    }
-}
-
-/// Find the first difference between two `yaml_parser::Event` sequences.
-#[allow(dead_code, reason = "utility function for debugging test failures")]
-fn find_first_event_diff(a: &[yaml_parser::Event<'_>], b: &[yaml_parser::Event<'_>]) -> String {
-    for (i, (ea, eb)) in a.iter().zip(b.iter()).enumerate() {
-        if ea != eb {
-            return format!("index {i}: {ea:?} vs {eb:?}");
-        }
-    }
-    if a.len() == b.len() {
-        "no diff found".to_owned()
-    } else {
-        format!("length {} vs {}", a.len(), b.len())
-    }
-}
-
 /// Convert library Event to test Event format.
 fn library_events_to_test_events(events: &[yaml_parser::Event<'_>]) -> Vec<Event> {
     events
@@ -1267,13 +1200,3 @@ fn library_events_to_test_events(events: &[yaml_parser::Event<'_>]) -> Vec<Event
         })
         .collect()
 }
-
-/// Tests where the emitter produces intentionally different spans.
-/// These are whitelisted to differ only in spans, not structure.
-#[allow(dead_code, reason = "kept for future span comparison testing")]
-const SPAN_DIFF_WHITELIST: &[&str] = &[
-    // TODO: Populate this list as we identify intentional span differences
-];
-
-// NOTE: one-off investigative tests were removed once their coverage moved
-// into focused parser/emitter assertions or corpus-based integration tests.

@@ -6,8 +6,9 @@
 //!
 //! This module implements the crate's serde `Deserializer` directly on top of
 //! the YAML event stream emitted by `Emitter`, without building the `Node` /
-//! `Value` AST first. It supports single-document inputs including anchors and
-//! aliases (YAML 1.2 style, not YAML 1.1 merge keys).
+//! `Value` AST first. It powers both single-document deserialization and the
+//! public document-by-document streaming API, including anchors and aliases
+//! (YAML 1.2 style, not YAML 1.1 merge keys).
 
 use std::borrow::Cow;
 use std::collections::HashMap;
