@@ -135,7 +135,7 @@ fn test_serde_json_empty_sequence() {
 mod yaml_parser_tests {
     use std::borrow::Cow;
 
-    use yaml_parser::{Node, Value};
+    use yaml_parser::{Node, Value, Integer};
 
     use crate::validatable::{ValidatableMapping, ValidatableSequence, ValidatableValue};
 
@@ -148,7 +148,7 @@ mod yaml_parser_tests {
     }
 
     fn int_node(i: i64) -> Node<'static> {
-        Node::new(Value::Int(i), make_span())
+        Node::new(Value::Int(Integer::I64(i)), make_span())
     }
 
     #[test]

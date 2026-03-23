@@ -18,7 +18,7 @@ use serde::forward_to_deserialize_any;
 
 use crate::emitter::Emitter;
 use crate::event::{Event, ScalarStyle};
-use crate::value::Number;
+use crate::value::Integer;
 
 use super::DeError;
 
@@ -283,11 +283,11 @@ impl<'de> EventStream<'de> {
             ScalarKind::Null => visitor.visit_unit(),
             ScalarKind::Bool(bool_val) => visitor.visit_bool(bool_val),
             ScalarKind::Int(num) => match num {
-                Number::I64(int_val) => visitor.visit_i64(int_val),
-                Number::U64(uint_val) => visitor.visit_u64(uint_val),
-                Number::I128(int_val) => visitor.visit_i128(int_val),
-                Number::U128(uint_val) => visitor.visit_u128(uint_val),
-                Number::BigIntStr(text) => match text {
+                Integer::I64(int_val) => visitor.visit_i64(int_val),
+                Integer::U64(uint_val) => visitor.visit_u64(uint_val),
+                Integer::I128(int_val) => visitor.visit_i128(int_val),
+                Integer::U128(uint_val) => visitor.visit_u128(uint_val),
+                Integer::BigIntStr(text) => match text {
                     Cow::Borrowed(str_ref) => visitor.visit_borrowed_str(str_ref),
                     Cow::Owned(str_owned) => visitor.visit_string(str_owned),
                 },
@@ -308,7 +308,7 @@ impl<'de> EventStream<'de> {
 enum ScalarKind<'de> {
     Null,
     Bool(bool),
-    Int(Number<'de>),
+    Int(Integer<'de>),
     Float(f64),
     String(Cow<'de, str>),
 }
@@ -400,15 +400,15 @@ fn infer_scalar_kind(value: Cow<'_, str>) -> ScalarKind<'_> {
                 }
                 NumericKind::Integer => {
                     if let Ok(int) = text.parse::<i64>() {
-                        return ScalarKind::Int(Number::I64(int));
+                        return ScalarKind::Int(Integer::I64(int));
                     }
                     if let Ok(int) = text.parse::<i128>() {
-                        return ScalarKind::Int(Number::I128(int));
+                        return ScalarKind::Int(Integer::I128(int));
                     }
                     if let Ok(uint) = text.parse::<u128>() {
-                        return ScalarKind::Int(Number::U128(uint));
+                        return ScalarKind::Int(Integer::U128(uint));
                     }
-                    return ScalarKind::Int(Number::BigIntStr(value));
+                    return ScalarKind::Int(Integer::BigIntStr(value));
                 }
                 NumericKind::NotNumeric => {}
             }

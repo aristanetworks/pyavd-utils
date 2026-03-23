@@ -6,7 +6,7 @@
 
 use std::borrow::Cow;
 
-use yaml_parser::{Node, Value};
+use yaml_parser::{Integer, Node, Value};
 
 use super::{ValidatableMapping, ValidatableSequence, ValidatableValue};
 
@@ -42,7 +42,13 @@ impl<'input> ValidatableValue for Node<'input> {
     fn as_str(&self) -> Option<Cow<'_, str>> {
         match &self.value {
             Value::String(cow) => Some(Cow::Borrowed(cow.as_ref())),
-            Value::Int(i) => Some(Cow::Owned(i.to_string())),
+            Value::Int(i) => match i {
+                Integer::I64(i) => Some(Cow::Owned(i.to_string())),
+                Integer::U64(u) => Some(Cow::Owned(u.to_string())),
+                Integer::I128(i) => Some(Cow::Owned(i.to_string())),
+                Integer::U128(u) => Some(Cow::Owned(u.to_string())),
+                Integer::BigIntStr(s) => Some(s.clone()),
+            },
             Value::Float(f) => Some(Cow::Owned(f.to_string())),
             // Using Title case to match Python behavior
             Value::Bool(b) => Some(Cow::Borrowed(if *b { "True" } else { "False" })),
@@ -52,7 +58,7 @@ impl<'input> ValidatableValue for Node<'input> {
 
     fn as_i64(&self) -> Option<i64> {
         match &self.value {
-            Value::Int(i) => Some(*i),
+            Value::Int(Integer::I64(i)) => Some(*i),
             Value::String(s) => s.parse().ok(),
             Value::Bool(b) => Some(if *b { 1 } else { 0 }),
             _ => None,
@@ -99,7 +105,7 @@ impl<'input> ValidatableValue for Node<'input> {
     fn value_type(&self) -> crate::feedback::Type {
         use crate::feedback::Type;
         match &self.value {
-            Value::Null | Value::Invalid => Type::Null,
+            Value::Null => Type::Null,
             Value::Bool(_) => Type::Bool,
             Value::Int(_) => Type::Int,
             Value::Float(_) => Type::Int, // Float is treated as Int for AVD schema purposes
@@ -121,7 +127,7 @@ impl<'input> ValidatableValue for Node<'input> {
     }
 
     fn coerce_int(&self, value: i64) -> Self::Coerced {
-        Node::new(Value::Int(value), self.span)
+        Node::new(Value::Int(Integer::I64(value)), self.span)
     }
 
     fn coerce_str(&self, value: String) -> Self::Coerced {
@@ -153,7 +159,8 @@ impl<'input> ValidatableValue for Node<'input> {
         match &self.value {
             Value::Null => FV::Null(),
             Value::Bool(b) => FV::Bool(*b),
-            Value::Int(i) => FV::Int(*i),
+            Value::Int(Integer::I64(i)) => FV::Int(*i),
+            Value::Int(_) => FV::Str(self.as_str().unwrap().into_owned()),
             Value::Float(f) => FV::Float(*f),
             Value::String(s) => FV::Str(s.to_string()),
             Value::Sequence(seq) => FV::List(seq.iter().map(|n| n.to_feedback_value()).collect()),
@@ -165,8 +172,8 @@ impl<'input> ValidatableValue for Node<'input> {
                     })
                     .collect(),
             ),
-            // Alias and Invalid shouldn't appear in validated data
-            Value::Alias(_) | Value::Invalid => FV::Null(),
+            // Alias shouldn't appear in validated data
+            Value::Alias(_) => FV::Null(),
         }
     }
 
@@ -189,16 +196,7 @@ pub struct NodeMapping<'a, 'input> {
 /// Try to coerce a YAML node to a string key.
 /// Returns None for complex types (mappings, sequences, null).
 fn coerce_key_to_string<'a>(node: &'a Node<'_>) -> Option<Cow<'a, str>> {
-    match &node.value {
-        Value::String(s) => Some(Cow::Borrowed(s.as_ref())),
-        Value::Int(i) => Some(Cow::Owned(i.to_string())),
-        Value::Float(f) => Some(Cow::Owned(f.to_string())),
-        Value::Bool(b) => Some(Cow::Owned(if *b { "true" } else { "false" }.to_string())),
-        // Complex types, null, and invalid nodes cannot be coerced to keys
-        Value::Mapping(_) | Value::Sequence(_) | Value::Null | Value::Alias(_) | Value::Invalid => {
-            None
-        }
-    }
+    node.as_str()
 }
 
 impl<'a, 'input: 'a> ValidatableMapping<'a> for NodeMapping<'a, 'input> {

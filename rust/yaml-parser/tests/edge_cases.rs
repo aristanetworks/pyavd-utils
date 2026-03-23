@@ -37,7 +37,7 @@ mod support;
 use saphyr::{LoadableYamlNode as _, Yaml};
 
 use support::parse_ok;
-use yaml_parser::{Number, Value};
+use yaml_parser::{Integer, Value};
 
 #[cfg(feature = "serde")]
 use serde::Deserialize;

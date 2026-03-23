@@ -15,7 +15,7 @@ use log::debug;
 use super::Validation;
 
 /// Result of validation including optionally coerced data.
-pub struct ValidationOutput<T> {
+pub struct ValidationOutput<T> {   
     /// The validation result with errors, warnings, and infos.
     pub result: ValidationResult,
     /// The coerced data with types adjusted according to the schema.
@@ -23,33 +23,15 @@ pub struct ValidationOutput<T> {
     pub coerced: Option<T>,
 }
 
-pub trait StoreValidate<T> {
-    /// Entrypoint for validating a JSON document against the given schema name.
-    /// Returns both validation results and the coerced JSON Value.
-    fn validate_json(
-        &self,
-        json: &str,
-        schema_name: T,
-        configuration: Option<&Configuration>,
-    ) -> Result<ValidationOutput<Value>, StoreValidateError>;
-
-    /// Entrypoint for validating a YAML document against the given schema name.
-    /// Returns both validation results and the coerced YAML Node.
-    fn validate_yaml(
-        &self,
-        yaml: &str,
-        schema_name: T,
-        configuration: Option<&Configuration>,
-    ) -> Result<ValidationOutput<Node<'static>>, StoreValidateError>;
-
-    /// Entrypoint for validating a serde_json::Value against the given schema name.
+pub trait StoreValidate<S, V> where V: crate::validatable::ValidatableValue {
+    /// Entrypoint for validating a value implementing ValidatableValue against the given schema name.
     /// Returns both validation results and the coerced Value.
     fn validate_value(
         &self,
-        value: &Value,
-        schema_name: T,
+        value: &V,
+        schema_name: S,
         configuration: Option<&Configuration>,
-    ) -> ValidationOutput<Value>;
+    ) -> Result<ValidationOutput<V>, SchemaConversionError>;
 }
 
 impl StoreValidate<Schema> for Store {
@@ -74,8 +56,9 @@ impl StoreValidate<Schema> for Store {
         configuration: Option<&Configuration>,
     ) -> Result<ValidationOutput<Node<'static>>, StoreValidateError> {
         debug!("Validating YAML");
-        let mut value = yaml_parser::Value::from_str(yaml)?;
+        let (mut yaml_docs, parse_errors) = yaml_parser::parse(yaml);
         debug!("Deserialization of YAML Done");
+
         let result = self.validate_value(&mut value, schema_name, configuration);
         debug!("Validating YAML Done");
         Ok(ValidationOutput {
@@ -86,7 +69,7 @@ impl StoreValidate<Schema> for Store {
 
     fn validate_value(
         &self,
-        value: &Value,
+        value: &T,
         schema_name: Schema,
         configuration: Option<&Configuration>,
     ) -> ValidationOutput<Value> {

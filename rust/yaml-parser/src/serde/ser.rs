@@ -22,7 +22,7 @@ use serde::ser::{
 };
 
 use crate::ast_events::{self, AstToEventsError};
-use crate::value::Number;
+use crate::value::Integer;
 use crate::{Node, Value, writer};
 
 /// Error type for serde-based *serialization* using yaml-parser.
@@ -100,43 +100,43 @@ impl Serializer for ValueSerializer {
     }
 
     fn serialize_i8(self, v: i8) -> Result<Self::Ok, Self::Error> {
-        Ok(Value::Int(Number::I64(i64::from(v))))
+        Ok(Value::Int(Integer::I64(i64::from(v))))
     }
 
     fn serialize_i16(self, v: i16) -> Result<Self::Ok, Self::Error> {
-        Ok(Value::Int(Number::I64(i64::from(v))))
+        Ok(Value::Int(Integer::I64(i64::from(v))))
     }
 
     fn serialize_i32(self, v: i32) -> Result<Self::Ok, Self::Error> {
-        Ok(Value::Int(Number::I64(i64::from(v))))
+        Ok(Value::Int(Integer::I64(i64::from(v))))
     }
 
     fn serialize_i64(self, v: i64) -> Result<Self::Ok, Self::Error> {
-        Ok(Value::Int(Number::I64(v)))
+        Ok(Value::Int(Integer::I64(v)))
     }
 
     fn serialize_i128(self, v: i128) -> Result<Self::Ok, Self::Error> {
-        Ok(Value::Int(Number::I128(v)))
+        Ok(Value::Int(Integer::I128(v)))
     }
 
     fn serialize_u8(self, v: u8) -> Result<Self::Ok, Self::Error> {
-        Ok(Value::Int(Number::U64(u64::from(v))))
+        Ok(Value::Int(Integer::U64(u64::from(v))))
     }
 
     fn serialize_u16(self, v: u16) -> Result<Self::Ok, Self::Error> {
-        Ok(Value::Int(Number::U64(u64::from(v))))
+        Ok(Value::Int(Integer::U64(u64::from(v))))
     }
 
     fn serialize_u32(self, v: u32) -> Result<Self::Ok, Self::Error> {
-        Ok(Value::Int(Number::U64(u64::from(v))))
+        Ok(Value::Int(Integer::U64(u64::from(v))))
     }
 
     fn serialize_u64(self, v: u64) -> Result<Self::Ok, Self::Error> {
-        Ok(Value::Int(Number::U64(v)))
+        Ok(Value::Int(Integer::U64(v)))
     }
 
     fn serialize_u128(self, v: u128) -> Result<Self::Ok, Self::Error> {
-        Ok(Value::Int(Number::U128(v)))
+        Ok(Value::Int(Integer::U128(v)))
     }
 
     fn serialize_f32(self, v: f32) -> Result<Self::Ok, Self::Error> {
@@ -161,7 +161,7 @@ impl Serializer for ValueSerializer {
     fn serialize_bytes(self, v: &[u8]) -> Result<Self::Ok, Self::Error> {
         let mut items = Vec::with_capacity(v.len());
         for &byte in v {
-            let value = Value::Int(Number::U64(u64::from(byte)));
+            let value = Value::Int(Integer::U64(u64::from(byte)));
             items.push(node_from_value(value));
         }
         Ok(Value::Sequence(items))

@@ -23,12 +23,12 @@ use std::borrow::Cow;
 
 use crate::span::Span;
 
-/// Numeric value representation used by `Value::Int`.
+/// Integer value representation used by `Value::Int`.
 ///
 /// This allows representing a wide range of integer values while still
 /// preserving the original textual representation for very large numbers.
 #[derive(Debug, Clone, PartialEq)]
-pub enum Number<'input> {
+pub enum Integer<'input> {
     /// Negative / positive integers that fit in `i64`.
     I64(i64),
     /// Non-negative integers that fit in `u64`.
@@ -41,16 +41,16 @@ pub enum Number<'input> {
     BigIntStr(Cow<'input, str>),
 }
 
-impl Number<'_> {
+impl Integer<'_> {
     /// Convert this number to an owned `'static` variant.
     #[must_use]
-    pub fn into_owned(self) -> Number<'static> {
+    pub fn into_owned(self) -> Integer<'static> {
         match self {
-            Number::I64(value) => Number::I64(value),
-            Number::U64(value) => Number::U64(value),
-            Number::I128(value) => Number::I128(value),
-            Number::U128(value) => Number::U128(value),
-            Number::BigIntStr(text) => Number::BigIntStr(Cow::Owned(text.into_owned())),
+            Integer::I64(value) => Integer::I64(value),
+            Integer::U64(value) => Integer::U64(value),
+            Integer::I128(value) => Integer::I128(value),
+            Integer::U128(value) => Integer::U128(value),
+            Integer::BigIntStr(text) => Integer::BigIntStr(Cow::Owned(text.into_owned())),
         }
     }
 
@@ -58,18 +58,18 @@ impl Number<'_> {
     #[must_use]
     pub fn to_decimal_string(&self) -> Cow<'_, str> {
         match self {
-            Number::I64(value) => Cow::Owned(value.to_string()),
-            Number::U64(value) => Cow::Owned(value.to_string()),
-            Number::I128(value) => Cow::Owned(value.to_string()),
-            Number::U128(value) => Cow::Owned(value.to_string()),
-            Number::BigIntStr(text) => Cow::Borrowed(text.as_ref()),
+            Integer::I64(value) => Cow::Owned(value.to_string()),
+            Integer::U64(value) => Cow::Owned(value.to_string()),
+            Integer::I128(value) => Cow::Owned(value.to_string()),
+            Integer::U128(value) => Cow::Owned(value.to_string()),
+            Integer::BigIntStr(text) => Cow::Borrowed(text.as_ref()),
         }
     }
 }
 
 #[cfg(feature = "serde")]
 mod serde_impls {
-    use super::{Node, Number, Value};
+    use super::{Node, Integer, Value};
     use crate::span::Span;
     use serde::de::{self, Deserialize, Deserializer, MapAccess, SeqAccess, Visitor};
     use serde::ser::{Serialize, SerializeMap as _, SerializeSeq as _, Serializer};
@@ -84,12 +84,12 @@ mod serde_impls {
                 Value::Null => serializer.serialize_unit(),
                 Value::Bool(bool_value) => serializer.serialize_bool(*bool_value),
                 Value::Int(number) => match number {
-                    Number::I64(i64_value) => serializer.serialize_i64(*i64_value),
-                    Number::U64(u64_value) => serializer.serialize_u64(*u64_value),
-                    Number::I128(i128_value) => serializer.serialize_i128(*i128_value),
-                    Number::U128(u128_value) => serializer.serialize_u128(*u128_value),
+                    Integer::I64(i64_value) => serializer.serialize_i64(*i64_value),
+                    Integer::U64(u64_value) => serializer.serialize_u64(*u64_value),
+                    Integer::I128(i128_value) => serializer.serialize_i128(*i128_value),
+                    Integer::U128(u128_value) => serializer.serialize_u128(*u128_value),
                     // Fall back to string for very large integers.
-                    Number::BigIntStr(text) => serializer.serialize_str(text.as_ref()),
+                    Integer::BigIntStr(text) => serializer.serialize_str(text.as_ref()),
                 },
                 Value::Float(float_value) => serializer.serialize_f64(*float_value),
                 Value::String(string_value) => serializer.serialize_str(string_value.as_ref()),
@@ -154,28 +154,28 @@ mod serde_impls {
         where
             E: de::Error,
         {
-            Ok(Value::Int(Number::I64(v)))
+            Ok(Value::Int(Integer::I64(v)))
         }
 
         fn visit_i128<E>(self, v: i128) -> Result<Self::Value, E>
         where
             E: de::Error,
         {
-            Ok(Value::Int(Number::I128(v)))
+            Ok(Value::Int(Integer::I128(v)))
         }
 
         fn visit_u64<E>(self, v: u64) -> Result<Self::Value, E>
         where
             E: de::Error,
         {
-            Ok(Value::Int(Number::U64(v)))
+            Ok(Value::Int(Integer::U64(v)))
         }
 
         fn visit_u128<E>(self, v: u128) -> Result<Self::Value, E>
         where
             E: de::Error,
         {
-            Ok(Value::Int(Number::U128(v)))
+            Ok(Value::Int(Integer::U128(v)))
         }
 
         fn visit_f64<E>(self, v: f64) -> Result<Self::Value, E>
@@ -449,8 +449,8 @@ pub enum Value<'input> {
     /// A boolean value (`true` or `false`)
     Bool(bool),
 
-    /// An integer value represented using the flexible `Number` type.
-    Int(Number<'input>),
+    /// An integer value represented using the flexible `Integer` type.
+    Int(Integer<'input>),
 
     /// A floating-point value
     Float(f64),
@@ -530,7 +530,7 @@ mod tests {
         assert!(!Value::<'_>::Null.is_collection());
 
         assert!(Value::Bool(true).is_scalar());
-        assert!(Value::Int(Number::I64(42)).is_scalar());
+        assert!(Value::Int(Integer::I64(42)).is_scalar());
         assert!(Value::Float(1.5).is_scalar());
         assert!(Value::String(Cow::Borrowed("hello")).is_scalar());
 

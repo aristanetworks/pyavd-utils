@@ -26,7 +26,7 @@ use std::collections::HashSet;
 use crate::error::{ErrorKind, ParseError};
 use crate::event::{Event, Properties as EventProperties, Property as EventProperty, ScalarStyle};
 use crate::span::Span;
-use crate::value::{Node, Number, Properties as NodeProperties, Value};
+use crate::value::{Node, Integer, Properties as NodeProperties, Value};
 
 /// Parser that builds AST from a streaming source of events.
 ///
@@ -548,15 +548,15 @@ pub(crate) fn infer_scalar_type(value: Cow<'_, str>) -> Value<'_> {
                 }
                 NumericKind::Integer => {
                     if let Ok(int) = text.parse::<i64>() {
-                        return Value::Int(Number::I64(int));
+                        return Value::Int(Integer::I64(int));
                     }
                     if let Ok(int) = text.parse::<i128>() {
-                        return Value::Int(Number::I128(int));
+                        return Value::Int(Integer::I128(int));
                     }
                     if let Ok(uint) = text.parse::<u128>() {
-                        return Value::Int(Number::U128(uint));
+                        return Value::Int(Integer::U128(uint));
                     }
-                    return Value::Int(Number::BigIntStr(value));
+                    return Value::Int(Integer::BigIntStr(value));
                 }
                 NumericKind::NotNumeric => {}
             }
@@ -670,7 +670,7 @@ mod tests {
         assert!(errors.is_empty());
         assert!(matches!(
             &docs.first().unwrap().value,
-            Value::Int(Number::I64(42))
+            Value::Int(Integer::I64(42))
         ));
 
         let (docs_, errors_) = parse("3.45");
@@ -837,7 +837,7 @@ mod tests {
             ("true", |v| matches!(v, Value::Bool(true))),
             ("false", |v| matches!(v, Value::Bool(false))),
             ("null", |v| matches!(v, Value::Null)),
-            ("42", |v| matches!(v, Value::Int(Number::I64(42)))),
+            ("42", |v| matches!(v, Value::Int(Integer::I64(42)))),
             (
                 "3.14",
                 |v| matches!(v, Value::Float(f) if (*f - 3.14).abs() < 0.001),
@@ -864,10 +864,10 @@ mod tests {
             assert_eq!(pairs.len(), 2);
             // First pair
             assert!(matches!(&pairs[0].0.value, Value::String(s) if s == "a"));
-            assert!(matches!(&pairs[0].1.value, Value::Int(Number::I64(1))));
+            assert!(matches!(&pairs[0].1.value, Value::Int(Integer::I64(1))));
             // Second pair
             assert!(matches!(&pairs[1].0.value, Value::String(s) if s == "b"));
-            assert!(matches!(&pairs[1].1.value, Value::Int(Number::I64(2))));
+            assert!(matches!(&pairs[1].1.value, Value::Int(Integer::I64(2))));
         } else {
             panic!("Expected mapping, got: {:?}", nodes[0].value);
         }
@@ -907,9 +907,9 @@ mod tests {
 
         if let Value::Sequence(items) = &nodes[0].value {
             assert_eq!(items.len(), 3);
-            assert!(matches!(&items[0].value, Value::Int(Number::I64(1))));
-            assert!(matches!(&items[1].value, Value::Int(Number::I64(2))));
-            assert!(matches!(&items[2].value, Value::Int(Number::I64(3))));
+            assert!(matches!(&items[0].value, Value::Int(Integer::I64(1))));
+            assert!(matches!(&items[1].value, Value::Int(Integer::I64(2))));
+            assert!(matches!(&items[2].value, Value::Int(Integer::I64(3))));
         } else {
             panic!("Expected sequence, got: {:?}", nodes[0].value);
         }
@@ -988,7 +988,7 @@ mod tests {
             // First item is mapping
             if let Value::Mapping(pairs) = &items[0].value {
                 assert!(matches!(&pairs[0].0.value, Value::String(s) if s == "a"));
-                assert!(matches!(&pairs[0].1.value, Value::Int(Number::I64(1))));
+                assert!(matches!(&pairs[0].1.value, Value::Int(Integer::I64(1))));
             } else {
                 panic!("Expected mapping, got: {:?}", items[0].value);
             }
