@@ -8,7 +8,8 @@ use serde_json::Value;
 
 use crate::dict::DynamicKeyInfo;
 use crate::resolve::{errors::SchemaResolverError, resolve_ref::resolve_ref};
-use crate::{Schema, Store, any::AnySchema, dict::Dict};
+use crate::store::SchemaStoreError;
+use crate::{Store, any::AnySchema, dict::Dict};
 
 // Keys that are accepted by the schema from either keys or dynamic keys.
 #[derive(Debug, PartialEq)]
@@ -21,8 +22,7 @@ impl SchemaKey {
     /// "eos_config#/keys/somekey/items/" or
     /// "avd_design#/dynamic_keys/connected_endpoint_keys.key"
     /// For dynamic keys the first item of the path is replaced with with dynamic key path.
-    pub fn get_schema_ref_from_path(&self, schema: &Schema, data_path: &[String]) -> String {
-        let schema_name: String = (*schema).into();
+    pub fn get_schema_ref_from_path(&self, schema_name: &str, data_path: &[String]) -> String {
         let mut path = data_path.iter();
         let mut schema_ref = format!("{schema_name}#");
         match path.next() {
@@ -99,20 +99,21 @@ pub enum SchemaKeysError {
 
 #[derive(Debug, derive_more::From)]
 pub enum GetSchemaFromPathError {
-    SchemaKeys(SchemaKeysError),
-    SchemaResolve(SchemaResolverError),
+    StoreError(SchemaStoreError),
+    Keys(SchemaKeysError),
+    Resolve(SchemaResolverError),
 }
 /// Given a data path return the schema covering this.
 /// Assumes that dynamic keys can only exist at the root level.
 /// Assumes that the root level is a dict.
 pub fn get_schema_from_path<'a>(
-    schema_id: Schema,
+    schema_name: &str,
     store: &'a Store,
     data_path: &'_ [String],
     data_value: &'_ Value,
 ) -> Result<Option<&'a AnySchema>, GetSchemaFromPathError> {
     let mut path = data_path.iter();
-    let schema = store.get(schema_id);
+    let schema = store.get(schema_name)?;
     match path.next() {
         None => Ok(Some(schema)),
         Some(root_key) => {
@@ -120,7 +121,7 @@ pub fn get_schema_from_path<'a>(
             match schema_keys.keys.get(root_key) {
                 None => Ok(None),
                 Some(schema_key) => {
-                    let schema_ref = schema_key.get_schema_ref_from_path(&schema_id, data_path);
+                    let schema_ref = schema_key.get_schema_ref_from_path(schema_name, data_path);
                     Ok(Some(resolve_ref(&schema_ref, store)?))
                 }
             }
@@ -235,12 +236,12 @@ mod tests {
         let value = json!(
             {"dynamic": [ {"key": "one"}, {"key": "two"}, {"key": "three"}]});
         let store = get_test_store();
-        let result = get_schema_from_path(Schema::EOSConfig, &store, &[], &value);
+        let result = get_schema_from_path("eos_config", &store, &[], &value);
         assert!(result.is_ok());
         let opt = result.unwrap();
         assert!(opt.is_some());
         let schema = opt.unwrap();
-        assert_eq!(schema, &store.eos_config);
+        assert_eq!(schema, store.get("eos_config").unwrap());
     }
 
     #[test]
@@ -248,8 +249,7 @@ mod tests {
         let value = json!(
             {"dynamic": [ {"key": "one"}, {"key": "two"}, {"key": "three"}]});
         let store = get_test_store();
-        let result =
-            get_schema_from_path(Schema::EOSConfig, &store, &["key2".into()], &value);
+        let result = get_schema_from_path("eos_config", &store, &["key2".into()], &value);
         assert!(result.is_ok());
         let opt = result.unwrap();
         assert!(opt.is_some());
@@ -267,7 +267,7 @@ mod tests {
         let value = json!(
             {"dynamic": [ {"key": "one"}, {"key": "two"}, {"key": "three"}]});
         let store = get_test_store();
-        let result = get_schema_from_path(Schema::EOSConfig, &store, &["two".into()], &value);
+        let result = get_schema_from_path("eos_config", &store, &["two".into()], &value);
         assert!(result.is_ok());
         let opt = result.unwrap();
         assert!(opt.is_some());

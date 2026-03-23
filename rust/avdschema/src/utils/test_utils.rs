@@ -20,9 +20,9 @@ pub(crate) fn get_tmp_file(filename: &str) -> PathBuf {
 }
 
 pub(crate) fn get_test_store() -> Store {
-    Store {
-        eos_config: AnySchema::deserialize(json!(
-            {
+    Store::deserialize(json!(
+        {
+            "eos_config": {
                 "type": "dict",
                 "keys": {
                     "key1": {
@@ -40,23 +40,17 @@ pub(crate) fn get_test_store() -> Store {
                         "max": 10,
                     },
                 },
-            }
-        ))
-        .unwrap(),
-        avd_design: AnySchema::deserialize(json!(
-            {
-            "type": "dict",
-            "keys": {
-                "key3": {
-                    "type": "str",
-                    "$ref": "eos_cli_config_gen#/keys/key2",
+            },
+            "avd_design": {
+                "type": "dict",
+                "keys": {
+                    "key3": {
+                        "type": "str",
+                        "$ref": "eos_cli_config_gen#/keys/key2",
+                    }
                 }
-            }
-            }
-        ))
-        .unwrap(),
-        cv_deploy: Some(
-            AnySchema::deserialize(json!({
+            },
+            "cv_deploy": {
                 "type": "dict",
                 "keys": {
                     "key4": {
@@ -68,10 +62,10 @@ pub(crate) fn get_test_store() -> Store {
                         "$ref": "cv_deploy#/keys/key4",
                     }
                 }
-            }))
-            .unwrap(),
-        ),
-    }
+            }
+        }
+    ))
+    .unwrap()
 }
 
 pub(crate) fn get_test_dict_schema_with_refs() -> AnySchema {
@@ -260,6 +254,7 @@ fn init_avd_store() -> Store {
     Store::from_file(Some(test_schema_store::get_store_gz_path()))
         .unwrap()
         .as_resolved()
+        .unwrap()
 }
 
 pub(crate) fn get_avd_store() -> &'static Store {

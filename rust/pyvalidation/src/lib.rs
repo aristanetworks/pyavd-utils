@@ -172,13 +172,18 @@ pub mod validation {
         info!("Initialize the schema store from file.");
 
         // Load the store from path including resolving the $refs where applicable.
-        let store = Store::from_file(Some(&file))
-            .map(|store| store.as_resolved())
-            .map_err(|err| {
+        let store = {
+            let store = Store::from_file(Some(&file)).map_err(|err| {
                 pyo3::exceptions::PyRuntimeError::new_err(format!(
                     "Error while loading the Schema Store from file: {err}",
                 ))
             })?;
+            store.as_resolved().map_err(|err| {
+                pyo3::exceptions::PyRuntimeError::new_err(format!(
+                    "Error while resolving the Schema Store: {err}",
+                ))
+            })
+        }?;
 
         // Insert the resolved store into the OnceLock.
         STORE.set(store).map_err(|_| {
@@ -217,11 +222,14 @@ pub mod validation {
             // The Value here will be in-place coerced to the correct data types.
             let mut data_as_value = serde_json::from_str::<serde_json::Value>(data_as_json)
                 .map_err(|err| PyRuntimeError::new_err(format!("Invalid JSON in data: {err}")))?;
-
             debug!("pyvalidation::get_validated_data Deserialization Done");
+
             let config = configuration.map(Into::into);
-            let validation_result =
-                get_store()?.validate_value(&mut data_as_value, schema_name, config.as_ref());
+            let validation_result = get_store()?
+                .validate_value(&mut data_as_value, schema_name, config.as_ref())
+                .map_err(|err| {
+                    PyRuntimeError::new_err(format!("Error while validating the data: {err}"))
+                })?;
             debug!("pyvalidation::get_validated_data Validation Done");
             let validated_data = if validation_result.errors.is_empty() {
                 Some(serde_json::to_string(&data_as_value).map_err(|err| {
@@ -336,9 +344,7 @@ mod tests {
                 let args = ();
                 let kwargs = pyo3::types::PyDict::new(py);
                 kwargs.set_item("data_as_json", data_as_json_str).unwrap();
-                kwargs
-                    .set_item("schema_name", "eos_config")
-                    .unwrap();
+                kwargs.set_item("schema_name", "eos_config").unwrap();
                 module
                     .call_method("validate_json", args, Some(&kwargs))
                     .unwrap()
@@ -394,9 +400,7 @@ mod tests {
                 let args = ();
                 let kwargs = pyo3::types::PyDict::new(py);
                 kwargs.set_item("data_as_json", "invalid_json").unwrap();
-                kwargs
-                    .set_item("schema_name", "eos_config")
-                    .unwrap();
+                kwargs.set_item("schema_name", "eos_config").unwrap();
                 module
                     .call_method("validate_json", args, Some(&kwargs))
                     .unwrap_err()
@@ -510,9 +514,7 @@ mod tests {
                 let args = ();
                 let kwargs = pyo3::types::PyDict::new(py);
                 kwargs.set_item("data_as_json", data_as_json_str).unwrap();
-                kwargs
-                    .set_item("schema_name", "eos_config")
-                    .unwrap();
+                kwargs.set_item("schema_name", "eos_config").unwrap();
                 module
                     .call_method("get_validated_data", args, Some(&kwargs))
                     .unwrap()
@@ -542,9 +544,7 @@ mod tests {
                 let args = ();
                 let kwargs = pyo3::types::PyDict::new(py);
                 kwargs.set_item("data_as_json", data_as_json_str).unwrap();
-                kwargs
-                    .set_item("schema_name", "eos_config")
-                    .unwrap();
+                kwargs.set_item("schema_name", "eos_config").unwrap();
                 module
                     .call_method("get_validated_data", args, Some(&kwargs))
                     .unwrap()
@@ -588,9 +588,7 @@ mod tests {
             let config = {
                 let args = ();
                 let kwargs = pyo3::types::PyDict::new(py);
-                kwargs
-                    .set_item("warn_eos_config_keys", true)
-                    .unwrap();
+                kwargs.set_item("warn_eos_config_keys", true).unwrap();
                 module
                     .call_method("Configuration", args, Some(&kwargs))
                     .unwrap()
