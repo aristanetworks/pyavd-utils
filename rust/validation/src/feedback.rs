@@ -173,9 +173,6 @@ pub enum Violation {
     /// The dictionary key is required, but was not set.
     #[display("Missing the required key '{key}'.")]
     MissingRequiredKey { key: String },
-    /// The given schema name was not found in the schema store.
-    #[display("Invalid Schema name '{schema}'.")]
-    InvalidSchema { schema: String },
     /// The value is not of the expected type.
     #[display("Invalid type '{found}'. Expected '{expected}'.")]
     InvalidType { expected: Type, found: Type },
