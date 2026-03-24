@@ -9,10 +9,7 @@ use derive_more::Display;
 
 /// An error encountered during YAML parsing.
 ///
-/// Errors include their source span, enabling accurate error reporting
-/// with line/column information.
-///
-/// # Span Coordinates
+/// Errors include their source span, enabling accurate error reporting.
 ///
 /// The `span` field contains byte offsets relative to the original input.
 #[derive(Debug, Clone, PartialEq)]

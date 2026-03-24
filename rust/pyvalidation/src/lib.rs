@@ -25,7 +25,10 @@ pub mod validation {
         types::PyModule,
     };
     use std::path::PathBuf;
-    use validation::{Context, StoreValidate as _, StoreValidateInput as _, Validation as _};
+    use validation::{
+        Context, StoreValidate as _, StoreValidateInput as _, Validation as _,
+        feedback::InputDiagnostic,
+    };
 
     fn get_store() -> PyResult<&'static Store> {
         STORE.get().ok_or_else(|| {
@@ -212,9 +215,11 @@ pub mod validation {
             .map_err(|err| {
                 PyRuntimeError::new_err(format!("Error while validating the data: {err}"))
             })?;
-        if let Some(diagnostic) = output.input_diagnostics.first() {
+        if let Some(InputDiagnostic::ParseDiagnostic(diagnostic)) = output.input_diagnostics.first()
+        {
             return Err(PyRuntimeError::new_err(format!(
-                "Invalid JSON in data: {diagnostic}"
+                "Invalid JSON in data: {}",
+                diagnostic.message
             )));
         }
         output.document.result.try_into()

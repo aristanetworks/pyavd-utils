@@ -128,8 +128,7 @@ pub struct Feedback<T: Clone + Debug + PartialEq + Serialize + Display> {
 /// Input-wide diagnostic found while decoding or selecting the input.
 #[derive(Clone, Debug, PartialEq, Serialize, derive_more::Display)]
 pub enum InputDiagnostic {
-    JsonParse(ParseDiagnostic),
-    YamlParse(ParseDiagnostic),
+    ParseDiagnostic(ParseDiagnostic),
 }
 
 /// Validation issue is wrapped in Feedback and added to the Context during coercion and validation.

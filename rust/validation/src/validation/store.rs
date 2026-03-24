@@ -105,7 +105,7 @@ impl StoreValidateInput for Store {
             Ok(value) => value,
             Err(parse_error) => {
                 return Ok(InputValidationResult {
-                    input_diagnostics: vec![InputDiagnostic::JsonParse(
+                    input_diagnostics: vec![InputDiagnostic::ParseDiagnostic(
                         ParseDiagnostic::from_json_error(&parse_error, json),
                     )],
                     document: empty_validation_output(),
@@ -139,7 +139,7 @@ impl StoreValidateInput for Store {
 
         let input_diagnostics = parse_errors
             .into_iter()
-            .map(|parse_error| InputDiagnostic::YamlParse(ParseDiagnostic::from(parse_error)))
+            .map(|parse_error| InputDiagnostic::ParseDiagnostic(ParseDiagnostic::from(parse_error)))
             .collect();
 
         let mut documents = Vec::with_capacity(yaml_docs.len());
@@ -232,7 +232,7 @@ mod tests {
         assert!(output.input_diagnostics.iter().any(|diagnostic| {
             matches!(
                 diagnostic,
-                InputDiagnostic::YamlParse(parse_diagnostic)
+                InputDiagnostic::ParseDiagnostic(parse_diagnostic)
                     if parse_diagnostic.kind == ParseDiagnosticKind::YamlSyntax
                         && parse_diagnostic.span.end >= parse_diagnostic.span.start
             )
@@ -287,7 +287,7 @@ mod tests {
         assert!(result.document.result.infos.is_empty());
         assert!(matches!(
             result.input_diagnostics.as_slice(),
-            [InputDiagnostic::JsonParse(parse_diagnostic)]
+            [InputDiagnostic::ParseDiagnostic(parse_diagnostic)]
                 if parse_diagnostic.kind == ParseDiagnosticKind::JsonSyntax
                     && parse_diagnostic.span.start <= input.len()
                     && parse_diagnostic.span.end <= input.len()
