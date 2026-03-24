@@ -4,7 +4,10 @@
 
 use avdschema::Store;
 
-use crate::feedback::{ErrorIssue, Feedback, InfoIssue, Path, Violation, WarningIssue};
+use crate::{
+    feedback::{Feedback, InfoIssue, Path, ValidationDiagnostic, Violation, WarningIssue},
+    validatable::ValidatableValue,
+};
 
 /// The Context object is passed along during coercion and validation.
 /// All coercions and violations will be registered in the context with the path carried in the context.
@@ -26,33 +29,56 @@ impl<'a> Context<'a> {
             state: Default::default(),
         }
     }
-    pub(crate) fn add_error(&mut self, error: impl Into<ErrorIssue>) {
+    pub(crate) fn add_error_for<V: ValidatableValue>(
+        &mut self,
+        value: &V,
+        error: impl Into<ValidationDiagnostic>,
+    ) {
         self.result.errors.push(Feedback {
             path: self.state.path.to_owned(),
+            span: value.source_span(),
             issue: error.into(),
         });
     }
 
-    pub(crate) fn add_warning(&mut self, warning: impl Into<WarningIssue>) {
+    pub(crate) fn add_warning_for<V: ValidatableValue>(
+        &mut self,
+        value: &V,
+        warning: impl Into<WarningIssue>,
+    ) {
         self.result.warnings.push(Feedback {
             path: self.state.path.to_owned(),
+            span: value.source_span(),
             issue: warning.into(),
         });
     }
 
-    pub(crate) fn add_info(&mut self, info: impl Into<InfoIssue>) {
+    pub(crate) fn add_info_for<V: ValidatableValue>(
+        &mut self,
+        value: &V,
+        info: impl Into<InfoIssue>,
+    ) {
         self.result.infos.push(Feedback {
             path: self.state.path.to_owned(),
+            span: value.source_span(),
             issue: info.into(),
         });
     }
 
-    pub(crate) fn add_duplicate_violation_pair(&mut self, trail_a: &[String], trail_b: &[String]) {
+    pub(crate) fn add_duplicate_violation_pair_for<A: ValidatableValue, B: ValidatableValue>(
+        &mut self,
+        value_a: &A,
+        trail_a: &[String],
+        value_b: &B,
+        trail_b: &[String],
+    ) {
         // Violation from A's perspective (A sees B as duplicate)
         let violation_a = Feedback {
             path: self.state.path.clone_with_slice(trail_a),
+            span: value_a.source_span(),
             issue: Violation::ValueNotUnique {
                 other_path: self.state.path.clone_with_slice(trail_b),
+                other_span: value_b.source_span(),
             }
             .into(),
         };
@@ -60,8 +86,10 @@ impl<'a> Context<'a> {
         // Violation from B's perspective (B sees A as duplicate)
         let violation_b = Feedback {
             path: self.state.path.clone_with_slice(trail_b),
+            span: value_b.source_span(),
             issue: Violation::ValueNotUnique {
                 other_path: self.state.path.clone_with_slice(trail_a),
+                other_span: value_a.source_span(),
             }
             .into(),
         };
@@ -99,7 +127,7 @@ pub struct Configuration {
 
 #[derive(Clone, Debug, Default)]
 pub struct ValidationResult {
-    pub errors: Vec<Feedback<ErrorIssue>>,
+    pub errors: Vec<Feedback<ValidationDiagnostic>>,
     pub warnings: Vec<Feedback<WarningIssue>>,
     pub infos: Vec<Feedback<InfoIssue>>,
 }

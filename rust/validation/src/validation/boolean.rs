@@ -28,10 +28,13 @@ impl Validation for Bool {
                 .return_coerced_data
                 .then(|| value.coerce_null())
         } else {
-            ctx.add_error(Violation::InvalidType {
-                expected: Type::Bool,
-                found: value.value_type(),
-            });
+            ctx.add_error_for(
+                value,
+                Violation::InvalidType {
+                    expected: Type::Bool,
+                    found: value.value_type(),
+                },
+            );
             None
         }
     }
@@ -78,6 +81,7 @@ mod tests {
             ctx.result.errors,
             vec![Feedback {
                 path: vec![].into(),
+                span: None,
                 issue: Violation::InvalidType {
                     expected: Type::Bool,
                     found: Type::List,

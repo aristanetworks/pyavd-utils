@@ -180,6 +180,10 @@ impl<'input> ValidatableValue for Node<'input> {
     fn is_float(&self) -> bool {
         matches!(self.value, Value::Float(_))
     }
+
+    fn source_span(&self) -> Option<crate::feedback::SourceSpan> {
+        Some(self.span.into())
+    }
 }
 
 // === Wrapper for yaml_parser Mapping ===

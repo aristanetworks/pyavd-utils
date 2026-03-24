@@ -18,7 +18,7 @@
 
 use std::borrow::Cow;
 
-use crate::feedback::Type;
+use crate::feedback::{SourceSpan, Type};
 
 /// A value that can be validated against a schema.
 ///
@@ -104,6 +104,11 @@ pub trait ValidatableValue: Sized {
 
     /// Returns true if this value is a float.
     fn is_float(&self) -> bool;
+
+    /// Get the source span for this value, if available.
+    fn source_span(&self) -> Option<SourceSpan> {
+        None
+    }
 
     // === Path navigation ===
 

@@ -18,9 +18,9 @@ impl Validation for Int {
         if let Some(v) = value.as_i64() {
             // Emit coercion info if the original value was not an int
             emit_coercion_info(value, v, ctx);
-            self.valid_values.validate(&v, ctx);
-            validate_min(self, &v, ctx);
-            validate_max(self, &v, ctx);
+            self.valid_values.validate(value, &v, ctx);
+            validate_min(self, value, &v, ctx);
+            validate_max(self, value, &v, ctx);
             validate_ref(self, value, ctx);
             if ctx.configuration.return_coerced_data {
                 Some(value.coerce_int(v))
@@ -33,10 +33,13 @@ impl Validation for Int {
                 .return_coerced_data
                 .then(|| value.coerce_null())
         } else {
-            ctx.add_error(Violation::InvalidType {
-                expected: Type::Int,
-                found: value.value_type(),
-            });
+            ctx.add_error_for(
+                value,
+                Violation::InvalidType {
+                    expected: Type::Int,
+                    found: value.value_type(),
+                },
+            );
             None
         }
     }
@@ -56,31 +59,40 @@ fn emit_coercion_info<V: ValidatableValue>(value: &V, coerced_value: i64, ctx: &
     if !ctx.configuration.return_coercion_infos || value.is_int() {
         return;
     }
-    ctx.add_info(CoercionNote {
-        found: value.to_feedback_value(),
-        made: coerced_value.into(),
-    });
+    ctx.add_info_for(
+        value,
+        CoercionNote {
+            found: value.to_feedback_value(),
+            made: coerced_value.into(),
+        },
+    );
 }
 
-fn validate_min(schema: &Int, input: &i64, ctx: &mut Context) {
+fn validate_min<V: ValidatableValue>(schema: &Int, value: &V, input: &i64, ctx: &mut Context) {
     if let Some(min) = schema.min
         && min > *input
     {
-        ctx.add_error(Violation::ValueBelowMinimum {
-            minimum: min,
-            found: *input,
-        });
+        ctx.add_error_for(
+            value,
+            Violation::ValueBelowMinimum {
+                minimum: min,
+                found: *input,
+            },
+        );
     }
 }
 
-fn validate_max(schema: &Int, input: &i64, ctx: &mut Context) {
+fn validate_max<V: ValidatableValue>(schema: &Int, value: &V, input: &i64, ctx: &mut Context) {
     if let Some(max) = schema.max
         && max < *input
     {
-        ctx.add_error(Violation::ValueAboveMaximum {
-            maximum: max,
-            found: *input,
-        });
+        ctx.add_error_for(
+            value,
+            Violation::ValueAboveMaximum {
+                maximum: max,
+                found: *input,
+            },
+        );
     }
 }
 
@@ -117,6 +129,7 @@ mod tests {
             ctx.result.errors,
             vec![Feedback {
                 path: vec![].into(),
+                span: None,
                 issue: Violation::InvalidType {
                     expected: Type::Int,
                     found: Type::Dict,
@@ -143,6 +156,7 @@ mod tests {
             ctx.result.infos,
             vec![Feedback {
                 path: vec![].into(),
+                span: None,
                 issue: CoercionNote {
                     found: "123".into(),
                     made: 123.into()
@@ -165,6 +179,7 @@ mod tests {
             ctx.result.errors,
             vec![Feedback {
                 path: vec![].into(),
+                span: None,
                 issue: Violation::InvalidType {
                     expected: Type::Int,
                     found: Type::Str
@@ -193,6 +208,7 @@ mod tests {
             ctx.result.infos,
             vec![Feedback {
                 path: vec![].into(),
+                span: None,
                 issue: CoercionNote {
                     found: true.into(),
                     made: 1.into()
@@ -211,6 +227,7 @@ mod tests {
             ctx.result.infos,
             vec![Feedback {
                 path: vec![].into(),
+                span: None,
                 issue: CoercionNote {
                     found: false.into(),
                     made: 0.into()
@@ -251,6 +268,7 @@ mod tests {
             ctx.result.errors,
             vec![Feedback {
                 path: vec![].into(),
+                span: None,
                 issue: Violation::InvalidValue {
                     expected: vec![123].into(),
                     found: input.into()
@@ -288,6 +306,7 @@ mod tests {
             ctx.result.errors,
             vec![Feedback {
                 path: vec![].into(),
+                span: None,
                 issue: Violation::ValueBelowMinimum {
                     minimum: 122,
                     found: 121
@@ -325,6 +344,7 @@ mod tests {
             ctx.result.errors,
             vec![Feedback {
                 path: vec![].into(),
+                span: None,
                 issue: Violation::ValueAboveMaximum {
                     maximum: 124,
                     found: 125

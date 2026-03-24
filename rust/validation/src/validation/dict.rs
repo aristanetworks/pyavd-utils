@@ -35,17 +35,20 @@ impl Validation for Dict {
         if let Some(mapping) = value.as_mapping() {
             validate_ref(self, value, ctx);
             let coerced_items = validate_keys(self, &mapping, ctx);
-            validate_required_keys(self, &mapping, ctx);
+            validate_required_keys(self, value, &mapping, ctx);
             coerced_items.map(|items| value.coerce_mapping(items))
         } else if value.is_null() && !ctx.configuration.restrict_null_values {
             ctx.configuration
                 .return_coerced_data
                 .then(|| value.coerce_null())
         } else {
-            ctx.add_error(Violation::InvalidType {
-                expected: Type::Dict,
-                found: value.value_type(),
-            });
+            ctx.add_error_for(
+                value,
+                Violation::InvalidType {
+                    expected: Type::Dict,
+                    found: value.value_type(),
+                },
+            );
             None
         }
     }
@@ -77,6 +80,7 @@ fn validate_ref<V: ValidatableValue>(schema: &Dict, value: &V, ctx: &mut Context
 fn check_deprecation<'a, M: ValidatableMapping<'a>>(
     _key: &str,
     key_schema: &AnySchema,
+    input_value: &M::Value,
     parent_dict_input: &M,
     ctx: &mut Context,
 ) -> bool {
@@ -84,13 +88,16 @@ fn check_deprecation<'a, M: ValidatableMapping<'a>>(
         && deprecation.warning
     {
         if deprecation.removed.unwrap_or_default() {
-            ctx.add_error(Violation::Removed(Removed::from_schema(
-                &ctx.state.path,
-                deprecation,
-            )));
+            ctx.add_error_for(
+                input_value,
+                Violation::Removed(Removed::from_schema(&ctx.state.path, deprecation)),
+            );
             true
         } else {
-            ctx.add_warning(Deprecated::from_schema(&ctx.state.path, deprecation));
+            ctx.add_warning_for(
+                input_value,
+                Deprecated::from_schema(&ctx.state.path, deprecation),
+            );
             if !deprecation.allow_with_new_key.unwrap_or_default()
                 && let Some(schema_new_key) = deprecation.new_key.as_ref()
             {
@@ -110,10 +117,13 @@ fn check_deprecation<'a, M: ValidatableMapping<'a>>(
                             root_value.path_exists(&rest_of_path.join("."))
                         };
                         if exists {
-                            ctx.add_error(Violation::DeprecatedConflict {
-                                other_path: new_key.into(),
-                                url: deprecation.url.to_owned().into(),
-                            });
+                            ctx.add_error_for(
+                                input_value,
+                                Violation::DeprecatedConflict {
+                                    other_path: new_key.into(),
+                                    url: deprecation.url.to_owned().into(),
+                                },
+                            );
                         }
                     }
                 });
@@ -294,7 +304,7 @@ fn validate_keys<'a, M: ValidatableMapping<'a>>(
 
         // Determine what to do with this key
         let include_in_output = if let Some(key_schema) = keys.get(input_key_str) {
-            if !check_deprecation(input_key_str, key_schema, input, ctx) {
+            if !check_deprecation(input_key_str, key_schema, input_value, input, ctx) {
                 if let Some(ref mut items) = coerced_items {
                     let coerced = key_schema
                         .validate(input_value, ctx)
@@ -309,7 +319,7 @@ fn validate_keys<'a, M: ValidatableMapping<'a>>(
             }
             false // Already handled
         } else if let Some(key_schema) = find_dynamic_key_schema(schema, input, input_key_str) {
-            if !check_deprecation(input_key_str, key_schema, input, ctx) {
+            if !check_deprecation(input_key_str, key_schema, input_value, input, ctx) {
                 if let Some(ref mut items) = coerced_items {
                     let coerced = key_schema
                         .validate(input_value, ctx)
@@ -327,7 +337,7 @@ fn validate_keys<'a, M: ValidatableMapping<'a>>(
             true
         } else if !schema.allow_other_keys.unwrap_or_default() {
             // Key is not part of the schema and does not start with underscore
-            ctx.add_error(Violation::UnexpectedKey());
+            ctx.add_error_for(input_value, Violation::UnexpectedKey());
             true // Include the value in output (error is recorded)
         } else {
             if let Some(eos_config_keys) = &eos_config_keys
@@ -336,7 +346,7 @@ fn validate_keys<'a, M: ValidatableMapping<'a>>(
             {
                 // Key is not in avd_design schema but is in eos_config_keys
                 // and allow_other_keys is true - emit a warning that it will be ignored
-                ctx.add_warning(IgnoredEosConfigKey {});
+                ctx.add_warning_for(input_value, IgnoredEosConfigKey {});
             }
             true // allow_other_keys is true - include as-is
         };
@@ -353,6 +363,7 @@ fn validate_keys<'a, M: ValidatableMapping<'a>>(
 
 fn validate_required_keys<'a, M: ValidatableMapping<'a>>(
     schema: &Dict,
+    value: &M::Value,
     input: &M,
     ctx: &mut Context,
 ) {
@@ -365,9 +376,12 @@ fn validate_required_keys<'a, M: ValidatableMapping<'a>>(
     if let Some(keys) = &schema.keys {
         for (key, key_schema) in keys {
             if key_schema.is_required() && !input.contains_key(key) {
-                ctx.add_error(Violation::MissingRequiredKey {
-                    key: key.to_string(),
-                });
+                ctx.add_error_for(
+                    value,
+                    Violation::MissingRequiredKey {
+                        key: key.to_string(),
+                    },
+                );
             }
         }
     }
@@ -410,6 +424,7 @@ mod tests {
             ctx.result.errors,
             vec![Feedback {
                 path: vec![].into(),
+                span: None,
                 issue: Violation::InvalidType {
                     expected: Type::Dict,
                     found: Type::Bool
@@ -454,6 +469,7 @@ mod tests {
             vec![
                 Feedback {
                     path: vec!["foo".into()].into(),
+                    span: None,
                     issue: Violation::InvalidType {
                         expected: Type::Str,
                         found: Type::List
@@ -462,6 +478,7 @@ mod tests {
                 },
                 Feedback {
                     path: vec!["bar".into()].into(),
+                    span: None,
                     issue: Violation::InvalidType {
                         expected: Type::Int,
                         found: Type::Str
@@ -496,6 +513,7 @@ mod tests {
             vec![
                 Feedback {
                     path: vec!["foo".into()].into(),
+                    span: None,
                     issue: CoercionNote {
                         found: 321.into(),
                         made: "321".into()
@@ -504,6 +522,7 @@ mod tests {
                 },
                 Feedback {
                     path: vec!["bar".into()].into(),
+                    span: None,
                     issue: CoercionNote {
                         found: "123".into(),
                         made: 123.into()
@@ -600,6 +619,7 @@ mod tests {
             vec![
                 Feedback {
                     path: vec!["dynkey1".into()].into(),
+                    span: None,
                     issue: Violation::ValueAboveMaximum {
                         maximum: 10,
                         found: 11
@@ -608,6 +628,7 @@ mod tests {
                 },
                 Feedback {
                     path: vec!["dynkey2".into()].into(),
+                    span: None,
                     issue: Violation::InvalidType {
                         expected: Type::Int,
                         found: Type::Str
@@ -696,6 +717,7 @@ mod tests {
             vec![
                 Feedback {
                     path: vec!["dynkey1".into(), "sub_key".into()].into(),
+                    span: None,
                     issue: Violation::ValueAboveMaximum {
                         maximum: 10,
                         found: 11
@@ -704,10 +726,12 @@ mod tests {
                 },
                 Feedback {
                     path: vec!["dynkey1".into(), "bad_key".into()].into(),
+                    span: None,
                     issue: Violation::UnexpectedKey {}.into()
                 },
                 Feedback {
                     path: vec!["dynkey2".into()].into(),
+                    span: None,
                     issue: Violation::InvalidType {
                         expected: Type::Dict,
                         found: Type::Str
@@ -747,6 +771,7 @@ mod tests {
             ctx.result.errors,
             vec![Feedback {
                 path: vec!["foo1".into()].into(),
+                span: None,
                 issue: Violation::UnexpectedKey().into()
             }]
         )
@@ -806,6 +831,7 @@ mod tests {
             ctx.result.warnings,
             vec![Feedback {
                 path: vec!["foo".into()].into(),
+                span: None,
                 issue: WarningIssue::Deprecated(Deprecated {
                     path: vec!["foo".into()].into(),
                     replacement: None.into(),
@@ -820,6 +846,7 @@ mod tests {
             ctx.result.errors,
             vec![Feedback {
                 path: vec!["foo".into()].into(),
+                span: None,
                 issue: Violation::LengthBelowMinimum {
                     minimum: 5,
                     found: 3
@@ -855,6 +882,7 @@ mod tests {
             ctx.result.errors,
             vec![Feedback {
                 path: vec!["foo".into()].into(),
+                span: None,
                 issue: Violation::Removed(Removed {
                     path: vec!["foo".into()].into(),
                     replacement: None.into(),
@@ -922,6 +950,7 @@ mod tests {
             ctx.result.warnings,
             vec![Feedback {
                 path: vec!["old_key".into()].into(),
+                span: None,
                 issue: WarningIssue::Deprecated(Deprecated {
                     path: vec!["old_key".into()].into(),
                     replacement: Some("new_key".into()).into(),
@@ -965,6 +994,7 @@ mod tests {
             ctx.result.warnings,
             vec![Feedback {
                 path: vec!["old_key".into()].into(),
+                span: None,
                 issue: WarningIssue::Deprecated(Deprecated {
                     path: vec!["old_key".into()].into(),
                     replacement: Some("new_key".into()).into(),
@@ -978,6 +1008,7 @@ mod tests {
             ctx.result.errors,
             vec![Feedback {
                 path: vec!["old_key".into()].into(),
+                span: None,
                 issue: Violation::DeprecatedConflict {
                     other_path: "new_key".into(),
                     url: None.into()
@@ -1018,6 +1049,7 @@ mod tests {
             ctx.result.warnings,
             vec![Feedback {
                 path: vec!["old_key".into()].into(),
+                span: None,
                 issue: WarningIssue::Deprecated(Deprecated {
                     path: vec!["old_key".into()].into(),
                     replacement: Some("new_key".into()).into(),
@@ -1031,6 +1063,7 @@ mod tests {
             ctx.result.errors,
             vec![Feedback {
                 path: vec!["old_key".into()].into(),
+                span: None,
                 issue: Violation::DeprecatedConflict {
                     other_path: "new_key".into(),
                     url: None.into()
@@ -1071,6 +1104,7 @@ mod tests {
             ctx.result.infos,
             vec![Feedback {
                 path: vec!["foo".into()].into(),
+                span: None,
                 issue: CoercionNote {
                     found: true.into(),
                     made: "True".into()
@@ -1106,6 +1140,7 @@ mod tests {
             ctx.result.errors,
             vec![Feedback {
                 path: vec![].into(),
+                span: None,
                 issue: Violation::MissingRequiredKey { key: "foo".into() }.into()
             }]
         )
@@ -1170,6 +1205,7 @@ mod tests {
             ctx.result.errors,
             vec![Feedback {
                 path: vec!["deeper".into()].into(),
+                span: None,
                 issue: Violation::MissingRequiredKey { key: "foo".into() }.into()
             }]
         )

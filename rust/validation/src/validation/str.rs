@@ -20,11 +20,11 @@ impl Validation for Str {
             // Emit coercion info if original was not a string
             emit_coercion_info(value, &s, ctx);
             // Apply convert_to_lower_case if specified
-            let s = convert_to_lower_case(self, s, ctx);
-            self.valid_values.validate(&s, ctx);
-            validate_min_length(self, &s, ctx);
-            validate_max_length(self, &s, ctx);
-            validate_pattern(self, &s, ctx);
+            let s = convert_to_lower_case(self, value, s, ctx);
+            self.valid_values.validate(value, &s, ctx);
+            validate_min_length(self, value, &s, ctx);
+            validate_max_length(self, value, &s, ctx);
+            validate_pattern(self, value, &s, ctx);
             validate_ref(self, value, ctx);
             if ctx.configuration.return_coerced_data {
                 Some(value.coerce_str(s))
@@ -37,10 +37,13 @@ impl Validation for Str {
                 .return_coerced_data
                 .then(|| value.coerce_null())
         } else {
-            ctx.add_error(Violation::InvalidType {
-                expected: Type::Str,
-                found: value.value_type(),
-            });
+            ctx.add_error_for(
+                value,
+                Violation::InvalidType {
+                    expected: Type::Str,
+                    found: value.value_type(),
+                },
+            );
             None
         }
     }
@@ -51,21 +54,32 @@ fn emit_coercion_info<V: ValidatableValue>(value: &V, coerced_str: &str, ctx: &m
     if !ctx.configuration.return_coercion_infos || value.is_str() {
         return;
     }
-    ctx.add_info(CoercionNote {
-        found: value.to_feedback_value(),
-        made: coerced_str.to_owned().into(),
-    });
+    ctx.add_info_for(
+        value,
+        CoercionNote {
+            found: value.to_feedback_value(),
+            made: coerced_str.to_owned().into(),
+        },
+    );
 }
 
-fn convert_to_lower_case(schema: &Str, s: String, ctx: &mut Context) -> String {
+fn convert_to_lower_case<V: ValidatableValue>(
+    schema: &Str,
+    value: &V,
+    s: String,
+    ctx: &mut Context,
+) -> String {
     if schema.convert_to_lower_case.unwrap_or_default() {
         let lower = s.to_lowercase();
         if lower != s {
             if ctx.configuration.return_coercion_infos {
-                ctx.add_info(CoercionNote {
-                    found: s.into(),
-                    made: lower.clone().into(),
-                });
+                ctx.add_info_for(
+                    value,
+                    CoercionNote {
+                        found: s.into(),
+                        made: lower.clone().into(),
+                    },
+                );
             }
             lower
         } else {
@@ -86,38 +100,57 @@ fn validate_ref<V: ValidatableValue>(schema: &Str, value: &V, ctx: &mut Context)
     }
 }
 
-fn validate_min_length(schema: &Str, input: &str, ctx: &mut Context) {
+fn validate_min_length<V: ValidatableValue>(
+    schema: &Str,
+    value: &V,
+    input: &str,
+    ctx: &mut Context,
+) {
     if let Some(min_length) = schema.min_length {
         let length = input.chars().count() as u64;
         if min_length > length {
-            ctx.add_error(Violation::LengthBelowMinimum {
-                minimum: min_length,
-                found: length,
-            });
+            ctx.add_error_for(
+                value,
+                Violation::LengthBelowMinimum {
+                    minimum: min_length,
+                    found: length,
+                },
+            );
         }
     }
 }
 
-fn validate_max_length(schema: &Str, input: &str, ctx: &mut Context) {
+fn validate_max_length<V: ValidatableValue>(
+    schema: &Str,
+    value: &V,
+    input: &str,
+    ctx: &mut Context,
+) {
     if let Some(max_length) = schema.max_length {
         let length = input.chars().count() as u64;
         if max_length < length {
-            ctx.add_error(Violation::LengthAboveMaximum {
-                maximum: max_length,
-                found: length,
-            });
+            ctx.add_error_for(
+                value,
+                Violation::LengthAboveMaximum {
+                    maximum: max_length,
+                    found: length,
+                },
+            );
         }
     }
 }
 
-fn validate_pattern(schema: &Str, input: &str, ctx: &mut Context) {
+fn validate_pattern<V: ValidatableValue>(schema: &Str, value: &V, input: &str, ctx: &mut Context) {
     if let Some(pattern) = &schema.pattern {
         let regex_pattern = pattern.get_compiled_pattern();
         if !regex_pattern.is_match(input) {
-            ctx.add_error(Violation::NotMatchingPattern {
-                pattern: pattern.to_string(),
-                found: input.into(),
-            });
+            ctx.add_error_for(
+                value,
+                Violation::NotMatchingPattern {
+                    pattern: pattern.to_string(),
+                    found: input.into(),
+                },
+            );
         }
     }
 }
@@ -156,6 +189,7 @@ mod tests {
             ctx.result.errors,
             vec![Feedback {
                 path: vec![].into(),
+                span: None,
                 issue: Violation::InvalidType {
                     expected: Type::Str,
                     found: Type::List
@@ -199,6 +233,7 @@ mod tests {
             ctx.result.errors,
             vec![Feedback {
                 path: vec![].into(),
+                span: None,
                 issue: Violation::InvalidValue {
                     expected: vec!["foo".to_string()].into(),
                     found: "FOO".into()
@@ -232,6 +267,7 @@ mod tests {
             ctx.result.infos,
             vec![Feedback {
                 path: vec![].into(),
+                span: None,
                 issue: CoercionNote {
                     found: "FOO".into(),
                     made: "foo".into()
@@ -269,6 +305,7 @@ mod tests {
             vec![
                 Feedback {
                     path: vec![].into(),
+                    span: None,
                     issue: CoercionNote {
                         found: true.into(),
                         made: "True".into()
@@ -277,6 +314,7 @@ mod tests {
                 },
                 Feedback {
                     path: vec![].into(),
+                    span: None,
                     issue: CoercionNote {
                         found: "True".into(),
                         made: "true".into()
@@ -306,6 +344,7 @@ mod tests {
             ctx.result.infos,
             vec![Feedback {
                 path: vec![].into(),
+                span: None,
                 issue: CoercionNote {
                     found: 1.5.into(),
                     made: "1.5".into()
@@ -346,6 +385,7 @@ mod tests {
             ctx.result.errors,
             vec![Feedback {
                 path: vec![].into(),
+                span: None,
                 issue: Violation::LengthBelowMinimum {
                     minimum: 3,
                     found: 2
@@ -383,6 +423,7 @@ mod tests {
             ctx.result.errors,
             vec![Feedback {
                 path: vec![].into(),
+                span: None,
                 issue: Violation::LengthAboveMaximum {
                     maximum: 3,
                     found: 4
@@ -420,6 +461,7 @@ mod tests {
             ctx.result.errors,
             vec![Feedback {
                 path: vec![].into(),
+                span: None,
                 issue: Violation::NotMatchingPattern {
                     pattern: "[a-z][A-Z][a-z]".into(),
                     found: "foo".into(),

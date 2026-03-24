@@ -121,16 +121,25 @@ impl<'a> FromIterator<&'a str> for Path {
 pub struct Feedback<T: Clone + Debug + PartialEq + Serialize + Display> {
     /// Data path which the feedback concerns.
     pub path: Path,
+    pub span: Option<SourceSpan>,
     pub issue: T,
 }
 
-/// Error issue is wrapped in Feedback and added to the Context during coercion and validation.
+/// Input-wide diagnostic found while decoding or selecting the input.
 #[derive(Clone, Debug, PartialEq, Serialize, derive_more::From, derive_more::Display)]
-pub enum ErrorIssue {
+pub enum InputDiagnostic {
+    #[display("Invalid Schema name '{schema}'.")]
+    InvalidSchema {
+        schema: String,
+    },
+    YamlParse(ParseDiagnostic),
+}
+
+/// Validation issue is wrapped in Feedback and added to the Context during coercion and validation.
+#[derive(Clone, Debug, PartialEq, Serialize, derive_more::From, derive_more::Display)]
+pub enum ValidationDiagnostic {
     /// Violation found during validation.
     Violation(Violation),
-    /// Parse diagnostic found while decoding the input.
-    Parse(ParseDiagnostic),
     /// Some internal error occurred.
     #[display("An internal error occurred: {message}.")]
     InternalError { message: String },
@@ -232,9 +241,6 @@ pub enum Violation {
     /// The dictionary key is required, but was not set.
     #[display("Missing the required key '{key}'.")]
     MissingRequiredKey { key: String },
-    /// The given schema name was not found in the schema store.
-    #[display("Invalid Schema name '{schema}'.")]
-    InvalidSchema { schema: String },
     /// The value is not of the expected type.
     #[display("Invalid type '{found}'. Expected '{expected}'.")]
     InvalidType { expected: Type, found: Type },
@@ -258,7 +264,10 @@ pub enum Violation {
     ValueBelowMinimum { minimum: i64, found: i64 },
     /// The value is not unique as required.
     #[display("The value is not unique among similar items. Conflicting item: {other_path}")]
-    ValueNotUnique { other_path: Path },
+    ValueNotUnique {
+        other_path: Path,
+        other_span: Option<SourceSpan>,
+    },
     /// The input data model is deprecated and cannot be used in conjunction with the new data model.
     #[display(
         "The input data model is deprecated and cannot be used in conjunction with the new data model '{other_path}'.{url}"

@@ -14,8 +14,8 @@ impl Validation for List {
     fn validate<V: ValidatableValue>(&self, value: &V, ctx: &mut Context) -> Option<V::Coerced> {
         if let Some(seq) = value.as_sequence() {
             validate_ref(self, value, ctx);
-            validate_min_length(self, &seq, ctx);
-            validate_max_length(self, &seq, ctx);
+            validate_min_length(self, value, &seq, ctx);
+            validate_max_length(self, value, &seq, ctx);
             validate_unique_keys(self, &seq, ctx);
             // Validate items and optionally collect coerced results
             let coerced_items = validate_items(self, &seq, ctx);
@@ -25,10 +25,13 @@ impl Validation for List {
                 .return_coerced_data
                 .then(|| value.coerce_null())
         } else {
-            ctx.add_error(Violation::InvalidType {
-                expected: Type::List,
-                found: value.value_type(),
-            });
+            ctx.add_error_for(
+                value,
+                Violation::InvalidType {
+                    expected: Type::List,
+                    found: value.value_type(),
+                },
+            );
             None
         }
     }
@@ -93,34 +96,42 @@ fn validate_item_schema_only<V: ValidatableValue>(schema: &List, item: &V, ctx: 
     }
 }
 
-fn validate_min_length<'a, S: ValidatableSequence<'a>>(
+fn validate_min_length<'a, V: ValidatableValue, S: ValidatableSequence<'a>>(
     schema: &List,
+    value: &V,
     input: &S,
     ctx: &mut Context,
 ) {
     if let Some(min_length) = schema.min_length {
         let length = input.len() as u64;
         if min_length > length {
-            ctx.add_error(Violation::LengthBelowMinimum {
-                minimum: min_length,
-                found: length,
-            });
+            ctx.add_error_for(
+                value,
+                Violation::LengthBelowMinimum {
+                    minimum: min_length,
+                    found: length,
+                },
+            );
         }
     }
 }
 
-fn validate_max_length<'a, S: ValidatableSequence<'a>>(
+fn validate_max_length<'a, V: ValidatableValue, S: ValidatableSequence<'a>>(
     schema: &List,
+    value: &V,
     input: &S,
     ctx: &mut Context,
 ) {
     if let Some(max_length) = schema.max_length {
         let length = input.len() as u64;
         if max_length < length {
-            ctx.add_error(Violation::LengthAboveMaximum {
-                maximum: max_length,
-                found: length,
-            });
+            ctx.add_error_for(
+                value,
+                Violation::LengthAboveMaximum {
+                    maximum: max_length,
+                    found: length,
+                },
+            );
         }
     }
 }
@@ -129,9 +140,12 @@ fn validate_item_primary_key<V: ValidatableValue>(schema: &List, item: &V, ctx: 
     if let Some(primary_key) = &schema.primary_key
         && item.get(primary_key).is_none_or(|value| value.is_null())
     {
-        ctx.add_error(Violation::MissingRequiredKey {
-            key: primary_key.to_owned(),
-        });
+        ctx.add_error_for(
+            item,
+            Violation::MissingRequiredKey {
+                key: primary_key.to_owned(),
+            },
+        );
     }
 }
 
@@ -149,8 +163,8 @@ fn validate_unique_keys<'a, S: ValidatableSequence<'a>>(
     );
 
     for unique_key in unique_keys {
-        // Map from stringified value to list of (index, trail) pairs
-        let mut seen_items: HashMap<String, Vec<Vec<String>>> = HashMap::new();
+        // Map from stringified value to list of (trail, value) pairs.
+        let mut seen_items: HashMap<String, Vec<(Vec<String>, &S::Value)>> = HashMap::new();
 
         for (i, item) in items.iter().enumerate() {
             // Get the value at the unique_key path
@@ -169,11 +183,16 @@ fn validate_unique_keys<'a, S: ValidatableSequence<'a>>(
                     .and_modify(|seen_item_trails| {
                         // We found at least one other item, so we know we have a duplicate
                         // Add violations for all duplicates in both directions.
-                        for seen_item_trail in seen_item_trails.iter() {
-                            ctx.add_duplicate_violation_pair(seen_item_trail, &trail);
+                        for (seen_item_trail, seen_value) in seen_item_trails.iter() {
+                            ctx.add_duplicate_violation_pair_for(
+                                *seen_value,
+                                seen_item_trail,
+                                value,
+                                &trail,
+                            );
                         }
                     })
-                    .or_insert_with(|| vec![trail]);
+                    .or_insert_with(|| vec![(trail, value)]);
             }
         }
     }
@@ -263,6 +282,7 @@ mod tests {
             ctx.result.errors,
             vec![Feedback {
                 path: vec![].into(),
+                span: None,
                 issue: Violation::InvalidType {
                     expected: Type::List,
                     found: Type::Bool
@@ -301,6 +321,7 @@ mod tests {
             vec![
                 Feedback {
                     path: vec!["0".into()].into(),
+                    span: None,
                     issue: Violation::InvalidType {
                         expected: Type::Str,
                         found: Type::Dict
@@ -309,6 +330,7 @@ mod tests {
                 },
                 Feedback {
                     path: vec!["1".into()].into(),
+                    span: None,
                     issue: Violation::InvalidType {
                         expected: Type::Str,
                         found: Type::Dict
@@ -339,6 +361,7 @@ mod tests {
             ctx.result.infos,
             vec![Feedback {
                 path: vec!["0".into()].into(),
+                span: None,
                 issue: CoercionNote {
                     found: 1.into(),
                     made: "1".into()
@@ -351,6 +374,7 @@ mod tests {
             ctx.result.errors,
             vec![Feedback {
                 path: vec!["1".into()].into(),
+                span: None,
                 issue: Violation::InvalidType {
                     expected: Type::Str,
                     found: Type::List
@@ -390,6 +414,7 @@ mod tests {
             ctx.result.errors,
             vec![Feedback {
                 path: vec![].into(),
+                span: None,
                 issue: Violation::LengthBelowMinimum {
                     minimum: 3,
                     found: 2
@@ -427,6 +452,7 @@ mod tests {
             ctx.result.errors,
             vec![Feedback {
                 path: vec![].into(),
+                span: None,
                 issue: Violation::LengthAboveMaximum {
                     maximum: 2,
                     found: 3
@@ -478,6 +504,7 @@ mod tests {
             ctx.result.errors,
             vec![Feedback {
                 path: vec!["0".into()].into(),
+                span: None,
                 issue: Violation::MissingRequiredKey { key: "foo".into() }.into()
             }]
         );
@@ -506,15 +533,19 @@ mod tests {
             vec![
                 Feedback {
                     path: vec!["0".into(), "foo".into()].into(),
+                    span: None,
                     issue: Violation::ValueNotUnique {
-                        other_path: vec!["2".into(), "foo".into()].into()
+                        other_path: vec!["2".into(), "foo".into()].into(),
+                        other_span: None,
                     }
                     .into()
                 },
                 Feedback {
                     path: vec!["2".into(), "foo".into()].into(),
+                    span: None,
                     issue: Violation::ValueNotUnique {
-                        other_path: vec!["0".into(), "foo".into()].into()
+                        other_path: vec!["0".into(), "foo".into()].into(),
+                        other_span: None,
                     }
                     .into()
                 }

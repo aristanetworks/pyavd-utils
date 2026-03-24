@@ -120,22 +120,16 @@ pub mod validation {
                 .errors
                 .iter()
                 .try_for_each(|feedback| match &feedback.issue {
-                    validation::feedback::ErrorIssue::Violation(violation) => {
+                    validation::feedback::ValidationDiagnostic::Violation(violation) => {
                         result.violations.push(Violation {
                             message: violation.to_string(),
                             path: feedback.path.to_owned().into(),
                         });
                         Ok(())
                     }
-                    validation::feedback::ErrorIssue::InternalError { message } => {
+                    validation::feedback::ValidationDiagnostic::InternalError { message } => {
                         Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
                             "Error occurred during validation: {message}"
-                        )))
-                    }
-                    validation::feedback::ErrorIssue::Parse(parse_diagnostic) => {
-                        Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
-                            "Unexpected parse diagnostic in pyvalidation. \
-                             This API currently validates already-parsed data: {parse_diagnostic}"
                         )))
                     }
                 })?;
@@ -211,7 +205,16 @@ pub mod validation {
         get_store()?
             .validate_json(data_as_json, schema_name, config.as_ref())
             .map_err(|err| PyRuntimeError::new_err(format!("Invalid JSON in data: {err}")))
-            .and_then(|output| output.result.try_into())
+            .and_then(|output| {
+                if !output.input_diagnostics.is_empty() {
+                    return Err(PyRuntimeError::new_err(
+                        "Unexpected input diagnostics in pyvalidation. \
+                         This API currently validates already-parsed JSON data."
+                            .to_string(),
+                    ));
+                }
+                output.document.result.try_into()
+            })
     }
 
     #[pyfunction]
