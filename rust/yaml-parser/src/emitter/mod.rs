@@ -327,11 +327,7 @@ impl<'input> Emitter<'input> {
     }
 
     fn error(&mut self, kind: ErrorKind, span: Span) {
-        self.errors.push(ParseError {
-            kind,
-            span,
-            span_offset: 0,
-        });
+        self.errors.push(ParseError { kind, span });
     }
 
     /// Report an error only if no error has already been reported for this span.

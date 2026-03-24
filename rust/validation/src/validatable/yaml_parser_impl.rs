@@ -196,7 +196,15 @@ pub struct NodeMapping<'a, 'input> {
 /// Try to coerce a YAML node to a string key.
 /// Returns None for complex types (mappings, sequences, null).
 fn coerce_key_to_string<'a>(node: &'a Node<'_>) -> Option<Cow<'a, str>> {
-    node.as_str()
+    match &node.value {
+        Value::String(s) => Some(Cow::Borrowed(s.as_ref())),
+        Value::Int(i) => Some(i.to_decimal_string()),
+        Value::Float(f) => Some(Cow::Owned(f.to_string())),
+        // Mapping keys are looked up using YAML's lowercase bool spelling.
+        Value::Bool(b) => Some(Cow::Borrowed(if *b { "true" } else { "false" })),
+        Value::Alias(alias) => Some(Cow::Borrowed(alias.as_ref())),
+        Value::Null | Value::Sequence(_) | Value::Mapping(_) => None,
+    }
 }
 
 impl<'a, 'input: 'a> ValidatableMapping<'a> for NodeMapping<'a, 'input> {

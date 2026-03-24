@@ -14,20 +14,13 @@ use derive_more::Display;
 ///
 /// # Span Coordinates
 ///
-/// The `span` field contains byte offsets relative to the document being parsed.
-/// For multi-document YAML streams, use `global_span()` to convert to global
-/// coordinates (relative to the original input). See `test_global_span` in the
-/// test module for usage examples.
+/// The `span` field contains byte offsets relative to the original input.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ParseError {
     /// The kind of error
     pub kind: ErrorKind,
-    /// The span in the source where the error occurred (document-relative)
+    /// The span in the source where the error occurred.
     pub span: Span,
-    /// Byte offset to add to span for global coordinates.
-    /// For single-document parsing this is 0. For multi-document streams,
-    /// this is the byte offset where the document starts in the original input.
-    pub span_offset: usize,
 }
 
 /// The kind of parse error.
@@ -266,35 +259,9 @@ impl ErrorKind {
 
 impl ParseError {
     /// Create a new error with just a kind and span.
-    ///
-    /// The `span_offset` is initialized to 0. Use [`with_offset`](Self::with_offset)
-    /// to set the offset for multi-document streams.
     #[must_use]
     pub const fn new(kind: ErrorKind, span: Span) -> Self {
-        Self {
-            kind,
-            span,
-            span_offset: 0,
-        }
-    }
-
-    /// Set the span offset for converting to global coordinates.
-    #[must_use]
-    pub const fn with_offset(mut self, offset: usize) -> Self {
-        self.span_offset = offset;
-        self
-    }
-
-    /// Get the span in global coordinates (relative to original input).
-    ///
-    /// For single-document parsing, this returns the same as `span`.
-    /// For multi-document streams, this adds `span_offset` to get the
-    /// position relative to the original input.
-    #[must_use]
-    pub fn global_span(&self) -> Span {
-        Span::from_usize_range(
-            self.span.start_usize() + self.span_offset..self.span.end_usize() + self.span_offset,
-        )
+        Self { kind, span }
     }
 
     /// Get a suggestion for how to fix this error.
@@ -405,23 +372,5 @@ mod tests {
         let err = ParseError::new(ErrorKind::TabInIndentation, Span::from_usize_range(0..1));
         assert!(err.suggestion().is_some());
         assert!(err.suggestion().unwrap().contains("spaces"));
-    }
-
-    #[test]
-    fn test_global_span() {
-        // Without offset, global_span equals span
-        let err = ParseError::new(ErrorKind::InvalidValue, Span::from_usize_range(10..20));
-        let global = err.global_span();
-        assert_eq!(global.start, 10);
-        assert_eq!(global.end, 20);
-
-        // With offset, global_span adds the offset
-        let err_with_offset = err.with_offset(100);
-        let global_with_offset = err_with_offset.global_span();
-        assert_eq!(global_with_offset.start, 110);
-        assert_eq!(global_with_offset.end, 120);
-        // Original span is unchanged
-        assert_eq!(err_with_offset.span.start, 10);
-        assert_eq!(err_with_offset.span.end, 20);
     }
 }

@@ -141,7 +141,7 @@ fn test_integer_edge_cases() {
         assert_eq!(docs.len(), 1, "Input {input:?} should produce 1 document",);
         let doc = docs.first().expect("expected exactly one document");
         assert!(
-            matches!(doc.value, Value::Int(Number::I64(val)) if val == expected),
+            matches!(doc.value, Value::Int(Integer::I64(val)) if val == expected),
             "Input {input:?} should parse to {expected}, got {:?}",
             doc.value,
         );
@@ -157,7 +157,7 @@ fn test_very_large_integer_as_bigintstr() {
     assert!(
         matches!(
             doc.value,
-            Value::Int(Number::BigIntStr(ref text)) if text.as_ref() == input
+            Value::Int(Integer::BigIntStr(ref text)) if text.as_ref() == input
         ),
         "expected BigIntStr for very large integer, got {:?}",
         doc.value,
@@ -255,10 +255,10 @@ impl<'de> Deserialize<'de> for OwnedYamlValue {
     }
 }
 
-/// Semantic equality for `Number` that ignores internal signed/unsigned
+/// Semantic equality for `Integer` that ignores internal signed/unsigned
 /// representation differences and compares the underlying decimal value.
 #[cfg(feature = "serde")]
-fn numbers_semantically_equal(left: &Number<'static>, right: &Number<'static>) -> bool {
+fn numbers_semantically_equal(left: &Integer<'static>, right: &Integer<'static>) -> bool {
     left.to_decimal_string() == right.to_decimal_string()
 }
 
@@ -268,7 +268,7 @@ fn numbers_semantically_equal(left: &Number<'static>, right: &Number<'static>) -
 /// - Ignores span information and node properties (anchors/tags), since
 ///   serde-based paths (including `serde_yaml`) do not preserve them.
 /// - Treats integers as equal when their decimal representations match,
-///   even if they use different `Number` variants (e.g. `I64` vs `U64`).
+///   even if they use different `Integer` variants (e.g. `I64` vs `U64`).
 #[cfg(feature = "serde")]
 fn values_semantically_equal(left: &Value<'static>, right: &Value<'static>) -> bool {
     match (left, right) {

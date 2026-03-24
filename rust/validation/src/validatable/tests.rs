@@ -135,7 +135,7 @@ fn test_serde_json_empty_sequence() {
 mod yaml_parser_tests {
     use std::borrow::Cow;
 
-    use yaml_parser::{Node, Value, Integer};
+    use yaml_parser::{Integer, Node, Value};
 
     use crate::validatable::{ValidatableMapping, ValidatableSequence, ValidatableValue};
 

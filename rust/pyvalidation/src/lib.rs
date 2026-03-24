@@ -25,7 +25,7 @@ pub mod validation {
         types::PyModule,
     };
     use std::path::PathBuf;
-    use validation::{Context, StoreValidate as _, Validation as _};
+    use validation::{Context, StoreValidate as _, StoreValidateInput as _, Validation as _};
 
     fn get_store() -> PyResult<&'static Store> {
         STORE.get().ok_or_else(|| {
@@ -130,6 +130,12 @@ pub mod validation {
                     validation::feedback::ErrorIssue::InternalError { message } => {
                         Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
                             "Error occurred during validation: {message}"
+                        )))
+                    }
+                    validation::feedback::ErrorIssue::Parse(parse_diagnostic) => {
+                        Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
+                            "Unexpected parse diagnostic in pyvalidation. \
+                             This API currently validates already-parsed data: {parse_diagnostic}"
                         )))
                     }
                 })?;

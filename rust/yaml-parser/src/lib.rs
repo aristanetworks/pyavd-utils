@@ -57,7 +57,7 @@ pub use error::{ErrorKind, ParseError};
 pub use event::{CollectionStyle, Event, ScalarStyle};
 pub use span::{Position, SourceMap, Span, Spanned};
 pub use stream::Stream;
-pub use value::{Node, Integer, Properties, Value};
+pub use value::{Integer, Node, Properties, Value};
 
 /// Parse YAML input and return the parsed documents and any errors encountered.
 ///

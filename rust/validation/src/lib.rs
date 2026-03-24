@@ -10,4 +10,4 @@ mod validation;
 
 pub use self::context::{Configuration, Context, ValidationResult};
 pub use self::validation::Validation;
-pub use self::validation::store::{StoreValidate, ValidationOutput};
+pub use self::validation::store::{StoreValidate, StoreValidateInput, ValidationOutput};

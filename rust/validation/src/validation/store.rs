@@ -3,19 +3,20 @@
 // that can be found in the LICENSE file.
 
 use avdschema::{Schema, Store};
+use log::debug;
 use serde_json::Value;
-use yaml_parser::{Node, parse};
+use yaml_parser::{Node, Value as YamlValue, parse};
 
 use crate::{
     context::{Configuration, Context, ValidationResult},
-    feedback::Violation,
+    feedback::{ErrorIssue, Feedback, ParseDiagnostic, Violation},
+    validatable::ValidatableValue,
 };
-use log::debug;
 
 use super::Validation;
 
 /// Result of validation including optionally coerced data.
-pub struct ValidationOutput<T> {   
+pub struct ValidationOutput<T> {
     /// The validation result with errors, warnings, and infos.
     pub result: ValidationResult,
     /// The coerced data with types adjusted according to the schema.
@@ -23,18 +24,82 @@ pub struct ValidationOutput<T> {
     pub coerced: Option<T>,
 }
 
-pub trait StoreValidate<S, V> where V: crate::validatable::ValidatableValue {
+/// Validate already-parsed values against a schema.
+pub trait StoreValidate<S, V>
+where
+    V: ValidatableValue,
+{
     /// Entrypoint for validating a value implementing ValidatableValue against the given schema name.
-    /// Returns both validation results and the coerced Value.
     fn validate_value(
         &self,
         value: &V,
         schema_name: S,
         configuration: Option<&Configuration>,
-    ) -> Result<ValidationOutput<V>, SchemaConversionError>;
+    ) -> ValidationOutput<V::Coerced>;
 }
 
-impl StoreValidate<Schema> for Store {
+/// Parse JSON or YAML input and validate the resulting value against a schema.
+pub trait StoreValidateInput<S> {
+    fn validate_json(
+        &self,
+        json: &str,
+        schema_name: S,
+        configuration: Option<&Configuration>,
+    ) -> Result<ValidationOutput<Value>, StoreValidateError>;
+
+    fn validate_yaml(
+        &self,
+        yaml: &str,
+        schema_name: S,
+        configuration: Option<&Configuration>,
+    ) -> Result<ValidationOutput<Node<'static>>, StoreValidateError>;
+}
+
+impl<V> StoreValidate<Schema, V> for Store
+where
+    V: ValidatableValue,
+{
+    fn validate_value(
+        &self,
+        value: &V,
+        schema_name: Schema,
+        configuration: Option<&Configuration>,
+    ) -> ValidationOutput<V::Coerced> {
+        debug!("Validating value");
+        let mut ctx = Context::new(self, configuration);
+        let schema = self.get(schema_name);
+        let coerced = schema.validate(value, &mut ctx);
+        debug!("Validating value done");
+        ValidationOutput {
+            result: ctx.result,
+            coerced,
+        }
+    }
+}
+
+impl<V> StoreValidate<&str, V> for Store
+where
+    V: ValidatableValue,
+{
+    fn validate_value(
+        &self,
+        value: &V,
+        schema_name: &str,
+        configuration: Option<&Configuration>,
+    ) -> ValidationOutput<V::Coerced> {
+        match Schema::try_from(schema_name) {
+            Ok(schema_type) => <Store as StoreValidate<Schema, V>>::validate_value(
+                self,
+                value,
+                schema_type,
+                configuration,
+            ),
+            Err(_) => invalid_schema_output(schema_name, self),
+        }
+    }
+}
+
+impl StoreValidateInput<Schema> for Store {
     fn validate_json(
         &self,
         json: &str,
@@ -43,9 +108,14 @@ impl StoreValidate<Schema> for Store {
     ) -> Result<ValidationOutput<Value>, StoreValidateError> {
         debug!("Validating JSON");
         let value: Value = serde_json::from_str(json)?;
-        debug!("Deserialization of JSON Done");
-        let output = self.validate_value(&value, schema_name, configuration);
-        debug!("Validating JSON Done");
+        debug!("Deserialization of JSON done");
+        let output = <Store as StoreValidate<Schema, Value>>::validate_value(
+            self,
+            &value,
+            schema_name,
+            configuration,
+        );
+        debug!("Validating JSON done");
         Ok(output)
     }
 
@@ -56,45 +126,66 @@ impl StoreValidate<Schema> for Store {
         configuration: Option<&Configuration>,
     ) -> Result<ValidationOutput<Node<'static>>, StoreValidateError> {
         debug!("Validating YAML");
-        let (mut yaml_docs, parse_errors) = yaml_parser::parse(yaml);
-        debug!("Deserialization of YAML Done");
+        let (yaml_docs, parse_errors) = parse(yaml);
+        debug!("Deserialization of YAML done");
 
-        let result = self.validate_value(&mut value, schema_name, configuration);
-        debug!("Validating YAML Done");
-        Ok(ValidationOutput {
-            result: ctx.result,
-            coerced,
-        })
-    }
+        let parse_feedback: Vec<Feedback<ErrorIssue>> = parse_errors
+            .into_iter()
+            .map(|parse_error| Feedback {
+                path: Default::default(),
+                issue: ParseDiagnostic::from(parse_error).into(),
+            })
+            .collect();
 
-    fn validate_value(
-        &self,
-        value: &T,
-        schema_name: Schema,
-        configuration: Option<&Configuration>,
-    ) -> ValidationOutput<Value> {
-        debug!("Validating serde_json::Value");
-        let mut ctx = Context::new(self, configuration);
-        let schema = self.get(schema_name);
-        let coerced = schema.validate(value, &mut ctx);
-        debug!("Validating serde_json::Value Done");
-        ValidationOutput {
-            result: ctx.result,
-            coerced,
+        let mut output = if let Some(value) = yaml_docs.into_iter().next() {
+            <Store as StoreValidate<Schema, Node<'static>>>::validate_value(
+                self,
+                &value,
+                schema_name,
+                configuration,
+            )
+        } else if parse_feedback.is_empty() {
+            // Preserve the old "empty input becomes null" behavior from serde_yaml.
+            let value = Node::new(YamlValue::Null, Default::default());
+            <Store as StoreValidate<Schema, Node<'static>>>::validate_value(
+                self,
+                &value,
+                schema_name,
+                configuration,
+            )
+        } else {
+            ValidationOutput {
+                result: ValidationResult::default(),
+                coerced: None,
+            }
+        };
+
+        if !parse_feedback.is_empty() {
+            let mut errors = parse_feedback;
+            errors.extend(output.result.errors);
+            output.result.errors = errors;
         }
+        debug!("Validating YAML done");
+        Ok(output)
     }
 }
 
-impl StoreValidate<&str> for Store {
+impl StoreValidateInput<&str> for Store {
     fn validate_json(
         &self,
         json: &str,
         schema_name: &str,
         configuration: Option<&Configuration>,
     ) -> Result<ValidationOutput<Value>, StoreValidateError> {
-        with_resolved_schema_json_output(schema_name, self, |schema_type| {
-            self.validate_json(json, schema_type, configuration)
-        })
+        match Schema::try_from(schema_name) {
+            Ok(schema_type) => <Store as StoreValidateInput<Schema>>::validate_json(
+                self,
+                json,
+                schema_type,
+                configuration,
+            ),
+            Err(_) => Ok(invalid_schema_output(schema_name, self)),
+        }
     }
 
     fn validate_yaml(
@@ -103,27 +194,21 @@ impl StoreValidate<&str> for Store {
         schema_name: &str,
         configuration: Option<&Configuration>,
     ) -> Result<ValidationOutput<Node<'static>>, StoreValidateError> {
-        with_resolved_schema_yaml_output(schema_name, self, |schema_type| {
-            self.validate_yaml(yaml, schema_type, configuration)
-        })
-    }
-
-    fn validate_value(
-        &self,
-        value: &Value,
-        schema_name: &str,
-        configuration: Option<&Configuration>,
-    ) -> ValidationOutput<Value> {
-        with_resolved_schema_value_output(schema_name, self, |schema_type| {
-            self.validate_value(value, schema_type, configuration)
-        })
+        match Schema::try_from(schema_name) {
+            Ok(schema_type) => <Store as StoreValidateInput<Schema>>::validate_yaml(
+                self,
+                yaml,
+                schema_type,
+                configuration,
+            ),
+            Err(_) => Ok(invalid_schema_output(schema_name, self)),
+        }
     }
 }
 
 #[derive(Debug, derive_more::Display, derive_more::From)]
 pub enum StoreValidateError {
     JsonError(serde_json::Error),
-    YamlParseError(yaml_parser::ParseError),
 }
 
 #[derive(Debug, derive_more::Display, derive_more::From)]
@@ -147,58 +232,11 @@ impl SchemaConversionError {
     }
 }
 
-impl From<ValidationResult> for Result<ValidationResult, StoreValidateError> {
-    fn from(result: ValidationResult) -> Self {
-        Ok(result)
-    }
-}
-
-fn with_resolved_schema_json_output<
-    F: FnOnce(Schema) -> Result<ValidationOutput<Value>, StoreValidateError>,
->(
-    schema_name: &str,
-    store: &Store,
-    func: F,
-) -> Result<ValidationOutput<Value>, StoreValidateError> {
-    match Schema::try_from(schema_name) {
-        Ok(schema_type) => func(schema_type),
-        Err(_) => Ok(ValidationOutput {
-            result: SchemaConversionError::InvalidSchemaName(schema_name.to_string())
-                .to_validation_result(store),
-            coerced: None,
-        }),
-    }
-}
-
-fn with_resolved_schema_yaml_output<
-    F: FnOnce(Schema) -> Result<ValidationOutput<Node<'static>>, StoreValidateError>,
->(
-    schema_name: &str,
-    store: &Store,
-    func: F,
-) -> Result<ValidationOutput<Node<'static>>, StoreValidateError> {
-    match Schema::try_from(schema_name) {
-        Ok(schema_type) => func(schema_type),
-        Err(_) => Ok(ValidationOutput {
-            result: SchemaConversionError::InvalidSchemaName(schema_name.to_string())
-                .to_validation_result(store),
-            coerced: None,
-        }),
-    }
-}
-
-fn with_resolved_schema_value_output<F: FnOnce(Schema) -> ValidationOutput<Value>>(
-    schema_name: &str,
-    store: &Store,
-    func: F,
-) -> ValidationOutput<Value> {
-    match Schema::try_from(schema_name) {
-        Ok(schema_type) => func(schema_type),
-        Err(_) => ValidationOutput {
-            result: SchemaConversionError::InvalidSchemaName(schema_name.to_string())
-                .to_validation_result(store),
-            coerced: None,
-        },
+fn invalid_schema_output<T>(schema_name: &str, store: &Store) -> ValidationOutput<T> {
+    ValidationOutput {
+        result: SchemaConversionError::InvalidSchemaName(schema_name.to_string())
+            .to_validation_result(store),
+        coerced: None,
     }
 }
 
@@ -207,7 +245,7 @@ mod tests {
     use super::*;
 
     use crate::{
-        feedback::{Feedback, Type},
+        feedback::{ErrorIssue, Feedback, ParseDiagnosticKind, Type},
         validation::test_utils::get_test_store,
     };
 
@@ -231,6 +269,7 @@ mod tests {
             },]
         )
     }
+
     #[test]
     fn validate_yaml_invalid_schema() {
         let input = "";
@@ -250,6 +289,25 @@ mod tests {
             },]
         )
     }
+
+    #[test]
+    fn validate_yaml_parse_error_is_returned_as_feedback() {
+        let input = "[";
+        let store = get_test_store();
+        let result = store.validate_yaml(input, "avd_design", None);
+        assert!(result.is_ok());
+        let output = result.unwrap();
+
+        assert!(output.result.errors.iter().any(|feedback| {
+            matches!(
+                &feedback.issue,
+                ErrorIssue::Parse(parse_diagnostic)
+                    if parse_diagnostic.kind == ParseDiagnosticKind::YamlSyntax
+                        && parse_diagnostic.span.end >= parse_diagnostic.span.start
+            )
+        }));
+    }
+
     #[test]
     fn validate_value_invalid_schema() {
         let input = serde_json::json!({});

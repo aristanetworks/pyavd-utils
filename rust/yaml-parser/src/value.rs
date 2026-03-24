@@ -69,7 +69,7 @@ impl Integer<'_> {
 
 #[cfg(feature = "serde")]
 mod serde_impls {
-    use super::{Node, Integer, Value};
+    use super::{Integer, Node, Value};
     use crate::span::Span;
     use serde::de::{self, Deserialize, Deserializer, MapAccess, SeqAccess, Visitor};
     use serde::ser::{Serialize, SerializeMap as _, SerializeSeq as _, Serializer};

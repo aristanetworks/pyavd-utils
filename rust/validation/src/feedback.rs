@@ -129,6 +129,8 @@ pub struct Feedback<T: Clone + Debug + PartialEq + Serialize + Display> {
 pub enum ErrorIssue {
     /// Violation found during validation.
     Violation(Violation),
+    /// Parse diagnostic found while decoding the input.
+    Parse(ParseDiagnostic),
     /// Some internal error occurred.
     #[display("An internal error occurred: {message}.")]
     InternalError { message: String },
@@ -159,6 +161,63 @@ pub enum InfoIssue {
 pub struct CoercionNote {
     pub found: Value,
     pub made: Value,
+}
+
+/// Absolute byte range within the original source input.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct SourceSpan {
+    pub start: usize,
+    pub end: usize,
+}
+
+impl From<yaml_parser::Span> for SourceSpan {
+    fn from(value: yaml_parser::Span) -> Self {
+        Self {
+            start: value.start_usize(),
+            end: value.end_usize(),
+        }
+    }
+}
+
+/// Parse diagnostic reported while decoding structured input.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct ParseDiagnostic {
+    pub kind: ParseDiagnosticKind,
+    pub message: String,
+    pub suggestion: Option<String>,
+    pub span: SourceSpan,
+}
+
+impl From<yaml_parser::ParseError> for ParseDiagnostic {
+    fn from(value: yaml_parser::ParseError) -> Self {
+        Self {
+            kind: ParseDiagnosticKind::YamlSyntax,
+            message: value.to_string(),
+            suggestion: value.suggestion().map(str::to_string),
+            span: value.span.into(),
+        }
+    }
+}
+
+impl Display for ParseDiagnostic {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{} at bytes {}..{}: {}",
+            self.kind, self.span.start, self.span.end, self.message
+        )?;
+        if let Some(suggestion) = &self.suggestion {
+            write!(f, " Suggestion: {suggestion}")?;
+        }
+        Ok(())
+    }
+}
+
+/// Parse diagnostic category.
+#[derive(Clone, Debug, PartialEq, Serialize, derive_more::Display)]
+pub enum ParseDiagnosticKind {
+    #[display("YAML syntax error")]
+    YamlSyntax,
 }
 
 /// One violation found during recursive validation.
@@ -471,5 +530,21 @@ mod tests {
             url: Some("my.url".to_string()).into(),
         };
         assert_eq!(removed, expected_removed);
+    }
+
+    #[test]
+    fn parse_diagnostic_from_yaml_parse_error() {
+        let parse_error = yaml_parser::ParseError::new(
+            yaml_parser::ErrorKind::MissingColon,
+            yaml_parser::Span::from_usize_range(3..6),
+        );
+        let diagnostic = ParseDiagnostic::from(parse_error);
+        assert_eq!(diagnostic.kind, ParseDiagnosticKind::YamlSyntax);
+        assert_eq!(diagnostic.message, "missing colon after mapping key");
+        assert_eq!(
+            diagnostic.suggestion,
+            Some("add a colon after the mapping key".to_string())
+        );
+        assert_eq!(diagnostic.span, SourceSpan { start: 3, end: 6 });
     }
 }

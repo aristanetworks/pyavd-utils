@@ -26,7 +26,7 @@ use std::collections::HashSet;
 use crate::error::{ErrorKind, ParseError};
 use crate::event::{Event, Properties as EventProperties, Property as EventProperty, ScalarStyle};
 use crate::span::Span;
-use crate::value::{Node, Integer, Properties as NodeProperties, Value};
+use crate::value::{Integer, Node, Properties as NodeProperties, Value};
 
 /// Parser that builds AST from a streaming source of events.
 ///
