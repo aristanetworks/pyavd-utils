@@ -18,21 +18,12 @@ static REF_REGEX: LazyLock<Regex> =
 /// and afterwards walk that schema according to the path.
 /// Returns the schema pointed to by the ref, or an error for invalid ref.
 pub fn resolve_ref<'a>(ref_: &str, store: &'a Store) -> Result<&'a AnySchema, SchemaResolverError> {
-    let captures = REF_REGEX.captures(ref_).ok_or(RefSyntax {
+    let syntax_err = || RefSyntax {
         schema_ref: ref_.to_owned(),
-    })?;
-    let schema_name = captures
-        .get(1)
-        .ok_or(RefSyntax {
-            schema_ref: ref_.to_owned(),
-        })?
-        .as_str();
-    let schema_path = captures
-        .get(2)
-        .ok_or(RefSyntax {
-            schema_ref: ref_.to_owned(),
-        })?
-        .as_str();
+    };
+    let captures = REF_REGEX.captures(ref_).ok_or_else(syntax_err)?;
+    let schema_name = captures.get(1).ok_or_else(syntax_err)?.as_str();
+    let schema_path = captures.get(2).ok_or_else(syntax_err)?.as_str();
 
     let path_iter = schema_path.split('/').skip(1).peekable();
     let schema = store.get(schema_name)?;
