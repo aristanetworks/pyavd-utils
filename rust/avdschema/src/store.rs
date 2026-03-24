@@ -24,8 +24,8 @@ pub struct Store {
 
 impl Store {
     pub fn get(&self, schema_name: &str) -> Result<&AnySchema, SchemaStoreError> {
-        if self.schemas.contains_key(schema_name) {
-            return Ok(self.schemas.get(schema_name).unwrap());
+        if let Some(schema) = self.schemas.get(schema_name) {
+            return Ok(schema);
         }
         // Either we have an invalid schema or we may be using an old schema name,
         // or tests using new schema names towards and old schema store.
