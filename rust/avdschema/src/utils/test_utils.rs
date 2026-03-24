@@ -38,7 +38,7 @@ pub(crate) fn get_test_store() -> Store {
                     "dynamic.key": {
                         "type": "int",
                         "max": 10,
-                    }
+                    },
                 },
             },
             "avd_design": {
@@ -47,19 +47,6 @@ pub(crate) fn get_test_store() -> Store {
                     "key3": {
                         "type": "str",
                         "$ref": "eos_cli_config_gen#/keys/key2",
-                    },
-                }
-            },
-            "cv_deploy": {
-                "type": "dict",
-                "keys": {
-                    "key4": {
-                        "type": "str",
-                        "description": "this is from key4"
-                    },
-                    "key5": {
-                        "type": "str",
-                        "$ref": "cv_deploy#/keys/key4"
                     }
                 }
             },

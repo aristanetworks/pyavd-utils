@@ -186,8 +186,8 @@ pub mod validation {
                 pyo3::exceptions::PyRuntimeError::new_err(format!(
                     "Error while resolving the Schema Store: {err}",
                 ))
-            })?
-        };
+            })
+        }?;
 
         // Insert the resolved store into the OnceLock.
         STORE.set(store).map_err(|_| {
@@ -233,6 +233,7 @@ pub mod validation {
             let data_as_value = serde_json::from_str::<serde_json::Value>(data_as_json)
                 .map_err(|err| PyRuntimeError::new_err(format!("Invalid JSON in data: {err}")))?;
             debug!("pyvalidation::get_validated_data Deserialization Done");
+
             // Enable return_coerced_data since this function returns validated data
             let mut config: validation::Configuration =
                 configuration.map(Into::into).unwrap_or_default();
@@ -281,6 +282,7 @@ pub mod validation {
 
         let config: Option<validation::Configuration> = configuration.map(Into::into);
         let mut ctx = Context::new(get_store()?, config.as_ref());
+
         // Validate returns the coerced value, but we only need the validation result here
         let _ = schema.validate(&data, &mut ctx);
 
