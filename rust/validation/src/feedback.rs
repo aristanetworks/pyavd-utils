@@ -126,12 +126,9 @@ pub struct Feedback<T: Clone + Debug + PartialEq + Serialize + Display> {
 }
 
 /// Input-wide diagnostic found while decoding or selecting the input.
-#[derive(Clone, Debug, PartialEq, Serialize, derive_more::From, derive_more::Display)]
+#[derive(Clone, Debug, PartialEq, Serialize, derive_more::Display)]
 pub enum InputDiagnostic {
-    #[display("Invalid Schema name '{schema}'.")]
-    InvalidSchema {
-        schema: String,
-    },
+    JsonParse(ParseDiagnostic),
     YamlParse(ParseDiagnostic),
 }
 
@@ -208,6 +205,17 @@ impl From<yaml_parser::ParseError> for ParseDiagnostic {
     }
 }
 
+impl ParseDiagnostic {
+    pub fn from_json_error(value: &serde_json::Error, input: &str) -> Self {
+        Self {
+            kind: ParseDiagnosticKind::JsonSyntax,
+            message: value.to_string(),
+            suggestion: None,
+            span: source_span_from_json_error(input, value),
+        }
+    }
+}
+
 impl Display for ParseDiagnostic {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
@@ -225,8 +233,42 @@ impl Display for ParseDiagnostic {
 /// Parse diagnostic category.
 #[derive(Clone, Debug, PartialEq, Serialize, derive_more::Display)]
 pub enum ParseDiagnosticKind {
+    #[display("JSON syntax error")]
+    JsonSyntax,
     #[display("YAML syntax error")]
     YamlSyntax,
+}
+
+fn source_span_from_json_error(input: &str, error: &serde_json::Error) -> SourceSpan {
+    let line = error.line();
+    let column = error.column();
+
+    if line == 0 || column == 0 {
+        let end = input.len();
+        return SourceSpan { start: end, end };
+    }
+
+    let mut current_line = 1;
+    let mut current_column = 1;
+
+    for (index, ch) in input.char_indices() {
+        if current_line == line && current_column == column {
+            return SourceSpan {
+                start: index,
+                end: index,
+            };
+        }
+
+        if ch == '\n' {
+            current_line += 1;
+            current_column = 1;
+        } else {
+            current_column += 1;
+        }
+    }
+
+    let end = input.len();
+    SourceSpan { start: end, end }
 }
 
 /// One violation found during recursive validation.

@@ -176,13 +176,18 @@ pub mod validation {
         info!("Initialize the schema store from file.");
 
         // Load the store from path including resolving the $refs where applicable.
-        let store = Store::from_file(Some(&file))
-            .map(|store| store.as_resolved())
-            .map_err(|err| {
+        let store = {
+            let store = Store::from_file(Some(&file)).map_err(|err| {
                 pyo3::exceptions::PyRuntimeError::new_err(format!(
                     "Error while loading the Schema Store from file: {err}",
                 ))
             })?;
+            store.as_resolved().map_err(|err| {
+                pyo3::exceptions::PyRuntimeError::new_err(format!(
+                    "Error while resolving the Schema Store: {err}",
+                ))
+            })?
+        };
 
         // Insert the resolved store into the OnceLock.
         STORE.set(store).map_err(|_| {
@@ -202,19 +207,17 @@ pub mod validation {
         configuration: Option<Configuration>,
     ) -> PyResult<ValidationResult> {
         let config = configuration.map(Into::into);
-        get_store()?
+        let output = get_store()?
             .validate_json(data_as_json, schema_name, config.as_ref())
-            .map_err(|err| PyRuntimeError::new_err(format!("Invalid JSON in data: {err}")))
-            .and_then(|output| {
-                if !output.input_diagnostics.is_empty() {
-                    return Err(PyRuntimeError::new_err(
-                        "Unexpected input diagnostics in pyvalidation. \
-                         This API currently validates already-parsed JSON data."
-                            .to_string(),
-                    ));
-                }
-                output.document.result.try_into()
-            })
+            .map_err(|err| {
+                PyRuntimeError::new_err(format!("Error while validating the data: {err}"))
+            })?;
+        if let Some(diagnostic) = output.input_diagnostics.first() {
+            return Err(PyRuntimeError::new_err(format!(
+                "Invalid JSON in data: {diagnostic}"
+            )));
+        }
+        output.document.result.try_into()
     }
 
     #[pyfunction]
@@ -235,7 +238,11 @@ pub mod validation {
             let mut config: validation::Configuration =
                 configuration.map(Into::into).unwrap_or_default();
             config.return_coerced_data = true;
-            let output = get_store()?.validate_value(&data_as_value, schema_name, Some(&config));
+            let output = get_store()?
+                .validate_value(&data_as_value, schema_name, Some(&config))
+                .map_err(|err| {
+                    PyRuntimeError::new_err(format!("Error while validating the data: {err}"))
+                })?;
             debug!("pyvalidation::get_validated_data Validation Done");
             let validated_data = if output.result.errors.is_empty() {
                 output

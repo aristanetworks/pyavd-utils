@@ -289,10 +289,11 @@ fn validate_keys<'a, M: ValidatableMapping<'a>>(
 
     // When at the root level, if warn_eos_config_keys is enabled, get the keys from the eos_config schema.
     let eos_config_keys: Option<&OrderMap<String, AnySchema>> = {
-        if ctx.state.path.is_empty() && ctx.configuration.warn_eos_config_keys {
-            <&Dict>::try_from(&ctx.store.eos_config)
-                .ok()
-                .and_then(|d| d.keys.as_ref())
+        if ctx.state.path.is_empty()
+            && ctx.configuration.warn_eos_config_keys
+            && let Ok(AnySchema::Dict(eos_config_schema)) = ctx.store.get("eos_config")
+        {
+            eos_config_schema.keys.as_ref()
         } else {
             None
         }
@@ -389,7 +390,6 @@ fn validate_required_keys<'a, M: ValidatableMapping<'a>>(
 
 #[cfg(test)]
 mod tests {
-    use avdschema::Schema;
     use avdschema::base::Base;
     use avdschema::int::Int;
     use avdschema::list::List;
@@ -1227,7 +1227,7 @@ mod tests {
             ..Default::default()
         };
         let mut ctx = Context::new(&store, Some(&configuration));
-        let schema = store.get(Schema::AVDDesign);
+        let schema = store.get("avd_design").unwrap();
         let _ = schema.validate(&input, &mut ctx);
 
         // Should have warnings for key1 and key2
@@ -1254,7 +1254,7 @@ mod tests {
             ..Default::default()
         };
         let mut ctx = Context::new(&store, Some(&configuration));
-        let schema = store.get(Schema::AVDDesign);
+        let schema = store.get("avd_design").unwrap();
         let _ = schema.validate(&input, &mut ctx);
 
         // Should have no warnings
@@ -1275,7 +1275,7 @@ mod tests {
 
         // Don't set warn_eos_config_keys since we're validating eos_config
         let mut ctx = Context::new(&store, None);
-        let schema = store.get(Schema::EOSConfig);
+        let schema = store.get("eos_config").unwrap();
         let _ = schema.validate(&input, &mut ctx);
 
         // Should have no warnings
@@ -1296,7 +1296,7 @@ mod tests {
             ..Default::default()
         };
         let mut ctx = Context::new(&store, Some(&configuration));
-        let schema = store.get(Schema::AVDDesign);
+        let schema = store.get("avd_design").unwrap();
         let _ = schema.validate(&input, &mut ctx);
 
         // Should have no warnings since key3 exists in both schemas
@@ -1324,7 +1324,7 @@ mod tests {
             ..Default::default()
         };
         let mut ctx = Context::new(&store, Some(&configuration));
-        let schema = store.get(Schema::AVDDesign);
+        let schema = store.get("avd_design").unwrap();
         let _ = schema.validate(&input, &mut ctx);
 
         // Should have no warnings - these special keys are silently ignored
