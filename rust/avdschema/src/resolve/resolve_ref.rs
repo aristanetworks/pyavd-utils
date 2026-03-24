@@ -75,6 +75,7 @@ mod tests {
     }
 
     #[test]
+    // Testing with cv_deploy ref
     fn resolve_ref_ok_3() {
         let test_store = get_test_store();
         let result = resolve_ref("cv_deploy#/keys/key4", &test_store);

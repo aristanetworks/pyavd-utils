@@ -62,6 +62,19 @@ pub(crate) fn get_test_store() -> Store {
                         "$ref": "cv_deploy#/keys/key4"
                     }
                 }
+            },
+            "cv_deploy": {
+                "type": "dict",
+                "keys": {
+                    "key4": {
+                        "type": "str",
+                        "description": "this is from key4",
+                    },
+                    "key5": {
+                        "type": "str",
+                        "$ref": "cv_deploy#/keys/key4",
+                    }
+                }
             }
         }
     ))

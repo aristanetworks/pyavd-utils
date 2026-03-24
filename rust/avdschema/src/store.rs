@@ -24,27 +24,30 @@ pub struct Store {
     #[serde(flatten)]
     schemas: HashMap<String, AnySchema>,
 }
+
 impl Store {
     pub fn get(&self, schema_name: &str) -> Result<&AnySchema, SchemaStoreError> {
         if let Some(schema) = self.schemas.get(schema_name) {
             return Ok(schema);
         }
-
-        let legacy_name = match schema_name {
+        // Either we have an invalid schema or we may be using an old schema name,
+        // or tests using new schema names towards and old schema store.
+        let schema_alias = match schema_name {
             "eos_designs" => "avd_design",
             "eos_cli_config_gen" => "eos_config",
             "avd_design" => "eos_designs",
             "eos_config" => "eos_cli_config_gen",
             _ => schema_name,
         };
-
         self.schemas
-            .get(legacy_name)
+            .get(schema_alias)
             .ok_or_else(|| SchemaStoreError::InvalidSchemaName(schema_name.to_string()))
     }
     pub fn as_resolved(mut self) -> Result<Self, SchemaResolverError> {
+        // Clone each schema so we can resolve them while still being able to resolve $refs between them.
         let cloned_schemas = self.schemas.clone();
         for (schema_name, mut schema) in cloned_schemas {
+            // Inplace resolve schema
             resolve_schema(&mut schema, &self)?;
             self.schemas.insert(schema_name, schema);
         }

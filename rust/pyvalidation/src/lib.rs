@@ -232,7 +232,6 @@ pub mod validation {
         let result: PyResult<ValidatedDataResult> = py.detach(|| {
             let data_as_value = serde_json::from_str::<serde_json::Value>(data_as_json)
                 .map_err(|err| PyRuntimeError::new_err(format!("Invalid JSON in data: {err}")))?;
-
             debug!("pyvalidation::get_validated_data Deserialization Done");
             // Enable return_coerced_data since this function returns validated data
             let mut config: validation::Configuration =
