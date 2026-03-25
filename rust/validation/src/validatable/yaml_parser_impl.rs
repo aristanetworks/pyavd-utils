@@ -8,7 +8,7 @@ use std::borrow::Cow;
 
 use yaml_parser::{Integer, MappingPair, Node, SequenceItem, Value};
 
-use super::{ValidatableMapping, ValidatableSequence, ValidatableValue};
+use super::{ValidatableMapping, ValidatableMappingPair, ValidatableSequence, ValidatableValue};
 
 // === ValidatableValue for yaml_parser::Node ===
 
@@ -226,6 +226,7 @@ fn coerce_key_to_string<'a>(node: &'a Node<'_>) -> Option<Cow<'a, str>> {
 
 impl<'a, 'input: 'a> ValidatableMapping<'a> for NodeMapping<'a, 'input> {
     type Value = Node<'input>;
+    type Pair = NodeMappingPair<'a, 'input>;
     type Iter = NodeMappingIter<'a, 'input>;
 
     fn get(&self, key: &str) -> Option<&Self::Value> {
@@ -264,16 +265,37 @@ pub struct NodeMappingIter<'a, 'input> {
 }
 
 impl<'a, 'input: 'a> Iterator for NodeMappingIter<'a, 'input> {
-    type Item = (Cow<'a, str>, &'a Node<'input>);
+    type Item = NodeMappingPair<'a, 'input>;
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {
             let pair = self.inner.next()?;
             if let Some(key_str) = coerce_key_to_string(&pair.key) {
-                return Some((key_str, &pair.value));
+                return Some(NodeMappingPair { key_str, pair });
             }
             // Skip non-coercible keys (mappings, sequences, null)
         }
+    }
+}
+
+pub struct NodeMappingPair<'a, 'input> {
+    key_str: Cow<'a, str>,
+    pair: &'a MappingPair<'input>,
+}
+
+impl<'a, 'input: 'a> ValidatableMappingPair<'a> for NodeMappingPair<'a, 'input> {
+    type Value = Node<'input>;
+
+    fn key(&self) -> Cow<'a, str> {
+        self.key_str.clone()
+    }
+
+    fn value(&self) -> &'a Self::Value {
+        &self.pair.value
+    }
+
+    fn key_span(&self) -> Option<crate::feedback::SourceSpan> {
+        Some(self.pair.key.span.into())
     }
 }
 

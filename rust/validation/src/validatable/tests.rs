@@ -137,7 +137,9 @@ mod yaml_parser_tests {
 
     use yaml_parser::{Integer, MappingPair, Node, SequenceItem, Value};
 
-    use crate::validatable::{ValidatableMapping, ValidatableSequence, ValidatableValue};
+    use crate::validatable::{
+        ValidatableMapping, ValidatableMappingPair, ValidatableSequence, ValidatableValue,
+    };
 
     fn make_span() -> yaml_parser::Span {
         yaml_parser::Span::new(0..1)
@@ -224,7 +226,7 @@ mod yaml_parser_tests {
 
         // Test iteration
         let keys: Vec<String> = ValidatableMapping::iter(&mapping)
-            .map(|(k, _)| k.into_owned())
+            .map(|pair| pair.key().into_owned())
             .collect();
         assert!(keys.contains(&"name".to_string()));
         assert!(keys.contains(&"age".to_string()));
@@ -304,7 +306,7 @@ mod yaml_parser_tests {
 
         // Iteration should also coerce keys
         let keys: Vec<String> = ValidatableMapping::iter(&mapping)
-            .map(|(k, _)| k.into_owned())
+            .map(|pair| pair.key().into_owned())
             .collect();
         assert!(keys.contains(&"123".to_string()));
         assert!(keys.contains(&"true".to_string()));

@@ -12,7 +12,9 @@ use ordermap::OrderMap;
 use crate::{
     context::Context,
     feedback::{Deprecated, IgnoredEosConfigKey, Removed, Type, Violation},
-    validatable::{ValidatableMapping, ValidatableSequence, ValidatableValue},
+    validatable::{
+        ValidatableMapping, ValidatableMappingPair, ValidatableSequence, ValidatableValue,
+    },
 };
 
 use super::Validation;
@@ -80,7 +82,7 @@ fn validate_ref<V: ValidatableValue>(schema: &Dict, value: &V, ctx: &mut Context
 fn check_deprecation<'a, M: ValidatableMapping<'a>>(
     _key: &str,
     key_schema: &AnySchema,
-    input_value: &M::Value,
+    key_span: Option<crate::feedback::SourceSpan>,
     parent_dict_input: &M,
     ctx: &mut Context,
 ) -> bool {
@@ -88,14 +90,14 @@ fn check_deprecation<'a, M: ValidatableMapping<'a>>(
         && deprecation.warning
     {
         if deprecation.removed.unwrap_or_default() {
-            ctx.add_error_for(
-                input_value,
+            ctx.add_error_with_span(
+                key_span,
                 Violation::Removed(Removed::from_schema(&ctx.state.path, deprecation)),
             );
             true
         } else {
-            ctx.add_warning_for(
-                input_value,
+            ctx.add_warning_with_span(
+                key_span.clone(),
                 Deprecated::from_schema(&ctx.state.path, deprecation),
             );
             if !deprecation.allow_with_new_key.unwrap_or_default()
@@ -117,8 +119,8 @@ fn check_deprecation<'a, M: ValidatableMapping<'a>>(
                             root_value.path_exists(&rest_of_path.join("."))
                         };
                         if exists {
-                            ctx.add_error_for(
-                                input_value,
+                            ctx.add_error_with_span(
+                                key_span.clone(),
                                 Violation::DeprecatedConflict {
                                     other_path: new_key.into(),
                                     url: deprecation.url.to_owned().into(),
@@ -280,7 +282,9 @@ fn validate_keys<'a, M: ValidatableMapping<'a>>(
     let Some(keys) = &schema.keys else {
         // No schema keys - preserve all input as-is when coercing
         if let Some(ref mut items) = coerced_items {
-            for (input_key, input_value) in input.iter() {
+            for pair in input.iter() {
+                let input_key = pair.key();
+                let input_value = pair.value();
                 items.push((input_key.into_owned(), input_value.clone_to_coerced()));
             }
         }
@@ -299,13 +303,16 @@ fn validate_keys<'a, M: ValidatableMapping<'a>>(
         }
     };
 
-    for (input_key, input_value) in input.iter() {
+    for pair in input.iter() {
+        let input_key = pair.key();
         let input_key_str: &str = &input_key;
+        let input_value = pair.value();
+        let key_span = pair.key_span();
         ctx.state.path.push(input_key_str.to_owned());
 
         // Determine what to do with this key
         let include_in_output = if let Some(key_schema) = keys.get(input_key_str) {
-            if !check_deprecation(input_key_str, key_schema, input_value, input, ctx) {
+            if !check_deprecation(input_key_str, key_schema, key_span, input, ctx) {
                 if let Some(ref mut items) = coerced_items {
                     let coerced = key_schema
                         .validate(input_value, ctx)
@@ -320,7 +327,7 @@ fn validate_keys<'a, M: ValidatableMapping<'a>>(
             }
             false // Already handled
         } else if let Some(key_schema) = find_dynamic_key_schema(schema, input, input_key_str) {
-            if !check_deprecation(input_key_str, key_schema, input_value, input, ctx) {
+            if !check_deprecation(input_key_str, key_schema, key_span, input, ctx) {
                 if let Some(ref mut items) = coerced_items {
                     let coerced = key_schema
                         .validate(input_value, ctx)
@@ -338,7 +345,7 @@ fn validate_keys<'a, M: ValidatableMapping<'a>>(
             true
         } else if !schema.allow_other_keys.unwrap_or_default() {
             // Key is not part of the schema and does not start with underscore
-            ctx.add_error_for(input_value, Violation::UnexpectedKey());
+            ctx.add_error_with_span(key_span, Violation::UnexpectedKey());
             true // Include the value in output (error is recorded)
         } else {
             if let Some(eos_config_keys) = &eos_config_keys
@@ -347,7 +354,7 @@ fn validate_keys<'a, M: ValidatableMapping<'a>>(
             {
                 // Key is not in avd_design schema but is in eos_config_keys
                 // and allow_other_keys is true - emit a warning that it will be ignored
-                ctx.add_warning_for(input_value, IgnoredEosConfigKey {});
+                ctx.add_warning_with_span(key_span, IgnoredEosConfigKey {});
             }
             true // allow_other_keys is true - include as-is
         };
@@ -396,10 +403,11 @@ mod tests {
     use avdschema::str::Str;
     use ordermap::OrderMap;
     use serde::Deserialize as _;
+    use yaml_parser::parse;
 
     use super::*;
     use crate::context::{Configuration, Context};
-    use crate::feedback::{CoercionNote, Feedback, WarningIssue};
+    use crate::feedback::{CoercionNote, Feedback, SourceSpan, WarningIssue};
     use crate::validation::test_utils::get_test_store;
 
     #[test]
@@ -777,6 +785,30 @@ mod tests {
         )
     }
 
+    #[test]
+    fn validate_yaml_unexpected_key_uses_key_span() {
+        let schema = Dict {
+            keys: Some(OrderMap::from_iter([("foo".into(), Str::default().into())])),
+            ..Default::default()
+        };
+        let (docs, errors) = parse("bar: 1\n");
+        assert!(errors.is_empty());
+        let input = docs.first().expect("expected a parsed document");
+
+        let store = get_test_store();
+        let mut ctx = Context::new(&store, None);
+        let _ = schema.validate(input, &mut ctx);
+
+        assert_eq!(
+            ctx.result.errors,
+            vec![Feedback {
+                path: vec!["bar".into()].into(),
+                span: Some(SourceSpan { start: 0, end: 3 }),
+                issue: Violation::UnexpectedKey().into()
+            }]
+        );
+    }
+
     /// Test that keys starting with underscore are preserved in output but not validated
     #[test]
     fn validate_underscore_key_preserved() {
@@ -854,6 +886,43 @@ mod tests {
                 .into()
             }]
         )
+    }
+
+    #[test]
+    fn validate_yaml_deprecated_key_uses_key_span() {
+        let schema: Dict = Dict::deserialize(serde_json::json!({
+            "keys": {
+                "foo": {
+                    "type": "str",
+                    "deprecation": {
+                        "warning": true,
+                        "remove_in_version": "1.2.3",
+                    }
+                }
+            }
+        }))
+        .unwrap();
+        let (docs, errors) = parse("foo: bar\n");
+        assert!(errors.is_empty());
+        let input = docs.first().expect("expected a parsed document");
+
+        let store = get_test_store();
+        let mut ctx = Context::new(&store, None);
+        let _ = schema.validate(input, &mut ctx);
+
+        assert_eq!(
+            ctx.result.warnings,
+            vec![Feedback {
+                path: vec!["foo".into()].into(),
+                span: Some(SourceSpan { start: 0, end: 3 }),
+                issue: WarningIssue::Deprecated(Deprecated {
+                    path: vec!["foo".into()].into(),
+                    replacement: None.into(),
+                    version: Some("1.2.3".into()).into(),
+                    url: None.into()
+                })
+            }]
+        );
     }
 
     // Tests a key that is marked as removed returns the proper error.

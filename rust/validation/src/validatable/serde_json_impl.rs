@@ -8,7 +8,7 @@ use std::borrow::Cow;
 
 use serde_json::{Map, Value};
 
-use super::{ValidatableMapping, ValidatableSequence, ValidatableValue};
+use super::{ValidatableMapping, ValidatableMappingPair, ValidatableSequence, ValidatableValue};
 
 // === ValidatableValue for serde_json::Value ===
 
@@ -116,6 +116,7 @@ impl ValidatableValue for Value {
 
 impl<'a> ValidatableMapping<'a> for &'a Map<String, Value> {
     type Value = Value;
+    type Pair = MapPair<'a>;
     type Iter = MapIter<'a>;
 
     fn get(&self, key: &str) -> Option<&Self::Value> {
@@ -143,12 +144,10 @@ pub struct MapIter<'a> {
 }
 
 impl<'a> Iterator for MapIter<'a> {
-    type Item = (Cow<'a, str>, &'a Value);
+    type Item = MapPair<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.inner
-            .next()
-            .map(|(k, v)| (Cow::Borrowed(k.as_str()), v))
+        self.inner.next().map(|(key, value)| MapPair { key, value })
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
@@ -157,6 +156,23 @@ impl<'a> Iterator for MapIter<'a> {
 }
 
 impl ExactSizeIterator for MapIter<'_> {}
+
+pub struct MapPair<'a> {
+    key: &'a String,
+    value: &'a Value,
+}
+
+impl<'a> ValidatableMappingPair<'a> for MapPair<'a> {
+    type Value = Value;
+
+    fn key(&self) -> Cow<'a, str> {
+        Cow::Borrowed(self.key.as_str())
+    }
+
+    fn value(&self) -> &'a Self::Value {
+        self.value
+    }
+}
 
 // === ValidatableSequence for Vec<Value> ===
 

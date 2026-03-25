@@ -34,21 +34,29 @@ impl<'a> Context<'a> {
         value: &V,
         error: impl Into<ValidationDiagnostic>,
     ) {
+        self.add_error_with_span(value.source_span(), error);
+    }
+
+    pub(crate) fn add_error_with_span(
+        &mut self,
+        span: Option<crate::feedback::SourceSpan>,
+        error: impl Into<ValidationDiagnostic>,
+    ) {
         self.result.errors.push(Feedback {
             path: self.state.path.to_owned(),
-            span: value.source_span(),
+            span,
             issue: error.into(),
         });
     }
 
-    pub(crate) fn add_warning_for<V: ValidatableValue>(
+    pub(crate) fn add_warning_with_span(
         &mut self,
-        value: &V,
+        span: Option<crate::feedback::SourceSpan>,
         warning: impl Into<WarningIssue>,
     ) {
         self.result.warnings.push(Feedback {
             path: self.state.path.to_owned(),
-            span: value.source_span(),
+            span,
             issue: warning.into(),
         });
     }

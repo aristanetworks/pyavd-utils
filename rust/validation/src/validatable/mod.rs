@@ -160,10 +160,11 @@ pub trait ValidatableMapping<'a> {
     /// The type of values in this mapping.
     type Value: ValidatableValue + 'a;
 
-    /// Iterator type for key-value pairs.
-    /// Keys are `Cow<str>` to support both borrowed keys (JSON) and
-    /// coerced keys (YAML int/bool keys converted to strings).
-    type Iter: Iterator<Item = (Cow<'a, str>, &'a Self::Value)>;
+    /// The mapping pair type yielded by iteration.
+    type Pair: ValidatableMappingPair<'a, Value = Self::Value>;
+
+    /// Iterator type for mapping pairs.
+    type Iter: Iterator<Item = Self::Pair>;
 
     /// Get a value by key.
     fn get(&self, key: &str) -> Option<&Self::Value>;
@@ -186,6 +187,23 @@ pub trait ValidatableMapping<'a> {
     )]
     fn is_empty(&self) -> bool {
         self.len() == 0
+    }
+}
+
+/// A single mapping key/value pair.
+pub trait ValidatableMappingPair<'a> {
+    /// The type of values in this mapping pair.
+    type Value: ValidatableValue + 'a;
+
+    /// Get the key as a string.
+    fn key(&self) -> Cow<'a, str>;
+
+    /// Get the mapped value.
+    fn value(&self) -> &'a Self::Value;
+
+    /// Get the source span of the key, if available.
+    fn key_span(&self) -> Option<SourceSpan> {
+        None
     }
 }
 
