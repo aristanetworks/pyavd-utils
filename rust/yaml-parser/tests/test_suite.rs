@@ -24,9 +24,38 @@
 )]
 
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use yaml_parser::parse;
+
+fn yaml_test_suite_dir() -> PathBuf {
+    let test_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/yaml-test-suite");
+    if !test_dir.exists() {
+        panic!(
+            "YAML test suite not installed at {}. Run `make rust-yaml-test-suite` from the repository root.",
+            test_dir.display()
+        );
+    }
+
+    let Ok(entries) = fs::read_dir(&test_dir) else {
+        panic!(
+            "Unable to read YAML test suite directory at {}. Run `make rust-yaml-test-suite` from the repository root.",
+            test_dir.display()
+        );
+    };
+
+    if entries
+        .filter_map(Result::ok)
+        .any(|entry| entry.path().is_dir())
+    {
+        test_dir
+    } else {
+        panic!(
+            "YAML test suite directory at {} does not contain extracted test cases. Run `make rust-yaml-test-suite` from the repository root.",
+            test_dir.display()
+        );
+    }
+}
 
 /// Event notation for YAML test suite comparison.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -549,16 +578,7 @@ fn collect_error_test_cases(test_dir: &Path) -> Vec<(String, String, String)> {
     reason = "Integration test with test output"
 )]
 fn error_recovery_combined_stream() {
-    let manifest_dir = env!("CARGO_MANIFEST_DIR");
-    let test_dir = Path::new(manifest_dir).join("tests/yaml-test-suite");
-
-    if !test_dir.exists() {
-        eprintln!(
-            "Test suite not found at {}. Skipping test.",
-            test_dir.display()
-        );
-        return;
-    }
+    let test_dir = yaml_test_suite_dir();
 
     let error_cases = collect_error_test_cases(&test_dir);
     eprintln!("Found {} error test cases", error_cases.len());
@@ -660,16 +680,7 @@ fn run_combined_error_test(error_cases: &[(String, String, String)], order_name:
     reason = "Integration test with test output"
 )]
 fn error_test_cases_produce_errors() {
-    let manifest_dir = env!("CARGO_MANIFEST_DIR");
-    let test_dir = Path::new(manifest_dir).join("tests/yaml-test-suite");
-
-    if !test_dir.exists() {
-        eprintln!(
-            "Test suite not found at {}. Skipping test.",
-            test_dir.display()
-        );
-        return;
-    }
+    let test_dir = yaml_test_suite_dir();
 
     let error_cases = collect_error_test_cases(&test_dir);
     eprintln!("Testing {} error test cases...", error_cases.len());
@@ -715,13 +726,7 @@ fn error_test_cases_produce_errors() {
 fn analyze_error_kinds() {
     use std::collections::HashMap;
 
-    let manifest_dir = env!("CARGO_MANIFEST_DIR");
-    let test_dir = Path::new(manifest_dir).join("tests/yaml-test-suite");
-
-    if !test_dir.exists() {
-        eprintln!("Test suite not found");
-        return;
-    }
+    let test_dir = yaml_test_suite_dir();
 
     let error_cases = collect_error_test_cases(&test_dir);
     eprintln!("Analyzing {} error test cases...\n", error_cases.len());
@@ -777,13 +782,7 @@ fn analyze_error_kinds() {
     reason = "Integration test with test output and statistics calculation"
 )]
 fn yaml_test_suite_via_events() {
-    let manifest_dir = env!("CARGO_MANIFEST_DIR");
-    let test_dir = Path::new(manifest_dir).join("tests/yaml-test-suite");
-
-    if !test_dir.exists() {
-        eprintln!("Test suite not found at {test_dir:?}. Skipping tests.");
-        return;
-    }
+    let test_dir = yaml_test_suite_dir();
 
     // Run positive tests (event comparison)
     let (passed, failed, failures) = run_test_suite_via_events(&test_dir);
@@ -837,13 +836,7 @@ do NOT remove or relax it just to get green tests.",
     reason = "Integration test with test output and statistics calculation"
 )]
 fn yaml_test_suite_roundtrip_via_writer() {
-    let manifest_dir = env!("CARGO_MANIFEST_DIR");
-    let test_dir = Path::new(manifest_dir).join("tests/yaml-test-suite");
-
-    if !test_dir.exists() {
-        eprintln!("Test suite not found at {test_dir:?}. Skipping tests.");
-        return;
-    }
+    let test_dir = yaml_test_suite_dir();
 
     let Ok(dir_entries) = fs::read_dir(&test_dir) else {
         panic!("Failed to read test directory {test_dir:?}");
