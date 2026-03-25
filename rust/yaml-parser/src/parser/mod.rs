@@ -25,7 +25,7 @@ use std::collections::HashSet;
 
 use crate::ast_event::AstEvent;
 use crate::error::{ErrorKind, ParseError};
-use crate::event::{Event, Properties as EventProperties, Property as EventProperty, ScalarStyle};
+use crate::event::{Event, Property as EventProperty, ScalarStyle};
 use crate::span::Span;
 use crate::value::{Integer, MappingPair, Node, Properties as NodeProperties, SequenceItem, Value};
 
@@ -209,21 +209,16 @@ where
         match event {
             Event::MappingStart {
                 properties, span, ..
-            } => Some(self.parse_mapping(properties.map(|event_props| *event_props), span)),
+            } => Some(self.parse_mapping(properties, span)),
             Event::SequenceStart {
                 properties, span, ..
-            } => Some(self.parse_sequence(properties.map(|event_props| *event_props), span)),
+            } => Some(self.parse_sequence(properties, span)),
             Event::Scalar {
                 style,
                 value,
                 properties,
                 span,
-            } => Some(self.build_scalar(
-                style,
-                value,
-                properties.map(|event_props| *event_props),
-                span,
-            )),
+            } => Some(self.build_scalar(style, value, properties, span)),
             Event::Alias { name, span } => Some(self.build_alias(name, span)),
             // Skip document markers, stream markers
             Event::StreamStart
@@ -242,7 +237,7 @@ where
     /// - flow mappings use `start..closing_brace.end`
     fn parse_mapping(
         &mut self,
-        props: Option<EventProperties<'input>>,
+        props: Option<Box<NodeProperties<'input>>>,
         start_span: Span,
     ) -> Node<'input> {
         self.register_anchor(
@@ -328,7 +323,7 @@ where
     /// - flow sequences use `start..closing_bracket.end`
     fn parse_sequence(
         &mut self,
-        props: Option<EventProperties<'input>>,
+        props: Option<Box<NodeProperties<'input>>>,
         start_span: Span,
     ) -> Node<'input> {
         self.register_anchor(
@@ -408,7 +403,7 @@ where
         &mut self,
         style: ScalarStyle,
         value: Cow<'input, str>,
-        props: Option<EventProperties<'input>>,
+        props: Option<Box<NodeProperties<'input>>>,
         span: Span,
     ) -> Node<'input> {
         self.register_anchor(
@@ -500,17 +495,9 @@ where
     /// (used by tests) returns just the value text without anchor/tag syntax.
     fn apply_properties(
         mut node: Node<'input>,
-        props: Option<EventProperties<'input>>,
+        props: Option<Box<NodeProperties<'input>>>,
     ) -> Node<'input> {
-        if let Some(node_props) = props
-            && (node_props.anchor.is_some() || node_props.tag.is_some())
-        {
-            // Store just the values (without spans) in the node properties
-            node.properties = Some(Box::new(NodeProperties {
-                anchor: node_props.anchor.map(|prop| prop.value),
-                tag: node_props.tag.map(|prop| prop.value),
-            }));
-        }
+        node.properties = props;
         node
     }
 }

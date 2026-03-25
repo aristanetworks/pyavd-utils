@@ -10,9 +10,7 @@
 //! - Serializing an existing AST back to YAML via the event-based writer.
 //! - Roundtrip tests that go `parse -> AST -> events -> writer -> parse`.
 
-use crate::event::{
-    CollectionStyle, Event, Properties as EventProperties, Property as EventProperty, ScalarStyle,
-};
+use crate::event::{CollectionStyle, Event, Properties as EventProperties, ScalarStyle};
 use crate::{Node, Value};
 
 /// Errors that can occur while converting an AST to events.
@@ -139,20 +137,5 @@ fn emit_node_events<'input>(
 fn node_properties_to_event_properties<'input>(
     node: &'input Node<'input>,
 ) -> EventProperties<'input> {
-    let mut props = EventProperties::default();
-    if let Some(node_props) = node.properties.as_ref() {
-        if let Some(anchor) = &node_props.anchor {
-            props.anchor = Some(EventProperty {
-                value: anchor.clone(),
-                span: node.span,
-            });
-        }
-        if let Some(tag) = &node_props.tag {
-            props.tag = Some(EventProperty {
-                value: tag.clone(),
-                span: node.span,
-            });
-        }
-    }
-    props
+    node.properties.as_deref().cloned().unwrap_or_default()
 }

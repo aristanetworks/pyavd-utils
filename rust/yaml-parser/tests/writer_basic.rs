@@ -21,14 +21,53 @@
     reason = "panic is expected in test assertions for mismatched value kinds"
 )]
 
-use yaml_parser::{Node, Value, emit_events, parse, writer};
+use yaml_parser::{Node, Properties, Property, Value, emit_events, parse, writer};
 
 fn assert_node_eq_ignoring_spans<'input>(expected: &Node<'input>, actual: &Node<'input>) {
-    assert_eq!(
-        expected.properties, actual.properties,
-        "node properties changed after roundtrip",
+    assert_properties_eq_ignoring_spans(
+        expected.properties.as_deref(),
+        actual.properties.as_deref(),
     );
     assert_value_eq_ignoring_spans(&expected.value, &actual.value);
+}
+
+fn assert_properties_eq_ignoring_spans<'input>(
+    expected: Option<&Properties<'input>>,
+    actual: Option<&Properties<'input>>,
+) {
+    match (expected, actual) {
+        (None, None) => {}
+        (Some(left), Some(right)) => {
+            assert_property_eq_ignoring_spans(
+                left.anchor.as_ref(),
+                right.anchor.as_ref(),
+                "anchor",
+            );
+            assert_property_eq_ignoring_spans(left.tag.as_ref(), right.tag.as_ref(), "tag");
+        }
+        (left, right) => {
+            panic!("node properties changed after roundtrip: left={left:?}, right={right:?}");
+        }
+    }
+}
+
+fn assert_property_eq_ignoring_spans<'input>(
+    expected: Option<&Property<'input>>,
+    actual: Option<&Property<'input>>,
+    kind: &str,
+) {
+    match (expected, actual) {
+        (None, None) => {}
+        (Some(left), Some(right)) => {
+            assert_eq!(
+                left.value, right.value,
+                "{kind} property value changed after roundtrip",
+            );
+        }
+        (left, right) => {
+            panic!("{kind} property changed after roundtrip: left={left:?}, right={right:?}");
+        }
+    }
 }
 
 fn assert_value_eq_ignoring_spans<'input>(expected: &Value<'input>, actual: &Value<'input>) {

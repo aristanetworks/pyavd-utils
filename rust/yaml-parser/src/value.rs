@@ -22,6 +22,7 @@
 use std::borrow::Cow;
 use std::ops::{Deref, DerefMut};
 
+pub use crate::event::{Properties, Property};
 use crate::span::Span;
 
 /// Integer value representation used by `Value::Int`.
@@ -290,50 +291,6 @@ mod serde_impls {
     }
 }
 
-/// Optional properties (anchor, tag) for a YAML node.
-///
-/// This is boxed within `Node` to keep the common no-properties case compact,
-/// since most nodes do not carry anchors or tags.
-///
-/// Anchors use `Cow<'input, str>` and are usually borrowed from the input.
-/// Tags also use `Cow` because they may be expanded or normalized.
-#[derive(Debug, Clone, PartialEq)]
-pub struct Properties<'input> {
-    /// Optional anchor name (from `&name`) - usually borrowed from input
-    pub anchor: Option<Cow<'input, str>>,
-    /// Optional tag (from `!tag`) - may need transformation
-    pub tag: Option<Cow<'input, str>>,
-}
-
-impl<'input> Properties<'input> {
-    /// Create properties with just an anchor.
-    #[must_use]
-    pub fn with_anchor(anchor: Cow<'input, str>) -> Self {
-        Self {
-            anchor: Some(anchor),
-            tag: None,
-        }
-    }
-
-    /// Create properties with just a tag.
-    #[must_use]
-    pub fn with_tag(tag: Cow<'input, str>) -> Self {
-        Self {
-            anchor: None,
-            tag: Some(tag),
-        }
-    }
-
-    /// Convert to owned version with `'static` lifetime.
-    #[must_use]
-    pub fn into_owned(self) -> Properties<'static> {
-        Properties {
-            anchor: self.anchor.map(|cow| Cow::Owned(cow.into_owned())),
-            tag: self.tag.map(|cow| Cow::Owned(cow.into_owned())),
-        }
-    }
-}
-
 /// A YAML node with optional properties (anchor, tag) and a value.
 ///
 /// This properly represents YAML's structure where anchors and tags are
@@ -370,9 +327,12 @@ impl<'input> Node<'input> {
     #[must_use]
     pub fn with_anchor(mut self, anchor: &'input str) -> Self {
         match &mut self.properties {
-            Some(props) => props.anchor = Some(Cow::Borrowed(anchor)),
+            Some(props) => props.anchor = Some(Property::new(Cow::Borrowed(anchor), self.span)),
             None => {
-                self.properties = Some(Box::new(Properties::with_anchor(Cow::Borrowed(anchor))));
+                self.properties = Some(Box::new(Properties::with_anchor(Property::new(
+                    Cow::Borrowed(anchor),
+                    self.span,
+                ))));
             }
         }
         self
@@ -382,10 +342,34 @@ impl<'input> Node<'input> {
     #[must_use]
     pub fn with_tag(mut self, tag: Cow<'input, str>) -> Self {
         match &mut self.properties {
-            Some(props) => props.tag = Some(tag),
-            None => self.properties = Some(Box::new(Properties::with_tag(tag))),
+            Some(props) => props.tag = Some(Property::new(tag, self.span)),
+            None => {
+                self.properties = Some(Box::new(Properties::with_tag(Property::new(
+                    tag, self.span,
+                ))))
+            }
         }
         self
+    }
+
+    /// Returns all properties, if present.
+    #[must_use]
+    pub fn properties(&self) -> Option<&Properties<'input>> {
+        self.properties.as_deref()
+    }
+
+    /// Returns the anchor property if present.
+    #[must_use]
+    pub fn anchor_property(&self) -> Option<&Property<'input>> {
+        self.properties()
+            .and_then(|properties| properties.anchor.as_ref())
+    }
+
+    /// Returns the tag property if present.
+    #[must_use]
+    pub fn tag_property(&self) -> Option<&Property<'input>> {
+        self.properties()
+            .and_then(|properties| properties.tag.as_ref())
     }
 
     /// Create a null node.
@@ -397,33 +381,26 @@ impl<'input> Node<'input> {
     /// Returns the anchor if present.
     #[must_use]
     pub fn anchor(&self) -> Option<&str> {
-        self.properties
-            .as_ref()
-            .and_then(|props| props.anchor.as_deref())
+        self.anchor_property()
+            .map(|property| property.value.as_ref())
     }
 
     /// Returns the tag if present.
     #[must_use]
-    pub fn tag(&self) -> Option<&Cow<'input, str>> {
-        self.properties
-            .as_ref()
-            .and_then(|props| props.tag.as_ref())
+    pub fn tag(&self) -> Option<&Property<'input>> {
+        self.tag_property()
     }
 
     /// Returns `true` if this node has an anchor.
     #[must_use]
     pub fn has_anchor(&self) -> bool {
-        self.properties
-            .as_ref()
-            .is_some_and(|props| props.anchor.is_some())
+        self.anchor_property().is_some()
     }
 
     /// Returns `true` if this node has a tag.
     #[must_use]
     pub fn has_tag(&self) -> bool {
-        self.properties
-            .as_ref()
-            .is_some_and(|props| props.tag.is_some())
+        self.tag_property().is_some()
     }
 
     /// Convert this node to an owned version with `'static` lifetime.
@@ -432,7 +409,7 @@ impl<'input> Node<'input> {
     #[must_use]
     pub fn into_owned(self) -> Node<'static> {
         Node {
-            properties: self.properties.map(|props| Box::new(props.into_owned())),
+            properties: self.properties.map(|props| Box::new((*props).into_owned())),
             value: self.value.into_owned(),
             span: self.span,
         }
@@ -647,12 +624,23 @@ mod tests {
         let node2 = Node::new(Value::String(Cow::Borrowed("test")), span).with_anchor("myanchor");
         assert!(node2.has_anchor());
         assert_eq!(node2.anchor(), Some("myanchor"));
+        assert_eq!(
+            node2.anchor_property().map(|property| property.span),
+            Some(span)
+        );
 
         // Node with tag
         let node3 =
             Node::new(Value::String(Cow::Borrowed("test")), span).with_tag(Cow::Borrowed("str"));
         assert!(node3.has_tag());
-        assert_eq!(node3.tag(), Some(&Cow::Borrowed("str")));
+        assert_eq!(
+            node3.tag().map(|property| property.value.as_ref()),
+            Some("str")
+        );
+        assert_eq!(
+            node3.tag_property().map(|property| property.span),
+            Some(span)
+        );
 
         // Null node
         let node4 = Node::null(span);
@@ -680,7 +668,10 @@ mod tests {
         let owned_node: Node<'static> = node.into_owned();
         // Anchor is preserved after into_owned
         assert_eq!(owned_node.anchor(), Some("anchor"));
-        assert!(matches!(owned_node.tag(), Some(Cow::Owned(str)) if str == "tag"));
+        assert!(matches!(
+            owned_node.tag(),
+            Some(property) if matches!(&property.value, Cow::Owned(str) if str == "tag")
+        ));
         assert!(matches!(owned_node.value, Value::String(Cow::Owned(str)) if str == "test"));
     }
 }

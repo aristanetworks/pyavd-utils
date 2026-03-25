@@ -41,6 +41,12 @@ pub struct Property<'input> {
 }
 
 impl Property<'_> {
+    /// Create a new property from a value and source span.
+    #[must_use]
+    pub fn new<'input>(value: Cow<'input, str>, span: Span) -> Property<'input> {
+        Property { value, span }
+    }
+
     /// Convert this property to an owned `'static` property.
     #[must_use]
     pub fn into_owned(self) -> Property<'static> {
@@ -68,6 +74,24 @@ pub struct Properties<'input> {
     reason = "need explicit lifetime for update/updated signatures"
 )]
 impl<'input> Properties<'input> {
+    /// Create properties with just an anchor.
+    #[must_use]
+    pub fn with_anchor(anchor: Property<'input>) -> Self {
+        Self {
+            anchor: Some(anchor),
+            tag: None,
+        }
+    }
+
+    /// Create properties with just a tag.
+    #[must_use]
+    pub fn with_tag(tag: Property<'input>) -> Self {
+        Self {
+            anchor: None,
+            tag: Some(tag),
+        }
+    }
+
     /// Returns true if both anchor and tag are absent.
     #[must_use]
     pub fn is_empty(&self) -> bool {
