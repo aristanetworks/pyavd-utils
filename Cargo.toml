@@ -33,7 +33,7 @@ inherits = "release"
 lto = true
 
 [workspace.lints.rust]
-unsafe_code = "forbid" 
+unsafe_code = "forbid"
 missing_docs = "warn"
 missing_debug_implementations = "warn"
 unreachable_pub = "warn"
