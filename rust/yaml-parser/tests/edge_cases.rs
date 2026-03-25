@@ -295,9 +295,12 @@ fn values_semantically_equal(left: &Value<'static>, right: &Value<'static>) -> b
                 && left_pairs
                     .iter()
                     .zip(right_pairs.iter())
-                    .all(|((lk, lval), (rk, rval))| {
-                        values_semantically_equal(&lk.value, &rk.value)
-                            && values_semantically_equal(&lval.value, &rval.value)
+                    .all(|(left_pair, right_pair)| {
+                        values_semantically_equal(&left_pair.key.value, &right_pair.key.value)
+                            && values_semantically_equal(
+                                &left_pair.value.value,
+                                &right_pair.value.value,
+                            )
                     })
         }
         _ => false,
@@ -389,22 +392,26 @@ fn first_difference_path(
                 );
                 return Some(path.to_owned());
             }
-            for (idx, ((lk, lval), (rk, rval))) in
+            for (idx, (left_pair, right_pair)) in
                 left_pairs.iter().zip(right_pairs.iter()).enumerate()
             {
                 let key_path = format!("{path}.<key#{idx}>");
-                if let Some(diff_path) = first_difference_path(&key_path, &lk.value, &rk.value) {
+                if let Some(diff_path) =
+                    first_difference_path(&key_path, &left_pair.key.value, &right_pair.key.value)
+                {
                     return Some(diff_path);
                 }
 
-                let key_name = match &lk.value {
+                let key_name = match &left_pair.key.value {
                     String(str_val) => str_val.as_ref().to_owned(),
                     other => format!("<{other:?}>"),
                 };
                 let value_path = format!("{path}.{key_name}");
-                if let Some(diff_path) =
-                    first_difference_path(&value_path, &lval.value, &rval.value)
-                {
+                if let Some(diff_path) = first_difference_path(
+                    &value_path,
+                    &left_pair.value.value,
+                    &right_pair.value.value,
+                ) {
                     return Some(diff_path);
                 }
             }
@@ -640,7 +647,7 @@ fn test_nested_empty_collections() {
     assert_eq!(outer.len(), 1);
     let middle_node = outer.first().expect("expected middle sequence node");
 
-    let middle = match &middle_node.value {
+    let middle = match &middle_node.node.value {
         Value::Sequence(items) => Some(items),
         _ => None,
     }
@@ -649,7 +656,7 @@ fn test_nested_empty_collections() {
     assert_eq!(middle.len(), 1);
     let inner_node = middle.first().expect("expected inner sequence node");
 
-    let inner = match &inner_node.value {
+    let inner = match &inner_node.node.value {
         Value::Sequence(items) => Some(items),
         _ => None,
     }
@@ -686,7 +693,10 @@ fn test_unicode_scalars() {
         }
         .expect("Expected mapping");
 
-        let (_, value_node) = pairs.first().expect("Expected at least one mapping pair");
+        let value_node = &pairs
+            .first()
+            .expect("Expected at least one mapping pair")
+            .value;
 
         let string_value = match &value_node.value {
             Value::String(string_value) => Some(string_value.as_ref()),
@@ -743,7 +753,7 @@ fn test_block_scalar_chomping() {
         }
         .expect("expected mapping");
 
-        let (_, value_node) = pairs.first().expect("expected mapping pair");
+        let value_node = &pairs.first().expect("expected mapping pair").value;
 
         let string_value = match &value_node.value {
             Value::String(string_value) => Some(string_value.as_ref()),
@@ -769,7 +779,7 @@ fn test_block_scalar_chomping() {
         }
         .expect("expected mapping");
 
-        let (_, value_node) = pairs.first().expect("expected mapping pair");
+        let value_node = &pairs.first().expect("expected mapping pair").value;
 
         let string_value = match &value_node.value {
             Value::String(string_value) => Some(string_value.as_ref()),
@@ -849,7 +859,7 @@ fn test_mixed_flow_and_block() {
     assert_eq!(pairs.len(), 2);
 
     // First pair: block sequence
-    let (_, first_value) = pairs.first().expect("expected first mapping pair");
+    let first_value = &pairs.first().expect("expected first mapping pair").value;
     let first_items = match &first_value.value {
         Value::Sequence(items) => Some(items),
         _ => None,
@@ -858,7 +868,7 @@ fn test_mixed_flow_and_block() {
     assert_eq!(first_items.len(), 2);
 
     // Second pair: flow sequence
-    let (_, second_value) = pairs.get(1).expect("expected second mapping pair");
+    let second_value = &pairs.get(1).expect("expected second mapping pair").value;
     let second_items = match &second_value.value {
         Value::Sequence(items) => Some(items),
         _ => None,
@@ -883,9 +893,9 @@ fn test_complex_keys() {
     .expect("expected mapping");
 
     assert_eq!(pairs.len(), 1);
-    let (key, value) = pairs.first().expect("expected exactly one pair");
-    assert_eq!(key.value, Value::String("complex key".into()));
-    assert_eq!(value.value, Value::String("value".into()));
+    let pair = pairs.first().expect("expected exactly one pair");
+    assert_eq!(pair.key.value, Value::String("complex key".into()));
+    assert_eq!(pair.value.value, Value::String("value".into()));
 }
 
 #[test]
@@ -936,7 +946,7 @@ fn test_very_long_line() {
     }
     .expect("expected mapping");
 
-    let (_, value_node) = pairs.first().expect("expected mapping pair");
+    let value_node = &pairs.first().expect("expected mapping pair").value;
 
     let string_value = match &value_node.value {
         Value::String(string_value) => Some(string_value),

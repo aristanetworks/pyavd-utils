@@ -506,13 +506,13 @@ fn test_zero_copy_parsing() {
     assert_eq!(pairs.len(), 1);
 
     // Extract and verify key/value using pattern matching
-    let (key, val) = pairs.first().expect("expected mapping pair");
-    let key_str = match &key.value {
+    let pair = pairs.first().expect("expected mapping pair");
+    let key_str = match &pair.key.value {
         Value::String(string_value) => Some(string_value.as_ref()),
         _ => None,
     }
     .expect("expected string key");
-    let val_str = match &val.value {
+    let val_str = match &pair.value.value {
         Value::String(string_value) => Some(string_value.as_ref()),
         _ => None,
     }
@@ -543,7 +543,7 @@ fn test_block_scalar_chomping() {
         .expect("expected sequence with string scalar");
 
         let first = seq.first().expect("expected at least one sequence item");
-        let str_val = match &first.value {
+        let str_val = match &first.node.value {
             Value::String(string_value) => Some(string_value),
             _ => None,
         }
@@ -572,7 +572,7 @@ fn test_block_scalar_chomping() {
         _ => None,
     }
     .expect("expected mapping");
-    let (_, value_node) = map.first().expect("expected mapping pair");
+    let value_node = &map.first().expect("expected mapping pair").value;
     let str_val = match &value_node.value {
         Value::String(string_value) => Some(string_value),
         _ => None,

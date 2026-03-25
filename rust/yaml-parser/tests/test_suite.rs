@@ -19,6 +19,10 @@
 )]
 #![allow(clippy::panic, reason = "panic is acceptable in tests")]
 #![allow(
+    clippy::manual_assert,
+    reason = "explicit panic messages are acceptable in this test bootstrap"
+)]
+#![allow(
     clippy::integer_division_remainder_used,
     reason = "modulo is fine in tests"
 )]

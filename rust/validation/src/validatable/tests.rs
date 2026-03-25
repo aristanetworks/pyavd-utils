@@ -135,7 +135,7 @@ fn test_serde_json_empty_sequence() {
 mod yaml_parser_tests {
     use std::borrow::Cow;
 
-    use yaml_parser::{Integer, Node, Value};
+    use yaml_parser::{Integer, MappingPair, Node, SequenceItem, Value};
 
     use crate::validatable::{ValidatableMapping, ValidatableSequence, ValidatableValue};
 
@@ -207,8 +207,8 @@ mod yaml_parser_tests {
     fn test_yaml_mapping() {
         let node = Node::new(
             Value::Mapping(vec![
-                (string_node("name"), string_node("Alice")),
-                (string_node("age"), int_node(30)),
+                MappingPair::new(make_span(), string_node("name"), string_node("Alice")),
+                MappingPair::new(make_span(), string_node("age"), int_node(30)),
             ]),
             make_span(),
         );
@@ -233,7 +233,11 @@ mod yaml_parser_tests {
     #[test]
     fn test_yaml_sequence() {
         let node = Node::new(
-            Value::Sequence(vec![int_node(1), int_node(2), int_node(3)]),
+            Value::Sequence(vec![
+                SequenceItem::new(make_span(), int_node(1)),
+                SequenceItem::new(make_span(), int_node(2)),
+                SequenceItem::new(make_span(), int_node(3)),
+            ]),
             make_span(),
         );
 
@@ -250,10 +254,15 @@ mod yaml_parser_tests {
     #[test]
     fn test_yaml_get() {
         let node = Node::new(
-            Value::Mapping(vec![(
+            Value::Mapping(vec![MappingPair::new(
+                make_span(),
                 string_node("nested"),
                 Node::new(
-                    Value::Mapping(vec![(string_node("key"), string_node("value"))]),
+                    Value::Mapping(vec![MappingPair::new(
+                        make_span(),
+                        string_node("key"),
+                        string_node("value"),
+                    )]),
                     make_span(),
                 ),
             )]),
@@ -273,8 +282,9 @@ mod yaml_parser_tests {
         // These should be coerced to string keys
         let node = Node::new(
             Value::Mapping(vec![
-                (int_node(123), string_node("int_key_value")),
-                (
+                MappingPair::new(make_span(), int_node(123), string_node("int_key_value")),
+                MappingPair::new(
+                    make_span(),
                     Node::new(Value::Bool(true), make_span()),
                     string_node("bool_key_value"),
                 ),

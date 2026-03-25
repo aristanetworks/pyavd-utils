@@ -6,7 +6,7 @@
 
 use std::borrow::Cow;
 
-use yaml_parser::{Integer, Node, Value};
+use yaml_parser::{Integer, MappingPair, Node, SequenceItem, Value};
 
 use super::{ValidatableMapping, ValidatableSequence, ValidatableValue};
 
@@ -18,7 +18,7 @@ impl<'input> ValidatableValue for Node<'input> {
     where
         Self: 'a;
     type Sequence<'a>
-        = &'a [Node<'input>]
+        = &'a [SequenceItem<'input>]
     where
         Self: 'a;
     type Coerced = Node<'static>;
@@ -89,11 +89,11 @@ impl<'input> ValidatableValue for Node<'input> {
     fn get(&self, key: &str) -> Option<&Self> {
         match &self.value {
             Value::Mapping(pairs) => {
-                for (k, v) in pairs {
-                    if let Value::String(k_str) = &k.value
+                for pair in pairs {
+                    if let Value::String(k_str) = &pair.key.value
                         && k_str.as_ref() == key
                     {
-                        return Some(v);
+                        return Some(&pair.value);
                     }
                 }
                 None
@@ -135,16 +135,24 @@ impl<'input> ValidatableValue for Node<'input> {
     }
 
     fn coerce_sequence(&self, items: Vec<Self::Coerced>) -> Self::Coerced {
-        Node::new(Value::Sequence(items), self.span)
+        Node::new(
+            Value::Sequence(
+                items
+                    .into_iter()
+                    .map(|node| SequenceItem::new(node.span, node))
+                    .collect(),
+            ),
+            self.span,
+        )
     }
 
     fn coerce_mapping(&self, items: Vec<(String, Self::Coerced)>) -> Self::Coerced {
         // Convert string keys to Node keys
-        let pairs: Vec<(Node<'static>, Node<'static>)> = items
+        let pairs: Vec<MappingPair<'static>> = items
             .into_iter()
             .map(|(key, value)| {
                 let key_node = Node::new(Value::String(Cow::Owned(key)), value.span);
-                (key_node, value)
+                MappingPair::new(value.span, key_node, value)
             })
             .collect();
         Node::new(Value::Mapping(pairs), self.span)
@@ -163,12 +171,17 @@ impl<'input> ValidatableValue for Node<'input> {
             Value::Int(_) => FV::Str(self.as_str().unwrap().into_owned()),
             Value::Float(f) => FV::Float(*f),
             Value::String(s) => FV::Str(s.to_string()),
-            Value::Sequence(seq) => FV::List(seq.iter().map(|n| n.to_feedback_value()).collect()),
+            Value::Sequence(seq) => FV::List(
+                seq.iter()
+                    .map(|item| item.node.to_feedback_value())
+                    .collect(),
+            ),
             Value::Mapping(map) => FV::Dict(
                 map.iter()
-                    .filter_map(|(k, v)| {
-                        k.as_str()
-                            .map(|key| (key.to_string(), v.to_feedback_value()))
+                    .filter_map(|pair| {
+                        pair.key
+                            .as_str()
+                            .map(|key| (key.to_string(), pair.value.to_feedback_value()))
                     })
                     .collect(),
             ),
@@ -194,7 +207,7 @@ impl<'input> ValidatableValue for Node<'input> {
 /// we coerce scalar keys (int, bool, float) to strings. Only complex keys
 /// (mappings, sequences) are skipped.
 pub struct NodeMapping<'a, 'input> {
-    pairs: &'a [(Node<'input>, Node<'input>)],
+    pairs: &'a [MappingPair<'input>],
 }
 
 /// Try to coerce a YAML node to a string key.
@@ -216,11 +229,11 @@ impl<'a, 'input: 'a> ValidatableMapping<'a> for NodeMapping<'a, 'input> {
     type Iter = NodeMappingIter<'a, 'input>;
 
     fn get(&self, key: &str) -> Option<&Self::Value> {
-        for (k, v) in self.pairs {
-            if let Some(k_str) = coerce_key_to_string(k)
+        for pair in self.pairs {
+            if let Some(k_str) = coerce_key_to_string(&pair.key)
                 && k_str == key
             {
-                return Some(v);
+                return Some(&pair.value);
             }
         }
         None
@@ -240,14 +253,14 @@ impl<'a, 'input: 'a> ValidatableMapping<'a> for NodeMapping<'a, 'input> {
         // Count entries with coercible keys
         self.pairs
             .iter()
-            .filter(|(k, _)| coerce_key_to_string(k).is_some())
+            .filter(|pair| coerce_key_to_string(&pair.key).is_some())
             .count()
     }
 }
 
 /// Iterator over yaml_parser mapping entries with coercible keys.
 pub struct NodeMappingIter<'a, 'input> {
-    inner: std::slice::Iter<'a, (Node<'input>, Node<'input>)>,
+    inner: std::slice::Iter<'a, MappingPair<'input>>,
 }
 
 impl<'a, 'input: 'a> Iterator for NodeMappingIter<'a, 'input> {
@@ -255,26 +268,40 @@ impl<'a, 'input: 'a> Iterator for NodeMappingIter<'a, 'input> {
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {
-            let (k, v) = self.inner.next()?;
-            if let Some(key_str) = coerce_key_to_string(k) {
-                return Some((key_str, v));
+            let pair = self.inner.next()?;
+            if let Some(key_str) = coerce_key_to_string(&pair.key) {
+                return Some((key_str, &pair.value));
             }
             // Skip non-coercible keys (mappings, sequences, null)
         }
     }
 }
 
-// === ValidatableSequence for slice of Nodes ===
+// === ValidatableSequence for slice of sequence items ===
 
-impl<'a, 'input: 'a> ValidatableSequence<'a> for &'a [Node<'input>] {
+impl<'a, 'input: 'a> ValidatableSequence<'a> for &'a [SequenceItem<'input>] {
     type Value = Node<'input>;
-    type Iter = std::slice::Iter<'a, Node<'input>>;
+    type Iter = SequenceIter<'a, 'input>;
 
     fn iter(&self) -> Self::Iter {
-        <[Node<'input>]>::iter(self)
+        SequenceIter {
+            inner: <[SequenceItem<'input>]>::iter(self),
+        }
     }
 
     fn len(&self) -> usize {
-        <[Node<'input>]>::len(self)
+        <[SequenceItem<'input>]>::len(self)
+    }
+}
+
+pub struct SequenceIter<'a, 'input> {
+    inner: std::slice::Iter<'a, SequenceItem<'input>>,
+}
+
+impl<'a, 'input: 'a> Iterator for SequenceIter<'a, 'input> {
+    type Item = &'a Node<'input>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.inner.next().map(|item| &item.node)
     }
 }

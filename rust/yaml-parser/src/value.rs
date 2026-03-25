@@ -20,6 +20,7 @@
 //! `'static` lifetime when you need to store values beyond the input's lifetime.
 
 use std::borrow::Cow;
+use std::ops::{Deref, DerefMut};
 
 use crate::span::Span;
 
@@ -69,7 +70,7 @@ impl Integer<'_> {
 
 #[cfg(feature = "serde")]
 mod serde_impls {
-    use super::{Integer, Node, Value};
+    use super::{Integer, MappingPair, Node, SequenceItem, Value};
     use crate::span::Span;
     use serde::de::{self, Deserialize, Deserializer, MapAccess, SeqAccess, Visitor};
     use serde::ser::{Serialize, SerializeMap as _, SerializeSeq as _, Serializer};
@@ -95,15 +96,15 @@ mod serde_impls {
                 Value::String(string_value) => serializer.serialize_str(string_value.as_ref()),
                 Value::Sequence(items) => {
                     let mut seq = serializer.serialize_seq(Some(items.len()))?;
-                    for node in items {
-                        seq.serialize_element(&node.value)?;
+                    for item in items {
+                        seq.serialize_element(&item.node.value)?;
                     }
                     seq.end()
                 }
                 Value::Mapping(pairs) => {
                     let mut map = serializer.serialize_map(Some(pairs.len()))?;
-                    for (key_node, value_node) in pairs {
-                        map.serialize_entry(&key_node.value, &value_node.value)?;
+                    for pair in pairs {
+                        map.serialize_entry(&pair.key.value, &pair.value.value)?;
                     }
                     map.end()
                 }
@@ -218,7 +219,7 @@ mod serde_impls {
                     value: elem,
                     span: Span::default(),
                 };
-                items.push(node);
+                items.push(SequenceItem::new(Span::default(), node));
             }
             Ok(Value::Sequence(items))
         }
@@ -239,7 +240,7 @@ mod serde_impls {
                     value,
                     span: Span::default(),
                 };
-                pairs.push((key_node, value_node));
+                pairs.push(MappingPair::new(Span::default(), key_node, value_node));
             }
             Ok(Value::Mapping(pairs))
         }
@@ -271,7 +272,11 @@ mod serde_impls {
                 value,
                 span: Span::default(),
             };
-            Ok(Value::Mapping(vec![(key_node, value_node)]))
+            Ok(Value::Mapping(vec![MappingPair::new(
+                Span::default(),
+                key_node,
+                value_node,
+            )]))
         }
     }
 
@@ -346,7 +351,7 @@ pub struct Node<'input> {
     pub properties: Option<Box<Properties<'input>>>,
     /// The node's value
     pub value: Value<'input>,
-    /// Source span covering the entire node (including properties)
+    /// Source span covering the semantic value of this node.
     pub span: Span,
 }
 
@@ -434,6 +439,97 @@ impl<'input> Node<'input> {
     }
 }
 
+/// A sequence item with both structural and semantic spans.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SequenceItem<'input> {
+    /// Source span covering the full sequence entry, including `-` in block style.
+    pub item_span: Span,
+    /// The semantic node value for this entry.
+    pub node: Node<'input>,
+}
+
+impl<'input> SequenceItem<'input> {
+    /// Create a new sequence item.
+    #[must_use]
+    pub fn new(item_span: Span, node: Node<'input>) -> Self {
+        Self { item_span, node }
+    }
+
+    /// Borrow the semantic node for this item.
+    #[must_use]
+    pub const fn as_node(&self) -> &Node<'input> {
+        &self.node
+    }
+
+    /// Convert this item to an owned version with `'static` lifetime.
+    #[must_use]
+    pub fn into_owned(self) -> SequenceItem<'static> {
+        SequenceItem {
+            item_span: self.item_span,
+            node: self.node.into_owned(),
+        }
+    }
+}
+
+impl<'input> Deref for SequenceItem<'input> {
+    type Target = Node<'input>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.node
+    }
+}
+
+impl DerefMut for SequenceItem<'_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.node
+    }
+}
+
+/// A mapping pair with both structural and semantic spans.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MappingPair<'input> {
+    /// Source span covering the full mapping entry.
+    pub pair_span: Span,
+    /// The semantic key node.
+    pub key: Node<'input>,
+    /// The semantic value node.
+    pub value: Node<'input>,
+}
+
+impl<'input> MappingPair<'input> {
+    /// Create a new mapping pair.
+    #[must_use]
+    pub fn new(pair_span: Span, key: Node<'input>, value: Node<'input>) -> Self {
+        Self {
+            pair_span,
+            key,
+            value,
+        }
+    }
+
+    /// Borrow the semantic key node.
+    #[must_use]
+    pub const fn key(&self) -> &Node<'input> {
+        &self.key
+    }
+
+    /// Borrow the semantic value node.
+    #[must_use]
+    pub const fn value(&self) -> &Node<'input> {
+        &self.value
+    }
+
+    /// Convert this pair to an owned version with `'static` lifetime.
+    #[must_use]
+    pub fn into_owned(self) -> MappingPair<'static> {
+        MappingPair {
+            pair_span: self.pair_span,
+            key: self.key.into_owned(),
+            value: self.value.into_owned(),
+        }
+    }
+}
+
 /// The core YAML value types.
 ///
 /// This represents the actual content of a YAML node, separate from
@@ -462,10 +558,10 @@ pub enum Value<'input> {
     String(Cow<'input, str>),
 
     /// A sequence (array/list)
-    Sequence(Vec<Node<'input>>),
+    Sequence(Vec<SequenceItem<'input>>),
 
     /// A mapping (object/dictionary)
-    Mapping(Vec<(Node<'input>, Node<'input>)>),
+    Mapping(Vec<MappingPair<'input>>),
 
     /// An alias reference (`*name`)
     ///
@@ -507,12 +603,12 @@ impl Value<'_> {
             Self::Int(number) => Value::Int(number.into_owned()),
             Self::Float(val) => Value::Float(val),
             Self::String(cow) => Value::String(Cow::Owned(cow.into_owned())),
-            Self::Sequence(seq) => Value::Sequence(seq.into_iter().map(Node::into_owned).collect()),
-            Self::Mapping(map) => Value::Mapping(
-                map.into_iter()
-                    .map(|(key, val)| (key.into_owned(), val.into_owned()))
-                    .collect(),
-            ),
+            Self::Sequence(seq) => {
+                Value::Sequence(seq.into_iter().map(SequenceItem::into_owned).collect())
+            }
+            Self::Mapping(map) => {
+                Value::Mapping(map.into_iter().map(MappingPair::into_owned).collect())
+            }
             Self::Alias(cow) => Value::Alias(Cow::Owned(cow.into_owned())),
         }
     }

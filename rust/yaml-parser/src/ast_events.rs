@@ -114,7 +114,7 @@ fn emit_node_events<'input>(
                 span: node.span,
             });
             for item in items {
-                emit_node_events(item, events)?;
+                emit_node_events(&item.node, events)?;
             }
             events.push(Event::SequenceEnd { span: node.span });
             Ok(())
@@ -125,9 +125,9 @@ fn emit_node_events<'input>(
                 properties: props.into_boxed_option(),
                 span: node.span,
             });
-            for (key, value) in pairs {
-                emit_node_events(key, events)?;
-                emit_node_events(value, events)?;
+            for pair in pairs {
+                emit_node_events(&pair.key, events)?;
+                emit_node_events(&pair.value, events)?;
             }
             events.push(Event::MappingEnd { span: node.span });
             Ok(())

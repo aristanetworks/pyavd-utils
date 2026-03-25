@@ -23,10 +23,11 @@
 use std::borrow::Cow;
 use std::collections::HashSet;
 
+use crate::ast_event::AstEvent;
 use crate::error::{ErrorKind, ParseError};
 use crate::event::{Event, Properties as EventProperties, Property as EventProperty, ScalarStyle};
 use crate::span::Span;
-use crate::value::{Integer, Node, Properties as NodeProperties, Value};
+use crate::value::{Integer, MappingPair, Node, Properties as NodeProperties, SequenceItem, Value};
 
 /// Parser that builds AST from a streaming source of events.
 ///
@@ -38,12 +39,13 @@ use crate::value::{Integer, Node, Properties as NodeProperties, Value};
 /// internal one-element lookahead buffer.
 pub struct Parser<'input, I>
 where
-    I: Iterator<Item = Event<'input>>,
+    I: Iterator,
+    I::Item: Into<AstEvent<'input>>,
 {
     /// Underlying event iterator.
     events: I,
     /// Buffered lookahead event (result of the most recent `peek()`).
-    peeked: Option<Event<'input>>,
+    peeked: Option<AstEvent<'input>>,
     /// Count of events that have been logically consumed via `advance()`.
     /// Used for progress tracking in recovery paths.
     events_consumed: usize,
@@ -56,7 +58,8 @@ where
 
 impl<'input, I> Parser<'input, I>
 where
-    I: Iterator<Item = Event<'input>>,
+    I: Iterator,
+    I::Item: Into<AstEvent<'input>>,
 {
     /// Create a new parser from an event iterator.
     #[must_use]
@@ -96,29 +99,32 @@ where
         loop {
             let event = self.peek().cloned()?;
             match event {
-                Event::StreamStart => {
+                AstEvent::Event(Event::StreamStart) => {
                     // Skip the stream start marker.
                     self.advance();
                 }
-                Event::StreamEnd => {
+                AstEvent::Event(Event::StreamEnd) => {
                     // Consume the stream end marker and signal EOF.
                     self.advance();
                     return None;
                 }
-                Event::DocumentStart { .. } => {
+                AstEvent::Event(Event::DocumentStart { .. }) => {
                     // Explicit document: consume the start marker, parse the
                     // root node, optionally consume a trailing DocumentEnd,
                     // then clear anchors for the next document.
                     self.advance();
                     let node = self.parse_node();
-                    if matches!(self.peek(), Some(Event::DocumentEnd { .. })) {
+                    if matches!(
+                        self.peek(),
+                        Some(AstEvent::Event(Event::DocumentEnd { .. }))
+                    ) {
                         self.advance();
                     }
                     // Anchors are scoped to a single document.
                     self.anchors.clear();
                     return node;
                 }
-                Event::MappingEnd { .. } | Event::SequenceEnd { .. } => {
+                AstEvent::Event(Event::MappingEnd { .. } | Event::SequenceEnd { .. }) => {
                     // Stray end markers - skip them to avoid infinite loop.
                     self.advance();
                 }
@@ -142,9 +148,9 @@ where
     }
 
     /// Peek at the current event, using an internal one-element buffer.
-    fn peek(&mut self) -> Option<&Event<'input>> {
+    fn peek(&mut self) -> Option<&AstEvent<'input>> {
         if self.peeked.is_none() {
-            self.peeked = self.events.next();
+            self.peeked = self.events.next().map(Into::into);
         }
         self.peeked.as_ref()
     }
@@ -163,11 +169,11 @@ where
     }
 
     /// Consume and return the current event by ownership.
-    fn next_event(&mut self) -> Option<Event<'input>> {
+    fn next_event(&mut self) -> Option<AstEvent<'input>> {
         let event = if let Some(event) = self.peeked.take() {
             Some(event)
         } else {
-            self.events.next()
+            self.events.next().map(Into::into)
         };
         if event.is_some() {
             self.events_consumed += 1;
@@ -182,7 +188,25 @@ where
 
     /// Parse a single node from events.
     fn parse_node(&mut self) -> Option<Node<'input>> {
-        match self.next_event()? {
+        self.next_event()
+            .and_then(|event| self.parse_node_from_ast_event(event))
+    }
+
+    fn parse_node_from_ast_event(&mut self, event: AstEvent<'input>) -> Option<Node<'input>> {
+        match event {
+            AstEvent::SequenceItem {
+                event: inner_event, ..
+            }
+            | AstEvent::MappingKey {
+                key_event: inner_event,
+                ..
+            }
+            | AstEvent::Event(inner_event) => self.parse_node_from_event(inner_event),
+        }
+    }
+
+    fn parse_node_from_event(&mut self, event: Event<'input>) -> Option<Node<'input>> {
+        match event {
             Event::MappingStart {
                 properties, span, ..
             } => Some(self.parse_mapping(properties.map(|event_props| *event_props), span)),
@@ -227,28 +251,50 @@ where
                 .and_then(|event_props| event_props.anchor.as_ref()),
         );
 
-        let mut pairs: Vec<(Node<'input>, Node<'input>)> = Vec::with_capacity(8);
+        let mut pairs: Vec<MappingPair<'input>> = Vec::with_capacity(8);
         let mut end_span = start_span;
 
         loop {
             match self.peek() {
-                Some(Event::MappingEnd { span }) => {
+                Some(AstEvent::Event(Event::MappingEnd { span })) => {
                     end_span = *span;
                     self.advance();
                     break;
                 }
-                Some(Event::SequenceEnd { .. }) => {
+                Some(AstEvent::Event(Event::SequenceEnd { .. })) => {
                     // Mismatched end marker - break to avoid infinite loop
                     break;
                 }
-                Some(_) => {
+                Some(AstEvent::MappingKey { .. }) => {
                     // Parse key
                     let consumed_before = self.events_consumed;
-                    let key = self.parse_node().unwrap_or_else(|| Node::null(start_span));
+                    let Some(AstEvent::MappingKey {
+                        pair_start,
+                        key_event,
+                    }) = self.next_event()
+                    else {
+                        debug_assert!(false, "peeked MappingKey event disappeared");
+                        break;
+                    };
+                    let key = self
+                        .parse_node_from_event(key_event)
+                        .unwrap_or_else(|| Node::null(start_span));
                     // Parse value
                     let value = self.parse_node().unwrap_or_else(|| Node::null(start_span));
-                    pairs.push((key, value));
+                    let pair_span = Span::new(pair_start..value.span.end);
+                    pairs.push(MappingPair::new(pair_span, key, value));
                     // Ensure we made progress to avoid infinite loop
+                    if self.events_consumed == consumed_before {
+                        self.advance();
+                    }
+                }
+                Some(_) => {
+                    let consumed_before = self.events_consumed;
+                    let key = self.parse_node().unwrap_or_else(|| Node::null(start_span));
+                    let value = self.parse_node().unwrap_or_else(|| Node::null(start_span));
+                    let pair_span =
+                        Span::from_usize_range(key.span.start_usize()..value.span.end_usize());
+                    pairs.push(MappingPair::new(pair_span, key, value));
                     if self.events_consumed == consumed_before {
                         self.advance();
                     }
@@ -262,7 +308,9 @@ where
         let start = start_span.start_usize();
         let end = if end_span.start == end_span.end {
             // Block: use last value's end
-            pairs.last().map_or(start, |(_, val)| val.span.end_usize())
+            pairs
+                .last()
+                .map_or(start, |pair| pair.value.span.end_usize())
         } else {
             // Flow: end_span covers the closing brace
             end_span.end_usize()
@@ -289,26 +337,42 @@ where
                 .and_then(|event_props| event_props.anchor.as_ref()),
         );
 
-        let mut items: Vec<Node<'input>> = Vec::with_capacity(16);
+        let mut items: Vec<SequenceItem<'input>> = Vec::with_capacity(16);
         let mut end_span = start_span;
 
         loop {
             match self.peek() {
-                Some(Event::SequenceEnd { span }) => {
+                Some(AstEvent::Event(Event::SequenceEnd { span })) => {
                     end_span = *span;
                     self.advance();
                     break;
                 }
-                Some(Event::MappingEnd { .. }) => {
+                Some(AstEvent::Event(Event::MappingEnd { .. })) => {
                     // Mismatched end marker - break to avoid infinite loop
                     break;
                 }
-                Some(_) => {
+                Some(AstEvent::SequenceItem { .. }) => {
                     let consumed_before = self.events_consumed;
-                    if let Some(item) = self.parse_node() {
-                        items.push(item);
+                    let Some(AstEvent::SequenceItem { item_start, event }) = self.next_event()
+                    else {
+                        debug_assert!(false, "peeked SequenceItem event disappeared");
+                        break;
+                    };
+                    if let Some(node) = self.parse_node_from_event(event) {
+                        let item_span = Span::new(item_start..node.span.end);
+                        items.push(SequenceItem::new(item_span, node));
                     }
                     // Ensure we made progress to avoid infinite loop
+                    if self.events_consumed == consumed_before {
+                        self.advance();
+                    }
+                }
+                Some(_) => {
+                    let consumed_before = self.events_consumed;
+                    if let Some(node) = self.parse_node() {
+                        let item_span = node.span;
+                        items.push(SequenceItem::new(item_span, node));
+                    }
                     if self.events_consumed == consumed_before {
                         self.advance();
                     }
@@ -322,7 +386,9 @@ where
         let start = start_span.start_usize();
         let end = if end_span.start == end_span.end {
             // Block: use last item's end
-            items.last().map_or(start, |node| node.span.end_usize())
+            items
+                .last()
+                .map_or(start, |item| item.node.span.end_usize())
         } else {
             // Flow: end_span covers the closing bracket
             end_span.end_usize()
@@ -580,6 +646,7 @@ mod tests {
         clippy::approx_constant,
         reason = "test values don't need to use consts"
     )]
+    #![allow(clippy::float_cmp, reason = "exact equality is fine for these tests")]
 
     use super::*;
     use crate::{Stream, error::ParseError};
@@ -588,6 +655,46 @@ mod tests {
     fn parse(input: &str) -> (Stream<'static>, Vec<ParseError>) {
         let (nodes, errors) = crate::parse(input);
         (nodes.into_iter().map(Node::into_owned).collect(), errors)
+    }
+
+    fn nodes_equal_ignoring_structural_spans(left: &Node<'_>, right: &Node<'_>) -> bool {
+        left.properties == right.properties
+            && left.span == right.span
+            && values_equal_ignoring_structural_spans(&left.value, &right.value)
+    }
+
+    fn values_equal_ignoring_structural_spans(left: &Value<'_>, right: &Value<'_>) -> bool {
+        match (left, right) {
+            (Value::Null, Value::Null) => true,
+            (Value::Bool(lb), Value::Bool(rb)) => lb == rb,
+            (Value::Int(li), Value::Int(ri)) => li == ri,
+            (Value::Float(lf), Value::Float(rf)) => lf == rf,
+            (Value::String(ls), Value::String(rs)) => ls == rs,
+            (Value::Alias(la), Value::Alias(ra)) => la == ra,
+            (Value::Sequence(left_items), Value::Sequence(right_items)) => {
+                left_items.len() == right_items.len()
+                    && left_items
+                        .iter()
+                        .zip(right_items.iter())
+                        .all(|(left_item, right_item)| {
+                            nodes_equal_ignoring_structural_spans(&left_item.node, &right_item.node)
+                        })
+            }
+            (Value::Mapping(left_pairs), Value::Mapping(right_pairs)) => {
+                left_pairs.len() == right_pairs.len()
+                    && left_pairs
+                        .iter()
+                        .zip(right_pairs.iter())
+                        .all(|(left_pair, right_pair)| {
+                            nodes_equal_ignoring_structural_spans(&left_pair.key, &right_pair.key)
+                                && nodes_equal_ignoring_structural_spans(
+                                    &left_pair.value,
+                                    &right_pair.value,
+                                )
+                        })
+            }
+            _ => false,
+        }
     }
 
     #[test]
@@ -608,8 +715,8 @@ mod tests {
         if let Value::Mapping(pairs) = value {
             assert_eq!(pairs.len(), 1);
             let pair = pairs.first().unwrap();
-            assert!(matches!(&pair.0.value, Value::String(string) if string == "key"));
-            assert!(matches!(&pair.1.value, Value::String(string) if string == "value"));
+            assert!(matches!(&pair.key.value, Value::String(string) if string == "key"));
+            assert!(matches!(&pair.value.value, Value::String(string) if string == "value"));
         }
     }
 
@@ -695,13 +802,13 @@ mod tests {
         if let Value::Mapping(pairs) = value {
             assert_eq!(pairs.len(), 2, "expected 2 pairs but got {pairs:?}");
             // Check first pair's value has anchor
-            let first_value = &pairs.first().unwrap().1;
+            let first_value = &pairs.first().unwrap().value;
             assert_eq!(
                 first_value.anchor(),
                 Some("anchor"),
                 "First value should have anchor 'anchor'"
             );
-            let alias_value = &pairs.last().unwrap().1.value;
+            let alias_value = &pairs.last().unwrap().value.value;
             assert!(
                 matches!(alias_value, Value::Alias(name) if name.as_ref() == "anchor"),
                 "Expected Alias(\"anchor\"), got {alias_value:?}"
@@ -799,7 +906,7 @@ mod tests {
             for (i, (parsed, via_events)) in
                 parsed_nodes.iter().zip(via_events_nodes.iter()).enumerate()
             {
-                if parsed != via_events {
+                if !nodes_equal_ignoring_structural_spans(parsed, via_events) {
                     failures.push(format!(
                         "Input: {input:?}\n  Document {i} mismatch:\n    parse:      {parsed:?}\n    via_events: {via_events:?}"
                     ));
@@ -863,11 +970,11 @@ mod tests {
         if let Value::Mapping(pairs) = &nodes[0].value {
             assert_eq!(pairs.len(), 2);
             // First pair
-            assert!(matches!(&pairs[0].0.value, Value::String(s) if s == "a"));
-            assert!(matches!(&pairs[0].1.value, Value::Int(Integer::I64(1))));
+            assert!(matches!(&pairs[0].key.value, Value::String(s) if s == "a"));
+            assert!(matches!(&pairs[0].value.value, Value::Int(Integer::I64(1))));
             // Second pair
-            assert!(matches!(&pairs[1].0.value, Value::String(s) if s == "b"));
-            assert!(matches!(&pairs[1].1.value, Value::Int(Integer::I64(2))));
+            assert!(matches!(&pairs[1].key.value, Value::String(s) if s == "b"));
+            assert!(matches!(&pairs[1].value.value, Value::Int(Integer::I64(2))));
         } else {
             panic!("Expected mapping, got: {:?}", nodes[0].value);
         }
@@ -880,9 +987,9 @@ mod tests {
 
         if let Value::Sequence(items) = &nodes[0].value {
             assert_eq!(items.len(), 3);
-            assert!(matches!(&items[0].value, Value::String(s) if s == "a"));
-            assert!(matches!(&items[1].value, Value::String(s) if s == "b"));
-            assert!(matches!(&items[2].value, Value::String(s) if s == "c"));
+            assert!(matches!(&items[0].node.value, Value::String(s) if s == "a"));
+            assert!(matches!(&items[1].node.value, Value::String(s) if s == "b"));
+            assert!(matches!(&items[2].node.value, Value::String(s) if s == "c"));
         } else {
             panic!("Expected sequence, got: {:?}", nodes[0].value);
         }
@@ -907,9 +1014,9 @@ mod tests {
 
         if let Value::Sequence(items) = &nodes[0].value {
             assert_eq!(items.len(), 3);
-            assert!(matches!(&items[0].value, Value::Int(Integer::I64(1))));
-            assert!(matches!(&items[1].value, Value::Int(Integer::I64(2))));
-            assert!(matches!(&items[2].value, Value::Int(Integer::I64(3))));
+            assert!(matches!(&items[0].node.value, Value::Int(Integer::I64(1))));
+            assert!(matches!(&items[1].node.value, Value::Int(Integer::I64(2))));
+            assert!(matches!(&items[2].node.value, Value::Int(Integer::I64(3))));
         } else {
             panic!("Expected sequence, got: {:?}", nodes[0].value);
         }
@@ -923,10 +1030,10 @@ mod tests {
         if let Value::Sequence(items) = &nodes[0].value {
             assert_eq!(items.len(), 2);
             // First item has anchor
-            assert_eq!(items[0].anchor(), Some("anchor"));
-            assert!(matches!(&items[0].value, Value::String(s) if s == "value"));
+            assert_eq!(items[0].node.anchor(), Some("anchor"));
+            assert!(matches!(&items[0].node.value, Value::String(s) if s == "value"));
             // Second item is alias
-            assert!(matches!(&items[1].value, Value::Alias(s) if s == "anchor"));
+            assert!(matches!(&items[1].node.value, Value::Alias(s) if s == "anchor"));
         } else {
             panic!("Expected sequence, got: {:?}", nodes[0].value);
         }
@@ -940,14 +1047,14 @@ mod tests {
         if let Value::Mapping(pairs) = &nodes[0].value {
             assert_eq!(pairs.len(), 1);
             // Check outer key
-            assert!(matches!(&pairs[0].0.value, Value::String(s) if s == "outer"));
+            assert!(matches!(&pairs[0].key.value, Value::String(s) if s == "outer"));
             // Check inner mapping
-            if let Value::Mapping(inner_pairs) = &pairs[0].1.value {
+            if let Value::Mapping(inner_pairs) = &pairs[0].value.value {
                 assert_eq!(inner_pairs.len(), 1);
-                assert!(matches!(&inner_pairs[0].0.value, Value::String(s) if s == "inner"));
-                assert!(matches!(&inner_pairs[0].1.value, Value::String(s) if s == "value"));
+                assert!(matches!(&inner_pairs[0].key.value, Value::String(s) if s == "inner"));
+                assert!(matches!(&inner_pairs[0].value.value, Value::String(s) if s == "value"));
             } else {
-                panic!("Expected inner mapping, got: {:?}", pairs[0].1.value);
+                panic!("Expected inner mapping, got: {:?}", pairs[0].value.value);
             }
         } else {
             panic!("Expected mapping, got: {:?}", nodes[0].value);
@@ -964,15 +1071,15 @@ mod tests {
         if let Value::Sequence(items) = &nodes[0].value {
             assert_eq!(items.len(), 2);
             // First item is nested sequence
-            if let Value::Sequence(nested) = &items[0].value {
+            if let Value::Sequence(nested) = &items[0].node.value {
                 assert_eq!(nested.len(), 2);
-                assert!(matches!(&nested[0].value, Value::String(s) if s == "a"));
-                assert!(matches!(&nested[1].value, Value::String(s) if s == "b"));
+                assert!(matches!(&nested[0].node.value, Value::String(s) if s == "a"));
+                assert!(matches!(&nested[1].node.value, Value::String(s) if s == "b"));
             } else {
-                panic!("Expected nested sequence, got: {:?}", items[0].value);
+                panic!("Expected nested sequence, got: {:?}", items[0].node.value);
             }
             // Second item is scalar
-            assert!(matches!(&items[1].value, Value::String(s) if s == "c"));
+            assert!(matches!(&items[1].node.value, Value::String(s) if s == "c"));
         } else {
             panic!("Expected sequence, got: {:?}", nodes[0].value);
         }
@@ -986,11 +1093,11 @@ mod tests {
         if let Value::Sequence(items) = &nodes[0].value {
             assert_eq!(items.len(), 2);
             // First item is mapping
-            if let Value::Mapping(pairs) = &items[0].value {
-                assert!(matches!(&pairs[0].0.value, Value::String(s) if s == "a"));
-                assert!(matches!(&pairs[0].1.value, Value::Int(Integer::I64(1))));
+            if let Value::Mapping(pairs) = &items[0].node.value {
+                assert!(matches!(&pairs[0].key.value, Value::String(s) if s == "a"));
+                assert!(matches!(&pairs[0].value.value, Value::Int(Integer::I64(1))));
             } else {
-                panic!("Expected mapping, got: {:?}", items[0].value);
+                panic!("Expected mapping, got: {:?}", items[0].node.value);
             }
         } else {
             panic!("Expected sequence, got: {:?}", nodes[0].value);

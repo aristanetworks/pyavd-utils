@@ -57,9 +57,9 @@ fn assert_value_eq_ignoring_spans<'input>(expected: &Value<'input>, actual: &Val
         }
         (Value::Mapping(a_pairs), Value::Mapping(b_pairs)) => {
             assert_eq!(a_pairs.len(), b_pairs.len(), "mapping length changed");
-            for ((a_key, a_val), (b_key, b_val)) in a_pairs.iter().zip(b_pairs.iter()) {
-                assert_node_eq_ignoring_spans(a_key, b_key);
-                assert_node_eq_ignoring_spans(a_val, b_val);
+            for (a_pair, b_pair) in a_pairs.iter().zip(b_pairs.iter()) {
+                assert_node_eq_ignoring_spans(&a_pair.key, &b_pair.key);
+                assert_node_eq_ignoring_spans(&a_pair.value, &b_pair.value);
             }
         }
         (left, right) => {

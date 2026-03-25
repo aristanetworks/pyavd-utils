@@ -19,10 +19,11 @@ use std::borrow::Cow;
 use std::collections::HashSet;
 use std::ops::ControlFlow;
 
+use crate::ast_event::AstEvent;
 use crate::error::{ErrorKind, ParseError};
 use crate::event::{Event, Properties, Property, ScalarStyle};
 use crate::lexer::{Token, TokenKind};
-use crate::span::{IndentLevel, Span, usize_to_indent};
+use crate::span::{BytePosition, IndentLevel, Span, usize_to_indent};
 
 use cursor::{LookaheadWindow, TokenCursor};
 use states::{
@@ -54,6 +55,44 @@ enum LineType {
     Empty,
     /// Line with extra indentation (preserve)
     MoreIndent,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum PendingAstWrap {
+    SequenceItem { item_start: BytePosition },
+    MappingPair { pair_start: BytePosition },
+}
+
+#[derive(Debug, Default)]
+struct PendingAstWrapQueue {
+    first: Option<PendingAstWrap>,
+    second: Option<PendingAstWrap>,
+}
+
+impl PendingAstWrapQueue {
+    fn clear(&mut self) {
+        self.first = None;
+        self.second = None;
+    }
+
+    fn push_back(&mut self, wrap: PendingAstWrap) {
+        if self.first.is_none() {
+            self.first = Some(wrap);
+        } else if self.second.is_none() {
+            self.second = Some(wrap);
+        } else {
+            debug_assert!(
+                false,
+                "pending AST wrap queue overflowed expected maximum depth"
+            );
+        }
+    }
+
+    fn pop_front(&mut self) -> Option<PendingAstWrap> {
+        let first = self.first.take()?;
+        self.first = self.second.take();
+        Some(first)
+    }
 }
 
 /// A YAML event emitter using an explicit state machine.
@@ -114,6 +153,12 @@ pub struct Emitter<'input> {
     /// Used to validate that continuation lines are indented relative to the flow start.
     /// Empty when not in flow context.
     flow_context_columns: Vec<IndentLevel>,
+    /// Structural AST metadata to apply to the next emitted node-start event.
+    pending_ast_wraps: PendingAstWrapQueue,
+}
+
+pub(crate) struct AstEmitter<'a, 'input> {
+    emitter: &'a mut Emitter<'input>,
 }
 
 impl<'input> Emitter<'input> {
@@ -141,7 +186,12 @@ impl<'input> Emitter<'input> {
             indent_stack: vec![0],                 // Start with base level 0
             last_line_start_span: Span::new(0..0), // Default span at start
             flow_context_columns: Vec::new(),
+            pending_ast_wraps: PendingAstWrapQueue::default(),
         }
+    }
+
+    pub(crate) fn ast_events(&mut self) -> AstEmitter<'_, 'input> {
+        AstEmitter { emitter: self }
     }
 
     /// Take collected errors from both lexer and emitter.
@@ -157,6 +207,43 @@ impl<'input> Emitter<'input> {
             "pending_event slot unexpectedly occupied"
         );
         self.pending_event = Some(event);
+    }
+
+    fn set_pending_ast_wrap(&mut self, wrap: PendingAstWrap) {
+        self.pending_ast_wraps.push_back(wrap);
+    }
+
+    fn wrap_ast_event(&mut self, event: Event<'input>) -> AstEvent<'input> {
+        match self.pending_ast_wraps.pop_front() {
+            Some(PendingAstWrap::SequenceItem { item_start }) => match event {
+                Event::MappingStart { .. }
+                | Event::SequenceStart { .. }
+                | Event::Scalar { .. }
+                | Event::Alias { .. } => AstEvent::SequenceItem { item_start, event },
+                _ => {
+                    debug_assert!(false, "invalid event for pending sequence item wrapper");
+                    AstEvent::Event(event)
+                }
+            },
+            Some(PendingAstWrap::MappingPair { pair_start }) => match event {
+                Event::MappingStart { .. }
+                | Event::SequenceStart { .. }
+                | Event::Scalar { .. }
+                | Event::Alias { .. } => AstEvent::MappingKey {
+                    pair_start,
+                    key_event: event,
+                },
+                _ => {
+                    debug_assert!(false, "invalid event for pending mapping pair wrapper");
+                    AstEvent::Event(event)
+                }
+            },
+            None => AstEvent::Event(event),
+        }
+    }
+
+    fn discard_pending_ast_wrap(&mut self) {
+        let _ = self.pending_ast_wraps.pop_front();
     }
 
     fn track_emitted_event(&mut self, event: &Event<'input>) {
@@ -1882,6 +1969,9 @@ impl<'input> Emitter<'input> {
                 start_span,
                 properties: EmitterProperties::default(),
             });
+            self.set_pending_ast_wrap(PendingAstWrap::MappingPair {
+                pair_start: start_span.start,
+            });
             self.set_pending_event(Event::Scalar {
                 style,
                 value,
@@ -2855,7 +2945,11 @@ impl<'input> Emitter<'input> {
                                 });
                             }
 
+                            let indicator_span = self.current_span();
                             let _ = self.take_current(); // consume `-`
+                            self.set_pending_ast_wrap(PendingAstWrap::SequenceItem {
+                                item_start: indicator_span.start,
+                            });
                             self.check_tabs_after_block_indicator();
                             let ws_width = self.skip_ws();
 
@@ -3114,7 +3208,11 @@ impl<'input> Emitter<'input> {
 
                     match self.peek_kind() {
                         Some(TokenKind::MappingKey) => {
+                            let pair_start_span = self.current_span();
                             let _ = self.take_current();
+                            self.set_pending_ast_wrap(PendingAstWrap::MappingPair {
+                                pair_start: pair_start_span.start,
+                            });
                             self.check_tabs_after_block_indicator();
                             let ws_width = self.skip_ws();
 
@@ -3148,6 +3246,9 @@ impl<'input> Emitter<'input> {
                         }
 
                         Some(TokenKind::Colon) => {
+                            self.set_pending_ast_wrap(PendingAstWrap::MappingPair {
+                                pair_start: self.current_span().start,
+                            });
                             self.state_stack.push(ParseState::BlockMap {
                                 indent,
                                 phase: BlockMapPhase::AfterKey {
@@ -3206,6 +3307,9 @@ impl<'input> Emitter<'input> {
                             }
 
                             if self.is_implicit_key() {
+                                self.set_pending_ast_wrap(PendingAstWrap::MappingPair {
+                                    pair_start: self.current_span().start,
+                                });
                                 self.state_stack.push(ParseState::BlockMap {
                                     indent,
                                     phase: BlockMapPhase::AfterKey {
@@ -4125,6 +4229,9 @@ impl<'input> Emitter<'input> {
                             // This creates a flow mapping entry
                             let map_start_span = self.current_span();
                             let _ = self.take_current(); // consume ?
+                            self.set_pending_ast_wrap(PendingAstWrap::SequenceItem {
+                                item_start: map_start_span.start,
+                            });
                             self.skip_ws_and_newlines();
 
                             // Push states in reverse order:
@@ -4209,6 +4316,9 @@ impl<'input> Emitter<'input> {
                                 }
 
                                 // Emit MappingStart for the implicit mapping
+                                self.set_pending_ast_wrap(PendingAstWrap::SequenceItem {
+                                    item_start: map_start_span.start,
+                                });
                                 return Some(Event::MappingStart {
                                     style: crate::event::CollectionStyle::Flow,
                                     properties: None,
@@ -4220,6 +4330,9 @@ impl<'input> Emitter<'input> {
                             self.state_stack.push(ParseState::FlowSeq {
                                 phase: FlowSeqPhase::AfterEntry,
                                 start_span,
+                            });
+                            self.set_pending_ast_wrap(PendingAstWrap::SequenceItem {
+                                item_start: self.current_span().start,
                             });
                             self.state_stack.push(ParseState::Value {
                                 ctx: ValueContext {
@@ -4390,7 +4503,11 @@ impl<'input> Emitter<'input> {
                     }
 
                     Some((TokenKind::MappingKey, _)) => {
+                        let pair_start_span = self.current_span();
                         let _ = self.take_current();
+                        self.set_pending_ast_wrap(PendingAstWrap::MappingPair {
+                            pair_start: pair_start_span.start,
+                        });
                         self.skip_ws();
                         self.state_stack.push(ParseState::FlowMap {
                             phase: FlowMapPhase::AfterKey,
@@ -4411,6 +4528,9 @@ impl<'input> Emitter<'input> {
 
                     Some((TokenKind::Colon, _)) => {
                         // Null key
+                        self.set_pending_ast_wrap(PendingAstWrap::MappingPair {
+                            pair_start: self.current_span().start,
+                        });
                         self.state_stack.push(ParseState::FlowMap {
                             phase: FlowMapPhase::AfterKey,
                             start_span,
@@ -4430,6 +4550,9 @@ impl<'input> Emitter<'input> {
 
                     Some(_) => {
                         // Implicit key
+                        self.set_pending_ast_wrap(PendingAstWrap::MappingPair {
+                            pair_start: self.current_span().start,
+                        });
                         self.state_stack.push(ParseState::FlowMap {
                             phase: FlowMapPhase::AfterKey,
                             start_span,
@@ -5642,19 +5765,15 @@ impl<'input> Emitter<'input> {
             }
         }
     }
-}
 
-// ═══════════════════════════════════════════════════════════════════
-// Iterator Implementation - The State Machine
-// ═══════════════════════════════════════════════════════════════════
-
-impl<'input> Iterator for Emitter<'input> {
-    type Item = Event<'input>;
-
-    fn next(&mut self) -> Option<Self::Item> {
+    // ═══════════════════════════════════════════════════════════════════
+    // Iterator Implementation - The State Machine
+    // ═══════════════════════════════════════════════════════════════════
+    fn next_event_core(&mut self) -> Option<Event<'input>> {
         // Emit StreamStart first
         if !self.emitted_stream_start {
             self.emitted_stream_start = true;
+            self.pending_ast_wraps.clear();
             return Some(Event::StreamStart);
         }
 
@@ -5730,6 +5849,29 @@ impl<'input> Iterator for Emitter<'input> {
                 }
             }
         }
+    }
+
+    pub(crate) fn next_ast_event(&mut self) -> Option<AstEvent<'input>> {
+        self.next_event_core()
+            .map(|event| self.wrap_ast_event(event))
+    }
+}
+
+impl<'input> Iterator for Emitter<'input> {
+    type Item = Event<'input>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let event = self.next_event_core()?;
+        self.discard_pending_ast_wrap();
+        Some(event)
+    }
+}
+
+impl<'input> Iterator for AstEmitter<'_, 'input> {
+    type Item = AstEvent<'input>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.emitter.next_ast_event()
     }
 }
 

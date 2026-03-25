@@ -14,6 +14,11 @@
     reason = "integration tests don't need cfg(test)"
 )]
 #![allow(clippy::expect_used, reason = "expect is acceptable in tests")]
+#![allow(clippy::panic, reason = "panic is acceptable in tests")]
+#![allow(
+    clippy::manual_let_else,
+    reason = "match expressions are acceptable in test setup"
+)]
 
 mod support;
 
@@ -141,6 +146,42 @@ fn test_sequence_spans() {
 }
 
 #[test]
+fn test_sequence_item_structural_spans() {
+    let input = "- item1\n- item2";
+    let docs = parse_ok(input);
+
+    let items = match &docs[0].value {
+        Value::Sequence(items) => items,
+        _ => panic!("Expected sequence"),
+    };
+
+    assert_eq!(
+        extract_span_text(
+            input,
+            items[0].item_span.start_usize(),
+            items[0].item_span.end_usize(),
+        ),
+        "- item1",
+    );
+    assert_eq!(
+        extract_span_text(
+            input,
+            items[1].item_span.start_usize(),
+            items[1].item_span.end_usize(),
+        ),
+        "- item2",
+    );
+    assert_eq!(
+        extract_span_text(
+            input,
+            items[0].span.start_usize(),
+            items[0].span.end_usize()
+        ),
+        "item1",
+    );
+}
+
+#[test]
 fn test_nested_structure_spans() {
     let input = "outer:\n  inner: value";
     let docs = parse_ok(input);
@@ -154,7 +195,9 @@ fn test_nested_structure_spans() {
     }
     .expect("Expected mapping");
     assert_eq!(pairs.len(), 1);
-    let (key, value) = &pairs[0];
+    let pair = &pairs[0];
+    let key = &pair.key;
+    let value = &pair.value;
 
     // Key span
     let key_text = extract_span_text(input, key.span.start_usize(), key.span.end_usize());
@@ -166,7 +209,9 @@ fn test_nested_structure_spans() {
         _ => None,
     }
     .expect("Expected nested mapping");
-    let (inner_key, inner_value) = &inner_pairs[0];
+    let inner_pair = &inner_pairs[0];
+    let inner_key = &inner_pair.key;
+    let inner_value = &inner_pair.value;
     let inner_key_text = extract_span_text(
         input,
         inner_key.span.start_usize(),
@@ -180,6 +225,55 @@ fn test_nested_structure_spans() {
         inner_value.span.end_usize(),
     );
     assert_eq!(inner_value_text, "value");
+}
+
+#[test]
+fn test_mapping_pair_structural_spans() {
+    let input = "outer:\n  inner: value";
+    let docs = parse_ok(input);
+
+    let pairs = match &docs[0].value {
+        Value::Mapping(pairs) => pairs,
+        _ => panic!("Expected mapping"),
+    };
+
+    assert_eq!(
+        extract_span_text(
+            input,
+            pairs[0].pair_span.start_usize(),
+            pairs[0].pair_span.end_usize(),
+        ),
+        "outer:\n  inner: value",
+    );
+
+    let inner_pairs = match &pairs[0].value.value {
+        Value::Mapping(inner_pairs) => inner_pairs,
+        _ => panic!("Expected nested mapping"),
+    };
+    assert_eq!(
+        extract_span_text(
+            input,
+            inner_pairs[0].pair_span.start_usize(),
+            inner_pairs[0].pair_span.end_usize(),
+        ),
+        "inner: value",
+    );
+    assert_eq!(
+        extract_span_text(
+            input,
+            inner_pairs[0].key.span.start_usize(),
+            inner_pairs[0].key.span.end_usize(),
+        ),
+        "inner",
+    );
+    assert_eq!(
+        extract_span_text(
+            input,
+            inner_pairs[0].value.span.start_usize(),
+            inner_pairs[0].value.span.end_usize(),
+        ),
+        "value",
+    );
 }
 
 #[test]
@@ -356,7 +450,7 @@ fn test_empty_scalar_spans() {
         _ => None,
     }
     .expect("Expected mapping");
-    let (_key, value) = &pairs[0];
+    let value = &pairs[0].value;
 
     // Empty value should have a valid span (even if zero-length)
     assert!(value.span.start_usize() <= value.span.end_usize());

@@ -154,6 +154,8 @@ fn validate_unique_keys<'a, S: ValidatableSequence<'a>>(
     items: &S,
     ctx: &mut Context,
 ) {
+    type SeenItem<'a, T> = (Vec<String>, &'a T);
+
     let unique_keys = schema.unique_keys.iter().flatten().chain(
         // the primary key is considered unique unless told otherwise
         schema
@@ -164,7 +166,7 @@ fn validate_unique_keys<'a, S: ValidatableSequence<'a>>(
 
     for unique_key in unique_keys {
         // Map from stringified value to list of (trail, value) pairs.
-        let mut seen_items: HashMap<String, Vec<(Vec<String>, &S::Value)>> = HashMap::new();
+        let mut seen_items: HashMap<String, Vec<SeenItem<'a, S::Value>>> = HashMap::new();
 
         for (i, item) in items.iter().enumerate() {
             // Get the value at the unique_key path

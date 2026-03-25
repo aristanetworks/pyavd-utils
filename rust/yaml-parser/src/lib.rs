@@ -35,6 +35,7 @@
 //! }
 //! ```
 
+mod ast_event;
 mod emitter;
 mod error;
 mod event;
@@ -57,7 +58,7 @@ pub use error::{ErrorKind, ParseError};
 pub use event::{CollectionStyle, Event, ScalarStyle};
 pub use span::{Position, SourceMap, Span, Spanned};
 pub use stream::Stream;
-pub use value::{Integer, Node, Properties, Value};
+pub use value::{Integer, MappingPair, Node, Properties, SequenceItem, Value};
 
 /// Parse YAML input and return the parsed documents and any errors encountered.
 ///
@@ -106,7 +107,8 @@ pub fn parse(input: &str) -> (Stream<'static>, Vec<ParseError>) {
     //    This avoids building an intermediate Vec<Event>.
     let mut all_errors = Vec::new();
     let nodes = {
-        let mut parser = parser::Parser::new(&mut emitter);
+        let mut ast_emitter = emitter.ast_events();
+        let mut parser = parser::Parser::new(&mut ast_emitter);
         let nodes = parser.parse();
         all_errors.extend(parser.take_errors());
         nodes

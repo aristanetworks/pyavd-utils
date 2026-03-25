@@ -22,7 +22,7 @@ use serde::ser::{
 };
 
 use crate::ast_events::{self, AstToEventsError};
-use crate::value::Integer;
+use crate::value::{Integer, MappingPair, SequenceItem};
 use crate::{Node, Value, writer};
 
 /// Error type for serde-based *serialization* using yaml-parser.
@@ -162,7 +162,8 @@ impl Serializer for ValueSerializer {
         let mut items = Vec::with_capacity(v.len());
         for &byte in v {
             let value = Value::Int(Integer::U64(u64::from(byte)));
-            items.push(node_from_value(value));
+            let node = node_from_value(value);
+            items.push(SequenceItem::new(node.span, node));
         }
         Ok(Value::Sequence(items))
     }
@@ -219,7 +220,7 @@ impl Serializer for ValueSerializer {
         let inner = value.serialize(ValueSerializer)?;
         let key = node_from_value(Value::String(std::borrow::Cow::Owned(variant.to_owned())));
         let val = node_from_value(inner);
-        Ok(Value::Mapping(vec![(key, val)]))
+        Ok(Value::Mapping(vec![MappingPair::new(val.span, key, val)]))
     }
 
     fn serialize_seq(self, len: Option<usize>) -> Result<Self::SerializeSeq, Self::Error> {
@@ -289,7 +290,7 @@ impl Serializer for ValueSerializer {
 }
 
 pub(crate) struct SeqSerializer {
-    elements: Vec<Node<'static>>,
+    elements: Vec<SequenceItem<'static>>,
 }
 
 impl SerializeSeq for SeqSerializer {
@@ -301,7 +302,8 @@ impl SerializeSeq for SeqSerializer {
         T: Serialize + ?Sized,
     {
         let element_value = value.serialize(ValueSerializer)?;
-        self.elements.push(node_from_value(element_value));
+        let node = node_from_value(element_value);
+        self.elements.push(SequenceItem::new(node.span, node));
         Ok(())
     }
 
@@ -344,7 +346,7 @@ impl SerializeTupleStruct for SeqSerializer {
 
 pub(crate) struct TupleVariantSerializer {
     name: String,
-    elements: Vec<Node<'static>>,
+    elements: Vec<SequenceItem<'static>>,
 }
 
 impl SerializeTupleVariant for TupleVariantSerializer {
@@ -356,7 +358,8 @@ impl SerializeTupleVariant for TupleVariantSerializer {
         T: Serialize + ?Sized,
     {
         let field_value = value.serialize(ValueSerializer)?;
-        self.elements.push(node_from_value(field_value));
+        let node = node_from_value(field_value);
+        self.elements.push(SequenceItem::new(node.span, node));
         Ok(())
     }
 
@@ -364,12 +367,12 @@ impl SerializeTupleVariant for TupleVariantSerializer {
         let seq_value = Value::Sequence(self.elements);
         let key = node_from_value(Value::String(std::borrow::Cow::Owned(self.name)));
         let val = node_from_value(seq_value);
-        Ok(Value::Mapping(vec![(key, val)]))
+        Ok(Value::Mapping(vec![MappingPair::new(val.span, key, val)]))
     }
 }
 
 pub(crate) struct MapSerializer {
-    entries: Vec<(Node<'static>, Node<'static>)>,
+    entries: Vec<MappingPair<'static>>,
     next_key: Option<Value<'static>>,
 }
 
@@ -393,7 +396,8 @@ impl SerializeMap for MapSerializer {
         let key_value = self.next_key.take().ok_or(SerError::ValueWithoutKey)?;
         let key_node = node_from_value(key_value);
         let val_node = node_from_value(value.serialize(ValueSerializer)?);
-        self.entries.push((key_node, val_node));
+        self.entries
+            .push(MappingPair::new(val_node.span, key_node, val_node));
         Ok(())
     }
 
@@ -403,7 +407,7 @@ impl SerializeMap for MapSerializer {
 }
 
 pub(crate) struct StructSerializer {
-    fields: Vec<(Node<'static>, Node<'static>)>,
+    fields: Vec<MappingPair<'static>>,
 }
 
 impl SerializeStruct for StructSerializer {
@@ -416,7 +420,8 @@ impl SerializeStruct for StructSerializer {
     {
         let key_node = node_from_value(Value::String(std::borrow::Cow::Owned(key.to_owned())));
         let val_node = node_from_value(value.serialize(ValueSerializer)?);
-        self.fields.push((key_node, val_node));
+        self.fields
+            .push(MappingPair::new(val_node.span, key_node, val_node));
         Ok(())
     }
 
@@ -427,7 +432,7 @@ impl SerializeStruct for StructSerializer {
 
 pub(crate) struct StructVariantSerializer {
     name: String,
-    fields: Vec<(Node<'static>, Node<'static>)>,
+    fields: Vec<MappingPair<'static>>,
 }
 
 impl SerializeStructVariant for StructVariantSerializer {
@@ -440,7 +445,8 @@ impl SerializeStructVariant for StructVariantSerializer {
     {
         let key_node = node_from_value(Value::String(std::borrow::Cow::Owned(key.to_owned())));
         let val_node = node_from_value(value.serialize(ValueSerializer)?);
-        self.fields.push((key_node, val_node));
+        self.fields
+            .push(MappingPair::new(val_node.span, key_node, val_node));
         Ok(())
     }
 
@@ -448,7 +454,7 @@ impl SerializeStructVariant for StructVariantSerializer {
         let inner = Value::Mapping(self.fields);
         let key = node_from_value(Value::String(std::borrow::Cow::Owned(self.name)));
         let val = node_from_value(inner);
-        Ok(Value::Mapping(vec![(key, val)]))
+        Ok(Value::Mapping(vec![MappingPair::new(val.span, key, val)]))
     }
 }
 
