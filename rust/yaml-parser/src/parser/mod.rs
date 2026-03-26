@@ -36,6 +36,16 @@ struct ParsedNode<'input> {
     leading_comment: Option<Comment<'input>>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum MappingKeyIdentity<'input> {
+    Null,
+    Bool(bool),
+    Int(String),
+    Float(u64),
+    String(Cow<'input, str>),
+    Alias(Cow<'input, str>),
+}
+
 /// Parser that builds AST from a streaming source of events.
 ///
 /// This parser consumes events and builds the AST.
@@ -335,6 +345,7 @@ where
         );
 
         let mut pairs: Vec<MappingPair<'input>> = Vec::with_capacity(8);
+        let mut seen_keys: HashSet<MappingKeyIdentity<'input>> = HashSet::with_capacity(8);
         let mut end_span = start_span;
 
         loop {
@@ -380,6 +391,7 @@ where
                     // unwind after recovering an orphan key.
                     if let Some(parsed_value) = self.parse_mapping_value_with_metadata() {
                         let value = parsed_value.node;
+                        self.report_duplicate_key(&key, &mut seen_keys);
                         let pair_span = Span::new(pair_start..value.span.end);
                         let mut pair = MappingPair::new(pair_span, key, value);
                         if let Some(comment) = parsed_value.leading_comment {
@@ -397,6 +409,7 @@ where
                     let key = self.parse_node().unwrap_or_else(|| Node::null(start_span));
                     if let Some(parsed_value) = self.parse_mapping_value_with_metadata() {
                         let value = parsed_value.node;
+                        self.report_duplicate_key(&key, &mut seen_keys);
                         let pair_span =
                             Span::from_usize_range(key.span.start_usize()..value.span.end_usize());
                         let mut pair = MappingPair::new(pair_span, key, value);
@@ -429,6 +442,34 @@ where
 
         let node = Node::new(Value::Mapping(pairs), span);
         Self::apply_properties(node, props)
+    }
+
+    fn report_duplicate_key(
+        &mut self,
+        key: &Node<'input>,
+        seen_keys: &mut HashSet<MappingKeyIdentity<'input>>,
+    ) {
+        let Some(identity) = Self::mapping_key_identity(key) else {
+            return;
+        };
+
+        if !seen_keys.insert(identity) {
+            self.error(ErrorKind::DuplicateKey, key.span);
+        }
+    }
+
+    fn mapping_key_identity(key: &Node<'input>) -> Option<MappingKeyIdentity<'input>> {
+        match &key.value {
+            Value::Null => Some(MappingKeyIdentity::Null),
+            Value::Bool(value) => Some(MappingKeyIdentity::Bool(*value)),
+            Value::Int(value) => Some(MappingKeyIdentity::Int(
+                value.to_decimal_string().into_owned(),
+            )),
+            Value::Float(value) => Some(MappingKeyIdentity::Float(value.to_bits())),
+            Value::String(value) => Some(MappingKeyIdentity::String(value.clone())),
+            Value::Alias(value) => Some(MappingKeyIdentity::Alias(value.clone())),
+            Value::Sequence(_) | Value::Mapping(_) => None,
+        }
     }
 
     /// Parse a sequence node.

@@ -87,6 +87,32 @@ fn test_simple_mapping() {
 }
 
 #[test]
+fn test_duplicate_mapping_key_reports_second_key_span() {
+    let input = "\
+foo: 1
+foo: 2
+";
+    let (docs, errors) = parse(input);
+
+    let duplicate_key = errors
+        .iter()
+        .find(|error| error.kind == ErrorKind::DuplicateKey)
+        .expect("Expected DuplicateKey error");
+    let second_key_start = input.rfind("foo").expect("second foo should exist");
+    assert_eq!(
+        duplicate_key.span.start_usize(),
+        second_key_start,
+        "DuplicateKey should point at the later duplicate key"
+    );
+    assert_eq!(
+        duplicate_key.span.end_usize(),
+        second_key_start + "foo".len(),
+        "DuplicateKey should cover only the later duplicate key"
+    );
+    assert_eq!(docs.len(), 1, "Should still produce 1 document");
+}
+
+#[test]
 fn test_nested_structure() {
     let input = "
 name: John
