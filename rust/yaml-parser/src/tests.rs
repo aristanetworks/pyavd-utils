@@ -21,6 +21,10 @@
     clippy::expect_used,
     reason = "expect() in tests provides precise failure messages for structural invariants"
 )]
+#![allow(
+    clippy::panic,
+    reason = "panic() in tests provides precise failure messages for structural invariants"
+)]
 
 use super::*;
 
@@ -149,6 +153,65 @@ fn test_document_with_leading_comment() {
     let (docs, parse_errors) = parse(input);
     assert!(parse_errors.is_empty());
     assert_eq!(docs.len(), 1);
+}
+
+#[test]
+fn test_inline_value_comment_attaches_to_node() {
+    let input = "key: value # trailing";
+    let (docs, errors) = parse(input);
+    assert!(errors.is_empty(), "unexpected parse errors: {errors:?}");
+
+    let Value::Mapping(pairs) = &docs[0].value else {
+        panic!("expected mapping");
+    };
+    assert_eq!(pairs.len(), 1);
+    assert_eq!(
+        pairs[0]
+            .value
+            .trailing_comment()
+            .map(|comment| comment.text.as_ref()),
+        Some(" trailing")
+    );
+    assert!(pairs[0].header_comment().is_none());
+}
+
+#[test]
+fn test_mapping_header_comment_attaches_to_pair() {
+    let input = "key: # header\n  - value\n";
+    let (docs, errors) = parse(input);
+    assert!(errors.is_empty(), "unexpected parse errors: {errors:?}");
+
+    let Value::Mapping(pairs) = &docs[0].value else {
+        panic!("expected mapping");
+    };
+    assert_eq!(pairs.len(), 1);
+    assert_eq!(
+        pairs[0]
+            .header_comment()
+            .map(|comment| comment.text.as_ref()),
+        Some(" header")
+    );
+    assert!(pairs[0].value.trailing_comment().is_none());
+}
+
+#[test]
+fn test_nested_value_comment_stays_on_nested_node() {
+    let input = "key:\n  value # nested\n";
+    let (docs, errors) = parse(input);
+    assert!(errors.is_empty(), "unexpected parse errors: {errors:?}");
+
+    let Value::Mapping(pairs) = &docs[0].value else {
+        panic!("expected mapping");
+    };
+    assert_eq!(pairs.len(), 1);
+    assert!(pairs[0].header_comment().is_none());
+    assert_eq!(
+        pairs[0]
+            .value
+            .trailing_comment()
+            .map(|comment| comment.text.as_ref()),
+        Some(" nested")
+    );
 }
 
 // =========================================================================

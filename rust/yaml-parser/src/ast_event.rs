@@ -2,22 +2,31 @@
 // Use of this source code is governed by the Apache License 2.0
 // that can be found in the LICENSE file.
 
-use crate::{Event, span::BytePosition};
+use crate::{Comment, Event, span::BytePosition};
 
 /// AST-oriented event stream that carries structural spans for collection entries.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum AstEvent<'input> {
-    /// An ordinary YAML node-level event.
+    /// A plain event with no attached comment trivia.
     Event(Event<'input>),
+    /// A node-level event with attached comment trivia.
+    RichEvent {
+        event: Event<'input>,
+        leading_comment: Option<Comment<'input>>,
+        trailing_comment: Option<Comment<'input>>,
+    },
     /// The first event of a sequence item, annotated with the item start offset.
     SequenceItem {
         item_start: BytePosition,
         event: Event<'input>,
+        leading_comment: Option<Comment<'input>>,
+        trailing_comment: Option<Comment<'input>>,
     },
     /// The first event of a mapping pair key, annotated with the pair start offset.
     MappingKey {
         pair_start: BytePosition,
         key_event: Event<'input>,
+        trailing_comment: Option<Comment<'input>>,
     },
 }
 

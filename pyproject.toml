@@ -183,9 +183,12 @@ exclude = [
   # Excluded
   ".tox",
   ".github",
+  "**/node_modules",
+  "**/__pycache__",
+  "**/.*",
+  ".venv",
 ]
 pythonVersion = "3.10"
-
 reportMissingImports = "error"
 
 [tool.pytest.ini_options]

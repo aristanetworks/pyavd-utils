@@ -22,7 +22,7 @@
 use std::borrow::Cow;
 use std::ops::{Deref, DerefMut};
 
-pub use crate::event::{Properties, Property};
+pub use crate::event::{Comment, Properties, Property};
 use crate::span::Span;
 
 /// Integer value representation used by `Value::Int`.
@@ -219,6 +219,7 @@ mod serde_impls {
                     properties: None,
                     value: elem,
                     span: Span::default(),
+                    trailing_comment: None,
                 };
                 items.push(SequenceItem::new(Span::default(), node));
             }
@@ -235,11 +236,13 @@ mod serde_impls {
                     properties: None,
                     value: key,
                     span: Span::default(),
+                    trailing_comment: None,
                 };
                 let value_node = Node {
                     properties: None,
                     value,
                     span: Span::default(),
+                    trailing_comment: None,
                 };
                 pairs.push(MappingPair::new(Span::default(), key_node, value_node));
             }
@@ -267,11 +270,13 @@ mod serde_impls {
                 properties: None,
                 value: Value::String(std::borrow::Cow::Owned(variant)),
                 span: Span::default(),
+                trailing_comment: None,
             };
             let value_node = Node {
                 properties: None,
                 value,
                 span: Span::default(),
+                trailing_comment: None,
             };
             Ok(Value::Mapping(vec![MappingPair::new(
                 Span::default(),
@@ -310,6 +315,8 @@ pub struct Node<'input> {
     pub value: Value<'input>,
     /// Source span covering the semantic value of this node.
     pub span: Span,
+    /// Same-line comment that trails this node's source representation.
+    pub trailing_comment: Option<Box<Comment<'input>>>,
 }
 
 impl<'input> Node<'input> {
@@ -320,6 +327,7 @@ impl<'input> Node<'input> {
             properties: None,
             value,
             span,
+            trailing_comment: None,
         }
     }
 
@@ -346,7 +354,7 @@ impl<'input> Node<'input> {
             None => {
                 self.properties = Some(Box::new(Properties::with_tag(Property::new(
                     tag, self.span,
-                ))))
+                ))));
             }
         }
         self
@@ -370,6 +378,13 @@ impl<'input> Node<'input> {
     pub fn tag_property(&self) -> Option<&Property<'input>> {
         self.properties()
             .and_then(|properties| properties.tag.as_ref())
+    }
+
+    /// Create a new node with a trailing same-line comment.
+    #[must_use]
+    pub fn with_trailing_comment(mut self, comment: Comment<'input>) -> Self {
+        self.trailing_comment = Some(Box::new(comment));
+        self
     }
 
     /// Create a null node.
@@ -403,6 +418,12 @@ impl<'input> Node<'input> {
         self.tag_property().is_some()
     }
 
+    /// Returns the trailing same-line comment if present.
+    #[must_use]
+    pub fn trailing_comment(&self) -> Option<&Comment<'input>> {
+        self.trailing_comment.as_deref()
+    }
+
     /// Convert this node to an owned version with `'static` lifetime.
     ///
     /// This is useful when you need to store the node beyond the input's lifetime.
@@ -412,6 +433,9 @@ impl<'input> Node<'input> {
             properties: self.properties.map(|props| Box::new((*props).into_owned())),
             value: self.value.into_owned(),
             span: self.span,
+            trailing_comment: self
+                .trailing_comment
+                .map(|comment| Box::new((*comment).into_owned())),
         }
     }
 }
@@ -423,13 +447,19 @@ pub struct SequenceItem<'input> {
     pub item_span: Span,
     /// The semantic node value for this entry.
     pub node: Node<'input>,
+    /// Same-line comment after `-` before a nested block value starts.
+    pub header_comment: Option<Box<Comment<'input>>>,
 }
 
 impl<'input> SequenceItem<'input> {
     /// Create a new sequence item.
     #[must_use]
     pub fn new(item_span: Span, node: Node<'input>) -> Self {
-        Self { item_span, node }
+        Self {
+            item_span,
+            node,
+            header_comment: None,
+        }
     }
 
     /// Borrow the semantic node for this item.
@@ -438,12 +468,28 @@ impl<'input> SequenceItem<'input> {
         &self.node
     }
 
+    /// Create a new sequence item with a header-line comment.
+    #[must_use]
+    pub fn with_header_comment(mut self, comment: Comment<'input>) -> Self {
+        self.header_comment = Some(Box::new(comment));
+        self
+    }
+
+    /// Returns the header-line comment if present.
+    #[must_use]
+    pub fn header_comment(&self) -> Option<&Comment<'input>> {
+        self.header_comment.as_deref()
+    }
+
     /// Convert this item to an owned version with `'static` lifetime.
     #[must_use]
     pub fn into_owned(self) -> SequenceItem<'static> {
         SequenceItem {
             item_span: self.item_span,
             node: self.node.into_owned(),
+            header_comment: self
+                .header_comment
+                .map(|comment| Box::new((*comment).into_owned())),
         }
     }
 }
@@ -471,6 +517,8 @@ pub struct MappingPair<'input> {
     pub key: Node<'input>,
     /// The semantic value node.
     pub value: Node<'input>,
+    /// Same-line comment after `key:` before a nested block value starts.
+    pub header_comment: Option<Box<Comment<'input>>>,
 }
 
 impl<'input> MappingPair<'input> {
@@ -481,6 +529,7 @@ impl<'input> MappingPair<'input> {
             pair_span,
             key,
             value,
+            header_comment: None,
         }
     }
 
@@ -496,6 +545,19 @@ impl<'input> MappingPair<'input> {
         &self.value
     }
 
+    /// Create a new mapping pair with a header-line comment.
+    #[must_use]
+    pub fn with_header_comment(mut self, comment: Comment<'input>) -> Self {
+        self.header_comment = Some(Box::new(comment));
+        self
+    }
+
+    /// Returns the header-line comment if present.
+    #[must_use]
+    pub fn header_comment(&self) -> Option<&Comment<'input>> {
+        self.header_comment.as_deref()
+    }
+
     /// Convert this pair to an owned version with `'static` lifetime.
     #[must_use]
     pub fn into_owned(self) -> MappingPair<'static> {
@@ -503,6 +565,9 @@ impl<'input> MappingPair<'input> {
             pair_span: self.pair_span,
             key: self.key.into_owned(),
             value: self.value.into_owned(),
+            header_comment: self
+                .header_comment
+                .map(|comment| Box::new((*comment).into_owned())),
         }
     }
 }

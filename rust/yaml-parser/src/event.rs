@@ -43,7 +43,7 @@ pub struct Property<'input> {
 impl Property<'_> {
     /// Create a new property from a value and source span.
     #[must_use]
-    pub fn new<'input>(value: Cow<'input, str>, span: Span) -> Property<'input> {
+    pub fn new(value: Cow<'_, str>, span: Span) -> Property<'_> {
         Property { value, span }
     }
 
@@ -52,6 +52,26 @@ impl Property<'_> {
     pub fn into_owned(self) -> Property<'static> {
         Property {
             value: Cow::Owned(self.value.into_owned()),
+            span: self.span,
+        }
+    }
+}
+
+/// A source comment with its text and span.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Comment<'input> {
+    /// Comment text after the `#` marker.
+    pub text: Cow<'input, str>,
+    /// Span covering the full comment syntax in the source.
+    pub span: Span,
+}
+
+impl Comment<'_> {
+    /// Convert this comment to an owned `'static` comment.
+    #[must_use]
+    pub fn into_owned(self) -> Comment<'static> {
+        Comment {
+            text: Cow::Owned(self.text.into_owned()),
             span: self.span,
         }
     }

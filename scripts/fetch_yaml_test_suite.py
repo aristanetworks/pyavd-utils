@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 # Copyright (c) 2026 Arista Networks, Inc.
 # Use of this source code is governed by the Apache License 2.0
 # that can be found in the LICENSE file.
@@ -12,6 +13,7 @@ import tempfile
 import urllib.request
 from pathlib import Path
 
+# TODO: Consider if we should always just pull the latest stable test suite.
 PINNED_COMMIT = "6ad3d2c62885d82fc349026c136ef560838fdf3d"
 ARCHIVE_URL = f"https://codeload.github.com/yaml/yaml-test-suite/tar.gz/{PINNED_COMMIT}"
 REPO_ROOT = Path(__file__).resolve().parent.parent

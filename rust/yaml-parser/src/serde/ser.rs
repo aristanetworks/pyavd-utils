@@ -468,6 +468,7 @@ fn node_from_value(value: Value<'static>) -> Node<'static> {
         properties: None,
         value,
         span: crate::span::Span::default(),
+        trailing_comment: None,
     }
 }
 

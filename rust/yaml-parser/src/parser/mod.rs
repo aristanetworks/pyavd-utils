@@ -27,7 +27,14 @@ use crate::ast_event::AstEvent;
 use crate::error::{ErrorKind, ParseError};
 use crate::event::{Event, Property as EventProperty, ScalarStyle};
 use crate::span::Span;
-use crate::value::{Integer, MappingPair, Node, Properties as NodeProperties, SequenceItem, Value};
+use crate::value::{
+    Comment, Integer, MappingPair, Node, Properties as NodeProperties, SequenceItem, Value,
+};
+
+struct ParsedNode<'input> {
+    node: Node<'input>,
+    leading_comment: Option<Comment<'input>>,
+}
 
 /// Parser that builds AST from a streaming source of events.
 ///
@@ -108,7 +115,11 @@ where
                     self.advance();
                     return None;
                 }
-                AstEvent::Event(Event::DocumentStart { .. }) => {
+                AstEvent::Event(Event::DocumentStart { .. })
+                | AstEvent::RichEvent {
+                    event: Event::DocumentStart { .. },
+                    ..
+                } => {
                     // Explicit document: consume the start marker, parse the
                     // root node, optionally consume a trailing DocumentEnd,
                     // then clear anchors for the next document.
@@ -116,7 +127,13 @@ where
                     let node = self.parse_node();
                     if matches!(
                         self.peek(),
-                        Some(AstEvent::Event(Event::DocumentEnd { .. }))
+                        Some(
+                            AstEvent::Event(Event::DocumentEnd { .. })
+                                | AstEvent::RichEvent {
+                                    event: Event::DocumentEnd { .. },
+                                    ..
+                                }
+                        )
                     ) {
                         self.advance();
                     }
@@ -124,7 +141,11 @@ where
                     self.anchors.clear();
                     return node;
                 }
-                AstEvent::Event(Event::MappingEnd { .. } | Event::SequenceEnd { .. }) => {
+                AstEvent::Event(Event::MappingEnd { .. } | Event::SequenceEnd { .. })
+                | AstEvent::RichEvent {
+                    event: Event::MappingEnd { .. } | Event::SequenceEnd { .. },
+                    ..
+                } => {
                     // Stray end markers - skip them to avoid infinite loop.
                     self.advance();
                 }
@@ -188,38 +209,80 @@ where
 
     /// Parse a single node from events.
     fn parse_node(&mut self) -> Option<Node<'input>> {
+        self.parse_node_with_metadata().map(|parsed| parsed.node)
+    }
+
+    fn parse_node_with_metadata(&mut self) -> Option<ParsedNode<'input>> {
         self.next_event()
             .and_then(|event| self.parse_node_from_ast_event(event))
     }
 
-    fn parse_node_from_ast_event(&mut self, event: AstEvent<'input>) -> Option<Node<'input>> {
+    fn parse_node_from_ast_event(&mut self, event: AstEvent<'input>) -> Option<ParsedNode<'input>> {
         match event {
             AstEvent::SequenceItem {
-                event: inner_event, ..
-            }
-            | AstEvent::MappingKey {
-                key_event: inner_event,
+                event: inner_event,
+                leading_comment,
+                trailing_comment,
                 ..
             }
-            | AstEvent::Event(inner_event) => self.parse_node_from_event(inner_event),
+            | AstEvent::RichEvent {
+                event: inner_event,
+                leading_comment,
+                trailing_comment,
+            } => self.parse_node_from_event(inner_event, leading_comment, trailing_comment),
+            AstEvent::Event(inner_event) => self.parse_node_from_event(inner_event, None, None),
+            AstEvent::MappingKey {
+                key_event: inner_event,
+                trailing_comment,
+                ..
+            } => self.parse_node_from_event(inner_event, None, trailing_comment),
         }
     }
 
-    fn parse_node_from_event(&mut self, event: Event<'input>) -> Option<Node<'input>> {
+    fn parse_node_from_event(
+        &mut self,
+        event: Event<'input>,
+        leading_comment: Option<Comment<'input>>,
+        trailing_comment: Option<Comment<'input>>,
+    ) -> Option<ParsedNode<'input>> {
         match event {
             Event::MappingStart {
                 properties, span, ..
-            } => Some(self.parse_mapping(properties, span)),
+            } => Some(ParsedNode {
+                node: self.parse_mapping(properties, span),
+                leading_comment,
+            }),
             Event::SequenceStart {
                 properties, span, ..
-            } => Some(self.parse_sequence(properties, span)),
+            } => Some(ParsedNode {
+                node: self.parse_sequence(properties, span),
+                leading_comment,
+            }),
             Event::Scalar {
                 style,
                 value,
                 properties,
                 span,
-            } => Some(self.build_scalar(style, value, properties, span)),
-            Event::Alias { name, span } => Some(self.build_alias(name, span)),
+            } => {
+                let mut node = self.build_scalar(style, value, properties, span);
+                if let Some(comment) = trailing_comment {
+                    node = node.with_trailing_comment(comment);
+                }
+                Some(ParsedNode {
+                    node,
+                    leading_comment,
+                })
+            }
+            Event::Alias { name, span } => {
+                let mut node = self.build_alias(name, span);
+                if let Some(comment) = trailing_comment {
+                    node = node.with_trailing_comment(comment);
+                }
+                Some(ParsedNode {
+                    node,
+                    leading_comment,
+                })
+            }
             // Skip document markers, stream markers
             Event::StreamStart
             | Event::StreamEnd
@@ -251,12 +314,24 @@ where
 
         loop {
             match self.peek() {
-                Some(AstEvent::Event(Event::MappingEnd { span })) => {
+                Some(
+                    AstEvent::Event(Event::MappingEnd { span })
+                    | AstEvent::RichEvent {
+                        event: Event::MappingEnd { span },
+                        ..
+                    },
+                ) => {
                     end_span = *span;
                     self.advance();
                     break;
                 }
-                Some(AstEvent::Event(Event::SequenceEnd { .. })) => {
+                Some(
+                    AstEvent::Event(Event::SequenceEnd { .. })
+                    | AstEvent::RichEvent {
+                        event: Event::SequenceEnd { .. },
+                        ..
+                    },
+                ) => {
                     // Mismatched end marker - break to avoid infinite loop
                     break;
                 }
@@ -266,18 +341,29 @@ where
                     let Some(AstEvent::MappingKey {
                         pair_start,
                         key_event,
+                        trailing_comment,
                     }) = self.next_event()
                     else {
                         debug_assert!(false, "peeked MappingKey event disappeared");
                         break;
                     };
                     let key = self
-                        .parse_node_from_event(key_event)
-                        .unwrap_or_else(|| Node::null(start_span));
+                        .parse_node_from_event(key_event, None, trailing_comment)
+                        .map_or_else(|| Node::null(start_span), |parsed| parsed.node);
                     // Parse value
-                    let value = self.parse_node().unwrap_or_else(|| Node::null(start_span));
+                    let parsed_value =
+                        self.parse_node_with_metadata()
+                            .unwrap_or_else(|| ParsedNode {
+                                node: Node::null(start_span),
+                                leading_comment: None,
+                            });
+                    let value = parsed_value.node;
                     let pair_span = Span::new(pair_start..value.span.end);
-                    pairs.push(MappingPair::new(pair_span, key, value));
+                    let mut pair = MappingPair::new(pair_span, key, value);
+                    if let Some(comment) = parsed_value.leading_comment {
+                        pair = pair.with_header_comment(comment);
+                    }
+                    pairs.push(pair);
                     // Ensure we made progress to avoid infinite loop
                     if self.events_consumed == consumed_before {
                         self.advance();
@@ -286,10 +372,20 @@ where
                 Some(_) => {
                     let consumed_before = self.events_consumed;
                     let key = self.parse_node().unwrap_or_else(|| Node::null(start_span));
-                    let value = self.parse_node().unwrap_or_else(|| Node::null(start_span));
+                    let parsed_value =
+                        self.parse_node_with_metadata()
+                            .unwrap_or_else(|| ParsedNode {
+                                node: Node::null(start_span),
+                                leading_comment: None,
+                            });
+                    let value = parsed_value.node;
                     let pair_span =
                         Span::from_usize_range(key.span.start_usize()..value.span.end_usize());
-                    pairs.push(MappingPair::new(pair_span, key, value));
+                    let mut pair = MappingPair::new(pair_span, key, value);
+                    if let Some(comment) = parsed_value.leading_comment {
+                        pair = pair.with_header_comment(comment);
+                    }
+                    pairs.push(pair);
                     if self.events_consumed == consumed_before {
                         self.advance();
                     }
@@ -337,25 +433,49 @@ where
 
         loop {
             match self.peek() {
-                Some(AstEvent::Event(Event::SequenceEnd { span })) => {
+                Some(
+                    AstEvent::Event(Event::SequenceEnd { span })
+                    | AstEvent::RichEvent {
+                        event: Event::SequenceEnd { span },
+                        ..
+                    },
+                ) => {
                     end_span = *span;
                     self.advance();
                     break;
                 }
-                Some(AstEvent::Event(Event::MappingEnd { .. })) => {
+                Some(
+                    AstEvent::Event(Event::MappingEnd { .. })
+                    | AstEvent::RichEvent {
+                        event: Event::MappingEnd { .. },
+                        ..
+                    },
+                ) => {
                     // Mismatched end marker - break to avoid infinite loop
                     break;
                 }
                 Some(AstEvent::SequenceItem { .. }) => {
                     let consumed_before = self.events_consumed;
-                    let Some(AstEvent::SequenceItem { item_start, event }) = self.next_event()
+                    let Some(AstEvent::SequenceItem {
+                        item_start,
+                        event,
+                        leading_comment,
+                        trailing_comment,
+                    }) = self.next_event()
                     else {
                         debug_assert!(false, "peeked SequenceItem event disappeared");
                         break;
                     };
-                    if let Some(node) = self.parse_node_from_event(event) {
+                    if let Some(parsed) =
+                        self.parse_node_from_event(event, leading_comment, trailing_comment)
+                    {
+                        let node = parsed.node;
                         let item_span = Span::new(item_start..node.span.end);
-                        items.push(SequenceItem::new(item_span, node));
+                        let mut item = SequenceItem::new(item_span, node);
+                        if let Some(comment) = parsed.leading_comment {
+                            item = item.with_header_comment(comment);
+                        }
+                        items.push(item);
                     }
                     // Ensure we made progress to avoid infinite loop
                     if self.events_consumed == consumed_before {
@@ -364,9 +484,14 @@ where
                 }
                 Some(_) => {
                     let consumed_before = self.events_consumed;
-                    if let Some(node) = self.parse_node() {
+                    if let Some(parsed) = self.parse_node_with_metadata() {
+                        let node = parsed.node;
                         let item_span = node.span;
-                        items.push(SequenceItem::new(item_span, node));
+                        let mut item = SequenceItem::new(item_span, node);
+                        if let Some(comment) = parsed.leading_comment {
+                            item = item.with_header_comment(comment);
+                        }
+                        items.push(item);
                     }
                     if self.events_consumed == consumed_before {
                         self.advance();

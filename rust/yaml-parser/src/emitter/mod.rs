@@ -21,7 +21,7 @@ use std::ops::ControlFlow;
 
 use crate::ast_event::AstEvent;
 use crate::error::{ErrorKind, ParseError};
-use crate::event::{Event, Properties, Property, ScalarStyle};
+use crate::event::{Comment, Event, Properties, Property, ScalarStyle};
 use crate::lexer::{Token, TokenKind};
 use crate::span::{BytePosition, IndentLevel, Span, usize_to_indent};
 
@@ -155,6 +155,8 @@ pub struct Emitter<'input> {
     flow_context_columns: Vec<IndentLevel>,
     /// Structural AST metadata to apply to the next emitted node-start event.
     pending_ast_wraps: PendingAstWrapQueue,
+    /// Comment captured after `key:` / `-` before the next node begins.
+    pending_ast_leading_comment: Option<Comment<'input>>,
 }
 
 pub(crate) struct AstEmitter<'a, 'input> {
@@ -187,6 +189,7 @@ impl<'input> Emitter<'input> {
             last_line_start_span: Span::new(0..0), // Default span at start
             flow_context_columns: Vec::new(),
             pending_ast_wraps: PendingAstWrapQueue::default(),
+            pending_ast_leading_comment: None,
         }
     }
 
@@ -214,15 +217,30 @@ impl<'input> Emitter<'input> {
     }
 
     fn wrap_ast_event(&mut self, event: Event<'input>) -> AstEvent<'input> {
+        let leading_comment = self.pending_ast_leading_comment.take();
+        let trailing_comment = self.take_inline_comment_for_ast();
         match self.pending_ast_wraps.pop_front() {
             Some(PendingAstWrap::SequenceItem { item_start }) => match event {
                 Event::MappingStart { .. }
                 | Event::SequenceStart { .. }
                 | Event::Scalar { .. }
-                | Event::Alias { .. } => AstEvent::SequenceItem { item_start, event },
+                | Event::Alias { .. } => AstEvent::SequenceItem {
+                    item_start,
+                    event,
+                    leading_comment,
+                    trailing_comment,
+                },
                 _ => {
                     debug_assert!(false, "invalid event for pending sequence item wrapper");
-                    AstEvent::Event(event)
+                    if leading_comment.is_some() || trailing_comment.is_some() {
+                        AstEvent::RichEvent {
+                            event,
+                            leading_comment,
+                            trailing_comment,
+                        }
+                    } else {
+                        AstEvent::Event(event)
+                    }
                 }
             },
             Some(PendingAstWrap::MappingPair { pair_start }) => match event {
@@ -232,18 +250,88 @@ impl<'input> Emitter<'input> {
                 | Event::Alias { .. } => AstEvent::MappingKey {
                     pair_start,
                     key_event: event,
+                    trailing_comment,
                 },
                 _ => {
                     debug_assert!(false, "invalid event for pending mapping pair wrapper");
-                    AstEvent::Event(event)
+                    if leading_comment.is_some() || trailing_comment.is_some() {
+                        AstEvent::RichEvent {
+                            event,
+                            leading_comment,
+                            trailing_comment,
+                        }
+                    } else {
+                        AstEvent::Event(event)
+                    }
                 }
             },
-            None => AstEvent::Event(event),
+            None => {
+                if leading_comment.is_some() || trailing_comment.is_some() {
+                    AstEvent::RichEvent {
+                        event,
+                        leading_comment,
+                        trailing_comment,
+                    }
+                } else {
+                    AstEvent::Event(event)
+                }
+            }
         }
     }
 
     fn discard_pending_ast_wrap(&mut self) {
         let _ = self.pending_ast_wraps.pop_front();
+    }
+
+    fn set_pending_ast_leading_comment(&mut self, comment: Comment<'input>) {
+        self.pending_ast_leading_comment = Some(comment);
+    }
+
+    fn take_comment_token(&mut self) -> Option<Comment<'input>> {
+        let Some((Token::Comment(text), span)) = self.take_current() else {
+            return None;
+        };
+        Some(Comment { text, span })
+    }
+
+    fn take_inline_comment_for_ast(&mut self) -> Option<Comment<'input>> {
+        let mut offset = 0;
+        while matches!(
+            self.peek_kind_nth(offset),
+            Some(TokenKind::Whitespace | TokenKind::WhitespaceWithTabs)
+        ) {
+            offset += 1;
+        }
+
+        if self.peek_kind_nth(offset) != Some(TokenKind::Comment) {
+            return None;
+        }
+
+        for _ in 0..offset {
+            let _ = self.take_current();
+        }
+
+        self.take_comment_token()
+    }
+
+    fn take_same_line_comment_after_ws(&mut self) -> Option<Comment<'input>> {
+        let mut offset = 0;
+        while matches!(
+            self.peek_kind_nth(offset),
+            Some(TokenKind::Whitespace | TokenKind::WhitespaceWithTabs)
+        ) {
+            offset += 1;
+        }
+
+        if self.peek_kind_nth(offset) != Some(TokenKind::Comment) {
+            return None;
+        }
+
+        for _ in 0..offset {
+            let _ = self.take_current();
+        }
+
+        self.take_comment_token()
     }
 
     fn track_emitted_event(&mut self, event: &Event<'input>) {
@@ -1111,6 +1199,12 @@ impl<'input> Emitter<'input> {
                     mut ctx,
                     properties,
                 } => {
+                    if (ctx.prior_crossed_line || self.peek_kind() != Some(TokenKind::LineStart))
+                        && let Some(comment) = self.take_same_line_comment_after_ws()
+                    {
+                        self.set_pending_ast_leading_comment(comment);
+                    }
+
                     // Phase 1: Skip initial whitespace/newlines and update content_column.
                     let has_leading_linestart = self.peek_kind() == Some(TokenKind::LineStart);
                     let (crossed, ws_width) = self.skip_ws_and_newlines_tracked();
