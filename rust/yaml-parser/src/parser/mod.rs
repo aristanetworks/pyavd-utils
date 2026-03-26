@@ -217,6 +217,24 @@ where
             .and_then(|event| self.parse_node_from_ast_event(event))
     }
 
+    /// Parse a mapping value unless the next event is a collection end marker.
+    ///
+    /// Recovery paths may queue a `MappingEnd` or `SequenceEnd` immediately
+    /// after emitting an orphan key. In that case the end marker belongs to
+    /// the surrounding collection and must remain buffered for the outer loop.
+    fn parse_mapping_value_with_metadata(&mut self) -> Option<ParsedNode<'input>> {
+        match self.peek() {
+            Some(
+                AstEvent::Event(Event::MappingEnd { .. } | Event::SequenceEnd { .. })
+                | AstEvent::RichEvent {
+                    event: Event::MappingEnd { .. } | Event::SequenceEnd { .. },
+                    ..
+                },
+            ) => None,
+            _ => self.parse_node_with_metadata(),
+        }
+    }
+
     fn parse_node_from_ast_event(&mut self, event: AstEvent<'input>) -> Option<ParsedNode<'input>> {
         match event {
             AstEvent::SequenceItem {
@@ -352,11 +370,13 @@ where
                     let key = self
                         .parse_node_from_event(key_event, leading_comment, trailing_comment)
                         .map_or_else(|| Node::null(start_span), |parsed| parsed.node);
-                    // Parse value
+                    let missing_value_span = key.span;
+                    // Preserve collection end markers so the outer mapping can
+                    // unwind after recovering an orphan key.
                     let parsed_value =
-                        self.parse_node_with_metadata()
+                        self.parse_mapping_value_with_metadata()
                             .unwrap_or_else(|| ParsedNode {
-                                node: Node::null(start_span),
+                                node: Node::null(missing_value_span),
                                 leading_comment: None,
                             });
                     let value = parsed_value.node;
@@ -374,10 +394,11 @@ where
                 Some(_) => {
                     let consumed_before = self.events_consumed;
                     let key = self.parse_node().unwrap_or_else(|| Node::null(start_span));
+                    let missing_value_span = key.span;
                     let parsed_value =
-                        self.parse_node_with_metadata()
+                        self.parse_mapping_value_with_metadata()
                             .unwrap_or_else(|| ParsedNode {
-                                node: Node::null(start_span),
+                                node: Node::null(missing_value_span),
                                 leading_comment: None,
                             });
                     let value = parsed_value.node;

@@ -446,6 +446,38 @@ mod error_recovery {
         assert!(!items.is_empty(), "Should have some items");
     }
 
+    /// Test that a missing comma in a flow sequence points at the insertion
+    /// site and recovery continues with later items.
+    #[test]
+    fn test_missing_separator_in_flow_sequence_points_to_insertion_site() {
+        let input = "[a [b], c]";
+        let (docs, errors) = parse(input);
+
+        let missing_separator = errors
+            .iter()
+            .find(|error| error.kind == ErrorKind::MissingSeparator)
+            .expect("Expected MissingSeparator error");
+        let insertion_point = input.find('a').expect("a should exist") + "a".len();
+        assert_eq!(
+            missing_separator.span.start_usize(),
+            insertion_point,
+            "MissingSeparator should point after the previous entry"
+        );
+        assert!(
+            missing_separator.span.is_empty(),
+            "MissingSeparator span should be zero-width, got {:?}",
+            missing_separator.span
+        );
+
+        assert_eq!(docs.len(), 1, "Should produce 1 document");
+        let items = match &docs.first().unwrap().value {
+            Value::Sequence(items) => Some(items),
+            _ => None,
+        }
+        .expect("expected sequence");
+        assert_eq!(items.len(), 3, "Should recover all sequence items");
+    }
+
     /// Test that parser recovers from invalid items in flow mapping
     /// and continues parsing valid pairs.
     #[test]
@@ -466,6 +498,38 @@ mod error_recovery {
 
         // Should have some pairs despite error
         assert!(!pairs.is_empty(), "Should have some pairs");
+    }
+
+    /// Test that a missing comma in a flow mapping points at the insertion
+    /// site and recovery continues with later pairs.
+    #[test]
+    fn test_missing_separator_in_flow_mapping_points_to_insertion_site() {
+        let input = "{a: [] b: 2, c: 3}";
+        let (docs, errors) = parse(input);
+
+        let missing_separator = errors
+            .iter()
+            .find(|error| error.kind == ErrorKind::MissingSeparator)
+            .expect("Expected MissingSeparator error");
+        let insertion_point = input.find("[]").expect("[] should exist") + "[]".len();
+        assert_eq!(
+            missing_separator.span.start_usize(),
+            insertion_point,
+            "MissingSeparator should point after the previous value"
+        );
+        assert!(
+            missing_separator.span.is_empty(),
+            "MissingSeparator span should be zero-width, got {:?}",
+            missing_separator.span
+        );
+
+        assert_eq!(docs.len(), 1, "Should produce 1 document");
+        let pairs = match &docs.first().unwrap().value {
+            Value::Mapping(pairs) => Some(pairs),
+            _ => None,
+        }
+        .expect("expected mapping");
+        assert_eq!(pairs.len(), 3, "Should recover all mapping pairs");
     }
 
     /// Test that parser handles duplicate anchors with error.
@@ -576,9 +640,70 @@ mod error_recovery {
 
         // Should have an error for missing colon
         assert!(!errors.is_empty(), "Expected error for missing colon");
+        let missing_colon = errors
+            .iter()
+            .find(|error| error.kind == ErrorKind::MissingColon)
+            .expect("Expected MissingColon error");
+        let missing_key_end = input.find("key2").expect("key2 should exist") + "key2".len();
+        assert_eq!(
+            missing_colon.span.start_usize(),
+            missing_key_end,
+            "MissingColon should point at the insertion site after the key"
+        );
+        assert!(
+            missing_colon.span.is_empty(),
+            "MissingColon span should be zero-width, got {:?}",
+            missing_colon.span
+        );
 
         // Should recover and parse other entries
         assert_eq!(docs.len(), 1, "Should produce 1 document");
+    }
+
+    /// Test recovery from a missing colon inside a nested mapping does not
+    /// trap later sibling keys inside the deeper structure.
+    #[test]
+    fn test_missing_colon_in_nested_mapping_recovers_to_root_sibling() {
+        let input = "\
+ipv4_prefix_list_catalog:
+  - name: ALLOW-DEFAULT
+    sequence_numbers
+      - sequence: 10
+        action: foo
+
+ipv4_acls:
+  - name: ACL-INTERNET-IN
+";
+        let (docs, errors) = parse(input);
+
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.kind == ErrorKind::MissingColon),
+            "Expected MissingColon error, got: {errors:?}"
+        );
+        assert_eq!(docs.len(), 1, "Should produce 1 document");
+
+        let Value::Mapping(root_pairs) = &docs[0].value else {
+            panic!("expected root mapping, got docs: {docs:#?}");
+        };
+
+        let root_keys: Vec<_> = root_pairs
+            .iter()
+            .map(|pair| match &pair.key.value {
+                Value::String(value) => value.as_ref(),
+                other => panic!("expected string key, got {other:?} in docs: {docs:#?}"),
+            })
+            .collect();
+
+        assert!(
+            root_keys.contains(&"ipv4_prefix_list_catalog"),
+            "expected first top-level key to survive recovery, got root keys: {root_keys:?}\ndocs: {docs:#?}"
+        );
+        assert!(
+            root_keys.contains(&"ipv4_acls"),
+            "expected later top-level key to recover at root, got root keys: {root_keys:?}\ndocs: {docs:#?}"
+        );
     }
 
     /// Test error spans are accurate.

@@ -3566,7 +3566,7 @@ impl<'input> Emitter<'input> {
                 // Plain scalar without a colon following - this is a MissingColon
                 let value: Cow<'input, str> = text.clone(); // Clone the Cow (cheap if Borrowed)
 
-                self.error(ErrorKind::MissingColon, span);
+                self.error(ErrorKind::MissingColon, Span::at(span.end));
                 // Consume the plain scalar tokens
                 self.skip_plain_scalar_tokens();
                 Some(Event::Scalar {
@@ -3578,20 +3578,21 @@ impl<'input> Emitter<'input> {
             }
             Some((Token::StringStart(_), span)) => {
                 // Quoted string without a colon following - this is a MissingColon
-                self.error(ErrorKind::MissingColon, span);
                 // Parse the quoted string to get its value
                 let (value, full_span) = self.parse_quoted_string_content();
+                let scalar_span = full_span.unwrap_or(span);
+                self.error(ErrorKind::MissingColon, Span::at(scalar_span.end));
                 Some(Event::Scalar {
                     style: ScalarStyle::DoubleQuoted, // or SingleQuoted - doesn't matter for error recovery
                     value,
                     properties: None,
-                    span: full_span.unwrap_or(span),
+                    span: scalar_span,
                 })
             }
             Some((Token::Alias(name), span)) => {
                 // Alias without a colon following - this is a MissingColon
                 let alias_name = Cow::Borrowed(name); // Borrow directly from input
-                self.error(ErrorKind::MissingColon, span);
+                self.error(ErrorKind::MissingColon, Span::at(span.end));
                 // Skip the alias token
                 let _ = self.take_current();
                 Some(Event::Alias {
@@ -4510,12 +4511,29 @@ impl<'input> Emitter<'input> {
                             return Some(Event::SequenceEnd { span });
                         }
 
+                        Some((TokenKind::FlowMapEnd, span)) => {
+                            // A `}` cannot terminate a flow sequence. Close the
+                            // current sequence and leave the token for the
+                            // enclosing context instead of retrying on the same
+                            // token forever.
+                            self.error(ErrorKind::MismatchedBrackets, span);
+                            self.exit_flow_collection();
+                            return Some(Event::SequenceEnd {
+                                span: self.collection_end_span(),
+                            });
+                        }
+
                         Some((TokenKind::DocStart | TokenKind::DocEnd, span)) => {
                             self.error(ErrorKind::DocumentMarkerInFlow, span);
                             let _ = self.take_current();
                         }
 
-                        Some(_) | None => {
+                        Some(_) => {
+                            self.error(ErrorKind::MissingSeparator, self.collection_end_span());
+                            phase = FlowSeqPhase::BeforeEntry;
+                        }
+
+                        None => {
                             self.error(ErrorKind::UnexpectedEof, start_span);
                             self.exit_flow_collection();
                             return Some(Event::SequenceEnd {
@@ -4731,6 +4749,18 @@ impl<'input> Emitter<'input> {
                         Some(Event::MappingEnd { span })
                     }
 
+                    Some((TokenKind::FlowSeqEnd, span)) => {
+                        // A `]` cannot terminate a flow mapping. Close the
+                        // current mapping and leave the token for the enclosing
+                        // sequence instead of re-entering recovery with no
+                        // progress.
+                        self.error(ErrorKind::MismatchedBrackets, span);
+                        self.exit_flow_collection();
+                        Some(Event::MappingEnd {
+                            span: self.collection_end_span(),
+                        })
+                    }
+
                     Some((TokenKind::DocStart | TokenKind::DocEnd, span)) => {
                         // Document markers inside flow context - ignore and continue
                         self.handle_doc_marker_in_flow_map(
@@ -4740,7 +4770,16 @@ impl<'input> Emitter<'input> {
                         )
                     }
 
-                    Some(_) | None => {
+                    Some(_) => {
+                        self.error(ErrorKind::MissingSeparator, self.collection_end_span());
+                        self.state_stack.push(ParseState::FlowMap {
+                            phase: FlowMapPhase::BeforeKey,
+                            start_span,
+                        });
+                        None
+                    }
+
+                    None => {
                         self.error(ErrorKind::UnexpectedEof, start_span);
                         self.exit_flow_collection();
                         Some(Event::MappingEnd {
