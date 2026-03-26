@@ -2464,6 +2464,23 @@ impl<'input> Emitter<'input> {
                 }
             }
 
+            Some(TokenKind::FlowSeqEnd | TokenKind::FlowMapEnd) if self.flow_depth == 0 => {
+                let span = self.current_span();
+                self.error(ErrorKind::UnmatchedBracket, span);
+                let _ = self.take_current();
+                self.state_stack.push(ParseState::Value {
+                    ctx: ValueContext {
+                        min_indent,
+                        content_column: ctx.content_column,
+                        kind: ctx.kind,
+                        allow_implicit_mapping,
+                        prior_crossed_line: !properties.is_empty(),
+                    },
+                    properties,
+                });
+                None
+            }
+
             Some(TokenKind::Alias) => {
                 // Defer alias handling to the `AliasValue` state so that
                 // complex-key behaviour is driven by the state machine.
@@ -3414,14 +3431,23 @@ impl<'input> Emitter<'input> {
                                 return None;
                             }
 
-                            if self.current_indent == indent
-                                && let Some(scalar_event) =
+                            if self.current_indent == indent {
+                                let pair_start = self.current_span().start;
+                                if let Some(scalar_event) =
                                     self.check_missing_colon_in_mapping_with_event()
-                            {
-                                self.set_pending_event(Event::MappingEnd {
-                                    span: self.collection_end_span(),
-                                });
-                                return Some(scalar_event);
+                                {
+                                    self.set_pending_ast_wrap(PendingAstWrap::MappingPair {
+                                        pair_start,
+                                    });
+                                    self.set_pending_event(self.emit_null());
+                                    self.state_stack.push(ParseState::BlockMap {
+                                        indent,
+                                        phase: BlockMapPhase::AfterValue,
+                                        start_span,
+                                        properties: EmitterProperties::default(),
+                                    });
+                                    return Some(scalar_event);
+                                }
                             }
                             self.pop_indent();
                             return Some(Event::MappingEnd {

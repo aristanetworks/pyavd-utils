@@ -706,6 +706,105 @@ ipv4_acls:
         );
     }
 
+    /// Test that a stray closing flow bracket in block value context does not
+    /// cause document-level trailing-content cascades.
+    #[test]
+    fn test_unmatched_bracket_in_block_value_recovers_to_following_root_key() {
+        let input = "\
+foo: ]
+ipv4_prefix_list_catalog:
+";
+        let (docs, errors) = parse(input);
+
+        let unmatched_brackets = errors
+            .iter()
+            .filter(|error| error.kind == ErrorKind::UnmatchedBracket)
+            .count();
+        assert_eq!(
+            unmatched_brackets, 1,
+            "expected exactly one UnmatchedBracket error, got: {errors:?}"
+        );
+        assert!(
+            !errors
+                .iter()
+                .any(|error| error.kind == ErrorKind::TrailingContent),
+            "unexpected TrailingContent cascade after unmatched bracket: {errors:?}"
+        );
+        assert_eq!(docs.len(), 1, "Should produce 1 document");
+
+        let Value::Mapping(root_pairs) = &docs[0].value else {
+            panic!("expected root mapping, got docs: {docs:#?}");
+        };
+
+        let root_keys: Vec<_> = root_pairs
+            .iter()
+            .map(|pair| match &pair.key.value {
+                Value::String(value) => value.as_ref(),
+                other => panic!("expected string key, got {other:?} in docs: {docs:#?}"),
+            })
+            .collect();
+
+        assert!(
+            root_keys.contains(&"foo"),
+            "expected first key to survive recovery, got root keys: {root_keys:?}\ndocs: {docs:#?}"
+        );
+        assert!(
+            root_keys.contains(&"ipv4_prefix_list_catalog"),
+            "expected later top-level key to recover at root, got root keys: {root_keys:?}\ndocs: {docs:#?}"
+        );
+    }
+
+    /// Test that a malformed would-be key inside an established root mapping
+    /// does not terminate the rest of the mapping.
+    #[test]
+    fn test_missing_colon_like_key_in_root_mapping_recovers_to_following_sibling() {
+        let input = "\
+underlay_routing_protocol: ebgp
+foo:,
+ipv4_prefix_list_catalog:
+";
+        let (docs, errors) = parse(input);
+
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.kind == ErrorKind::MissingColon),
+            "Expected MissingColon error, got: {errors:?}"
+        );
+        assert!(
+            !errors
+                .iter()
+                .any(|error| error.kind == ErrorKind::TrailingContent),
+            "unexpected TrailingContent cascade after malformed key line: {errors:?}"
+        );
+        assert_eq!(docs.len(), 1, "Should produce 1 document");
+
+        let Value::Mapping(root_pairs) = &docs[0].value else {
+            panic!("expected root mapping, got docs: {docs:#?}");
+        };
+
+        let root_keys: Vec<_> = root_pairs
+            .iter()
+            .map(|pair| match &pair.key.value {
+                Value::String(value) => value.as_ref(),
+                other => panic!("expected string key, got {other:?} in docs: {docs:#?}"),
+            })
+            .collect();
+
+        assert!(
+            root_keys.contains(&"underlay_routing_protocol"),
+            "expected first key to survive recovery, got root keys: {root_keys:?}\ndocs: {docs:#?}"
+        );
+        assert!(
+            root_keys.contains(&"foo:,"),
+            "expected malformed line to recover as orphan key, got root keys: {root_keys:?}\ndocs: {docs:#?}"
+        );
+        assert!(
+            root_keys.contains(&"ipv4_prefix_list_catalog"),
+            "expected later top-level key to remain in the same mapping, got root keys: {root_keys:?}\ndocs: {docs:#?}"
+        );
+    }
+
     /// Test error spans are accurate.
     #[test]
     fn test_error_span_accuracy() {
