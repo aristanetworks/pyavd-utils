@@ -682,6 +682,12 @@ ipv4_acls:
                 .any(|error| error.kind == ErrorKind::MissingColon),
             "Expected MissingColon error, got: {errors:?}"
         );
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.kind == ErrorKind::InvalidIndentation),
+            "Expected InvalidIndentation from dropped malformed subtree, got: {errors:?}"
+        );
         assert_eq!(docs.len(), 1, "Should produce 1 document");
 
         let Value::Mapping(root_pairs) = &docs[0].value else {
@@ -796,8 +802,8 @@ ipv4_prefix_list_catalog:
             "expected first key to survive recovery, got root keys: {root_keys:?}\ndocs: {docs:#?}"
         );
         assert!(
-            root_keys.contains(&"foo:,"),
-            "expected malformed line to recover as orphan key, got root keys: {root_keys:?}\ndocs: {docs:#?}"
+            !root_keys.contains(&"foo:,"),
+            "malformed line should be dropped instead of recovered as a fake key, got root keys: {root_keys:?}\ndocs: {docs:#?}"
         );
         assert!(
             root_keys.contains(&"ipv4_prefix_list_catalog"),

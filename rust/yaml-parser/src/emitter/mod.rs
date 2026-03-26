@@ -3431,23 +3431,14 @@ impl<'input> Emitter<'input> {
                                 return None;
                             }
 
-                            if self.current_indent == indent {
-                                let pair_start = self.current_span().start;
-                                if let Some(scalar_event) =
-                                    self.check_missing_colon_in_mapping_with_event()
-                                {
-                                    self.set_pending_ast_wrap(PendingAstWrap::MappingPair {
-                                        pair_start,
-                                    });
-                                    self.set_pending_event(self.emit_null());
-                                    self.state_stack.push(ParseState::BlockMap {
-                                        indent,
-                                        phase: BlockMapPhase::AfterValue,
-                                        start_span,
-                                        properties: EmitterProperties::default(),
-                                    });
-                                    return Some(scalar_event);
-                                }
+                            if self.current_indent == indent
+                                && self.recover_missing_colon_in_mapping(indent)
+                            {
+                                phase = BlockMapPhase::BeforeKeyScan {
+                                    require_line_boundary: false,
+                                    crossed_line: false,
+                                };
+                                continue;
                             }
                             self.pop_indent();
                             return Some(Event::MappingEnd {
@@ -3572,61 +3563,74 @@ impl<'input> Emitter<'input> {
         self.with_lookahead(200, |window| Self::scan_is_implicit_key(&window))
     }
 
-    /// Check if there's a scalar at the current position that looks like a mapping key
-    /// but is missing a colon. Reports `MissingColon` error if detected.
+    /// Recover from a scalar-like line at mapping indentation that looks like a
+    /// key but is missing a colon.
     ///
-    /// This is called when `is_implicit_key()` returns false but we're at a scalar
-    /// that could have been intended as a key. Cases like:
-    /// ```yaml
-    /// foo:
-    ///   bar: baz
-    /// invalid    # <- scalar at mapping indent, but no colon
-    /// ```
-    /// Check if there's a scalar at the current position that looks like a mapping key
-    /// but is missing a colon. If found, reports `MissingColon` error and returns the
-    /// scalar event to emit (as an orphaned key for error recovery).
-    fn check_missing_colon_in_mapping_with_event(&mut self) -> Option<Event<'input>> {
-        // Check if current token is a scalar-like token at this position
-        match self.peek() {
-            Some((Token::Plain(text), span)) => {
-                // Plain scalar without a colon following - this is a MissingColon
-                let value: Cow<'input, str> = text.clone(); // Clone the Cow (cheap if Borrowed)
-
+    /// Recovery policy:
+    /// - report `MissingColon` at the insertion point after the scalar
+    /// - drop the malformed line instead of inventing a mapping pair
+    /// - consume any more-indented continuation lines as invalid indentation so
+    ///   they are not absorbed by the parent mapping
+    fn recover_missing_colon_in_mapping(&mut self, indent: IndentLevel) -> bool {
+        let recovered = match self.peek() {
+            Some((Token::Plain(_text), span)) => {
                 self.error(ErrorKind::MissingColon, Span::at(span.end));
-                // Consume the plain scalar tokens
                 self.skip_plain_scalar_tokens();
-                Some(Event::Scalar {
-                    style: ScalarStyle::Plain,
-                    value,
-                    properties: None,
-                    span,
-                })
+                true
             }
             Some((Token::StringStart(_), span)) => {
-                // Quoted string without a colon following - this is a MissingColon
-                // Parse the quoted string to get its value
-                let (value, full_span) = self.parse_quoted_string_content();
+                let (_value, full_span) = self.parse_quoted_string_content();
                 let scalar_span = full_span.unwrap_or(span);
                 self.error(ErrorKind::MissingColon, Span::at(scalar_span.end));
-                Some(Event::Scalar {
-                    style: ScalarStyle::DoubleQuoted, // or SingleQuoted - doesn't matter for error recovery
-                    value,
-                    properties: None,
-                    span: scalar_span,
-                })
+                true
             }
-            Some((Token::Alias(name), span)) => {
-                // Alias without a colon following - this is a MissingColon
-                let alias_name = Cow::Borrowed(name); // Borrow directly from input
+            Some((Token::Alias(_name), span)) => {
                 self.error(ErrorKind::MissingColon, Span::at(span.end));
-                // Skip the alias token
                 let _ = self.take_current();
-                Some(Event::Alias {
-                    name: alias_name,
-                    span,
-                })
+                true
             }
-            _ => None,
+            _ => false,
+        };
+
+        if !recovered {
+            return false;
+        }
+
+        self.skip_to_line_end();
+        self.skip_invalid_indented_recovery_lines(indent);
+        true
+    }
+
+    /// Consume tokens until the next `LineStart`, document marker, or EOF.
+    fn skip_to_line_end(&mut self) {
+        while let Some(kind) = self.peek_kind() {
+            if matches!(
+                kind,
+                TokenKind::LineStart | TokenKind::DocStart | TokenKind::DocEnd
+            ) {
+                break;
+            }
+            let _ = self.take_current();
+        }
+    }
+
+    /// Skip lines indented more deeply than `indent`, reporting
+    /// `InvalidIndentation` when they contain content.
+    fn skip_invalid_indented_recovery_lines(&mut self, indent: IndentLevel) {
+        while let Some((next_indent, line_span)) = self.peek_line_start() {
+            if next_indent <= indent {
+                break;
+            }
+
+            let has_content = !self.line_start_is_blank_from(1);
+            let _ = self.take_current();
+            self.current_indent = next_indent;
+            self.last_line_start_span = line_span;
+
+            if has_content {
+                self.error(ErrorKind::InvalidIndentation, line_span);
+            }
+            self.skip_to_line_end();
         }
     }
 
