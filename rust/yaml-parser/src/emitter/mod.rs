@@ -334,6 +334,13 @@ impl<'input> Emitter<'input> {
         }
     }
 
+    fn mapping_key_insertion_span(&self) -> Span {
+        self.last_content_span.map_or_else(
+            || Span::at(self.current_span().start),
+            |span| Span::at(span.end),
+        )
+    }
+
     // ─────────────────────────────────────────────────────────────
     // Token access helpers
     // ─────────────────────────────────────────────────────────────
@@ -4360,7 +4367,7 @@ impl<'input> Emitter<'input> {
                             });
                             // 3. Parse the value (after we see colon)
                             self.state_stack.push(ParseState::FlowSeq {
-                                phase: FlowSeqPhase::ImplicitMapValue { map_start_span },
+                                phase: FlowSeqPhase::ImplicitMapValue,
                                 start_span,
                             });
                             // 4. Parse the key
@@ -4402,7 +4409,7 @@ impl<'input> Emitter<'input> {
                                 });
                                 // 3. Parse the value (after we see colon)
                                 self.state_stack.push(ParseState::FlowSeq {
-                                    phase: FlowSeqPhase::ImplicitMapValue { map_start_span },
+                                    phase: FlowSeqPhase::ImplicitMapValue,
                                     start_span,
                                 });
 
@@ -4480,7 +4487,7 @@ impl<'input> Emitter<'input> {
                     });
                 }
 
-                FlowSeqPhase::ImplicitMapValue { map_start_span } => {
+                FlowSeqPhase::ImplicitMapValue => {
                     self.skip_ws_and_newlines();
 
                     if self.peek_kind() == Some(TokenKind::Colon) {
@@ -4507,11 +4514,9 @@ impl<'input> Emitter<'input> {
                         return None;
                     }
 
-                    return Some(Event::Scalar {
-                        style: ScalarStyle::Plain,
-                        value: Cow::Borrowed(""),
-                        properties: None,
-                        span: map_start_span,
+                    self.error(ErrorKind::MissingColon, self.mapping_key_insertion_span());
+                    return Some(Event::InvalidatePair {
+                        span: self.mapping_key_insertion_span(),
                     });
                 }
 
@@ -4744,12 +4749,13 @@ impl<'input> Emitter<'input> {
                         None
                     }
                 } else {
-                    // No colon, emit null value
+                    let span = self.mapping_key_insertion_span();
+                    self.error(ErrorKind::MissingColon, span);
                     self.state_stack.push(ParseState::FlowMap {
                         phase: FlowMapPhase::AfterValue,
                         start_span,
                     });
-                    Some(self.emit_null())
+                    Some(Event::InvalidatePair { span })
                 }
             }
 

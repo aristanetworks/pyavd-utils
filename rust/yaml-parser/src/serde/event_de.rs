@@ -260,6 +260,18 @@ impl<'de> EventStream<'de> {
         self.anchors.clear();
     }
 
+    fn invalid_pair_error(&self) -> DeError {
+        DeError::Custom("invalid mapping entry: expected ':' after the key".into())
+    }
+
+    fn next_value_event(&mut self) -> Result<Event<'de>, DeError> {
+        match self.next_event() {
+            Some(Event::InvalidatePair { .. }) => Err(self.invalid_pair_error()),
+            Some(event) => Ok(event),
+            None => Err(DeError::Custom("unexpected end of input".into())),
+        }
+    }
+
     #[inline]
     fn deserialize_scalar<V>(
         style: ScalarStyle,
@@ -461,6 +473,7 @@ impl<'de> SeqAccess<'de> for SeqAccessImpl<'_, 'de> {
             .ok_or_else(|| DeError::Custom("unexpected end of input inside sequence".into()))?;
 
         match event {
+            Event::InvalidatePair { .. } => Err(self.stream.invalid_pair_error()),
             Event::SequenceEnd { .. } => {
                 // Normal end-of-sequence marker - consume it
                 self.stream.next_event();
@@ -498,6 +511,7 @@ impl<'de> MapAccess<'de> for MapAccessImpl<'_, 'de> {
             .ok_or_else(|| DeError::Custom("unexpected end of input inside mapping".into()))?;
 
         match event {
+            Event::InvalidatePair { .. } => Err(self.stream.invalid_pair_error()),
             Event::MappingEnd { .. } => {
                 // Normal end-of-mapping marker - consume it
                 self.stream.next_event();
@@ -523,6 +537,12 @@ impl<'de> MapAccess<'de> for MapAccessImpl<'_, 'de> {
             return Err(DeError::ValueWithoutKey);
         }
 
+        if matches!(self.stream.peek(), Some(Event::InvalidatePair { .. })) {
+            let _ = self.stream.next_event();
+            self.value_pending = false;
+            return Err(self.stream.invalid_pair_error());
+        }
+
         let value = seed.deserialize(&mut *self.stream)?;
         self.value_pending = false;
         Ok(value)
@@ -536,9 +556,7 @@ impl<'de> de::Deserializer<'de> for &mut EventStream<'de> {
     where
         V: Visitor<'de>,
     {
-        let event = self
-            .next_event()
-            .ok_or_else(|| DeError::Custom("unexpected end of input".into()))?;
+        let event = self.next_value_event()?;
 
         // Anchors and aliases are now handled transparently in next_event(),
         // so we just process the event normally
@@ -578,6 +596,10 @@ impl<'de> de::Deserializer<'de> for &mut EventStream<'de> {
             .peek()
             .ok_or_else(|| DeError::Custom("unexpected end of input".into()))?;
 
+        if matches!(event, Event::InvalidatePair { .. }) {
+            return Err(self.invalid_pair_error());
+        }
+
         // Fast null check: avoid full scalar inference by checking patterns directly.
         let is_plain_null = match event {
             Event::Scalar { style, value, .. } if *style == ScalarStyle::Plain => {
@@ -607,9 +629,7 @@ impl<'de> de::Deserializer<'de> for &mut EventStream<'de> {
     {
         use serde::de::value::StringDeserializer;
 
-        let event = self
-            .next_event()
-            .ok_or_else(|| DeError::Custom("unexpected end of input".into()))?;
+        let event = self.next_value_event()?;
 
         if let Event::Scalar { style, value, .. } = event {
             // Fast path: quoted scalars are always strings.
@@ -649,9 +669,7 @@ impl<'de> de::Deserializer<'de> for &mut EventStream<'de> {
     where
         V: Visitor<'de>,
     {
-        let event = self
-            .next_event()
-            .ok_or_else(|| DeError::Custom("unexpected end of input".into()))?;
+        let event = self.next_value_event()?;
 
         match event {
             Event::Scalar { value, .. } => {
@@ -672,9 +690,7 @@ impl<'de> de::Deserializer<'de> for &mut EventStream<'de> {
     where
         V: Visitor<'de>,
     {
-        let event = self
-            .next_event()
-            .ok_or_else(|| DeError::Custom("unexpected end of input".into()))?;
+        let event = self.next_value_event()?;
 
         match event {
             Event::Scalar { value, .. } => {
@@ -696,9 +712,7 @@ impl<'de> de::Deserializer<'de> for &mut EventStream<'de> {
     where
         V: Visitor<'de>,
     {
-        let event = self
-            .next_event()
-            .ok_or_else(|| DeError::Custom("unexpected end of input".into()))?;
+        let event = self.next_value_event()?;
         match event {
             Event::Scalar { value, .. } => {
                 let scalar = value.as_ref();
@@ -718,9 +732,7 @@ impl<'de> de::Deserializer<'de> for &mut EventStream<'de> {
     where
         V: Visitor<'de>,
     {
-        let event = self
-            .next_event()
-            .ok_or_else(|| DeError::Custom("unexpected end of input".into()))?;
+        let event = self.next_value_event()?;
         match event {
             Event::Scalar { value, .. } => {
                 let scalar = value.as_ref();
@@ -740,9 +752,7 @@ impl<'de> de::Deserializer<'de> for &mut EventStream<'de> {
     where
         V: Visitor<'de>,
     {
-        let event = self
-            .next_event()
-            .ok_or_else(|| DeError::Custom("unexpected end of input".into()))?;
+        let event = self.next_value_event()?;
         match event {
             Event::Scalar { value, .. } => {
                 let scalar = value.as_ref();
@@ -770,9 +780,7 @@ impl<'de> de::Deserializer<'de> for &mut EventStream<'de> {
     where
         V: Visitor<'de>,
     {
-        let event = self
-            .next_event()
-            .ok_or_else(|| DeError::Custom("unexpected end of input".into()))?;
+        let event = self.next_value_event()?;
         match event {
             Event::Scalar { value, .. } => {
                 let scalar = value.as_ref();
@@ -802,9 +810,7 @@ impl<'de> de::Deserializer<'de> for &mut EventStream<'de> {
     where
         V: Visitor<'de>,
     {
-        let event = self
-            .next_event()
-            .ok_or_else(|| DeError::Custom("unexpected end of input".into()))?;
+        let event = self.next_value_event()?;
         match event {
             Event::Scalar { value, .. } => {
                 let scalar = value.as_ref();
@@ -825,9 +831,7 @@ impl<'de> de::Deserializer<'de> for &mut EventStream<'de> {
     where
         V: Visitor<'de>,
     {
-        let event = self
-            .next_event()
-            .ok_or_else(|| DeError::Custom("unexpected end of input".into()))?;
+        let event = self.next_value_event()?;
         match event {
             Event::Scalar { value, .. } => match value {
                 Cow::Borrowed(str_ref) => visitor.visit_borrowed_str(str_ref),
@@ -848,9 +852,7 @@ impl<'de> de::Deserializer<'de> for &mut EventStream<'de> {
     where
         V: Visitor<'de>,
     {
-        let event = self
-            .next_event()
-            .ok_or_else(|| DeError::Custom("unexpected end of input".into()))?;
+        let event = self.next_value_event()?;
         match event {
             Event::Scalar { style, value, .. } => {
                 EventStream::deserialize_scalar(style, value, visitor)
@@ -870,9 +872,7 @@ impl<'de> de::Deserializer<'de> for &mut EventStream<'de> {
     where
         V: Visitor<'de>,
     {
-        let event = self
-            .next_event()
-            .ok_or_else(|| DeError::Custom("unexpected end of input".into()))?;
+        let event = self.next_value_event()?;
         match event {
             Event::Scalar { style, value, .. } => {
                 EventStream::deserialize_scalar(style, value, visitor)
@@ -896,9 +896,7 @@ impl<'de> de::Deserializer<'de> for &mut EventStream<'de> {
     where
         V: Visitor<'de>,
     {
-        let event = self
-            .next_event()
-            .ok_or_else(|| DeError::Custom("unexpected end of input".into()))?;
+        let event = self.next_value_event()?;
 
         match event {
             Event::SequenceStart { .. } => {
@@ -938,9 +936,7 @@ impl<'de> de::Deserializer<'de> for &mut EventStream<'de> {
     where
         V: Visitor<'de>,
     {
-        let event = self
-            .next_event()
-            .ok_or_else(|| DeError::Custom("unexpected end of input".into()))?;
+        let event = self.next_value_event()?;
 
         match event {
             Event::MappingStart { .. } => {
@@ -1180,5 +1176,19 @@ mod tests {
 
         let value: Config = from_str_internal(yaml).unwrap();
         assert_eq!(value.service.tags, vec!["web", "api"]);
+    }
+
+    #[test]
+    fn reports_missing_colon_in_flow_mapping_during_deserialization() {
+        let yaml = "{a, b: 2, c: 3}";
+        let error = from_str_internal::<std::collections::BTreeMap<String, i64>>(yaml)
+            .expect_err("invalid mapping pair should fail serde deserialization");
+
+        assert!(
+            error
+                .to_string()
+                .contains("invalid mapping entry: expected ':' after the key"),
+            "unexpected error message: {error}"
+        );
     }
 }

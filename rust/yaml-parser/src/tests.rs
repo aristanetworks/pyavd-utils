@@ -532,6 +532,57 @@ mod error_recovery {
         assert_eq!(pairs.len(), 3, "Should recover all mapping pairs");
     }
 
+    /// Test that a malformed flow mapping entry without a colon is dropped
+    /// instead of recovered as a fake `null` pair.
+    #[test]
+    fn test_missing_colon_in_flow_mapping_drops_pair_and_recovers() {
+        let input = "{a, b: 2, c: 3}";
+        let (docs, errors) = parse(input);
+
+        let missing_colon = errors
+            .iter()
+            .find(|error| error.kind == ErrorKind::MissingColon)
+            .expect("Expected MissingColon error");
+        let insertion_point = input.find('a').expect("a should exist") + "a".len();
+        assert_eq!(
+            missing_colon.span.start_usize(),
+            insertion_point,
+            "MissingColon should point after the malformed flow-map key"
+        );
+        assert!(
+            missing_colon.span.is_empty(),
+            "MissingColon span should be zero-width, got {:?}",
+            missing_colon.span
+        );
+
+        assert_eq!(docs.len(), 1, "Should produce 1 document");
+        let Value::Mapping(pairs) = &docs[0].value else {
+            panic!("expected mapping, got docs: {docs:#?}");
+        };
+
+        let keys: Vec<_> = pairs
+            .iter()
+            .map(|pair| match &pair.key.value {
+                Value::String(value) => value.as_ref(),
+                other => panic!("expected string key, got {other:?} in docs: {docs:#?}"),
+            })
+            .collect();
+
+        assert_eq!(pairs.len(), 2, "malformed pair should be dropped");
+        assert!(
+            !keys.contains(&"a"),
+            "malformed key should not survive as a fake pair, got keys: {keys:?}\ndocs: {docs:#?}"
+        );
+        assert!(
+            keys.contains(&"b"),
+            "expected `b` pair to survive, got keys: {keys:?}"
+        );
+        assert!(
+            keys.contains(&"c"),
+            "expected `c` pair to survive, got keys: {keys:?}"
+        );
+    }
+
     /// Test that parser handles duplicate anchors with error.
     #[test]
     fn test_duplicate_anchor_error() {

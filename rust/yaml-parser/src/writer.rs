@@ -79,7 +79,10 @@ impl<'a, 'input, W: Write> WriterState<'a, 'input, W> {
         while let Some(event) = self.peek().cloned() {
             self.tick("write_stream")?;
             match event {
-                Event::StreamStart | Event::MappingEnd { .. } | Event::SequenceEnd { .. } => {
+                Event::StreamStart
+                | Event::MappingEnd { .. }
+                | Event::SequenceEnd { .. }
+                | Event::InvalidatePair { .. } => {
                     // Stream start and stray collection end markers at the
                     // top level should not cause us to loop; if they
                     // appear here it means a nested writer already
@@ -166,7 +169,8 @@ impl<'a, 'input, W: Write> WriterState<'a, 'input, W> {
             Event::DocumentEnd { .. }
             | Event::StreamEnd
             | Event::MappingEnd { .. }
-            | Event::SequenceEnd { .. } => Ok(()),
+            | Event::SequenceEnd { .. }
+            | Event::InvalidatePair { .. } => Ok(()),
             Event::StreamStart | Event::DocumentStart { .. } => {
                 // Should have been handled by write_stream
                 self.advance();
@@ -749,11 +753,27 @@ impl<'a, 'input, W: Write> WriterState<'a, 'input, W> {
     }
 
     fn peek(&self) -> Option<&Event<'input>> {
-        self.events.get(self.pos)
+        let mut pos = self.pos;
+        while matches!(self.events.get(pos), Some(Event::InvalidatePair { .. })) {
+            pos += 1;
+        }
+        self.events.get(pos)
     }
 
     fn advance(&mut self) {
+        while matches!(
+            self.events.get(self.pos),
+            Some(Event::InvalidatePair { .. })
+        ) {
+            self.pos += 1;
+        }
         if self.pos < self.events.len() {
+            self.pos += 1;
+        }
+        while matches!(
+            self.events.get(self.pos),
+            Some(Event::InvalidatePair { .. })
+        ) {
             self.pos += 1;
         }
     }

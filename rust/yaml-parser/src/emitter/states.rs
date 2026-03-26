@@ -206,7 +206,7 @@ pub(super) enum FlowSeqPhase {
     /// Emit empty key scalar for implicit mapping with empty key (e.g., `[ : value ]`).
     ImplicitMapEmptyKey { map_start_span: Span },
     /// After implicit mapping key, expect `:` then parse value.
-    ImplicitMapValue { map_start_span: Span },
+    ImplicitMapValue,
     /// After implicit mapping value, emit `MappingEnd`.
     ImplicitMapEnd,
 }

@@ -142,6 +142,7 @@ where
                     return node;
                 }
                 AstEvent::Event(Event::MappingEnd { .. } | Event::SequenceEnd { .. })
+                | AstEvent::Event(Event::InvalidatePair { .. })
                 | AstEvent::RichEvent {
                     event: Event::MappingEnd { .. } | Event::SequenceEnd { .. },
                     ..
@@ -224,6 +225,10 @@ where
     /// the surrounding collection and must remain buffered for the outer loop.
     fn parse_mapping_value_with_metadata(&mut self) -> Option<ParsedNode<'input>> {
         match self.peek() {
+            Some(AstEvent::Event(Event::InvalidatePair { .. })) => {
+                self.advance();
+                None
+            }
             Some(
                 AstEvent::Event(Event::MappingEnd { .. } | Event::SequenceEnd { .. })
                 | AstEvent::RichEvent {
@@ -308,7 +313,8 @@ where
             | Event::DocumentStart { .. }
             | Event::DocumentEnd { .. }
             | Event::MappingEnd { .. }
-            | Event::SequenceEnd { .. } => None,
+            | Event::SequenceEnd { .. }
+            | Event::InvalidatePair { .. } => None,
         }
     }
 
@@ -370,22 +376,17 @@ where
                     let key = self
                         .parse_node_from_event(key_event, leading_comment, trailing_comment)
                         .map_or_else(|| Node::null(start_span), |parsed| parsed.node);
-                    let missing_value_span = key.span;
                     // Preserve collection end markers so the outer mapping can
                     // unwind after recovering an orphan key.
-                    let parsed_value =
-                        self.parse_mapping_value_with_metadata()
-                            .unwrap_or_else(|| ParsedNode {
-                                node: Node::null(missing_value_span),
-                                leading_comment: None,
-                            });
-                    let value = parsed_value.node;
-                    let pair_span = Span::new(pair_start..value.span.end);
-                    let mut pair = MappingPair::new(pair_span, key, value);
-                    if let Some(comment) = parsed_value.leading_comment {
-                        pair = pair.with_header_comment(comment);
+                    if let Some(parsed_value) = self.parse_mapping_value_with_metadata() {
+                        let value = parsed_value.node;
+                        let pair_span = Span::new(pair_start..value.span.end);
+                        let mut pair = MappingPair::new(pair_span, key, value);
+                        if let Some(comment) = parsed_value.leading_comment {
+                            pair = pair.with_header_comment(comment);
+                        }
+                        pairs.push(pair);
                     }
-                    pairs.push(pair);
                     // Ensure we made progress to avoid infinite loop
                     if self.events_consumed == consumed_before {
                         self.advance();
@@ -394,21 +395,16 @@ where
                 Some(_) => {
                     let consumed_before = self.events_consumed;
                     let key = self.parse_node().unwrap_or_else(|| Node::null(start_span));
-                    let missing_value_span = key.span;
-                    let parsed_value =
-                        self.parse_mapping_value_with_metadata()
-                            .unwrap_or_else(|| ParsedNode {
-                                node: Node::null(missing_value_span),
-                                leading_comment: None,
-                            });
-                    let value = parsed_value.node;
-                    let pair_span =
-                        Span::from_usize_range(key.span.start_usize()..value.span.end_usize());
-                    let mut pair = MappingPair::new(pair_span, key, value);
-                    if let Some(comment) = parsed_value.leading_comment {
-                        pair = pair.with_header_comment(comment);
+                    if let Some(parsed_value) = self.parse_mapping_value_with_metadata() {
+                        let value = parsed_value.node;
+                        let pair_span =
+                            Span::from_usize_range(key.span.start_usize()..value.span.end_usize());
+                        let mut pair = MappingPair::new(pair_span, key, value);
+                        if let Some(comment) = parsed_value.leading_comment {
+                            pair = pair.with_header_comment(comment);
+                        }
+                        pairs.push(pair);
                     }
-                    pairs.push(pair);
                     if self.events_consumed == consumed_before {
                         self.advance();
                     }

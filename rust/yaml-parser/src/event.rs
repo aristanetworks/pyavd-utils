@@ -262,6 +262,16 @@ pub enum Event<'input> {
         span: Span,
     },
 
+    /// Recovery sentinel indicating the current mapping pair should be dropped.
+    ///
+    /// This is emitted only in malformed recovery paths where the emitter has
+    /// already committed to a key event but determines that the pair itself
+    /// should not survive in higher-level consumers.
+    InvalidatePair {
+        /// Span identifying the insertion / recovery site for the invalid pair.
+        span: Span,
+    },
+
     /// A scalar value.
     Scalar {
         /// How the scalar was written (plain, quoted, block).
@@ -300,6 +310,7 @@ impl Event<'_> {
             | Self::DocumentEnd { .. }
             | Self::MappingEnd { .. }
             | Self::SequenceEnd { .. }
+            | Self::InvalidatePair { .. }
             | Self::Alias { .. } => None,
         }
     }
@@ -321,6 +332,7 @@ impl Event<'_> {
             | Self::MappingEnd { span }
             | Self::SequenceStart { span, .. }
             | Self::SequenceEnd { span }
+            | Self::InvalidatePair { span }
             | Self::Scalar { span, .. }
             | Self::Alias { span, .. } => Some(*span),
         }
@@ -356,6 +368,7 @@ impl Event<'_> {
                 span,
             },
             Self::SequenceEnd { span } => Event::SequenceEnd { span },
+            Self::InvalidatePair { span } => Event::InvalidatePair { span },
             Self::Scalar {
                 style,
                 value,
@@ -434,6 +447,7 @@ impl std::fmt::Display for Event<'_> {
                 Ok(())
             }
             Self::SequenceEnd { .. } => write!(f, "-SEQ"),
+            Self::InvalidatePair { .. } => write!(f, "=INV pair"),
             Self::Scalar { style, value, .. } => {
                 write!(f, "=VAL")?;
                 if let Some(prop) = self
