@@ -922,6 +922,61 @@ ipv4_prefix_list_catalog:
         );
     }
 
+    /// Test that a colon-like continuation after a plain scalar value is
+    /// reported locally and does not poison following root keys.
+    #[test]
+    fn test_unexpected_colon_after_plain_scalar_recovers_to_following_root_key() {
+        let input = "\
+underlay_routing_protocol: ebgpfoo:
+ipv4_prefix_list_catalog:
+";
+        let (docs, errors) = parse(input);
+
+        let unexpected_colon = errors
+            .iter()
+            .find(|error| error.kind == ErrorKind::UnexpectedColon)
+            .expect("Expected UnexpectedColon error");
+        let colon_pos = input.find("ebgpfoo:").expect("ebgpfoo should exist") + "ebgpfoo".len();
+        assert_eq!(
+            unexpected_colon.span.start_usize(),
+            colon_pos,
+            "UnexpectedColon should point at the colon after the scalar value"
+        );
+        assert_eq!(
+            unexpected_colon.span.end_usize(),
+            colon_pos + 1,
+            "UnexpectedColon should cover only the offending colon"
+        );
+        assert!(
+            !errors
+                .iter()
+                .any(|error| error.kind == ErrorKind::TrailingContent),
+            "unexpected TrailingContent cascade after unexpected colon: {errors:?}"
+        );
+        assert_eq!(docs.len(), 1, "Should produce 1 document");
+
+        let Value::Mapping(root_pairs) = &docs[0].value else {
+            panic!("expected root mapping, got docs: {docs:#?}");
+        };
+
+        let root_keys: Vec<_> = root_pairs
+            .iter()
+            .map(|pair| match &pair.key.value {
+                Value::String(value) => value.as_ref(),
+                other => panic!("expected string key, got {other:?} in docs: {docs:#?}"),
+            })
+            .collect();
+
+        assert!(
+            root_keys.contains(&"underlay_routing_protocol"),
+            "expected first key to survive recovery, got root keys: {root_keys:?}\ndocs: {docs:#?}"
+        );
+        assert!(
+            root_keys.contains(&"ipv4_prefix_list_catalog"),
+            "expected later top-level key to recover at root, got root keys: {root_keys:?}\ndocs: {docs:#?}"
+        );
+    }
+
     /// Test error spans are accurate.
     #[test]
     fn test_error_span_accuracy() {

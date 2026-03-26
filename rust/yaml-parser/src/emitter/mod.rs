@@ -3305,6 +3305,20 @@ impl<'input> Emitter<'input> {
                     crossed_line,
                 } => {
                     if require_line_boundary && !crossed_line {
+                        if let Some(kind) = self.peek_kind() {
+                            let error_kind = if kind == TokenKind::Colon {
+                                ErrorKind::UnexpectedColon
+                            } else {
+                                ErrorKind::TrailingContent
+                            };
+                            self.error(error_kind, self.current_span());
+                            self.skip_to_line_end();
+                            phase = BlockMapPhase::BeforeKeyScan {
+                                require_line_boundary: false,
+                                crossed_line: false,
+                            };
+                            continue;
+                        }
                         self.pop_indent();
                         return Some(Event::MappingEnd {
                             span: self.collection_end_span(),
