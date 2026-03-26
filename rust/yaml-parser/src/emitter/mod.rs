@@ -218,7 +218,11 @@ impl<'input> Emitter<'input> {
 
     fn wrap_ast_event(&mut self, event: Event<'input>) -> AstEvent<'input> {
         let leading_comment = self.pending_ast_leading_comment.take();
-        let trailing_comment = self.take_inline_comment_for_ast();
+        let trailing_comment = if matches!(event, Event::Scalar { .. } | Event::Alias { .. }) {
+            self.take_same_line_comment_after_ws()
+        } else {
+            None
+        };
         match self.pending_ast_wraps.pop_front() {
             Some(PendingAstWrap::SequenceItem { item_start }) => match event {
                 Event::MappingStart { .. }
@@ -250,6 +254,7 @@ impl<'input> Emitter<'input> {
                 | Event::Alias { .. } => AstEvent::MappingKey {
                     pair_start,
                     key_event: event,
+                    leading_comment,
                     trailing_comment,
                 },
                 _ => {
@@ -292,26 +297,6 @@ impl<'input> Emitter<'input> {
             return None;
         };
         Some(Comment { text, span })
-    }
-
-    fn take_inline_comment_for_ast(&mut self) -> Option<Comment<'input>> {
-        let mut offset = 0;
-        while matches!(
-            self.peek_kind_nth(offset),
-            Some(TokenKind::Whitespace | TokenKind::WhitespaceWithTabs)
-        ) {
-            offset += 1;
-        }
-
-        if self.peek_kind_nth(offset) != Some(TokenKind::Comment) {
-            return None;
-        }
-
-        for _ in 0..offset {
-            let _ = self.take_current();
-        }
-
-        self.take_comment_token()
     }
 
     fn take_same_line_comment_after_ws(&mut self) -> Option<Comment<'input>> {
@@ -3119,6 +3104,9 @@ impl<'input> Emitter<'input> {
                                     return None;
                                 }
                                 _ => {
+                                    if let Some(comment) = self.take_same_line_comment_after_ws() {
+                                        self.set_pending_ast_leading_comment(comment);
+                                    }
                                     return self.process_value_after_properties(
                                         ValueContext {
                                             min_indent,

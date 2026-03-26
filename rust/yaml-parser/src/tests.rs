@@ -195,6 +195,115 @@ fn test_mapping_header_comment_attaches_to_pair() {
 }
 
 #[test]
+fn test_mapping_header_comment_attaches_to_pair_with_nested_mapping() {
+    let input = "foo: # hello\n  bar: 1\n";
+    let (docs, errors) = parse(input);
+    assert!(errors.is_empty(), "unexpected parse errors: {errors:?}");
+
+    let Value::Mapping(pairs) = &docs[0].value else {
+        panic!("expected mapping");
+    };
+    assert_eq!(pairs.len(), 1);
+    assert_eq!(
+        pairs[0]
+            .header_comment()
+            .map(|comment| comment.text.as_ref()),
+        Some(" hello")
+    );
+}
+
+#[test]
+fn test_sequence_header_comment_attaches_with_nested_mapping() {
+    let input = "- # hello\n  foo: 1\n";
+    let (docs, errors) = parse(input);
+    assert!(errors.is_empty(), "unexpected parse errors: {errors:?}");
+
+    let Value::Sequence(items) = &docs[0].value else {
+        panic!("expected sequence");
+    };
+    assert_eq!(items.len(), 1);
+    assert_eq!(
+        items[0]
+            .header_comment()
+            .map(|comment| comment.text.as_ref()),
+        Some(" hello")
+    );
+}
+
+#[test]
+fn test_sequence_header_comment_attaches_with_nested_sequence() {
+    let input = "- # hello\n  - 1\n";
+    let (docs, errors) = parse(input);
+    assert!(errors.is_empty(), "unexpected parse errors: {errors:?}");
+
+    let Value::Sequence(items) = &docs[0].value else {
+        panic!("expected sequence");
+    };
+    assert_eq!(items.len(), 1);
+    assert_eq!(
+        items[0]
+            .header_comment()
+            .map(|comment| comment.text.as_ref()),
+        Some(" hello")
+    );
+}
+
+#[test]
+fn test_mapping_header_comment_attaches_to_pair_with_nested_flow_sequence() {
+    let input = "foo: # hello\n  [1, 2]\n";
+    let (docs, errors) = parse(input);
+    assert!(errors.is_empty(), "unexpected parse errors: {errors:?}");
+
+    let Value::Mapping(pairs) = &docs[0].value else {
+        panic!("expected mapping");
+    };
+    assert_eq!(pairs.len(), 1);
+    assert_eq!(
+        pairs[0]
+            .header_comment()
+            .map(|comment| comment.text.as_ref()),
+        Some(" hello")
+    );
+}
+
+#[test]
+fn test_mapping_header_comment_attaches_to_pair_with_nested_flow_mapping() {
+    let input = "foo: # hello\n  {bar: 1}\n";
+    let (docs, errors) = parse(input);
+    assert!(errors.is_empty(), "unexpected parse errors: {errors:?}");
+
+    let Value::Mapping(pairs) = &docs[0].value else {
+        panic!("expected mapping");
+    };
+    assert_eq!(pairs.len(), 1);
+    assert_eq!(
+        pairs[0]
+            .header_comment()
+            .map(|comment| comment.text.as_ref()),
+        Some(" hello")
+    );
+}
+
+#[test]
+fn test_explicit_key_trailing_comment_attaches_to_key_node() {
+    let input = "? foo # hello\n: 1\n";
+    let (docs, errors) = parse(input);
+    assert!(errors.is_empty(), "unexpected parse errors: {errors:?}");
+
+    let Value::Mapping(pairs) = &docs[0].value else {
+        panic!("expected mapping");
+    };
+    assert_eq!(pairs.len(), 1);
+    assert_eq!(
+        pairs[0]
+            .key()
+            .trailing_comment()
+            .map(|comment| comment.text.as_ref()),
+        Some(" hello")
+    );
+}
+
+#[test]
 fn test_nested_value_comment_stays_on_nested_node() {
     let input = "key:\n  value # nested\n";
     let (docs, errors) = parse(input);

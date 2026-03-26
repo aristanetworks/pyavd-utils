@@ -30,7 +30,7 @@ Both share the same lexer and emitter.
 The public pipeline is intentionally simple:
 
 ```text
-AST path:    Lexer -> Emitter -> Parser
+AST path:    Lexer -> Emitter -> AstEvent adapter -> Parser
 serde path:  Lexer -> Emitter -> event_de
 ```
 
@@ -39,6 +39,7 @@ That means:
 - lexing happens once
 - structural YAML decisions live in the emitter
 - AST construction and serde deserialization are consumer layers on top of the same event stream
+- the AST path adds a thin adapter layer where structural comment trivia can be attached
 
 ## Layer 1: Lexer
 
@@ -73,6 +74,8 @@ The emitter lives in [`src/emitter/mod.rs`](src/emitter/mod.rs) and is the
 structural core of the crate.
 
 It consumes lexer output and emits YAML serialization-tree [`Event`](src/event.rs)s.
+For AST consumers it also exposes an internal AST-oriented stream that can carry
+extra structural metadata on top of plain events.
 
 Key responsibilities:
 
@@ -117,6 +120,21 @@ That design keeps the common no-properties case small:
 - emitter states carry `None` instead of materializing empty property structs
 - public `Event` and AST APIs still expose optional boxed properties where needed
 
+### Comment handling
+
+Comments stay visible as lexer tokens because they affect scalar termination and,
+for the AST path, some comments are attached to parsed structures.
+
+The current attachment policy is intentionally small:
+
+- same-line comments after a scalar/alias become `Node.trailing_comment`
+- comments after `key:` before a nested block value become `MappingPair.header_comment`
+- comments after `-` before a nested block item become `SequenceItem.header_comment`
+
+Leading comments that do not clearly belong to one of those structural cases are
+transported through the internal AST event layer only and are not preserved on
+the final AST.
+
 ## Layer 3A: Event-to-AST Parser
 
 The AST parser lives in [`src/parser/mod.rs`](src/parser/mod.rs).
@@ -133,6 +151,7 @@ Key responsibilities:
 - apply scalar type inference
 - scope anchors per document and validate aliases
 - preserve spans on AST nodes
+- attach supported comment metadata to nodes, mapping pairs, and sequence items
 
 The AST layer is intentionally simpler than the emitter because the emitter has
 already resolved structure.

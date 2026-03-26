@@ -233,9 +233,10 @@ where
             AstEvent::Event(inner_event) => self.parse_node_from_event(inner_event, None, None),
             AstEvent::MappingKey {
                 key_event: inner_event,
+                leading_comment,
                 trailing_comment,
                 ..
-            } => self.parse_node_from_event(inner_event, None, trailing_comment),
+            } => self.parse_node_from_event(inner_event, leading_comment, trailing_comment),
         }
     }
 
@@ -341,6 +342,7 @@ where
                     let Some(AstEvent::MappingKey {
                         pair_start,
                         key_event,
+                        leading_comment,
                         trailing_comment,
                     }) = self.next_event()
                     else {
@@ -348,7 +350,7 @@ where
                         break;
                     };
                     let key = self
-                        .parse_node_from_event(key_event, None, trailing_comment)
+                        .parse_node_from_event(key_event, leading_comment, trailing_comment)
                         .map_or_else(|| Node::null(start_span), |parsed| parsed.node);
                     // Parse value
                     let parsed_value =
