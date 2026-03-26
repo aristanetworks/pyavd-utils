@@ -479,6 +479,16 @@ impl<'input> Emitter<'input> {
         }
     }
 
+    fn indented_line_error_span(&self, line_span: Span, indent: IndentLevel) -> Span {
+        let width = usize::from(indent);
+        if width == 0 {
+            line_span
+        } else {
+            let end = line_span.end_usize();
+            Span::from_usize_range(end.saturating_sub(width)..end)
+        }
+    }
+
     /// Enter a flow collection context.
     /// Tracks the column where the flow collection started (for `InvalidIndentationContext` errors).
     fn enter_flow_collection(&mut self, flow_start_column: Option<IndentLevel>) {
@@ -3635,7 +3645,10 @@ impl<'input> Emitter<'input> {
             self.last_line_start_span = line_span;
 
             if has_content {
-                self.error(ErrorKind::InvalidIndentation, line_span);
+                self.error(
+                    ErrorKind::InvalidIndentation,
+                    self.indented_line_error_span(line_span, next_indent),
+                );
             }
             self.skip_to_line_end();
         }
@@ -5101,7 +5114,12 @@ impl<'input> Emitter<'input> {
                 }
 
                 if !self.is_valid_indent(indent) && self.has_content_at_orphan_level_from(1) {
-                    self.error(ErrorKind::InvalidIndentation, line_span);
+                    self.error(
+                        ErrorKind::InvalidIndentation,
+                        self.indented_line_error_span(line_span, indent),
+                    );
+                    self.skip_to_line_end();
+                    self.skip_invalid_indented_recovery_lines(min_indent.saturating_sub(1));
                 }
             } else if self.has_continuation_after_low_indent(min_indent) {
                 let _ = self.take_current();

@@ -862,6 +862,66 @@ ipv4_prefix_list_catalog:
         );
     }
 
+    /// Test that an extra-indented would-be nested key under a plain scalar
+    /// value is reported locally and does not poison later root keys.
+    #[test]
+    fn test_invalid_indented_mapping_after_plain_scalar_recovers_to_following_root_key() {
+        let input = "\
+underlay_routing_protocol: ebgp
+ foo:
+ipv4_prefix_list_catalog:
+";
+        let (docs, errors) = parse(input);
+
+        let invalid_indentation = errors
+            .iter()
+            .find(|error| error.kind == ErrorKind::InvalidIndentation)
+            .expect("Expected InvalidIndentation error");
+        let invalid_indent_start = input.find(" foo:").expect("indented foo should exist");
+        assert_eq!(
+            invalid_indentation.span.start_usize(),
+            invalid_indent_start,
+            "InvalidIndentation should point at the extra leading space"
+        );
+        assert_eq!(
+            invalid_indentation.span.end_usize(),
+            invalid_indent_start + 1,
+            "InvalidIndentation should cover only the extra leading space"
+        );
+        assert!(
+            !errors
+                .iter()
+                .any(|error| error.kind == ErrorKind::TrailingContent),
+            "unexpected TrailingContent cascade after invalid indentation: {errors:?}"
+        );
+        assert_eq!(docs.len(), 1, "Should produce 1 document");
+
+        let Value::Mapping(root_pairs) = &docs[0].value else {
+            panic!("expected root mapping, got docs: {docs:#?}");
+        };
+
+        let root_keys: Vec<_> = root_pairs
+            .iter()
+            .map(|pair| match &pair.key.value {
+                Value::String(value) => value.as_ref(),
+                other => panic!("expected string key, got {other:?} in docs: {docs:#?}"),
+            })
+            .collect();
+
+        assert!(
+            root_keys.contains(&"underlay_routing_protocol"),
+            "expected first key to survive recovery, got root keys: {root_keys:?}\ndocs: {docs:#?}"
+        );
+        assert!(
+            !root_keys.contains(&"foo"),
+            "invalid indented line should not be promoted into the root mapping, got root keys: {root_keys:?}\ndocs: {docs:#?}"
+        );
+        assert!(
+            root_keys.contains(&"ipv4_prefix_list_catalog"),
+            "expected later top-level key to recover at root, got root keys: {root_keys:?}\ndocs: {docs:#?}"
+        );
+    }
+
     /// Test error spans are accurate.
     #[test]
     fn test_error_span_accuracy() {
