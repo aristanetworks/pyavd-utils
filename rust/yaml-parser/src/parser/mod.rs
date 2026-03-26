@@ -237,6 +237,7 @@ where
 
     fn parse_node_from_ast_event(&mut self, event: AstEvent<'input>) -> Option<ParsedNode<'input>> {
         match event {
+            AstEvent::Event(inner_event) => self.parse_node_from_event(inner_event, None, None),
             AstEvent::SequenceItem {
                 event: inner_event,
                 leading_comment,
@@ -247,9 +248,8 @@ where
                 event: inner_event,
                 leading_comment,
                 trailing_comment,
-            } => self.parse_node_from_event(inner_event, leading_comment, trailing_comment),
-            AstEvent::Event(inner_event) => self.parse_node_from_event(inner_event, None, None),
-            AstEvent::MappingKey {
+            }
+            | AstEvent::MappingKey {
                 key_event: inner_event,
                 leading_comment,
                 trailing_comment,
