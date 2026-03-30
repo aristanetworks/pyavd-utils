@@ -4775,6 +4775,17 @@ impl<'input> Emitter<'input> {
                         });
                         None
                     }
+                } else if matches!(
+                    self.peek_kind(),
+                    Some(TokenKind::Comma | TokenKind::FlowMapEnd)
+                ) {
+                    // YAML flow mappings allow omitted values, so `key,` and
+                    // `key}` are valid shorthand for `key: null`.
+                    self.state_stack.push(ParseState::FlowMap {
+                        phase: FlowMapPhase::AfterValue,
+                        start_span,
+                    });
+                    Some(self.emit_null())
                 } else {
                     let span = self.mapping_key_insertion_span();
                     self.error(ErrorKind::MissingColon, span);

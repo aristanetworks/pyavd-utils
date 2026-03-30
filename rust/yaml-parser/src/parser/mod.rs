@@ -38,7 +38,6 @@ struct ParsedNode<'input> {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 enum MappingKeyIdentity<'input> {
-    Null,
     Bool(bool),
     Int(String),
     Float(u64),
@@ -460,7 +459,10 @@ where
 
     fn mapping_key_identity(key: &Node<'input>) -> Option<MappingKeyIdentity<'input>> {
         match &key.value {
-            Value::Null => Some(MappingKeyIdentity::Null),
+            // Empty mapping keys are represented as null nodes. The YAML test
+            // suite treats repeated missing keys as valid parse cases, so keep
+            // parser-level duplicate diagnostics focused on concrete keys.
+            Value::Null => None,
             Value::Bool(value) => Some(MappingKeyIdentity::Bool(*value)),
             Value::Int(value) => Some(MappingKeyIdentity::Int(
                 value.to_decimal_string().into_owned(),
