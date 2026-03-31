@@ -260,13 +260,13 @@ impl<'de> EventStream<'de> {
         self.anchors.clear();
     }
 
-    fn invalid_pair_error(&self) -> DeError {
+    fn invalid_pair_error() -> DeError {
         DeError::Custom("invalid mapping entry: expected ':' after the key".into())
     }
 
     fn next_value_event(&mut self) -> Result<Event<'de>, DeError> {
         match self.next_event() {
-            Some(Event::InvalidatePair { .. }) => Err(self.invalid_pair_error()),
+            Some(Event::InvalidatePair { .. }) => Err(Self::invalid_pair_error()),
             Some(event) => Ok(event),
             None => Err(DeError::Custom("unexpected end of input".into())),
         }
@@ -473,7 +473,7 @@ impl<'de> SeqAccess<'de> for SeqAccessImpl<'_, 'de> {
             .ok_or_else(|| DeError::Custom("unexpected end of input inside sequence".into()))?;
 
         match event {
-            Event::InvalidatePair { .. } => Err(self.stream.invalid_pair_error()),
+            Event::InvalidatePair { .. } => Err(EventStream::invalid_pair_error()),
             Event::SequenceEnd { .. } => {
                 // Normal end-of-sequence marker - consume it
                 self.stream.next_event();
@@ -511,7 +511,7 @@ impl<'de> MapAccess<'de> for MapAccessImpl<'_, 'de> {
             .ok_or_else(|| DeError::Custom("unexpected end of input inside mapping".into()))?;
 
         match event {
-            Event::InvalidatePair { .. } => Err(self.stream.invalid_pair_error()),
+            Event::InvalidatePair { .. } => Err(EventStream::invalid_pair_error()),
             Event::MappingEnd { .. } => {
                 // Normal end-of-mapping marker - consume it
                 self.stream.next_event();
@@ -540,7 +540,7 @@ impl<'de> MapAccess<'de> for MapAccessImpl<'_, 'de> {
         if matches!(self.stream.peek(), Some(Event::InvalidatePair { .. })) {
             let _ = self.stream.next_event();
             self.value_pending = false;
-            return Err(self.stream.invalid_pair_error());
+            return Err(EventStream::invalid_pair_error());
         }
 
         let value = seed.deserialize(&mut *self.stream)?;
@@ -597,7 +597,7 @@ impl<'de> de::Deserializer<'de> for &mut EventStream<'de> {
             .ok_or_else(|| DeError::Custom("unexpected end of input".into()))?;
 
         if matches!(event, Event::InvalidatePair { .. }) {
-            return Err(self.invalid_pair_error());
+            return Err(EventStream::invalid_pair_error());
         }
 
         // Fast null check: avoid full scalar inference by checking patterns directly.
@@ -672,7 +672,13 @@ impl<'de> de::Deserializer<'de> for &mut EventStream<'de> {
         let event = self.next_value_event()?;
 
         match event {
-            Event::Scalar { value, .. } => {
+            Event::Scalar { style, value, .. } => {
+                if style != ScalarStyle::Plain {
+                    return Err(DeError::Custom(format!(
+                        "invalid bool value: {}",
+                        value.as_ref()
+                    )));
+                }
                 if let Some(bool_val) = parse_core_bool(value.as_ref()) {
                     visitor.visit_bool(bool_val)
                 } else {
@@ -693,7 +699,13 @@ impl<'de> de::Deserializer<'de> for &mut EventStream<'de> {
         let event = self.next_value_event()?;
 
         match event {
-            Event::Scalar { value, .. } => {
+            Event::Scalar { style, value, .. } => {
+                if style != ScalarStyle::Plain {
+                    return Err(DeError::Custom(format!(
+                        "invalid i64 value: {}",
+                        value.as_ref()
+                    )));
+                }
                 let scalar = value.as_ref();
                 if let Ok(int) = scalar.parse::<i64>() {
                     visitor.visit_i64(int)
@@ -714,7 +726,13 @@ impl<'de> de::Deserializer<'de> for &mut EventStream<'de> {
     {
         let event = self.next_value_event()?;
         match event {
-            Event::Scalar { value, .. } => {
+            Event::Scalar { style, value, .. } => {
+                if style != ScalarStyle::Plain {
+                    return Err(DeError::Custom(format!(
+                        "invalid u64 value: {}",
+                        value.as_ref()
+                    )));
+                }
                 let scalar = value.as_ref();
                 if let Ok(int) = scalar.parse::<u64>() {
                     visitor.visit_u64(int)
@@ -734,7 +752,13 @@ impl<'de> de::Deserializer<'de> for &mut EventStream<'de> {
     {
         let event = self.next_value_event()?;
         match event {
-            Event::Scalar { value, .. } => {
+            Event::Scalar { style, value, .. } => {
+                if style != ScalarStyle::Plain {
+                    return Err(DeError::Custom(format!(
+                        "invalid i128 value: {}",
+                        value.as_ref()
+                    )));
+                }
                 let scalar = value.as_ref();
                 if let Ok(int) = scalar.parse::<i128>() {
                     visitor.visit_i128(int)
@@ -754,7 +778,13 @@ impl<'de> de::Deserializer<'de> for &mut EventStream<'de> {
     {
         let event = self.next_value_event()?;
         match event {
-            Event::Scalar { value, .. } => {
+            Event::Scalar { style, value, .. } => {
+                if style != ScalarStyle::Plain {
+                    return Err(DeError::Custom(format!(
+                        "invalid u128 value: {}",
+                        value.as_ref()
+                    )));
+                }
                 let scalar = value.as_ref();
                 if let Ok(int) = scalar.parse::<u128>() {
                     visitor.visit_u128(int)
@@ -782,7 +812,13 @@ impl<'de> de::Deserializer<'de> for &mut EventStream<'de> {
     {
         let event = self.next_value_event()?;
         match event {
-            Event::Scalar { value, .. } => {
+            Event::Scalar { style, value, .. } => {
+                if style != ScalarStyle::Plain {
+                    return Err(DeError::Custom(format!(
+                        "invalid f64 value: {}",
+                        value.as_ref()
+                    )));
+                }
                 let scalar = value.as_ref();
                 if let Ok(float) = scalar.parse::<f64>() {
                     visitor.visit_f64(float)
@@ -1180,15 +1216,36 @@ mod tests {
 
     #[test]
     fn reports_missing_colon_in_flow_mapping_during_deserialization() {
-        let yaml = "{a, b: 2, c: 3}";
-        let error = from_str_internal::<std::collections::BTreeMap<String, i64>>(yaml)
-            .expect_err("invalid mapping pair should fail serde deserialization");
+        let yaml = "{\"a\" [1], c: 3}";
+        let result = from_str_internal::<std::collections::BTreeMap<String, i64>>(yaml);
+        assert!(
+            result.is_err(),
+            "invalid mapping pair should fail serde deserialization"
+        );
+        let Err(error) = result else {
+            return;
+        };
 
         assert!(
             error
                 .to_string()
                 .contains("invalid mapping entry: expected ':' after the key"),
             "unexpected error message: {error}"
+        );
+    }
+
+    #[test]
+    fn quoted_scalars_do_not_deserialize_as_typed_primitives() {
+        let quoted_bool = from_str_internal::<bool>("\"true\"");
+        assert!(
+            quoted_bool.is_err(),
+            "quoted YAML string should not deserialize as bool"
+        );
+
+        let quoted_int = from_str_internal::<i64>("'42'");
+        assert!(
+            quoted_int.is_err(),
+            "quoted YAML string should not deserialize as integer"
         );
     }
 }

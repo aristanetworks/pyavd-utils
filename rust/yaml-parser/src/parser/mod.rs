@@ -150,8 +150,11 @@ where
                     self.anchors.clear();
                     return node;
                 }
-                AstEvent::Event(Event::MappingEnd { .. } | Event::SequenceEnd { .. })
-                | AstEvent::Event(Event::InvalidatePair { .. })
+                AstEvent::Event(
+                    Event::MappingEnd { .. }
+                    | Event::SequenceEnd { .. }
+                    | Event::InvalidatePair { .. },
+                )
                 | AstEvent::RichEvent {
                     event: Event::MappingEnd { .. } | Event::SequenceEnd { .. },
                     ..
@@ -462,7 +465,7 @@ where
             // Empty mapping keys are represented as null nodes. The YAML test
             // suite treats repeated missing keys as valid parse cases, so keep
             // parser-level duplicate diagnostics focused on concrete keys.
-            Value::Null => None,
+            Value::Null | Value::Sequence(_) | Value::Mapping(_) => None,
             Value::Bool(value) => Some(MappingKeyIdentity::Bool(*value)),
             Value::Int(value) => Some(MappingKeyIdentity::Int(
                 value.to_decimal_string().into_owned(),
@@ -470,7 +473,6 @@ where
             Value::Float(value) => Some(MappingKeyIdentity::Float(value.to_bits())),
             Value::String(value) => Some(MappingKeyIdentity::String(value.clone())),
             Value::Alias(value) => Some(MappingKeyIdentity::Alias(value.clone())),
-            Value::Sequence(_) | Value::Mapping(_) => None,
         }
     }
 

@@ -479,7 +479,7 @@ impl<'input> Emitter<'input> {
         }
     }
 
-    fn indented_line_error_span(&self, line_span: Span, indent: IndentLevel) -> Span {
+    fn indented_line_error_span(line_span: Span, indent: IndentLevel) -> Span {
         let width = usize::from(indent);
         if width == 0 {
             line_span
@@ -3661,7 +3661,7 @@ impl<'input> Emitter<'input> {
             if has_content {
                 self.error(
                     ErrorKind::InvalidIndentation,
-                    self.indented_line_error_span(line_span, next_indent),
+                    Self::indented_line_error_span(line_span, next_indent),
                 );
             }
             self.skip_to_line_end();
@@ -5141,7 +5141,7 @@ impl<'input> Emitter<'input> {
                 if !self.is_valid_indent(indent) && self.has_content_at_orphan_level_from(1) {
                     self.error(
                         ErrorKind::InvalidIndentation,
-                        self.indented_line_error_span(line_span, indent),
+                        Self::indented_line_error_span(line_span, indent),
                     );
                     self.skip_to_line_end();
                     self.skip_invalid_indented_recovery_lines(min_indent.saturating_sub(1));

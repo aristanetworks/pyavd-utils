@@ -91,7 +91,7 @@ fn emit_node_events<'input>(
         }
         Value::String(string_value) => {
             events.push(Event::Scalar {
-                style: ScalarStyle::Plain,
+                style: ScalarStyle::DoubleQuoted,
                 value: string_value.clone(),
                 properties: props.into_boxed_option(),
                 span: node.span,

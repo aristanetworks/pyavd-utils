@@ -40,6 +40,12 @@ fn test_serde_json_float_to_str_coercion() {
 }
 
 #[test]
+fn test_serde_json_float_value_type_is_not_int() {
+    let value = json!(1.5);
+    assert_eq!(value.value_type(), crate::feedback::Type::Float);
+}
+
+#[test]
 fn test_serde_json_bool() {
     let value_true = json!(true);
     let value_false = json!(false);
@@ -185,6 +191,12 @@ mod yaml_parser_tests {
     }
 
     #[test]
+    fn test_yaml_float_value_type_is_not_int() {
+        let node = Node::new(Value::Float(1.5), make_span());
+        assert_ne!(node.value_type(), crate::feedback::Type::Int);
+    }
+
+    #[test]
     fn test_yaml_bool() {
         let node_true = Node::new(Value::Bool(true), make_span());
         let node_false = Node::new(Value::Bool(false), make_span());
@@ -310,5 +322,28 @@ mod yaml_parser_tests {
             .collect();
         assert!(keys.contains(&"123".to_string()));
         assert!(keys.contains(&"true".to_string()));
+    }
+
+    #[test]
+    fn test_yaml_get_coerces_scalar_keys() {
+        let node = Node::new(
+            Value::Mapping(vec![
+                MappingPair::new(make_span(), int_node(123), string_node("int_key_value")),
+                MappingPair::new(
+                    make_span(),
+                    Node::new(Value::Bool(true), make_span()),
+                    string_node("bool_key_value"),
+                ),
+            ]),
+            make_span(),
+        );
+
+        let int_value = node.get("123").expect("should find int key through get()");
+        assert_eq!(int_value.as_str().as_deref(), Some("int_key_value"));
+
+        let bool_value = node
+            .get("true")
+            .expect("should find bool key through get()");
+        assert_eq!(bool_value.as_str().as_deref(), Some("bool_key_value"));
     }
 }

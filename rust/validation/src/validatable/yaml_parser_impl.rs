@@ -59,6 +59,7 @@ impl<'input> ValidatableValue for Node<'input> {
     fn as_i64(&self) -> Option<i64> {
         match &self.value {
             Value::Int(Integer::I64(i)) => Some(*i),
+            Value::Float(float) => integral_float_to_i64(*float),
             Value::String(s) => s.parse().ok(),
             Value::Bool(b) => Some(if *b { 1 } else { 0 }),
             _ => None,
@@ -90,8 +91,8 @@ impl<'input> ValidatableValue for Node<'input> {
         match &self.value {
             Value::Mapping(pairs) => {
                 for pair in pairs {
-                    if let Value::String(k_str) = &pair.key.value
-                        && k_str.as_ref() == key
+                    if let Some(key_str) = coerce_key_to_string(&pair.key)
+                        && key_str == key
                     {
                         return Some(&pair.value);
                     }
@@ -108,7 +109,7 @@ impl<'input> ValidatableValue for Node<'input> {
             Value::Null => Type::Null,
             Value::Bool(_) => Type::Bool,
             Value::Int(_) => Type::Int,
-            Value::Float(_) => Type::Int, // Float is treated as Int for AVD schema purposes
+            Value::Float(_) => Type::Float,
             Value::String(_) | Value::Alias(_) => Type::Str,
             Value::Sequence(_) => Type::List,
             Value::Mapping(_) => Type::Dict,
@@ -221,6 +222,18 @@ fn coerce_key_to_string<'a>(node: &'a Node<'_>) -> Option<Cow<'a, str>> {
         Value::Bool(b) => Some(Cow::Borrowed(if *b { "true" } else { "false" })),
         Value::Alias(alias) => Some(Cow::Borrowed(alias.as_ref())),
         Value::Null | Value::Sequence(_) | Value::Mapping(_) => None,
+    }
+}
+
+fn integral_float_to_i64(float: f64) -> Option<i64> {
+    if float.is_finite()
+        && float.fract() == 0.0
+        && float >= i64::MIN as f64
+        && float <= i64::MAX as f64
+    {
+        Some(float as i64)
+    } else {
+        None
     }
 }
 

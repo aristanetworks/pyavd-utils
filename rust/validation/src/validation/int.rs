@@ -353,4 +353,33 @@ mod tests {
             }]
         );
     }
+
+    #[test]
+    fn validate_type_coerced_from_integral_float_ok() {
+        let schema = Int::default();
+        let input = serde_json::json!(1.0);
+        let store = get_test_store();
+        let configuration = Configuration {
+            return_coercion_infos: true,
+            return_coerced_data: true,
+            ..Default::default()
+        };
+        let mut ctx = Context::new(&store, Some(&configuration));
+        let coerced = schema.validate(&input, &mut ctx);
+
+        assert!(ctx.result.errors.is_empty());
+        assert_eq!(
+            ctx.result.infos,
+            vec![Feedback {
+                path: vec![].into(),
+                span: None,
+                issue: CoercionNote {
+                    found: 1.0.into(),
+                    made: 1.into()
+                }
+                .into()
+            }]
+        );
+        assert_eq!(coerced, Some(Value::Number(1.into())));
+    }
 }

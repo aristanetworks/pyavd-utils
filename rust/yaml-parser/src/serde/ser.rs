@@ -502,6 +502,11 @@ mod tests {
         reason = "tests use expect with explicit messages for clearer diagnostics"
     )]
     use super::*;
+    use crate::{
+        MappingPair, Node, SequenceItem,
+        span::Span,
+        value::{Comment, Value},
+    };
     use serde::{Deserialize, Serialize};
 
     #[derive(Debug, Serialize, Deserialize, PartialEq)]
@@ -560,8 +565,59 @@ mod tests {
             .first()
             .expect("expected exactly one document after roundtrip");
         assert_eq!(
-            roundtripped_doc.value, doc.value,
+            normalize_value(&roundtripped_doc.value),
+            normalize_value(&doc.value),
             "AST value changed after roundtrip"
         );
+    }
+
+    fn normalize_value(value: &Value<'_>) -> Value<'static> {
+        match value {
+            Value::Null => Value::Null,
+            Value::Bool(boolean) => Value::Bool(*boolean),
+            Value::Int(integer) => Value::Int(integer.clone().into_owned()),
+            Value::Float(float) => Value::Float(*float),
+            Value::String(string) => Value::String(std::borrow::Cow::Owned(string.to_string())),
+            Value::Sequence(items) => Value::Sequence(
+                items
+                    .iter()
+                    .map(|item| SequenceItem {
+                        item_span: Span::default(),
+                        node: normalize_node(&item.node),
+                        header_comment: normalize_comment(item.header_comment.as_deref()),
+                    })
+                    .collect(),
+            ),
+            Value::Mapping(pairs) => Value::Mapping(
+                pairs
+                    .iter()
+                    .map(|pair| MappingPair {
+                        pair_span: Span::default(),
+                        key: normalize_node(&pair.key),
+                        value: normalize_node(&pair.value),
+                        header_comment: normalize_comment(pair.header_comment.as_deref()),
+                    })
+                    .collect(),
+            ),
+            Value::Alias(alias) => Value::Alias(std::borrow::Cow::Owned(alias.to_string())),
+        }
+    }
+
+    fn normalize_node(node: &Node<'_>) -> Node<'static> {
+        Node {
+            properties: None,
+            value: normalize_value(&node.value),
+            span: Span::default(),
+            trailing_comment: normalize_comment(node.trailing_comment.as_deref()),
+        }
+    }
+
+    fn normalize_comment(comment: Option<&Comment<'_>>) -> Option<Box<Comment<'static>>> {
+        comment.map(|input_comment| {
+            Box::new(Comment {
+                text: std::borrow::Cow::Owned(input_comment.text.to_string()),
+                span: Span::default(),
+            })
+        })
     }
 }

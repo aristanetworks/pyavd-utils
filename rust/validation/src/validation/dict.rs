@@ -116,7 +116,7 @@ fn check_deprecation<'a, M: ValidatableMapping<'a>>(
                         let exists = if rest_of_path.is_empty() {
                             true
                         } else {
-                            root_value.path_exists(&rest_of_path.join("."))
+                            !root_value.walk_path(&rest_of_path.join(".")).is_empty()
                         };
                         if exists {
                             ctx.add_error_with_span(
@@ -1135,6 +1135,67 @@ mod tests {
                 span: None,
                 issue: Violation::DeprecatedConflict {
                     other_path: "new_key".into(),
+                    url: None.into()
+                }
+                .into()
+            }]
+        );
+    }
+
+    #[test]
+    fn validate_key_deprecated_with_new_key_under_list_err() {
+        let schema: Dict = Dict::deserialize(serde_json::json!({
+            "keys": {
+                "old_key": {
+                    "type": "str",
+                    "deprecation": {
+                        "warning": true,
+                        "new_key": "methods.group",
+                        "remove_in_version": "2.0.0"
+                    }
+                },
+                "methods": {
+                    "type": "list",
+                    "items": {
+                        "type": "dict",
+                        "keys": {
+                            "group": {
+                                "type": "str"
+                            }
+                        }
+                    }
+                }
+            }
+        }))
+        .unwrap();
+        let input = serde_json::json!({
+            "old_key": "old_value",
+            "methods": [{"group": "new_value"}]
+        });
+        let store = get_test_store();
+        let mut ctx = Context::new(&store, None);
+        let _ = schema.validate(&input, &mut ctx);
+
+        assert_eq!(
+            ctx.result.warnings,
+            vec![Feedback {
+                path: vec!["old_key".into()].into(),
+                span: None,
+                issue: WarningIssue::Deprecated(Deprecated {
+                    path: vec!["old_key".into()].into(),
+                    replacement: Some("methods.group".into()).into(),
+                    version: Some("2.0.0".into()).into(),
+                    url: None.into()
+                })
+            }]
+        );
+        assert_eq!(
+            ctx.result.errors,
+            vec![Feedback {
+                path: vec!["old_key".into()].into(),
+                span: None,
+                issue: Violation::DeprecatedConflict {
+                    other_path: "methods.group".into(),
                     url: None.into()
                 }
                 .into()

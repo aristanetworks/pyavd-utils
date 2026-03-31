@@ -169,10 +169,7 @@ fn validate_unique_keys<'a, S: ValidatableSequence<'a>>(
         let mut seen_items: HashMap<String, Vec<SeenItem<'a, S::Value>>> = HashMap::new();
 
         for (i, item) in items.iter().enumerate() {
-            // Get the value at the unique_key path
-            let values = get_values_at_path(item, unique_key);
-
-            for (trail_suffix, value) in values {
+            for (trail_suffix, value) in item.walk_path(unique_key) {
                 // Build the full trail
                 let mut trail = vec![i.to_string()];
                 trail.extend(trail_suffix);
@@ -198,37 +195,6 @@ fn validate_unique_keys<'a, S: ValidatableSequence<'a>>(
             }
         }
     }
-}
-
-/// Get all values at a dot-separated path, returning (trail_suffix, value) pairs.
-fn get_values_at_path<'a, V: ValidatableValue>(
-    value: &'a V,
-    path: &str,
-) -> Vec<(Vec<String>, &'a V)> {
-    let mut path_parts = path.split('.');
-    let Some(first_key) = path_parts.next() else {
-        return vec![(vec![], value)];
-    };
-
-    let rest: Vec<_> = path_parts.collect();
-
-    let Some(child) = value.get(first_key) else {
-        return vec![];
-    };
-
-    if rest.is_empty() {
-        return vec![(vec![first_key.to_string()], child)];
-    }
-
-    // Navigate further
-    let rest_path = rest.join(".");
-    get_values_at_path(child, &rest_path)
-        .into_iter()
-        .map(|(mut trail, v)| {
-            trail.insert(0, first_key.to_string());
-            (trail, v)
-        })
-        .collect()
 }
 
 /// Convert a ValidatableValue to a string for comparison purposes.
@@ -575,5 +541,69 @@ mod tests {
         let _ = schema.validate(&input, &mut ctx);
         assert!(ctx.result.infos.is_empty());
         assert!(ctx.result.errors.is_empty());
+    }
+
+    #[test]
+    fn validate_unique_keys_through_nested_list_err() {
+        let schema = List {
+            items: Some(Box::new(
+                Dict {
+                    keys: Some(OrderMap::from_iter([(
+                        "aliases".into(),
+                        List {
+                            items: Some(Box::new(
+                                Dict {
+                                    keys: Some(OrderMap::from_iter([(
+                                        "name".into(),
+                                        Str::default().into(),
+                                    )])),
+                                    ..Default::default()
+                                }
+                                .into(),
+                            )),
+                            ..Default::default()
+                        }
+                        .into(),
+                    )])),
+                    ..Default::default()
+                }
+                .into(),
+            )),
+            unique_keys: Some(vec!["aliases.name".into()]),
+            ..Default::default()
+        };
+        let input = serde_json::json!([
+            {"aliases": [{"name": "dup"}]},
+            {"aliases": [{"name": "dup"}]}
+        ]);
+        let store = get_test_store();
+        let mut ctx = Context::new(&store, None);
+        let _ = schema.validate(&input, &mut ctx);
+
+        assert_eq!(
+            ctx.result.errors,
+            vec![
+                Feedback {
+                    path: vec!["0".into(), "aliases".into(), "0".into(), "name".into()].into(),
+                    span: None,
+                    issue: Violation::ValueNotUnique {
+                        other_path: vec!["1".into(), "aliases".into(), "0".into(), "name".into()]
+                            .into(),
+                        other_span: None,
+                    }
+                    .into()
+                },
+                Feedback {
+                    path: vec!["1".into(), "aliases".into(), "0".into(), "name".into()].into(),
+                    span: None,
+                    issue: Violation::ValueNotUnique {
+                        other_path: vec!["0".into(), "aliases".into(), "0".into(), "name".into()]
+                            .into(),
+                        other_span: None,
+                    }
+                    .into()
+                }
+            ]
+        );
     }
 }

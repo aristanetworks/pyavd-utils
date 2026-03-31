@@ -558,6 +558,23 @@ fn stream_from_str_docs_resets_anchors_between_documents() {
     assert!(docs[1].is_ok());
 }
 
+#[cfg(feature = "serde")]
+#[test]
+fn serde_to_string_preserves_string_scalars_that_look_typed() {
+    for input in ["true", "null", "42"] {
+        let yaml = yaml_parser::serde::to_string(&input.to_owned())
+            .expect("serializing string scalar should succeed");
+        let reparsed: serde_yaml::Value =
+            serde_yaml::from_str(&yaml).expect("serde_yaml should parse emitted YAML");
+
+        assert_eq!(
+            reparsed,
+            serde_yaml::Value::String(input.to_owned()),
+            "serialized YAML should roundtrip as a string for input {input:?}, got YAML {yaml:?}"
+        );
+    }
+}
+
 #[test]
 fn test_float_edge_cases() {
     let test_cases = vec![

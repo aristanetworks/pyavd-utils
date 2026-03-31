@@ -324,6 +324,7 @@ pub enum Type {
     Null,
     Bool,
     Int,
+    Float,
     Str,
     List,
     Dict,
@@ -333,7 +334,13 @@ impl From<&serde_json::Value> for Type {
         match value {
             serde_json::Value::Null => Self::Null,
             serde_json::Value::Bool(_) => Self::Bool,
-            serde_json::Value::Number(_) => Self::Int,
+            serde_json::Value::Number(number) => {
+                if number.is_f64() {
+                    Self::Float
+                } else {
+                    Self::Int
+                }
+            }
             serde_json::Value::String(_) => Self::Str,
             serde_json::Value::Array(_) => Self::List,
             serde_json::Value::Object(_) => Self::Dict,
@@ -482,6 +489,8 @@ mod tests {
         assert_eq!(type_, Type::Bool);
         let type_ = Type::from(&serde_json::json!(-123));
         assert_eq!(type_, Type::Int);
+        let type_ = Type::from(&serde_json::json!(123.45));
+        assert_eq!(type_, Type::Float);
         let type_ = Type::from(&serde_json::json!("string"));
         assert_eq!(type_, Type::Str);
         let type_ = Type::from(&serde_json::json!({"key": "value"}));

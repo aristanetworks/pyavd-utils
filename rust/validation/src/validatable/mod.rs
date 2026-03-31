@@ -117,14 +117,53 @@ pub trait ValidatableValue: Sized {
     /// This is used for checking deprecation conflicts where we need to
     /// verify if a replacement key exists.
     fn path_exists(&self, path: &str) -> bool {
-        let mut current: Option<&Self> = Some(self);
-        for component in path.split('.') {
-            match current {
-                Some(v) => current = v.get(component),
-                None => return false,
+        !self.walk_path(path).is_empty()
+    }
+
+    /// Walk a dot-separated path and return all matching values.
+    ///
+    /// Path traversal expands through sequences automatically, so a path like
+    /// `items.name` will match the `name` key under every item in a list.
+    ///
+    /// Returns pairs of `(trail, value)` where `trail` is the concrete path
+    /// from `self` to the matched value, including list indexes.
+    fn walk_path<'a>(&'a self, path: &str) -> Vec<(Vec<String>, &'a Self)> {
+        fn walk<'a, V: ValidatableValue>(
+            value: &'a V,
+            components: &[&str],
+            trail: &mut Vec<String>,
+            results: &mut Vec<(Vec<String>, &'a V)>,
+        ) {
+            if let Some(seq) = value.as_sequence() {
+                for (index, item) in seq.iter().enumerate() {
+                    trail.push(index.to_string());
+                    walk(item, components, trail, results);
+                    trail.pop();
+                }
+                return;
+            }
+
+            let Some((component, rest)) = components.split_first() else {
+                results.push((trail.clone(), value));
+                return;
+            };
+
+            if let Some(child) = value.get(component) {
+                trail.push((*component).to_string());
+                walk(child, rest, trail, results);
+                trail.pop();
             }
         }
-        current.is_some()
+
+        let components: Vec<&str> = if path.is_empty() {
+            Vec::new()
+        } else {
+            path.split('.').collect()
+        };
+        let mut results = Vec::new();
+        let mut trail = Vec::new();
+        walk(self, &components, &mut trail, &mut results);
+        results
     }
 
     // === Coercion builders ===

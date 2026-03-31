@@ -45,7 +45,12 @@ impl ValidatableValue for Value {
 
     fn as_i64(&self) -> Option<i64> {
         match self {
-            Value::Number(n) => n.as_i64(),
+            Value::Number(n) => n.as_i64().or_else(|| {
+                n.as_f64()
+                    .filter(|float| float.is_finite() && float.fract() == 0.0)
+                    .filter(|float| *float >= i64::MIN as f64 && *float <= i64::MAX as f64)
+                    .map(|float| float as i64)
+            }),
             Value::String(s) => s.parse().ok(),
             Value::Bool(b) => Some(if *b { 1 } else { 0 }),
             _ => None,
