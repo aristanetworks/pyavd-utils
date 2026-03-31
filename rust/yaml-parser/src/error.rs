@@ -205,6 +205,9 @@ impl ErrorKind {
             Self::PropertiesOnAlias => Some(
                 "aliases (*name) cannot have anchors or tags; apply them to the original value",
             ),
+            Self::OrphanedProperties => {
+                Some("attach the anchor or tag to the following value at the correct indentation")
+            }
             Self::UndefinedTagHandle => Some(
                 "add a %TAG directive to define the handle, e.g., %TAG !e! tag:example.com,2000:",
             ),
@@ -248,8 +251,7 @@ impl ErrorKind {
             | Self::InvalidAnchor
             | Self::InvalidTag
             | Self::DuplicateDirective
-            | Self::InvalidDirective
-            | Self::OrphanedProperties => None,
+            | Self::InvalidDirective => None,
         }
     }
 }

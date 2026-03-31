@@ -243,3 +243,36 @@ The crate intentionally prefers:
 
 That tradeoff has proven worth keeping; current optimization work is focused on
 hot-path tuning inside this architecture rather than redesigning it.
+
+## Future Work
+
+### Reduce serde alias replay cloning
+
+The serde event deserializer currently clones the full recorded event buffer
+each time an alias is replayed. That keeps the implementation simple, but it
+scales linearly with the size of the anchored subtree for every alias use.
+
+If alias-heavy documents become a real workload, this could be revisited with a
+shared backing store for recorded events so alias replay can borrow or share
+the buffered sequence instead of cloning it per dereference.
+
+### String-only schema key matching in validation
+
+One possible follow-up in the validation layer is to stop coercing YAML scalar
+mapping keys (`123`, `true`, `1.5`) to strings when matching schema-defined
+keys or walking schema-driven paths.
+
+Rationale:
+
+- AVD schemas define keys as identifier-like strings.
+- Dynamic keys are also string-derived.
+- Treating non-string YAML keys as schema-matchable creates extra normalization
+  rules in `get()` and path navigation that the schema language does not need.
+
+If adopted, this should be implemented consistently across validation:
+
+- strict string-only matching for YAML `get()` / mapping lookup
+- matching iterator behavior left unchanged so diagnostics can still report the
+  original input accurately
+- explicit review of unexpected-key and path-walking behavior so the policy is
+  changed everywhere at once, not piecemeal

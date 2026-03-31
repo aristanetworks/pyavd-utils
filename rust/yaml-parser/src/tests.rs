@@ -683,6 +683,21 @@ mod error_recovery {
         assert!(!docs.is_empty(), "Should produce some output");
     }
 
+    /// Test that tabs after a block indicator still error when an implicit
+    /// mapping key uses whitespace before the colon.
+    #[test]
+    fn test_tabs_before_implicit_mapping_with_spaced_colon_error() {
+        let input = "- \tkey : value";
+        let (_docs, errors) = parse(input);
+
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.kind == ErrorKind::InvalidIndentation),
+            "Expected InvalidIndentation for tab before implicit mapping key, got: {errors:?}"
+        );
+    }
+
     /// Test that valid content before error is preserved.
     #[test]
     fn test_valid_content_before_error_preserved() {

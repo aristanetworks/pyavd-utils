@@ -267,6 +267,11 @@ pub enum Event<'input> {
     /// This is emitted only in malformed recovery paths where the emitter has
     /// already committed to a key event but determines that the pair itself
     /// should not survive in higher-level consumers.
+    ///
+    /// Raw event-stream consumers should treat this as a signal to discard the
+    /// immediately preceding key event. The invalid pair is always accompanied
+    /// by at least one parse error and is not part of the YAML Test Suite event
+    /// format, so consumers producing test-format output should skip it.
     InvalidatePair {
         /// Span identifying the insertion / recovery site for the invalid pair.
         span: Span,

@@ -75,16 +75,17 @@ impl PendingAstWrapQueue {
         self.second = None;
     }
 
+    #[allow(
+        clippy::unreachable,
+        reason = "queue overflow indicates a broken internal invariant and should fail loudly"
+    )]
     fn push_back(&mut self, wrap: PendingAstWrap) {
         if self.first.is_none() {
             self.first = Some(wrap);
         } else if self.second.is_none() {
             self.second = Some(wrap);
         } else {
-            debug_assert!(
-                false,
-                "pending AST wrap queue overflowed expected maximum depth"
-            );
+            unreachable!("pending AST wrap queue overflowed expected maximum depth");
         }
     }
 
@@ -537,7 +538,8 @@ impl<'input> Emitter<'input> {
 
         // Check if the key text contains a newline
         if key_text.contains('\n') {
-            // Find the colon span for error reporting (look ahead for colon)
+            // Diagnostic-only lookahead: this improves the reported span, not
+            // whether the multiline-key error is emitted.
             let colon_span = (0..10)
                 .find_map(|i| {
                     self.peek_nth_with(i, |tok, span| matches!(tok, Token::Colon).then_some(span))
@@ -565,6 +567,8 @@ impl<'input> Emitter<'input> {
                 }
                 _ => return, // No colon immediately - not an implicit key
             }
+            // Practical guard only: the lexer collapses separation runs, so this
+            // is not a correctness boundary for real YAML inputs.
             if check_idx > 20 {
                 return;
             }

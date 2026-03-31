@@ -134,6 +134,10 @@ pub fn parse(input: &str) -> (Stream<'static>, Vec<ParseError>) {
 /// The event stream follows the YAML Test Suite format:
 /// `StreamStart`, `DocumentStart`, content events, `DocumentEnd`, `StreamEnd`
 ///
+/// When the input contains parse errors, [`Event::InvalidatePair`] may also
+/// appear in the stream. It is not part of the test-suite format; consumers
+/// should skip it and treat the preceding key event as orphaned.
+///
 /// This function performs zero-copy parsing where possible: event payloads
 /// borrow string data directly from the input. Escaped strings and processed
 /// block scalars allocate only when transformation is required.

@@ -124,6 +124,8 @@ pub trait ValidatableValue: Sized {
     ///
     /// Path traversal expands through sequences automatically, so a path like
     /// `items.name` will match the `name` key under every item in a list.
+    /// An empty path returns the value itself for scalars/mappings, and all
+    /// sequence items for sequences.
     ///
     /// Returns pairs of `(trail, value)` where `trail` is the concrete path
     /// from `self` to the matched value, including list indexes.

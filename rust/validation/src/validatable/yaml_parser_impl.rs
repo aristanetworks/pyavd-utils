@@ -152,8 +152,10 @@ impl<'input> ValidatableValue for Node<'input> {
         let pairs: Vec<MappingPair<'static>> = items
             .into_iter()
             .map(|(key, value)| {
-                let key_node = Node::new(Value::String(Cow::Owned(key)), value.span);
-                MappingPair::new(value.span, key_node, value)
+                let key_span = yaml_parser::Span::at(value.span.start);
+                let pair_span = yaml_parser::Span::new(key_span.start..value.span.end);
+                let key_node = Node::new(Value::String(Cow::Owned(key)), key_span);
+                MappingPair::new(pair_span, key_node, value)
             })
             .collect();
         Node::new(Value::Mapping(pairs), self.span)
@@ -243,6 +245,9 @@ impl<'a, 'input: 'a> ValidatableMapping<'a> for NodeMapping<'a, 'input> {
     type Iter = NodeMappingIter<'a, 'input>;
 
     fn get(&self, key: &str) -> Option<&Self::Value> {
+        // This is intentionally a linear scan: YAML mappings preserve order,
+        // may contain duplicate keys, and may use non-string scalar keys that
+        // are coerced at lookup time.
         for pair in self.pairs {
             if let Some(k_str) = coerce_key_to_string(&pair.key)
                 && k_str == key

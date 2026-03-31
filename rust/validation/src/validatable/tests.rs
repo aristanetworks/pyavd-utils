@@ -346,4 +346,25 @@ mod yaml_parser_tests {
             .expect("should find bool key through get()");
         assert_eq!(bool_value.as_str().as_deref(), Some("bool_key_value"));
     }
+
+    #[test]
+    fn test_yaml_coerce_mapping_uses_distinct_key_and_value_spans() {
+        let original = Node::new(Value::Null, yaml_parser::Span::new(10..20));
+        let coerced = original.coerce_mapping(vec![(
+            "foo".to_owned(),
+            Node::new(
+                Value::String(Cow::Owned("bar".to_owned())),
+                yaml_parser::Span::new(14..20),
+            ),
+        )]);
+
+        let Value::Mapping(pairs) = coerced.value else {
+            panic!("coerce_mapping should create a mapping");
+        };
+        let pair = pairs.first().expect("coerce_mapping should emit one pair");
+
+        assert_eq!(pair.key.span, yaml_parser::Span::new(14..14));
+        assert_eq!(pair.value.span, yaml_parser::Span::new(14..20));
+        assert_eq!(pair.pair_span, yaml_parser::Span::new(14..20));
+    }
 }

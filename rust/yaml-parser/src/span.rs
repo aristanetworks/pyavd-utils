@@ -75,6 +75,9 @@ pub const fn usize_to_indent(n: usize) -> IndentLevel {
 ///
 /// Uses [`BytePosition`] for compact storage while still covering realistic
 /// YAML inputs comfortably.
+///
+/// Parser- and lexer-produced spans are expected to fall on valid UTF-8
+/// boundaries, so they may be used for slicing the original `&str` input.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct Span {
     /// The start byte offset (inclusive).
@@ -208,12 +211,12 @@ pub type Spanned<T> = (T, Span);
 /// A line/column position in source code.
 ///
 /// Line and column numbers are 1-based (first line is line 1, first column is column 1).
-/// Column is counted in Unicode code points, not bytes.
+/// Column is counted in bytes from the start of the line, not Unicode code points.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Position {
     /// 1-based line number.
     pub line: usize,
-    /// 1-based column number (in Unicode code points).
+    /// 1-based column number (in bytes from the start of the line).
     pub column: usize,
 }
 
@@ -229,6 +232,10 @@ impl Position {
 ///
 /// This is useful for IDE integration where error messages and diagnostics
 /// need to be displayed with human-readable line/column numbers.
+///
+/// Positions use byte-based columns. LSP consumers should advertise
+/// `positionEncodingKind: "utf-8"` so clients interpret these columns
+/// correctly.
 ///
 /// # Example
 ///
@@ -252,6 +259,8 @@ pub struct SourceMap {
     /// Byte offset of each line start (0-indexed by line number - 1).
     /// `line_starts[0]` is always 0 (start of first line).
     line_starts: Vec<usize>,
+    /// Total length of the input in bytes.
+    input_len: usize,
 }
 
 impl SourceMap {
@@ -267,7 +276,10 @@ impl SourceMap {
             }
         }
 
-        Self { line_starts }
+        Self {
+            line_starts,
+            input_len: input.len(),
+        }
     }
 
     /// Convert a byte offset to a line/column position.
@@ -309,7 +321,11 @@ impl SourceMap {
         }
 
         let start = self.line_starts.get(line - 1).copied()?;
-        let end = self.line_starts.get(line).copied().unwrap_or(usize::MAX);
+        let end = self
+            .line_starts
+            .get(line)
+            .copied()
+            .unwrap_or(self.input_len);
 
         Some(start..end)
     }
@@ -357,7 +373,7 @@ mod tests {
 
         assert_eq!(map.line_range(1), Some(0..3)); // "ab\n"
         assert_eq!(map.line_range(2), Some(3..6)); // "cd\n"
-        assert_eq!(map.line_range(3), Some(6..usize::MAX)); // "ef" (last line)
+        assert_eq!(map.line_range(3), Some(6..8)); // "ef" (last line)
         assert_eq!(map.line_range(0), None);
         assert_eq!(map.line_range(4), None);
     }
@@ -367,6 +383,7 @@ mod tests {
         let map = SourceMap::new("");
         assert_eq!(map.line_count(), 1);
         assert_eq!(map.position(0), Position::new(1, 1));
+        assert_eq!(map.line_range(1), Some(0..0));
     }
 
     #[test]
