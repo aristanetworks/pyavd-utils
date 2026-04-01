@@ -85,9 +85,6 @@ fn assert_value_eq_ignoring_spans<'input>(expected: &Value<'input>, actual: &Val
         (Value::String(left_str), Value::String(right_str)) => {
             assert_eq!(left_str, right_str, "string value changed");
         }
-        (Value::Alias(left_alias), Value::Alias(right_alias)) => {
-            assert_eq!(left_alias, right_alias, "alias name changed");
-        }
         (Value::Sequence(a_items), Value::Sequence(b_items)) => {
             assert_eq!(a_items.len(), b_items.len(), "sequence length changed");
             for (a_node, b_node) in a_items.iter().zip(b_items.iter()) {

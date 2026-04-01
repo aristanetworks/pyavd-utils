@@ -666,8 +666,11 @@ mod error_recovery {
         // Should have an error for undefined alias
         assert!(!errors.is_empty(), "Expected error for undefined alias");
 
-        // Should still produce a document (null fallback)
-        assert_eq!(docs.len(), 1, "Should produce 1 document");
+        // Root-level unresolved aliases are dropped from the AST entirely.
+        assert!(
+            docs.is_empty(),
+            "Expected no AST document for unresolved root alias"
+        );
     }
 
     /// Test that parser recovers from tabs in indentation.

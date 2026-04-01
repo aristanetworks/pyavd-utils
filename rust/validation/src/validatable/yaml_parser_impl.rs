@@ -110,7 +110,7 @@ impl<'input> ValidatableValue for Node<'input> {
             Value::Bool(_) => Type::Bool,
             Value::Int(_) => Type::Int,
             Value::Float(_) => Type::Float,
-            Value::String(_) | Value::Alias(_) => Type::Str,
+            Value::String(_) => Type::Str,
             Value::Sequence(_) => Type::List,
             Value::Mapping(_) => Type::Dict,
         }
@@ -188,8 +188,6 @@ impl<'input> ValidatableValue for Node<'input> {
                     })
                     .collect(),
             ),
-            // Alias shouldn't appear in validated data
-            Value::Alias(_) => FV::Null(),
         }
     }
 
@@ -222,7 +220,6 @@ fn coerce_key_to_string<'a>(node: &'a Node<'_>) -> Option<Cow<'a, str>> {
         Value::Float(f) => Some(Cow::Owned(f.to_string())),
         // Mapping keys are looked up using YAML's lowercase bool spelling.
         Value::Bool(b) => Some(Cow::Borrowed(if *b { "true" } else { "false" })),
-        Value::Alias(alias) => Some(Cow::Borrowed(alias.as_ref())),
         Value::Null | Value::Sequence(_) | Value::Mapping(_) => None,
     }
 }

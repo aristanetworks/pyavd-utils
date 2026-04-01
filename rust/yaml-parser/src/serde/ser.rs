@@ -599,7 +599,6 @@ mod tests {
                     })
                     .collect(),
             ),
-            Value::Alias(alias) => Value::Alias(std::borrow::Cow::Owned(alias.to_string())),
         }
     }
 

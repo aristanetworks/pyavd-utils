@@ -281,7 +281,7 @@ fn values_semantically_equal(left: &Value<'static>, right: &Value<'static>) -> b
                 lv == rv
             }
         }
-        (Value::String(lv), Value::String(rv)) | (Value::Alias(lv), Value::Alias(rv)) => lv == rv,
+        (Value::String(lv), Value::String(rv)) => lv == rv,
         (Value::Int(lv), Value::Int(rv)) => numbers_semantically_equal(lv, rv),
         (Value::Sequence(left_items), Value::Sequence(right_items)) => {
             left_items.len() == right_items.len()
@@ -355,14 +355,6 @@ fn first_difference_path(
                 None
             } else {
                 eprintln!("diff at {path}: left Int({ln:?}), right Int({rn:?})");
-                Some(path.to_owned())
-            }
-        }
-        (Alias(lv), Alias(rv)) => {
-            if lv == rv {
-                None
-            } else {
-                eprintln!("diff at {path}: left Alias({lv:?}), right Alias({rv:?})");
                 Some(path.to_owned())
             }
         }

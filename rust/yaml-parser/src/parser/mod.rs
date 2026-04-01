@@ -21,7 +21,7 @@
 //! 3. Track anchors for alias validation
 
 use std::borrow::Cow;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use crate::ast_event::AstEvent;
 use crate::error::{ErrorKind, ParseError};
@@ -42,7 +42,6 @@ enum MappingKeyIdentity<'input> {
     Int(String),
     Float(u64),
     String(Cow<'input, str>),
-    Alias(Cow<'input, str>),
 }
 
 /// Parser that builds AST from a streaming source of events.
@@ -70,6 +69,8 @@ where
     /// Set of registered anchor names (for alias validation)
     /// Uses owned strings because events may contain `Cow::Owned` values
     anchors: HashSet<String>,
+    /// Completed anchored nodes available for alias resolution.
+    anchor_nodes: HashMap<String, Node<'input>>,
 }
 
 impl<'input, I> Parser<'input, I>
@@ -86,6 +87,7 @@ where
             events_consumed: 0,
             errors: Vec::new(),
             anchors: HashSet::new(),
+            anchor_nodes: HashMap::new(),
         }
     }
 
@@ -133,7 +135,7 @@ where
                     // root node, optionally consume a trailing DocumentEnd,
                     // then clear anchors for the next document.
                     self.advance();
-                    let node = self.parse_node();
+                    let parsed_root = self.parse_node();
                     if matches!(
                         self.peek(),
                         Some(
@@ -148,7 +150,10 @@ where
                     }
                     // Anchors are scoped to a single document.
                     self.anchors.clear();
-                    return node;
+                    self.anchor_nodes.clear();
+                    if let Some(root_node) = parsed_root {
+                        return Some(root_node);
+                    }
                 }
                 AstEvent::Event(
                     Event::MappingEnd { .. }
@@ -169,6 +174,7 @@ where
                     if let Some(parsed_node) = self.parse_node() {
                         // Anchors are scoped to a single document.
                         self.anchors.clear();
+                        self.anchor_nodes.clear();
                         return Some(parsed_node);
                     }
                     // `parse_node` returned None without consuming - skip the
@@ -309,16 +315,15 @@ where
                     leading_comment,
                 })
             }
-            Event::Alias { name, span } => {
-                let mut node = self.build_alias(name, span);
+            Event::Alias { name, span } => self.build_alias(&name, span).map(|mut node| {
                 if let Some(comment) = trailing_comment {
                     node = node.with_trailing_comment(comment);
                 }
-                Some(ParsedNode {
+                ParsedNode {
                     node,
                     leading_comment,
-                })
-            }
+                }
+            }),
             // Skip document markers, stream markers
             Event::StreamStart
             | Event::StreamEnd
@@ -386,16 +391,18 @@ where
                         debug_assert!(false, "peeked MappingKey event disappeared");
                         break;
                     };
-                    let key = self
-                        .parse_node_from_event(key_event, leading_comment, trailing_comment)
-                        .map_or_else(|| Node::null(start_span), |parsed| parsed.node);
+                    let key_node_result =
+                        self.parse_node_from_event(key_event, leading_comment, trailing_comment);
                     // Preserve collection end markers so the outer mapping can
                     // unwind after recovering an orphan key.
-                    if let Some(parsed_value) = self.parse_mapping_value_with_metadata() {
+                    if let Some(parsed_value) = self.parse_mapping_value_with_metadata()
+                        && let Some(parsed_key) = key_node_result
+                    {
+                        let key_node = parsed_key.node;
                         let value = parsed_value.node;
-                        self.report_duplicate_key(&key, &mut seen_keys);
+                        self.report_duplicate_key(&key_node, &mut seen_keys);
                         let pair_span = Span::new(pair_start..value.span.end);
-                        let mut pair = MappingPair::new(pair_span, key, value);
+                        let mut pair = MappingPair::new(pair_span, key_node, value);
                         if let Some(comment) = parsed_value.leading_comment {
                             pair = pair.with_header_comment(comment);
                         }
@@ -442,8 +449,9 @@ where
         };
         let span = Span::from_usize_range(start..end);
 
-        let node = Node::new(Value::Mapping(pairs), span);
-        Self::apply_properties(node, props)
+        let mapping_node = Self::apply_properties(Node::new(Value::Mapping(pairs), span), props);
+        self.store_anchor_node(&mapping_node);
+        mapping_node
     }
 
     fn report_duplicate_key(
@@ -472,7 +480,6 @@ where
             )),
             Value::Float(value) => Some(MappingKeyIdentity::Float(value.to_bits())),
             Value::String(value) => Some(MappingKeyIdentity::String(value.clone())),
-            Value::Alias(value) => Some(MappingKeyIdentity::Alias(value.clone())),
         }
     }
 
@@ -579,8 +586,9 @@ where
         };
         let span = Span::from_usize_range(start..end);
 
-        let node = Node::new(Value::Sequence(items), span);
-        Self::apply_properties(node, props)
+        let sequence_node = Self::apply_properties(Node::new(Value::Sequence(items), span), props);
+        self.store_anchor_node(&sequence_node);
+        sequence_node
     }
 
     /// Build a scalar node with type inference.
@@ -623,6 +631,7 @@ where
 
         let base_node = Node::new(typed_value, span);
         let node = Self::apply_properties(base_node, props);
+        self.store_anchor_node(&node);
 
         // Validate core-schema tags against the scalar's textual form.
         // For now we are conservative and only enforce additional rules for
@@ -655,13 +664,17 @@ where
         node
     }
 
-    /// Build an alias node.
-    fn build_alias(&mut self, name: Cow<'input, str>, span: Span) -> Node<'input> {
-        // Validate that the anchor exists
-        if !self.anchor_is_defined(name.as_ref()) {
+    /// Build a resolved alias node.
+    fn build_alias(&mut self, name: &Cow<'input, str>, span: Span) -> Option<Node<'input>> {
+        if let Some(node) = self.anchor_nodes.get(name.as_ref()) {
+            return Some(node.clone().into_resolved_alias_root(span));
+        }
+
+        if self.anchors.contains(name.as_ref()) {
             self.error(ErrorKind::UndefinedAlias, span);
         }
-        Node::new(Value::Alias(name), span)
+
+        None
     }
 
     /// Register an anchor in the anchor tracking set.
@@ -672,9 +685,11 @@ where
         }
     }
 
-    /// Check if an anchor is defined.
-    fn anchor_is_defined(&self, name: &str) -> bool {
-        self.anchors.contains(name)
+    /// Store a completed anchored node for later alias resolution.
+    fn store_anchor_node(&mut self, node: &Node<'input>) {
+        if let Some(anchor) = node.anchor() {
+            self.anchor_nodes.insert(anchor.to_owned(), node.clone());
+        }
     }
 
     /// Apply anchor and tag properties to a node.
@@ -846,7 +861,6 @@ mod tests {
             (Value::Int(li), Value::Int(ri)) => li == ri,
             (Value::Float(lf), Value::Float(rf)) => lf == rf,
             (Value::String(ls), Value::String(rs)) => ls == rs,
-            (Value::Alias(la), Value::Alias(ra)) => la == ra,
             (Value::Sequence(left_items), Value::Sequence(right_items)) => {
                 left_items.len() == right_items.len()
                     && left_items
@@ -984,12 +998,100 @@ mod tests {
                 Some("anchor"),
                 "First value should have anchor 'anchor'"
             );
-            let alias_value = &pairs.last().unwrap().value.value;
-            assert!(
-                matches!(alias_value, Value::Alias(name) if name.as_ref() == "anchor"),
-                "Expected Alias(\"anchor\"), got {alias_value:?}"
-            );
+            assert!(matches!(
+                &pairs.last().unwrap().value.value,
+                Value::Int(Integer::I64(1))
+            ));
+            assert_eq!(pairs.last().unwrap().value.anchor(), None);
         }
+    }
+
+    #[test]
+    fn test_parse_alias_root_span_uses_alias_site() {
+        let input = "- &anchor value\n- *anchor";
+        let (docs, errors) = parse(input);
+        assert!(errors.is_empty(), "errors: {errors:?}");
+
+        let Value::Sequence(items) = &docs[0].value else {
+            panic!("Expected sequence");
+        };
+        let Some(alias_text) =
+            input.get(items[1].node.span.start_usize()..items[1].node.span.end_usize())
+        else {
+            panic!("alias span should be on UTF-8 boundaries");
+        };
+        assert_eq!(alias_text, "*anchor");
+        assert_eq!(
+            &items[1].node.value,
+            &Value::String(Cow::Owned("value".to_owned()))
+        );
+    }
+
+    #[test]
+    fn test_unknown_alias_drops_sequence_item() {
+        let (docs, errors) = parse("- 1\n- *missing\n- 2");
+        assert!(
+            !errors.is_empty(),
+            "expected emitter error for unknown alias"
+        );
+
+        let Value::Sequence(items) = &docs[0].value else {
+            panic!("Expected sequence");
+        };
+        assert_eq!(items.len(), 2);
+        assert!(matches!(items[0].node.value, Value::Int(Integer::I64(1))));
+        assert!(matches!(items[1].node.value, Value::Int(Integer::I64(2))));
+    }
+
+    #[test]
+    fn test_unknown_alias_drops_mapping_pair() {
+        let (docs, errors) = parse("good: 1\nbad: *missing\nalso_good: 2");
+        assert!(
+            !errors.is_empty(),
+            "expected emitter error for unknown alias"
+        );
+
+        let Value::Mapping(pairs) = &docs[0].value else {
+            panic!("Expected mapping");
+        };
+        assert_eq!(pairs.len(), 2);
+        assert!(matches!(&pairs[0].key.value, Value::String(s) if s == "good"));
+        assert!(matches!(&pairs[1].key.value, Value::String(s) if s == "also_good"));
+    }
+
+    #[test]
+    fn test_unknown_alias_key_drops_mapping_pair() {
+        let (docs, errors) = parse("good: 0\n*missing: 1\nok: 2");
+        assert!(
+            !errors.is_empty(),
+            "expected emitter error for unknown alias"
+        );
+
+        let Value::Mapping(pairs) = &docs[0].value else {
+            panic!("Expected mapping");
+        };
+        assert_eq!(pairs.len(), 2);
+        assert!(matches!(&pairs[0].key.value, Value::String(s) if s == "good"));
+        assert!(matches!(&pairs[1].key.value, Value::String(s) if s == "ok"));
+    }
+
+    #[test]
+    fn test_self_referential_alias_drops_item_and_reports_error() {
+        let (docs, errors) = parse("&a [*a]");
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.kind == ErrorKind::UndefinedAlias),
+            "expected UndefinedAlias error, got {errors:?}"
+        );
+
+        let Value::Sequence(items) = &docs[0].value else {
+            panic!("Expected sequence");
+        };
+        assert!(
+            items.is_empty(),
+            "expected self-referential alias item to be dropped"
+        );
     }
 
     #[test]
@@ -1208,8 +1310,9 @@ mod tests {
             // First item has anchor
             assert_eq!(items[0].node.anchor(), Some("anchor"));
             assert!(matches!(&items[0].node.value, Value::String(s) if s == "value"));
-            // Second item is alias
-            assert!(matches!(&items[1].node.value, Value::Alias(s) if s == "anchor"));
+            // Second item resolves to the anchored value without re-defining the anchor.
+            assert!(matches!(&items[1].node.value, Value::String(s) if s == "value"));
+            assert_eq!(items[1].node.anchor(), None);
         } else {
             panic!("Expected sequence, got: {:?}", nodes[0].value);
         }

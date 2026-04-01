@@ -109,8 +109,6 @@ mod serde_impls {
                     }
                     map.end()
                 }
-                // For generic serde, aliases are represented as plain strings.
-                Value::Alias(name) => serializer.serialize_str(name.as_ref()),
             }
         }
     }
@@ -387,6 +385,17 @@ impl<'input> Node<'input> {
         self
     }
 
+    /// Update the root node surface after resolving an alias.
+    #[must_use]
+    pub fn into_resolved_alias_root(mut self, span: Span) -> Self {
+        self.span = span;
+        if let Some(mut properties) = self.properties.take() {
+            properties.anchor = None;
+            self.properties = (!properties.is_empty()).then_some(properties);
+        }
+        self
+    }
+
     /// Create a null node.
     #[must_use]
     pub fn null(span: Span) -> Self {
@@ -604,12 +613,6 @@ pub enum Value<'input> {
 
     /// A mapping (object/dictionary)
     Mapping(Vec<MappingPair<'input>>),
-
-    /// An alias reference (`*name`)
-    ///
-    /// Note: Aliases don't have their own anchor/tag properties in YAML.
-    /// Uses `Cow` (usually borrowed) for zero-copy while supporting `into_owned()`.
-    Alias(Cow<'input, str>),
 }
 
 impl Value<'_> {
@@ -651,7 +654,6 @@ impl Value<'_> {
             Self::Mapping(map) => {
                 Value::Mapping(map.into_iter().map(MappingPair::into_owned).collect())
             }
-            Self::Alias(cow) => Value::Alias(Cow::Owned(cow.into_owned())),
         }
     }
 }
@@ -721,11 +723,6 @@ mod tests {
         let owned: Value<'static> = borrowed.into_owned();
         assert!(matches!(owned, Value::String(Cow::Owned(str)) if str == "test"));
 
-        // Test Value::Alias into_owned
-        let alias: Value<'_> = Value::Alias(Cow::Borrowed("myalias"));
-        let owned_alias: Value<'static> = alias.into_owned();
-        assert!(matches!(owned_alias, Value::Alias(Cow::Owned(str)) if str == "myalias"));
-
         // Test Node::into_owned - anchors and tags are converted to owned
         let node = Node::new(Value::String(Cow::Borrowed("test")), span)
             .with_anchor("anchor")
@@ -738,5 +735,27 @@ mod tests {
             Some(property) if matches!(&property.value, Cow::Owned(str) if str == "tag")
         ));
         assert!(matches!(owned_node.value, Value::String(Cow::Owned(str)) if str == "test"));
+    }
+
+    #[test]
+    fn test_into_resolved_alias_root_strips_anchor_only() {
+        let span = Span::from_usize_range(0..4);
+        let alias_span = Span::from_usize_range(10..12);
+        let node = Node::new(Value::String(Cow::Borrowed("test")), span)
+            .with_anchor("anchor")
+            .with_tag(Cow::Borrowed("tag"))
+            .with_trailing_comment(Comment {
+                text: Cow::Borrowed(" comment"),
+                span,
+            });
+
+        let resolved = node.into_resolved_alias_root(alias_span);
+        assert_eq!(resolved.span, alias_span);
+        assert_eq!(resolved.anchor(), None);
+        assert_eq!(
+            resolved.tag().map(|property| property.value.as_ref()),
+            Some("tag")
+        );
+        assert!(resolved.trailing_comment().is_some());
     }
 }

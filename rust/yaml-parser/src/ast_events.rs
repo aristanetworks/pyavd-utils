@@ -98,13 +98,6 @@ fn emit_node_events<'input>(
             });
             Ok(())
         }
-        Value::Alias(name) => {
-            events.push(Event::Alias {
-                name: name.clone(),
-                span: node.span,
-            });
-            Ok(())
-        }
         Value::Sequence(items) => {
             events.push(Event::SequenceStart {
                 style: CollectionStyle::Block,
