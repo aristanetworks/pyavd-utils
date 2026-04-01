@@ -16,7 +16,8 @@ use super::{
     base::{Base, documentation_options::DocumentationOptionsDict},
 };
 
-type DefaultDynamicKeys = Option<Box<OrderMap<String, Vec<String>>>>;
+pub type DefaultDynamicKeys = OrderMap<String, Vec<String>>;
+type CachedDefaultDynamicKeys = Option<Box<DefaultDynamicKeys>>;
 
 /// AVD Schema for dictionary data.
 #[skip_serializing_none]
@@ -45,9 +46,16 @@ pub struct Dict {
     pub base: Base<OrderMap<String, Value>>,
     pub documentation_options: Option<DocumentationOptionsDict>,
     #[serde(skip)]
-    pub default_dynamic_keys: OnceLock<DefaultDynamicKeys>,
+    pub _cached_default_dynamic_keys: OnceLock<CachedDefaultDynamicKeys>,
 }
 impl<'a> Dict {
+    /// Return the cached default dynamic keys, initializing them on first access.
+    pub fn default_dynamic_keys(&self) -> Option<&DefaultDynamicKeys> {
+        self._cached_default_dynamic_keys
+            .get_or_init(|| self.init_default_dynamic_keys())
+            .as_deref()
+    }
+
     /// Get map of dynamic keys and their corresponding schema.
     /// Reads the dynamic_keys definition in the schema, resolves the pointers in the given inputs (or use the default values for the schema).
     pub fn get_dynamic_keys(
@@ -55,10 +63,7 @@ impl<'a> Dict {
         dict: &Map<String, Value>,
     ) -> Option<OrderMap<String, DynamicKeyInfo<'a>>> {
         self.dynamic_keys.as_ref().map(|dynamic_keys| {
-            let default_dynamic_keys = self
-                .default_dynamic_keys
-                .get_or_init(|| self.init_default_dynamic_keys())
-                .as_ref();
+            let default_dynamic_keys = self.default_dynamic_keys();
             dynamic_keys
                 .iter()
                 .skip_while(|(_, dynamic_key_schema)| dynamic_key_schema.is_removed())
@@ -87,7 +92,7 @@ impl<'a> Dict {
         })
     }
 
-    pub(self) fn init_default_dynamic_keys(&self) -> DefaultDynamicKeys {
+    fn init_default_dynamic_keys(&self) -> CachedDefaultDynamicKeys {
         self.dynamic_keys.as_ref().map(|dynamic_keys| {
             dynamic_keys
                 .iter()
@@ -111,7 +116,7 @@ impl<'a> Dict {
                         .flatten()
                         .into_iter()
                 })
-                .collect::<OrderMap<String, Vec<String>>>()
+                .collect::<DefaultDynamicKeys>()
                 .into()
         })
     }
@@ -189,12 +194,9 @@ mod tests {
     use ordermap::OrderMap;
     use serde_json::{Value, json};
 
-    use crate::{
-        any::AnySchema, boolean::Bool, dict::DynamicKeyInfo,
-        utils::test_utils::get_test_dict_schema,
-    };
+    use crate::{any::AnySchema, boolean::Bool, utils::test_utils::get_test_dict_schema};
 
-    use super::Dict;
+    use super::{DefaultDynamicKeys, Dict, DynamicKeyInfo};
 
     #[test]
     fn try_from_anyschema_ok() {
@@ -382,21 +384,19 @@ mod tests {
     }
 
     #[test]
-    fn init_default_dynamic_keys_some() {
+    fn default_dynamic_keys_some() {
         let test_dict_schema = get_test_dict_schema();
         let dict_schema: &Dict = (&test_dict_schema).try_into().unwrap();
-        let expected_result: OrderMap<String, Vec<String>> =
+        let expected_result: DefaultDynamicKeys =
             OrderMap::from_iter([("outer.inner".to_string(), vec!["dyn_key1_int".to_string()])]);
-        let result = dict_schema.init_default_dynamic_keys();
-        assert!(result.is_some());
-        let unboxed_result = result.unwrap().as_ref().clone();
-        assert_eq!(unboxed_result, expected_result);
+        let result = dict_schema.default_dynamic_keys();
+        assert_eq!(result, Some(&expected_result));
     }
 
     #[test]
-    fn init_default_dynamic_keys_none() {
+    fn default_dynamic_keys_none() {
         let dict_schema = Dict::default();
-        let result = dict_schema.init_default_dynamic_keys();
-        assert!(result.is_none());
+        let result = dict_schema.default_dynamic_keys();
+        assert_eq!(result, None);
     }
 }
