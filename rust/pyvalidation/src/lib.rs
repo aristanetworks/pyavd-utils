@@ -25,7 +25,10 @@ pub mod validation {
         types::PyModule,
     };
     use std::path::PathBuf;
-    use validation::{Coercion as _, Context, StoreValidate as _, Validation as _};
+    use validation::{
+        Context, StoreValidate as _, StoreValidateInput as _, Validation as _,
+        feedback::InputDiagnostic,
+    };
 
     fn get_store() -> PyResult<&'static Store> {
         STORE.get().ok_or_else(|| {
@@ -69,23 +72,26 @@ pub mod validation {
         pub return_coercion_infos: bool,
         pub restrict_null_values: bool,
         pub warn_eos_config_keys: bool,
+        pub return_coerced_data: bool,
     }
 
     #[pymethods]
     impl Configuration {
         #[new]
-        #[pyo3(signature = (*, ignore_required_keys_on_root_dict=false, return_coercion_infos=false, restrict_null_values=false, warn_eos_config_keys=false))]
+        #[pyo3(signature = (*, ignore_required_keys_on_root_dict=false, return_coercion_infos=false, restrict_null_values=false, warn_eos_config_keys=false, return_coerced_data=false))]
         fn new(
             ignore_required_keys_on_root_dict: bool,
             return_coercion_infos: bool,
             restrict_null_values: bool,
             warn_eos_config_keys: bool,
+            return_coerced_data: bool,
         ) -> Self {
             Self {
                 ignore_required_keys_on_root_dict,
                 return_coercion_infos,
                 restrict_null_values,
                 warn_eos_config_keys,
+                return_coerced_data,
             }
         }
     }
@@ -97,6 +103,7 @@ pub mod validation {
                 return_coercion_infos: config.return_coercion_infos,
                 restrict_null_values: config.restrict_null_values,
                 warn_eos_config_keys: config.warn_eos_config_keys,
+                return_coerced_data: config.return_coerced_data,
             }
         }
     }
@@ -116,14 +123,14 @@ pub mod validation {
                 .errors
                 .iter()
                 .try_for_each(|feedback| match &feedback.issue {
-                    validation::feedback::ErrorIssue::Violation(violation) => {
+                    validation::feedback::ValidationIssue::Violation(violation) => {
                         result.violations.push(Violation {
                             message: violation.to_string(),
                             path: feedback.path.to_owned().into(),
                         });
                         Ok(())
                     }
-                    validation::feedback::ErrorIssue::InternalError { message } => {
+                    validation::feedback::ValidationIssue::InternalError { message } => {
                         Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
                             "Error occurred during validation: {message}"
                         )))
@@ -203,10 +210,19 @@ pub mod validation {
         configuration: Option<Configuration>,
     ) -> PyResult<ValidationResult> {
         let config = configuration.map(Into::into);
-        get_store()?
+        let output = get_store()?
             .validate_json(data_as_json, schema_name, config.as_ref())
-            .map_err(|err| PyRuntimeError::new_err(format!("Invalid JSON in data: {err}")))
-            .and_then(|result| result.try_into())
+            .map_err(|err| {
+                PyRuntimeError::new_err(format!("Error while validating the data: {err}"))
+            })?;
+        if let Some(InputDiagnostic::ParseDiagnostic(diagnostic)) = output.input_diagnostics.first()
+        {
+            return Err(PyRuntimeError::new_err(format!(
+                "Invalid JSON in data: {}",
+                diagnostic.message
+            )));
+        }
+        output.document.result.try_into()
     }
 
     #[pyfunction]
@@ -219,27 +235,34 @@ pub mod validation {
     ) -> PyResult<ValidatedDataResult> {
         debug!("pyvalidation::get_validated_data Begin");
         let result: PyResult<ValidatedDataResult> = py.detach(|| {
-            // The Value here will be in-place coerced to the correct data types.
-            let mut data_as_value = serde_json::from_str::<serde_json::Value>(data_as_json)
+            let data_as_value = serde_json::from_str::<serde_json::Value>(data_as_json)
                 .map_err(|err| PyRuntimeError::new_err(format!("Invalid JSON in data: {err}")))?;
             debug!("pyvalidation::get_validated_data Deserialization Done");
 
-            let config = configuration.map(Into::into);
-            let validation_result = get_store()?
-                .validate_value(&mut data_as_value, schema_name, config.as_ref())
+            // Enable return_coerced_data since this function returns validated data
+            let mut config: validation::Configuration =
+                configuration.map(Into::into).unwrap_or_default();
+            config.return_coerced_data = true;
+            let output = get_store()?
+                .validate_value(&data_as_value, schema_name, Some(&config))
                 .map_err(|err| {
                     PyRuntimeError::new_err(format!("Error while validating the data: {err}"))
                 })?;
             debug!("pyvalidation::get_validated_data Validation Done");
-            let validated_data = if validation_result.errors.is_empty() {
-                Some(serde_json::to_string(&data_as_value).map_err(|err| {
-                    PyRuntimeError::new_err(format!("Invalid JSON in coerced data: {err}"))
-                })?)
+            let validated_data = if output.result.errors.is_empty() {
+                output
+                    .coerced
+                    .map(|coerced| {
+                        serde_json::to_string(&coerced).map_err(|err| {
+                            PyRuntimeError::new_err(format!("Invalid JSON in coerced data: {err}"))
+                        })
+                    })
+                    .transpose()?
             } else {
                 None
             };
             Ok(ValidatedDataResult {
-                validation_result: validation_result.try_into()?,
+                validation_result: output.result.try_into()?,
                 validated_data,
             })
         });
@@ -259,13 +282,14 @@ pub mod validation {
             PyRuntimeError::new_err(format!("Invalid JSON in adhoc schema: {err}"))
         })?;
         // Parse data JSON
-        let mut data: serde_json::Value = serde_json::from_str(data_as_json)
+        let data: serde_json::Value = serde_json::from_str(data_as_json)
             .map_err(|err| PyRuntimeError::new_err(format!("Invalid JSON in data: {err}")))?;
 
         let config: Option<validation::Configuration> = configuration.map(Into::into);
         let mut ctx = Context::new(get_store()?, config.as_ref());
-        schema.coerce(&mut data, &mut ctx);
-        schema.validate_value(&data, &mut ctx);
+
+        // Validate returns the coerced value, but we only need the validation result here
+        let _ = schema.validate(&data, &mut ctx);
 
         let validation_result: validation::ValidationResult = ctx.result;
         validation_result.try_into()

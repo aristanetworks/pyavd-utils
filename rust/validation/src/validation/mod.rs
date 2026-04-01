@@ -11,23 +11,28 @@ pub(crate) mod store;
 pub(crate) mod str;
 pub(crate) mod valid_values;
 
-use serde_json::Value;
+use crate::{context::Context, validatable::ValidatableValue};
 
-use crate::context::Context;
-
-pub trait Validation<T> {
-    /// Validate the given value T according to the schema where the trait is implemented.
-    /// Validation updates the given Context with any found violations.
-    fn validate(&self, value: &T, ctx: &mut Context);
-
-    /// Validate the given JSON Value according to the schema where the trait is implemented.
-    /// Validation updates the given Context with any found violations including if the type of Value is wrong.
-    fn validate_value(&self, value: &Value, ctx: &mut Context);
-
-    /// Validation of ref which will not merge in the schema, so it only works as expected when there are no local variables set.
-    /// In practice this is only used for structured_config, where we $ref in the full eos_config schema. All other schemas
-    /// will be resolved up-front and stored in the schema store.
-    fn validate_ref(&self, value: &T, ctx: &mut Context);
+/// Trait for validating values against a schema.
+///
+/// Accepts any type implementing [`ValidatableValue`], allowing validation
+/// of both `serde_json::Value` and `yaml_parser::Node`.
+///
+/// Optionally returns the coerced value with types corrected based on schema expectations.
+/// For example, a string "123" validated against an Int schema returns an Int value.
+/// When `ctx.configuration.return_coerced_data` is false, returns `None` to avoid allocations.
+pub trait Validation {
+    /// Validate any value implementing [`ValidatableValue`] against this schema.
+    ///
+    /// This method validates the value and optionally returns a coerced version with types
+    /// adjusted based on the schema. It works with both `serde_json::Value` and
+    /// `yaml_parser::Node`.
+    ///
+    /// Returns `Some(coerced)` when `ctx.configuration.return_coerced_data` is true,
+    /// `None` otherwise (to avoid expensive allocations in validation-only use cases).
+    ///
+    /// The coerced value preserves metadata (like YAML spans) from the original.
+    fn validate<V: ValidatableValue>(&self, value: &V, ctx: &mut Context) -> Option<V::Coerced>;
 }
 
 #[cfg(test)]

@@ -1,0 +1,103 @@
+# Large sequence for benchmark testing
+# 100 items with various types
+
+- item_001
+- item_002
+- 42
+- 3.14159
+- true
+- false
+- null
+- "double quoted"
+- 'single quoted'
+- plain with spaces
+- item_011
+- item_012
+- 123
+- 2.71828
+- true
+- false
+- ~
+- "another string"
+- 'another single'
+- twenty items
+- item_021
+- item_022
+- 999
+- 1.41421
+- yes
+- no
+- null
+- "unicode: \u0041"
+- 'literal text'
+- thirty items
+- item_031
+- item_032
+- 777
+- 0.12345
+- true
+- false
+- null
+- "escaped \n newline"
+- 'no escapes here'
+- forty items
+- item_041
+- item_042
+- 123456789
+- 9.87654
+- true
+- false
+- ~
+- "fifty coming up"
+- 'almost fifty'
+- fifty items
+- item_051
+- item_052
+- 111
+- 6.28318
+- true
+- false
+- null
+- "more content"
+- 'single quoted again'
+- sixty items
+- item_061
+- item_062
+- 222
+- 1.61803
+- true
+- false
+- null
+- "seventy soon"
+- 'getting there'
+- seventy items
+- item_071
+- item_072
+- 333
+- 2.23606
+- true
+- false
+- ~
+- "almost eighty"
+- 'eighty is close'
+- eighty items
+- item_081
+- item_082
+- 444
+- 1.73205
+- true
+- false
+- null
+- "ninety coming"
+- 'almost done'
+- ninety items
+- item_091
+- item_092
+- 555
+- 2.44948
+- true
+- false
+- null
+- "final items"
+- 'the end'
+- one hundred items

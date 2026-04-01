@@ -9,6 +9,7 @@ members = [
     "rust/pypasswords",
     "rust/pyvalidation",
     "rust/test_schema_store",
+    "rust/yaml-parser",
 ]
 resolver = "2"
 
@@ -24,9 +25,6 @@ reqwest = { version = "0.12.24", default-features = false }
 serde = { version = "1.0.217" }
 serde_json = { version = "1.0.135" }
 serde_yaml = { version = "0.9.33" }
-
-[profile.release]
-# debug = true
 
 [profile.release-lto]
 inherits = "release"
@@ -105,7 +103,6 @@ str_to_string = "deny"
 string_add = "allow"                          # TODO: discuss
 string_lit_chars_any = "warn"
 string_slice = "warn"
-string_to_string = "deny"
 suspicious_xor_used_as_pow = "warn"
 tests_outside_test_module = "deny"
 todo = "deny"

@@ -87,7 +87,11 @@ impl<'a> Dict {
         })
     }
 
-    pub(self) fn init_default_dynamic_keys(&self) -> DefaultDynamicKeys {
+    /// Initialize the default dynamic keys from schema defaults.
+    /// This is used internally by get_dynamic_keys and can be used for
+    /// validating against schema defaults when the input doesn't contain
+    /// the dynamic key source values.
+    pub fn init_default_dynamic_keys(&self) -> DefaultDynamicKeys {
         self.dynamic_keys.as_ref().map(|dynamic_keys| {
             dynamic_keys
                 .iter()
