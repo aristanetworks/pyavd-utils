@@ -5,6 +5,7 @@
 pub mod dump;
 pub mod load;
 pub mod macros;
+pub mod schema_data;
 pub mod schema_from_path;
 pub mod walker;
 

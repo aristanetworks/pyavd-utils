@@ -9,7 +9,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use serde_with::skip_serializing_none;
 
-use crate::{Walker as _, any::Shortcuts, base::Deprecation};
+use crate::{
+    SchemaDataValue,
+    any::Shortcuts,
+    base::Deprecation,
+    utils::schema_data::{SchemaDataMap, SchemaDataSequence},
+};
 
 use super::{
     any::AnySchema,
@@ -50,10 +55,13 @@ pub struct Dict {
 impl<'a> Dict {
     /// Get map of dynamic keys and their corresponding schema.
     /// Reads the dynamic_keys definition in the schema, resolves the pointers in the given inputs (or use the default values for the schema).
-    pub fn get_dynamic_keys(
+    pub fn get_dynamic_keys<'input, M>(
         &'a self,
-        dict: &Map<String, Value>,
-    ) -> Option<OrderMap<String, DynamicKeyInfo<'a>>> {
+        dict: M,
+    ) -> Option<OrderMap<String, DynamicKeyInfo<'a>>>
+    where
+        M: SchemaDataMap<'input>,
+    {
         self.dynamic_keys.as_ref().map(|dynamic_keys| {
             let default_dynamic_keys = self
                 .default_dynamic_keys
@@ -124,25 +132,33 @@ impl<'a> Dict {
 
     // Get all string values from the given key_path. Non-string values are ignored.
     // Returns None if the first key was missing. That will tell us if we need to look at the default value instead.
-    pub(self) fn get_all(key_path: &str, dict: &Map<String, Value>) -> Option<Vec<String>> {
+    pub(self) fn get_all<'input, M>(key_path: &str, dict: M) -> Option<Vec<String>>
+    where
+        M: SchemaDataMap<'input>,
+    {
         let mut path = key_path.split('.');
         path.next()
-            .and_then(|root_key| dict.get_key_value(root_key))
+            .and_then(|root_key| dict.get(root_key).map(|value| (root_key, value)))
             .map(|(key, value)| {
                 value
                     .walk(path, Some(&mut vec![key.to_string()]))
                     .into_iter()
-                    .flat_map(|(_, value)| match value {
-                        Value::String(string) => vec![string.to_owned()],
-                        Value::Array(array) => array
-                            .iter()
-                            .filter_map(|item| item.as_str().map(|str| str.to_string()))
-                            .collect(),
-                        _ => {
+                    .flat_map(|(_, value)| {
+                        if let Some(string) = value.as_str() {
+                            return vec![string.to_owned()];
+                        }
+                        let Some(array) = value.as_sequence() else {
                             // Ignore an incorrect type targeted by the key_path.
                             // The validation will report this during validation of that model.
-                            vec![]
+                            return Vec::new();
+                        };
+                        let mut strings = Vec::new();
+                        for item in array.iter() {
+                            if let Some(string) = item.as_str() {
+                                strings.push(string.to_string());
+                            }
                         }
+                        strings
                     })
                     .collect::<Vec<String>>()
             })
@@ -221,8 +237,7 @@ mod tests {
         };
         let value: Value =
             json!({"outer": [ {"inner": "one"}, {"inner": "two"}, {"inner": "three"}]});
-        let dict = value.as_object().unwrap();
-        let result = dict_schema.get_dynamic_keys(dict);
+        let result = dict_schema.get_dynamic_keys(value.as_object().unwrap());
         assert_eq!(
             result,
             Some(OrderMap::from_iter([
@@ -261,8 +276,7 @@ mod tests {
             ..Default::default()
         };
         let value: Value = json!({"list": ["one", "two", "three"]});
-        let dict = value.as_object().unwrap();
-        let result = dict_schema.get_dynamic_keys(dict);
+        let result = dict_schema.get_dynamic_keys(value.as_object().unwrap());
         assert_eq!(
             result,
             Some(OrderMap::from_iter([
@@ -301,8 +315,7 @@ mod tests {
             .get("outer.inner")
             .unwrap();
         let value: Value = json!({"outer": [{"inner": "one"}, {"inner": "two"}]});
-        let dict = value.as_object().unwrap();
-        let result = dict_schema.get_dynamic_keys(dict);
+        let result = dict_schema.get_dynamic_keys(value.as_object().unwrap());
         assert_eq!(
             result,
             Some(OrderMap::from_iter([
@@ -335,8 +348,7 @@ mod tests {
             .get("outer.inner")
             .unwrap();
         let value: Value = json!({"bool_key": true});
-        let dict = value.as_object().unwrap();
-        let result = dict_schema.get_dynamic_keys(dict);
+        let result = dict_schema.get_dynamic_keys(value.as_object().unwrap());
         assert_eq!(
             result,
             Some(OrderMap::from_iter([(
@@ -352,16 +364,14 @@ mod tests {
     #[test]
     fn get_all_some() {
         let value: Value = json!({"outer": [{"inner": "one"}, {"inner": "two"}]});
-        let dict = value.as_object().unwrap();
-        let result = Dict::get_all("outer.inner", dict);
+        let result = Dict::get_all("outer.inner", value.as_object().unwrap());
         assert_eq!(result, Some(vec!["one".to_string(), "two".to_string()]));
     }
 
     #[test]
     fn get_all_none() {
         let value: Value = json!({"outer": [{"inner": "one"}, {"inner": "two"}]});
-        let dict = value.as_object().unwrap();
-        let result = Dict::get_all("non_existing.inner", dict);
+        let result = Dict::get_all("non_existing.inner", value.as_object().unwrap());
         assert!(result.is_none());
     }
 

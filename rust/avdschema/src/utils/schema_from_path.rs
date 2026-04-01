@@ -4,12 +4,10 @@
 
 use ordermap::OrderMap;
 
-use serde_json::Value;
-
 use crate::dict::DynamicKeyInfo;
 use crate::resolve::{errors::SchemaResolverError, resolve_ref::resolve_ref};
 use crate::store::SchemaStoreError;
-use crate::{Store, any::AnySchema, dict::Dict};
+use crate::{SchemaDataValue, Store, any::AnySchema, dict::Dict};
 
 // Keys that are accepted by the schema from either keys or dynamic keys.
 #[derive(Debug, PartialEq)]
@@ -51,14 +49,17 @@ pub struct SchemaKeys {
     pub keys: OrderMap<String, SchemaKey>,
 }
 impl SchemaKeys {
-    pub fn try_from_schema_with_value(
+    pub fn try_from_schema_with_value<V>(
         schema: &AnySchema,
-        value: &Value,
-    ) -> Result<Self, SchemaKeysError> {
+        value: &V,
+    ) -> Result<Self, SchemaKeysError>
+    where
+        V: SchemaDataValue,
+    {
         let dict_schema: &Dict = schema
             .try_into()
             .map_err(|_err| SchemaKeysError::SchemaNotDict)?;
-        let dict = value.as_object().ok_or(SchemaKeysError::ValueNotADict)?;
+        let dict = value.as_map().ok_or(SchemaKeysError::ValueNotADict)?;
         let mut schema_keys = SchemaKeys {
             keys: dict_schema
                 .keys
@@ -110,7 +111,7 @@ pub fn get_schema_from_path<'a>(
     schema_name: &str,
     store: &'a Store,
     data_path: &'_ [String],
-    data_value: &'_ Value,
+    data_value: &'_ impl SchemaDataValue,
 ) -> Result<Option<&'a AnySchema>, GetSchemaFromPathError> {
     let mut path = data_path.iter();
     let schema = store.get(schema_name)?;

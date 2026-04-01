@@ -44,7 +44,7 @@ impl Coercion for Dict {
                     }
                 }
             }
-            if let Some(dynamic_keys) = self.get_dynamic_keys(dict) {
+            if let Some(dynamic_keys) = self.get_dynamic_keys(&*dict) {
                 for (key, dynamic_key_info) in dynamic_keys.iter() {
                     if let Some(value) = dict.get_mut(key) {
                         ctx.state.path.push(key.to_owned());
