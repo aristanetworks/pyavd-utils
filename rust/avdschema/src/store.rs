@@ -2,17 +2,20 @@
 // Use of this source code is governed by the Apache License 2.0
 // that can be found in the LICENSE file.
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, path::PathBuf};
+
+use std::collections::HashMap;
+#[cfg(feature = "dump_load_files")]
+use std::path::PathBuf;
 
 use crate::{
     resolve::errors::SchemaResolverError,
     resolve_schema,
     schema::any::AnySchema,
-    utils::{
-        dump::Dump,
-        load::{Load, LoadError},
-    },
+    utils::{dump::Dump, load::Load},
 };
+
+#[cfg(feature = "dump_load_files")]
+use crate::utils::load::LoadError;
 
 /// Schema store containing the AVD schemas.
 /// The store is used as entrypoint for validation and when resolving a $ref pointing to a specific schema.
@@ -29,7 +32,7 @@ impl Store {
         }
         // Either we have an invalid schema or we may be using an old schema name,
         // or tests using new schema names towards and old schema store.
-        let schema_name = match schema_name {
+        let schema_alias = match schema_name {
             "eos_designs" => "avd_design",
             "eos_cli_config_gen" => "eos_config",
             "avd_design" => "eos_designs",
@@ -37,16 +40,16 @@ impl Store {
             _ => schema_name,
         };
         self.schemas
-            .get(schema_name)
-            .ok_or(SchemaStoreError::InvalidSchemaName(schema_name.to_string()))
+            .get(schema_alias)
+            .ok_or_else(|| SchemaStoreError::InvalidSchemaName(schema_name.to_string()))
     }
     pub fn as_resolved(mut self) -> Result<Self, SchemaResolverError> {
         // Clone each schema so we can resolve them while still being able to resolve $refs between them.
         let cloned_schemas = self.schemas.clone();
-        for (schema_name, mut schema) in cloned_schemas.into_iter() {
+        for (schema_name, mut schema) in cloned_schemas {
             // Inplace resolve schema
             resolve_schema(&mut schema, &self)?;
-            self.schemas.insert(schema_name.clone(), schema);
+            self.schemas.insert(schema_name, schema);
         }
         Ok(self)
     }
