@@ -177,9 +177,7 @@ mod tests {
     use super::*;
 
     use crate::{
-        feedback::{
-            Feedback, ParseDiagnosticKind, SourceSpan, Type, ValidationDiagnostic, Violation,
-        },
+        feedback::{Feedback, ParseDiagnosticKind, SourceSpan, Type, ValidationIssue, Violation},
         validation::test_utils::get_test_store,
     };
 
@@ -316,10 +314,7 @@ mod tests {
         let Some(feedback) = result.documents[0].result.errors.first() else {
             panic!("expected validation feedback")
         };
-        assert!(matches!(
-            &feedback.issue,
-            ValidationDiagnostic::Violation(_)
-        ));
+        assert!(matches!(&feedback.issue, ValidationIssue::Violation(_)));
         assert!(feedback.span.is_some());
     }
 }

@@ -133,7 +133,7 @@ pub enum InputDiagnostic {
 
 /// Validation issue is wrapped in Feedback and added to the Context during coercion and validation.
 #[derive(Clone, Debug, PartialEq, Serialize, derive_more::From, derive_more::Display)]
-pub enum ValidationDiagnostic {
+pub enum ValidationIssue {
     /// Violation found during validation.
     Violation(Violation),
     /// Some internal error occurred.
