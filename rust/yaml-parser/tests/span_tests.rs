@@ -30,6 +30,23 @@ fn extract_span_text(input: &str, start: usize, end: usize) -> &str {
     &input[start..end]
 }
 
+fn assert_span_offsets_and_text(
+    input: &str,
+    actual_start: usize,
+    actual_end: usize,
+    expected_start: usize,
+    expected_end: usize,
+    expected_text: &str,
+) {
+    assert_eq!(actual_start, expected_start, "unexpected span start");
+    assert_eq!(actual_end, expected_end, "unexpected span end");
+    assert_eq!(
+        extract_span_text(input, actual_start, actual_end),
+        expected_text,
+        "unexpected span text",
+    );
+}
+
 #[test]
 fn test_scalar_spans_plain() {
     let input = "hello";
@@ -524,4 +541,248 @@ fn test_document_marker_spans() {
 
     let end_text = extract_span_text(input, doc_end.start_usize(), doc_end.end_usize());
     assert_eq!(end_text, "...", "Document end span should cover ...");
+}
+
+#[test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "this is a deliberate byte-offset matrix for a complex Unicode fixture"
+)]
+fn test_unicode_byte_spans_across_nested_structures() {
+    let input = concat!(
+        "ascii🙂mix: café🚀\n",
+        "絵文字: 🌍🎉\n",
+        "純粋: [😀, βeta🎯]\n",
+        "mix🎉key:\n",
+        "  inner漢: \"välue🌍\"\n",
+        "  emoji😀: plain🚀text\n",
+    );
+    let docs = parse_ok(input);
+
+    assert_eq!(docs.len(), 1);
+    let doc = &docs[0];
+
+    // Byte layout:
+    // - "ascii🙂mix" = 5 ASCII + 4-byte emoji + 3 ASCII = 12 bytes
+    // - "café🚀" = 3 ASCII + 2-byte "é" + 4-byte emoji = 9 bytes
+    // - "絵文字" = 3 CJK chars = 9 bytes
+    // - "🌍🎉" = 2 emojis = 8 bytes
+    // - "純粋" = 2 CJK chars = 6 bytes
+    // - "βeta🎯" = 2-byte beta + 3 ASCII + 4-byte emoji = 9 bytes
+    // - "mix🎉key" = 3 ASCII + 4-byte emoji + 3 ASCII = 10 bytes
+    // - "inner漢" = 5 ASCII + 3-byte CJK = 8 bytes
+    // - "\"välue🌍\"" = quotes + 1 ASCII + 2-byte "ä" + 4 ASCII + 4-byte emoji = 12 bytes
+    // - "emoji😀" = 5 ASCII + 4-byte emoji = 9 bytes
+    // - "plain🚀text" = 5 ASCII + 4-byte emoji + 4 ASCII = 13 bytes
+    //
+    // Expected byte ranges:
+    // full input      0..134  (final newline at 133..134)
+    // doc             0..133  (document/value span intentionally excludes the trailing newline)
+    // pair 1 key      0..12   value 14..23   pair 0..23
+    // pair 2 key      24..33  value 35..43   pair 24..43
+    // pair 3 key      44..50  value 52..69   pair 44..69
+    //   seq item 1    53..57
+    //   seq item 2    59..68
+    // pair 4 key      70..80  value 84..133  pair 70..133
+    //   inner key 1   84..92  value 94..106  pair 84..106
+    //   inner key 2   109..118 value 120..133 pair 109..133
+    assert_span_offsets_and_text(
+        input,
+        doc.span.start_usize(),
+        doc.span.end_usize(),
+        0,
+        133,
+        concat!(
+            "ascii🙂mix: café🚀\n",
+            "絵文字: 🌍🎉\n",
+            "純粋: [😀, βeta🎯]\n",
+            "mix🎉key:\n",
+            "  inner漢: \"välue🌍\"\n",
+            "  emoji😀: plain🚀text",
+        ),
+    );
+
+    let pairs = match &doc.value {
+        Value::Mapping(pairs) => pairs,
+        _ => panic!("Expected mapping"),
+    };
+    assert_eq!(pairs.len(), 4);
+
+    assert_span_offsets_and_text(
+        input,
+        pairs[0].key.span.start_usize(),
+        pairs[0].key.span.end_usize(),
+        0,
+        12,
+        "ascii🙂mix",
+    );
+    assert_span_offsets_and_text(
+        input,
+        pairs[0].value.span.start_usize(),
+        pairs[0].value.span.end_usize(),
+        14,
+        23,
+        "café🚀",
+    );
+    assert_span_offsets_and_text(
+        input,
+        pairs[0].pair_span.start_usize(),
+        pairs[0].pair_span.end_usize(),
+        0,
+        23,
+        "ascii🙂mix: café🚀",
+    );
+
+    assert_span_offsets_and_text(
+        input,
+        pairs[1].key.span.start_usize(),
+        pairs[1].key.span.end_usize(),
+        24,
+        33,
+        "絵文字",
+    );
+    assert_span_offsets_and_text(
+        input,
+        pairs[1].value.span.start_usize(),
+        pairs[1].value.span.end_usize(),
+        35,
+        43,
+        "🌍🎉",
+    );
+    assert_span_offsets_and_text(
+        input,
+        pairs[1].pair_span.start_usize(),
+        pairs[1].pair_span.end_usize(),
+        24,
+        43,
+        "絵文字: 🌍🎉",
+    );
+
+    assert_span_offsets_and_text(
+        input,
+        pairs[2].key.span.start_usize(),
+        pairs[2].key.span.end_usize(),
+        44,
+        50,
+        "純粋",
+    );
+    assert_span_offsets_and_text(
+        input,
+        pairs[2].value.span.start_usize(),
+        pairs[2].value.span.end_usize(),
+        52,
+        69,
+        "[😀, βeta🎯]",
+    );
+    assert_span_offsets_and_text(
+        input,
+        pairs[2].pair_span.start_usize(),
+        pairs[2].pair_span.end_usize(),
+        44,
+        69,
+        "純粋: [😀, βeta🎯]",
+    );
+
+    let sequence = match &pairs[2].value.value {
+        Value::Sequence(items) => items,
+        _ => panic!("Expected flow sequence"),
+    };
+    assert_eq!(sequence.len(), 2);
+    assert_span_offsets_and_text(
+        input,
+        sequence[0].node.span.start_usize(),
+        sequence[0].node.span.end_usize(),
+        53,
+        57,
+        "😀",
+    );
+    assert_span_offsets_and_text(
+        input,
+        sequence[1].node.span.start_usize(),
+        sequence[1].node.span.end_usize(),
+        59,
+        68,
+        "βeta🎯",
+    );
+
+    assert_span_offsets_and_text(
+        input,
+        pairs[3].key.span.start_usize(),
+        pairs[3].key.span.end_usize(),
+        70,
+        80,
+        "mix🎉key",
+    );
+    assert_span_offsets_and_text(
+        input,
+        pairs[3].value.span.start_usize(),
+        pairs[3].value.span.end_usize(),
+        84,
+        133,
+        "inner漢: \"välue🌍\"\n  emoji😀: plain🚀text",
+    );
+    assert_span_offsets_and_text(
+        input,
+        pairs[3].pair_span.start_usize(),
+        pairs[3].pair_span.end_usize(),
+        70,
+        133,
+        "mix🎉key:\n  inner漢: \"välue🌍\"\n  emoji😀: plain🚀text",
+    );
+
+    let inner_pairs = match &pairs[3].value.value {
+        Value::Mapping(nested_pairs) => nested_pairs,
+        _ => panic!("Expected nested mapping"),
+    };
+    assert_eq!(inner_pairs.len(), 2);
+
+    assert_span_offsets_and_text(
+        input,
+        inner_pairs[0].key.span.start_usize(),
+        inner_pairs[0].key.span.end_usize(),
+        84,
+        92,
+        "inner漢",
+    );
+    assert_span_offsets_and_text(
+        input,
+        inner_pairs[0].value.span.start_usize(),
+        inner_pairs[0].value.span.end_usize(),
+        94,
+        106,
+        "\"välue🌍\"",
+    );
+    assert_span_offsets_and_text(
+        input,
+        inner_pairs[0].pair_span.start_usize(),
+        inner_pairs[0].pair_span.end_usize(),
+        84,
+        106,
+        "inner漢: \"välue🌍\"",
+    );
+
+    assert_span_offsets_and_text(
+        input,
+        inner_pairs[1].key.span.start_usize(),
+        inner_pairs[1].key.span.end_usize(),
+        109,
+        118,
+        "emoji😀",
+    );
+    assert_span_offsets_and_text(
+        input,
+        inner_pairs[1].value.span.start_usize(),
+        inner_pairs[1].value.span.end_usize(),
+        120,
+        133,
+        "plain🚀text",
+    );
+    assert_span_offsets_and_text(
+        input,
+        inner_pairs[1].pair_span.start_usize(),
+        inner_pairs[1].pair_span.end_usize(),
+        109,
+        133,
+        "emoji😀: plain🚀text",
+    );
 }
