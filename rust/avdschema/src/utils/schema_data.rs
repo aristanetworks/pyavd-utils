@@ -6,7 +6,7 @@ use ordermap::OrderMap;
 use serde_json::{Map, Value};
 
 pub trait SchemaDataValue: Sized {
-    type Map<'a>: SchemaDataMap<'a, Value = Self> + Copy
+    type Mapping<'a>: SchemaDataMapping<'a, Value = Self> + Copy
     where
         Self: 'a;
 
@@ -14,7 +14,7 @@ pub trait SchemaDataValue: Sized {
     where
         Self: 'a;
 
-    fn as_map(&self) -> Option<Self::Map<'_>>;
+    fn as_mapping(&self) -> Option<Self::Mapping<'_>>;
 
     fn as_sequence(&self) -> Option<Self::Sequence<'_>>;
 
@@ -29,8 +29,8 @@ pub trait SchemaDataValue: Sized {
             if let Some(trail) = &mut trail {
                 trail.push(component.to_string());
             }
-            if let Some(map) = self.as_map()
-                && let Some(value) = map.get(component)
+            if let Some(mapping) = self.as_mapping()
+                && let Some(value) = mapping.get(component)
             {
                 return value.walk(path, trail);
             }
@@ -42,8 +42,8 @@ pub trait SchemaDataValue: Sized {
                         .enumerate()
                         .filter_map(|(index, element)| {
                             element
-                                .as_map()
-                                .and_then(|map| map.get(component))
+                                .as_mapping()
+                                .and_then(|mapping| mapping.get(component))
                                 .map(|el| (index, el))
                         })
                         .flat_map(|(index, value)| {
@@ -63,7 +63,7 @@ pub trait SchemaDataValue: Sized {
     }
 }
 
-pub trait SchemaDataMap<'a>: Copy {
+pub trait SchemaDataMapping<'a>: Copy {
     type Value: SchemaDataValue + 'a;
 
     fn get(&self, key: &str) -> Option<&'a Self::Value>;
@@ -77,10 +77,10 @@ pub trait SchemaDataSequence<'a> {
 }
 
 impl SchemaDataValue for Value {
-    type Map<'a> = &'a serde_json::Map<String, Value>;
+    type Mapping<'a> = &'a serde_json::Map<String, Value>;
     type Sequence<'a> = &'a [Value];
 
-    fn as_map(&self) -> Option<Self::Map<'_>> {
+    fn as_mapping(&self) -> Option<Self::Mapping<'_>> {
         self.as_object()
     }
 
@@ -93,7 +93,7 @@ impl SchemaDataValue for Value {
     }
 }
 
-impl<'a> SchemaDataMap<'a> for &'a Map<String, Value> {
+impl<'a> SchemaDataMapping<'a> for &'a Map<String, Value> {
     type Value = Value;
 
     fn get(&self, key: &str) -> Option<&'a Self::Value> {

@@ -59,7 +59,7 @@ impl SchemaKeys {
         let dict_schema: &Dict = schema
             .try_into()
             .map_err(|_err| SchemaKeysError::SchemaNotDict)?;
-        let dict = value.as_map().ok_or(SchemaKeysError::ValueNotADict)?;
+        let dict = value.as_mapping().ok_or(SchemaKeysError::ValueNotADict)?;
         let mut schema_keys = SchemaKeys {
             keys: dict_schema
                 .keys

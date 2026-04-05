@@ -13,7 +13,7 @@ use crate::{
     SchemaDataValue,
     any::Shortcuts,
     base::Deprecation,
-    utils::schema_data::{SchemaDataMap, SchemaDataSequence},
+    utils::schema_data::{SchemaDataMapping, SchemaDataSequence},
 };
 
 use super::{
@@ -60,7 +60,7 @@ impl<'a> Dict {
         dict: M,
     ) -> Option<OrderMap<String, DynamicKeyInfo<'a>>>
     where
-        M: SchemaDataMap<'input>,
+        M: SchemaDataMapping<'input>,
     {
         self.dynamic_keys.as_ref().map(|dynamic_keys| {
             let default_dynamic_keys = self
@@ -134,7 +134,7 @@ impl<'a> Dict {
     // Returns None if the first key was missing. That will tell us if we need to look at the default value instead.
     pub(self) fn get_all<'input, M>(key_path: &str, dict: M) -> Option<Vec<String>>
     where
-        M: SchemaDataMap<'input>,
+        M: SchemaDataMapping<'input>,
     {
         let mut path = key_path.split('.');
         path.next()
