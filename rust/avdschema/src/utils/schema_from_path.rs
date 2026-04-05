@@ -49,12 +49,12 @@ pub struct SchemaKeys {
     pub keys: OrderMap<String, SchemaKey>,
 }
 impl SchemaKeys {
-    pub fn try_from_schema_with_value<V>(
+    pub fn try_from_schema_with_value<'a, V>(
         schema: &AnySchema,
-        value: &V,
+        value: V,
     ) -> Result<Self, SchemaKeysError>
     where
-        V: SchemaDataValue,
+        V: SchemaDataValue<'a>,
     {
         let dict_schema: &Dict = schema
             .try_into()
@@ -107,12 +107,12 @@ pub enum GetSchemaFromPathError {
 /// Given a data path return the schema covering this.
 /// Assumes that dynamic keys can only exist at the root level.
 /// Assumes that the root level is a dict.
-pub fn get_schema_from_path<'a>(
+pub fn get_schema_from_path<'store, 'value>(
     schema_name: &str,
-    store: &'a Store,
+    store: &'store Store,
     data_path: &'_ [String],
-    data_value: &'_ impl SchemaDataValue,
-) -> Result<Option<&'a AnySchema>, GetSchemaFromPathError> {
+    data_value: impl SchemaDataValue<'value>,
+) -> Result<Option<&'store AnySchema>, GetSchemaFromPathError> {
     let mut path = data_path.iter();
     let schema = store.get(schema_name)?;
     match path.next() {

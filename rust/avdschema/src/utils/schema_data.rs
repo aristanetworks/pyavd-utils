@@ -5,26 +5,22 @@
 use ordermap::OrderMap;
 use serde_json::{Map, Value};
 
-pub trait SchemaDataValue: Sized {
-    type Mapping<'a>: SchemaDataMapping<'a, Value = Self> + Copy
-    where
-        Self: 'a;
+pub trait SchemaDataValue<'a>: Sized + Copy {
+    type Mapping: SchemaDataMapping<'a, Value = Self> + Copy;
 
-    type Sequence<'a>: SchemaDataSequence<'a, Value = Self>
-    where
-        Self: 'a;
+    type Sequence: SchemaDataSequence<'a, Value = Self>;
 
-    fn as_mapping(&self) -> Option<Self::Mapping<'_>>;
+    fn as_mapping(self) -> Option<Self::Mapping>;
 
-    fn as_sequence(&self) -> Option<Self::Sequence<'_>>;
+    fn as_sequence(self) -> Option<Self::Sequence>;
 
-    fn as_str(&self) -> Option<&str>;
+    fn as_str(self) -> Option<&'a str>;
 
-    fn walk<'a, 's>(
-        &'a self,
+    fn walk<'s>(
+        self,
         mut path: impl Iterator<Item = &'s str> + Clone,
         mut trail: Option<&mut Vec<String>>,
-    ) -> OrderMap<Vec<String>, &'a Self> {
+    ) -> OrderMap<Vec<String>, Self> {
         if let Some(component) = path.next() {
             if let Some(trail) = &mut trail {
                 trail.push(component.to_string());
@@ -64,45 +60,45 @@ pub trait SchemaDataValue: Sized {
 }
 
 pub trait SchemaDataMapping<'a>: Copy {
-    type Value: SchemaDataValue + 'a;
+    type Value: SchemaDataValue<'a> + 'a;
 
-    fn get(&self, key: &str) -> Option<&'a Self::Value>;
+    fn get(&self, key: &str) -> Option<Self::Value>;
 }
 
 pub trait SchemaDataSequence<'a> {
-    type Value: SchemaDataValue + 'a;
-    type Iter: Iterator<Item = &'a Self::Value>;
+    type Value: SchemaDataValue<'a> + 'a;
+    type Iter: Iterator<Item = Self::Value>;
 
     fn iter(&self) -> Self::Iter;
 }
 
-impl SchemaDataValue for Value {
-    type Mapping<'a> = &'a serde_json::Map<String, Value>;
-    type Sequence<'a> = &'a [Value];
+impl<'a> SchemaDataValue<'a> for &'a Value {
+    type Mapping = &'a serde_json::Map<String, Value>;
+    type Sequence = &'a [Value];
 
-    fn as_mapping(&self) -> Option<Self::Mapping<'_>> {
+    fn as_mapping(self) -> Option<Self::Mapping> {
         self.as_object()
     }
 
-    fn as_sequence(&self) -> Option<Self::Sequence<'_>> {
+    fn as_sequence(self) -> Option<Self::Sequence> {
         self.as_array().map(Vec::as_slice)
     }
 
-    fn as_str(&self) -> Option<&str> {
+    fn as_str(self) -> Option<&'a str> {
         self.as_str()
     }
 }
 
 impl<'a> SchemaDataMapping<'a> for &'a Map<String, Value> {
-    type Value = Value;
+    type Value = &'a Value;
 
-    fn get(&self, key: &str) -> Option<&'a Self::Value> {
+    fn get(&self, key: &str) -> Option<Self::Value> {
         Map::get(self, key)
     }
 }
 
 impl<'a> SchemaDataSequence<'a> for &'a [Value] {
-    type Value = Value;
+    type Value = &'a Value;
     type Iter = std::slice::Iter<'a, Value>;
 
     fn iter(&self) -> Self::Iter {
