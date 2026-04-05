@@ -3,7 +3,7 @@
 // that can be found in the LICENSE file.
 
 use avdschema::{
-    Walker as _,
+    SchemaDataValue as _,
     any::{AnySchema, Shortcuts as _},
     dict::Dict,
     resolve_ref,

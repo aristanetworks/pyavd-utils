@@ -9,7 +9,7 @@ use serde_json::Value;
 use crate::feedback::{Type, Violation};
 
 use crate::{context::Context, validation::Validation};
-use avdschema::{Walker, any::AnySchema, list::List, resolve_ref};
+use avdschema::{SchemaDataValue as _, any::AnySchema, list::List, resolve_ref};
 
 impl Validation<Vec<Value>> for List {
     fn validate(&self, input: &Vec<Value>, ctx: &mut Context) {

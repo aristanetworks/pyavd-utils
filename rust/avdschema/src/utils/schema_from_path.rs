@@ -4,12 +4,10 @@
 
 use ordermap::OrderMap;
 
-use serde_json::Value;
-
 use crate::dict::DynamicKeyInfo;
 use crate::resolve::{errors::SchemaResolverError, resolve_ref::resolve_ref};
 use crate::store::SchemaStoreError;
-use crate::{Store, any::AnySchema, dict::Dict};
+use crate::{SchemaDataValue, Store, any::AnySchema, dict::Dict};
 
 // Keys that are accepted by the schema from either keys or dynamic keys.
 #[derive(Debug, PartialEq)]
@@ -51,14 +49,17 @@ pub struct SchemaKeys {
     pub keys: OrderMap<String, SchemaKey>,
 }
 impl SchemaKeys {
-    pub fn try_from_schema_with_value(
+    pub fn try_from_schema_with_value<'a, V>(
         schema: &AnySchema,
-        value: &Value,
-    ) -> Result<Self, SchemaKeysError> {
+        value: V,
+    ) -> Result<Self, SchemaKeysError>
+    where
+        V: SchemaDataValue<'a>,
+    {
         let dict_schema: &Dict = schema
             .try_into()
             .map_err(|_err| SchemaKeysError::SchemaNotDict)?;
-        let dict = value.as_object().ok_or(SchemaKeysError::ValueNotADict)?;
+        let dict = value.as_mapping().ok_or(SchemaKeysError::ValueNotADict)?;
         let mut schema_keys = SchemaKeys {
             keys: dict_schema
                 .keys
@@ -106,12 +107,12 @@ pub enum GetSchemaFromPathError {
 /// Given a data path return the schema covering this.
 /// Assumes that dynamic keys can only exist at the root level.
 /// Assumes that the root level is a dict.
-pub fn get_schema_from_path<'a>(
+pub fn get_schema_from_path<'store, 'value>(
     schema_name: &str,
-    store: &'a Store,
+    store: &'store Store,
     data_path: &'_ [String],
-    data_value: &'_ Value,
-) -> Result<Option<&'a AnySchema>, GetSchemaFromPathError> {
+    data_value: impl SchemaDataValue<'value>,
+) -> Result<Option<&'store AnySchema>, GetSchemaFromPathError> {
     let mut path = data_path.iter();
     let schema = store.get(schema_name)?;
     match path.next() {
