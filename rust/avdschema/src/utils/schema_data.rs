@@ -101,15 +101,6 @@ impl<'a> SchemaDataMap<'a> for &'a Map<String, Value> {
     }
 }
 
-impl<'a> SchemaDataSequence<'a> for &'a Vec<Value> {
-    type Value = Value;
-    type Iter = std::slice::Iter<'a, Value>;
-
-    fn iter(&self) -> Self::Iter {
-        <[Value]>::iter(self)
-    }
-}
-
 impl<'a> SchemaDataSequence<'a> for &'a [Value] {
     type Value = Value;
     type Iter = std::slice::Iter<'a, Value>;
