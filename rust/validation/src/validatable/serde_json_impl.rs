@@ -121,11 +121,19 @@ impl ValidatableValue for Value {
 
 impl<'a> ValidatableMapping<'a> for &'a Map<String, Value> {
     type Value = Value;
+    type SchemaDataMapping<'s>
+        = &'s Map<String, Value>
+    where
+        Self: 's;
     type Pair = MapPair<'a>;
     type Iter = MapIter<'a>;
 
     fn get(&self, key: &str) -> Option<&Self::Value> {
         Map::get(self, key)
+    }
+
+    fn as_schema_data_mapping(&self) -> Self::SchemaDataMapping<'_> {
+        *self
     }
 
     fn contains_key(&self, key: &str) -> bool {
