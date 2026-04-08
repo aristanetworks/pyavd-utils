@@ -3,7 +3,6 @@
 // that can be found in the LICENSE file.
 
 use avdschema::{
-    SchemaDataValue as _,
     any::{AnySchema, Shortcuts as _},
     dict::Dict,
     resolve_ref,
@@ -13,9 +12,7 @@ use ordermap::OrderMap;
 use crate::{
     context::Context,
     feedback::{Deprecated, IgnoredEosConfigKey, Removed, Type, Violation},
-    validatable::{
-        ValidatableMapping, ValidatableMappingPair, ValidatableSequence, ValidatableValue,
-    },
+    validatable::{ValidatableMapping, ValidatableMappingPair, ValidatableValue},
 };
 
 use super::Validation;
@@ -86,81 +83,6 @@ fn validate_ref<V: ValidatableValue>(
     None
 }
 
-fn get_dynamic_keys_schemas<'a, 'b, M: ValidatableMapping<'b>>(
-    schema: &'a Dict,
-    input: &M,
-) -> Option<OrderMap<String, &'a AnySchema>> {
-    let dynamic_keys = schema.dynamic_keys.as_ref()?;
-
-    let default_dynamic_keys = schema
-        .get_dynamic_keys()
-
-    Some(
-        dynamic_keys
-            .iter()
-            .filter(|(_, dynamic_key_schema)| !dynamic_key_schema.is_removed())
-            .flat_map(|(dynamic_key_path, dynamic_key_schema)| {
-                get_all_dynamic_key_values(input, dynamic_key_path)
-                    .or_else(|| {
-                        default_dynamic_keys
-                            .and_then(|default_dynamic_keys| {
-                                default_dynamic_keys.get(dynamic_key_path)
-                            })
-                            .cloned()
-                    })
-                    .into_iter()
-                    .flatten()
-                    .map(move |key| (key, dynamic_key_schema))
-            })
-            .collect(),
-    )
-}
-
-/// Get all string values from the given key path.
-///
-/// Returns `None` if the root key is missing, which signals the caller to
-/// consider schema defaults instead.
-fn get_all_dynamic_key_values<'a, M: ValidatableMapping<'a>>(
-    input: &M,
-    key_path: &str,
-) -> Option<Vec<String>> {
-    let mut path = key_path.split('.');
-    let root_key = path.next()?;
-    let root_value = input.get(root_key)?;
-    let remaining_path = path.collect::<Vec<_>>().join(".");
-
-    Some(
-        root_value
-            .walk_path(&remaining_path)
-            .into_iter()
-            .flat_map(|(_, matched_value)| extract_dynamic_keys(matched_value))
-            .collect(),
-    )
-}
-
-fn extract_dynamic_keys<V: ValidatableValue>(value: &V) -> Vec<String> {
-    if value.is_str() {
-        return value
-            .as_str()
-            .map(|value| vec![value.into_owned()])
-            .unwrap_or_default();
-    }
-
-    if let Some(sequence) = value.as_sequence() {
-        let mut keys = Vec::new();
-        for item in sequence.iter() {
-            if item.is_str()
-                && let Some(item) = item.as_str()
-            {
-                keys.push(item.into_owned());
-            }
-        }
-        return keys;
-    }
-
-    Vec::new()
-}
-
 /// Validate and optionally coerce mapping keys.
 /// Returns Some(coerced_items) when coercion is enabled, None otherwise.
 fn validate_keys<'a, M: ValidatableMapping<'a>>(
@@ -198,7 +120,7 @@ fn validate_keys<'a, M: ValidatableMapping<'a>>(
             None
         }
     };
-    let dynamic_keys_infos = schema.get_dynamic_keys(input);
+    let dynamic_keys_infos = schema.get_dynamic_keys(input.as_schema_data_mapping());
 
     for pair in input.iter() {
         let input_key = pair.key();
@@ -226,7 +148,8 @@ fn validate_keys<'a, M: ValidatableMapping<'a>>(
         } else if let Some(dynamic_keys_infos) = &dynamic_keys_infos
             && let Some(dynamic_key_info) = dynamic_keys_infos.get(input_key_str)
         {
-            if !check_deprecation(input_key_str, dynamic_key_info.schema, key_span, input, ctx) {
+            let key_schema = dynamic_key_info.schema;
+            if !check_deprecation(input_key_str, key_schema, key_span, input, ctx) {
                 if let Some(ref mut items) = coerced_items {
                     let coerced = key_schema
                         .validate(input_value, ctx)
