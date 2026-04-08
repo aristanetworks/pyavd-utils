@@ -18,6 +18,8 @@
 
 use std::borrow::Cow;
 
+use avdschema::SchemaDataMapping;
+
 use crate::feedback::{SourceSpan, Type};
 
 /// A value that can be validated against a schema.
@@ -129,33 +131,6 @@ pub trait ValidatableValue: Sized {
     /// Returns pairs of `(trail, value)` where `trail` is the concrete path
     /// from `self` to the matched value, including list indexes.
     fn walk_path<'a>(&'a self, path: &str) -> Vec<(Vec<String>, &'a Self)> {
-        fn walk<'a, V: ValidatableValue>(
-            value: &'a V,
-            components: &[&str],
-            trail: &mut Vec<String>,
-            results: &mut Vec<(Vec<String>, &'a V)>,
-        ) {
-            if let Some(seq) = value.as_sequence() {
-                for (index, item) in seq.iter().enumerate() {
-                    trail.push(index.to_string());
-                    walk(item, components, trail, results);
-                    trail.pop();
-                }
-                return;
-            }
-
-            let Some((component, rest)) = components.split_first() else {
-                results.push((trail.clone(), value));
-                return;
-            };
-
-            if let Some(child) = value.get(component) {
-                trail.push((*component).to_string());
-                walk(child, rest, trail, results);
-                trail.pop();
-            }
-        }
-
         let components: Vec<&str> = if path.is_empty() {
             Vec::new()
         } else {
@@ -163,8 +138,35 @@ pub trait ValidatableValue: Sized {
         };
         let mut results = Vec::new();
         let mut trail = Vec::new();
-        walk(self, &components, &mut trail, &mut results);
+        self.walk(&components, &mut trail, &mut results);
         results
+    }
+
+    fn walk<'a>(
+        &'a self,
+        components: &[&str],
+        trail: &mut Vec<String>,
+        results: &mut Vec<(Vec<String>, &'a Self)>,
+    ) {
+        if let Some(seq) = self.as_sequence() {
+            for (index, item) in seq.iter().enumerate() {
+                trail.push(index.to_string());
+                item.walk(components, trail, results);
+                trail.pop();
+            }
+            return;
+        }
+
+        let Some((component, rest)) = components.split_first() else {
+            results.push((trail.clone(), self));
+            return;
+        };
+
+        if let Some(child) = self.get(component) {
+            trail.push((*component).to_string());
+            child.walk(rest, trail, results);
+            trail.pop();
+        }
     }
 
     // === Coercion builders ===
@@ -200,14 +202,22 @@ pub trait ValidatableMapping<'a> {
     /// The type of values in this mapping.
     type Value: ValidatableValue + 'a;
 
+    /// A view that can be used with avdschema helper functions.
+    type SchemaDataMapping<'s>: SchemaDataMapping<'s>
+    where
+        Self: 's;
+
     /// The mapping pair type yielded by iteration.
-    type Pair: ValidatableMappingPair<'a, Value = Self::Value>;
+    type Pair: ValidatableMappingPair<'a, Value = <Self as ValidatableMapping<'a>>::Value>;
 
     /// Iterator type for mapping pairs.
     type Iter: Iterator<Item = Self::Pair>;
 
     /// Get a value by key.
-    fn get(&self, key: &str) -> Option<&Self::Value>;
+    fn get(&self, key: &str) -> Option<&<Self as ValidatableMapping<'a>>::Value>;
+
+    /// Expose this mapping as a schema-data mapping view.
+    fn as_schema_data_mapping(&self) -> Self::SchemaDataMapping<'_>;
 
     /// Check if a key exists in the mapping.
     fn contains_key(&self, key: &str) -> bool;
