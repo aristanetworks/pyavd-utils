@@ -120,14 +120,14 @@ pub mod validation {
                 .errors
                 .iter()
                 .try_for_each(|feedback| match &feedback.issue {
-                    validation::feedback::ValidationIssue::Violation(violation) => {
+                    validation::feedback::ErrorIssue::Violation(violation) => {
                         result.violations.push(Violation {
                             message: violation.to_string(),
                             path: feedback.path.to_owned().into(),
                         });
                         Ok(())
                     }
-                    validation::feedback::ValidationIssue::InternalError { message } => {
+                    validation::feedback::ErrorIssue::InternalError { message } => {
                         Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
                             "Error occurred during validation: {message}"
                         )))
