@@ -5,7 +5,7 @@
 use avdschema::Store;
 
 use crate::{
-    feedback::{Feedback, InfoIssue, Path, ValidationIssue, Violation, WarningIssue},
+    feedback::{ErrorIssue, Feedback, InfoIssue, Path, Violation, WarningIssue},
     validatable::ValidatableValue,
 };
 
@@ -32,7 +32,7 @@ impl<'a> Context<'a> {
     pub(crate) fn add_error_for<V: ValidatableValue>(
         &mut self,
         value: &V,
-        error: impl Into<ValidationIssue>,
+        error: impl Into<ErrorIssue>,
     ) {
         self.add_error_with_span(value.source_span(), error);
     }
@@ -40,7 +40,7 @@ impl<'a> Context<'a> {
     pub(crate) fn add_error_with_span(
         &mut self,
         span: Option<crate::feedback::SourceSpan>,
-        error: impl Into<ValidationIssue>,
+        error: impl Into<ErrorIssue>,
     ) {
         self.result.errors.push(Feedback {
             path: self.state.path.to_owned(),
@@ -135,7 +135,7 @@ pub struct Configuration {
 
 #[derive(Clone, Debug, Default)]
 pub struct ValidationResult {
-    pub errors: Vec<Feedback<ValidationIssue>>,
+    pub errors: Vec<Feedback<ErrorIssue>>,
     pub warnings: Vec<Feedback<WarningIssue>>,
     pub infos: Vec<Feedback<InfoIssue>>,
 }
