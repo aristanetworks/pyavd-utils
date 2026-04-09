@@ -35,6 +35,22 @@ class Benchmark:
         return (self.throughput_bytes * 1_000_000_000.0) / (self.median_ns * 1024.0 * 1024.0)
 
 
+def parse_benchmark_identity(name: str) -> tuple[str, str, str]:
+    """Split a benchmark id into group, backend, and dataset."""
+    parts = name.split("/")
+    if len(parts) >= 3:
+        group = parts[0]
+        backend = parts[1]
+        dataset = "/".join(parts[2:])
+        return group, backend, dataset
+    if len(parts) == 2:
+        group = parts[0]
+        backend = "value"
+        dataset = parts[1]
+        return group, backend, dataset
+    return "value", "value", name
+
+
 def write_stdout(text: str = "") -> None:
     """Write one line to stdout."""
     sys.stdout.write(f"{text}\n")
@@ -94,14 +110,6 @@ def parse_args(argv: list[str]) -> tuple[str, argparse.Namespace]:
     return "compare", compare_parser.parse_args(argv)
 
 
-def split_function_id(name: str) -> tuple[str, str]:
-    """Split a Criterion function id into backend and dataset."""
-    parts = name.split("/", 1)
-    if len(parts) == 2:
-        return parts[0], parts[1]
-    return "value", name
-
-
 def load_benchmarks(root: Path) -> dict[str, Benchmark]:
     """Load all benchmark medians under a Criterion output directory."""
     if not root.exists():
@@ -121,15 +129,17 @@ def load_benchmarks(root: Path) -> dict[str, Benchmark]:
         if benchmark_path.exists():
             with benchmark_path.open(encoding="utf-8") as file:
                 benchmark_data = json.load(file)
-            group = benchmark_data.get("group_id") or relative.parts[0]
-            function_id = benchmark_data.get("function_id") or "/".join(relative.parts[1:-2])
+            benchmark_name = benchmark_data.get("full_id")
+            if not benchmark_name:
+                group = benchmark_data.get("group_id") or relative.parts[0]
+                function_id = benchmark_data.get("function_id") or "/".join(relative.parts[1:-2])
+                benchmark_name = f"{group}/{function_id}"
             throughput = benchmark_data.get("throughput")
             throughput_bytes = None
             if isinstance(throughput, dict) and "Bytes" in throughput:
                 throughput_bytes = float(throughput["Bytes"])
         else:
-            group = relative.parts[0]
-            function_id = "/".join(relative.parts[1:-2])
+            benchmark_name = "/".join(relative.parts[:-2])
             throughput_bytes = None
 
         median = estimate_data.get("median", {})
@@ -137,10 +147,9 @@ def load_benchmarks(root: Path) -> dict[str, Benchmark]:
         if point_estimate is None:
             continue
 
-        backend, dataset = split_function_id(function_id)
-        name = f"{group}/{function_id}"
-        benchmarks[name] = Benchmark(
-            name=name,
+        group, backend, dataset = parse_benchmark_identity(benchmark_name)
+        benchmarks[benchmark_name] = Benchmark(
+            name=benchmark_name,
             group=group,
             backend=backend,
             dataset=dataset,
