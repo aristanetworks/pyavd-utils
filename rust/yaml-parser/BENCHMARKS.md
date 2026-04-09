@@ -28,6 +28,17 @@ cargo bench -p yaml-parser --bench parser_bench --features serde \
 Then extract the comparisons you need from that file rather than re-running
 small slices repeatedly.
 
+### Remote Stable Runs
+
+Use `scripts/remote_bench.sh` to run the same Criterion suite on a dedicated remote host. Configure `REMOTE_BENCH_HOST` in `tmp/remote-bench/config.env`, then run either a broad slice or a small targeted benchmark:
+
+```bash
+scripts/remote_bench.sh --filter 'parse_latency/(yaml_parser|saphyr_marked)'
+scripts/remote_bench.sh --benchmark 'parse_latency/yaml_parser/small'
+```
+
+Each run writes fetched Criterion artifacts plus `comparison.txt`, `baseline_report.md`, and `candidate_report.md` under `tmp/remote-bench/runs/<timestamp>/`.
+
 ## Comparison Targets
 
 - `yaml_parser`: this crate
