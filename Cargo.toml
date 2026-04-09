@@ -9,6 +9,7 @@ members = [
     "rust/pypasswords",
     "rust/pyvalidation",
     "rust/test_schema_store",
+    "rust/yaml-parser",
 ]
 # Exclude test_schema_store from default members so cargo-about and cargo-deny will not pick this up.
 default-members = [
