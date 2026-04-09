@@ -81,29 +81,36 @@ fn test_simple_mapping() {
 }
 
 #[test]
-fn test_duplicate_mapping_key_reports_second_key_span() {
+fn test_duplicate_mapping_keys_are_accepted() {
     let input = "\
 foo: 1
 foo: 2
 ";
     let (docs, errors) = parse(input);
 
-    let duplicate_key = errors
-        .iter()
-        .find(|error| error.kind == ErrorKind::DuplicateKey)
-        .expect("Expected DuplicateKey error");
-    let second_key_start = input.rfind("foo").expect("second foo should exist");
-    assert_eq!(
-        duplicate_key.span.start_usize(),
-        second_key_start,
-        "DuplicateKey should point at the later duplicate key"
-    );
-    assert_eq!(
-        duplicate_key.span.end_usize(),
-        second_key_start + "foo".len(),
-        "DuplicateKey should cover only the later duplicate key"
+    assert!(
+        errors.is_empty(),
+        "duplicate mapping keys should be accepted"
     );
     assert_eq!(docs.len(), 1, "Should still produce 1 document");
+
+    let Value::Mapping(pairs) = &docs[0].value else {
+        panic!("expected mapping, got docs: {docs:#?}");
+    };
+
+    assert_eq!(pairs.len(), 2, "Should keep both duplicate-key entries");
+    assert_eq!(
+        pairs
+            .iter()
+            .filter(|pair| matches!(&pair.key.value, Value::String(value) if value == "foo"))
+            .count(),
+        2,
+        "AST should preserve both duplicate foo keys"
+    );
+    assert!(matches!(&pairs[0].key.value, Value::String(value) if value == "foo"));
+    assert!(matches!(&pairs[0].value.value, Value::Int(value) if value.to_decimal_string() == "1"));
+    assert!(matches!(&pairs[1].key.value, Value::String(value) if value == "foo"));
+    assert!(matches!(&pairs[1].value.value, Value::Int(value) if value.to_decimal_string() == "2"));
 }
 
 #[test]
@@ -625,15 +632,13 @@ mod error_recovery {
     }
 
     #[test]
-    fn test_duplicate_empty_mapping_keys_do_not_error() {
+    fn test_duplicate_empty_mapping_keys_are_accepted() {
         let input = ": a\n: b\n";
         let (docs, errors) = parse(input);
 
         assert!(
-            errors
-                .iter()
-                .all(|error| error.kind != ErrorKind::DuplicateKey),
-            "missing keys should not trigger DuplicateKey, got: {errors:?}"
+            errors.is_empty(),
+            "missing keys should be accepted, got: {errors:?}"
         );
         assert_eq!(docs.len(), 1, "Should produce 1 document");
     }
