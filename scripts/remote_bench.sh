@@ -19,6 +19,7 @@ CANDIDATE_REF=""
 BENCH_FILTER='serde_deserialize_throughput/(yaml_parser|serde_yaml)/(large_mapping|nested_mapping|tags|block_scalars)'
 declare -a SELECTED_BENCHMARKS=()
 KEEP_REMOTE_RESULTS=0
+CLEAN_TARGET=0
 
 usage() {
     cat <<'EOF'
@@ -32,6 +33,7 @@ Options:
   --candidate-ref <ref>  Git ref to use as the candidate export instead of the workspace
   --filter <regex>       Criterion benchmark filter regex
   --benchmark <id>       Exact benchmark id to run, repeatable
+  --clean-target         Delete the remote workspace target dir before building
   --keep-remote-results  Leave the remote run directory in place
   --help                 Show this help text
 
@@ -75,6 +77,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --keep-remote-results)
             KEEP_REMOTE_RESULTS=1
+            shift
+            ;;
+        --clean-target)
+            CLEAN_TARGET=1
             shift
             ;;
         --help)
@@ -142,10 +148,11 @@ else
     candidate_description="workspace"
 fi
 
-printf 'baseline_ref=%s\ncandidate=%s\nfilter=%s\n' \
+printf 'baseline_ref=%s\ncandidate=%s\nfilter=%s\nclean_target=%s\n' \
     "$BASELINE_REF" \
     "$candidate_description" \
-    "$BENCH_FILTER" >"$local_results/metadata.txt"
+    "$BENCH_FILTER" \
+    "$CLEAN_TARGET" >"$local_results/metadata.txt"
 
 echo "Creating remote run directory on $REMOTE_HOST"
 ssh "$REMOTE_HOST" "bash -lc 'mkdir -p \"$remote_run_root\" \"$remote_workspace_root\"'"
@@ -163,14 +170,16 @@ run_remote_bench() {
     local remote_result_quoted
     local remote_source_quoted
     local bench_filter_quoted
+    local clean_target_quoted
 
     printf -v remote_result_quoted '%q' "$remote_result"
     printf -v remote_source_quoted '%q' "$remote_source"
     printf -v bench_filter_quoted '%q' "$BENCH_FILTER"
+    printf -v clean_target_quoted '%q' "$CLEAN_TARGET"
 
     echo "Running remote benchmark: $label"
     ssh "$REMOTE_HOST" \
-        "REMOTE_RESULT=$remote_result_quoted REMOTE_SOURCE=$remote_source_quoted BENCH_FILTER=$bench_filter_quoted bash -s" <<'EOF'
+        "REMOTE_RESULT=$remote_result_quoted REMOTE_SOURCE=$remote_source_quoted BENCH_FILTER=$bench_filter_quoted CLEAN_TARGET=$clean_target_quoted bash -s" <<'EOF'
 set -euo pipefail
 
 make_absolute() {
@@ -185,6 +194,7 @@ make_absolute() {
 remote_result="$REMOTE_RESULT"
 remote_source="$REMOTE_SOURCE"
 bench_filter="$BENCH_FILTER"
+clean_target="$CLEAN_TARGET"
 
 export PATH="$HOME/.cargo/bin:$PATH"
 remote_result=$(make_absolute "$remote_result")
@@ -196,7 +206,11 @@ output_file="$remote_result/output.txt"
 target_dir="$remote_source/target"
 result_criterion_dir="$remote_result/target/criterion"
 
-rm -rf "$target_dir/criterion"
+if [[ "$clean_target" == "1" ]]; then
+    rm -rf "$target_dir"
+else
+    rm -rf "$target_dir/criterion"
+fi
 CARGO_TARGET_DIR="$target_dir" cargo bench --bench parser_bench --features serde -- "$bench_filter" | tee "$output_file"
 rm -rf "$result_criterion_dir"
 mkdir -p "$result_criterion_dir"
