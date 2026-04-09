@@ -1,0 +1,107 @@
+# Benchmark file for anchor/alias performance
+# Tests anchor definition and alias resolution
+
+defaults: &defaults
+  adapter: postgres
+  host: localhost
+  port: 5432
+  pool: 5
+  timeout: 30
+
+development:
+  <<: *defaults
+  database: dev_db
+  debug: true
+
+test:
+  <<: *defaults
+  database: test_db
+  pool: 1
+
+production:
+  <<: *defaults
+  database: prod_db
+  pool: 25
+  timeout: 60
+
+# Multiple anchors
+colors:
+  primary: &primary_color "#3498db"
+  secondary: &secondary_color "#2ecc71"
+  accent: &accent_color "#e74c3c"
+  background: &bg_color "#ecf0f1"
+
+theme_light:
+  header: *primary_color
+  sidebar: *secondary_color
+  button: *accent_color
+  body: *bg_color
+
+theme_dark:
+  header: *primary_color
+  sidebar: *accent_color
+  button: *secondary_color
+  body: "#2c3e50"
+
+# Nested anchors
+base_config: &base
+  version: "1.0"
+  enabled: true
+  settings:
+    log_level: info
+    retry: 3
+
+service_a:
+  <<: *base
+  name: service_a
+  port: 8080
+
+service_b:
+  <<: *base
+  name: service_b
+  port: 8081
+
+service_c:
+  <<: *base
+  name: service_c
+  port: 8082
+
+# List with anchors
+common_tags: &tags
+  - web
+  - api
+  - microservice
+
+services:
+  - name: auth
+    tags: *tags
+  - name: users
+    tags: *tags
+  - name: orders
+    tags: *tags
+  - name: inventory
+    tags: *tags
+  - name: notifications
+    tags: *tags
+
+# Complex nested structure with anchors
+shared_logging: &logging
+  format: json
+  level: debug
+  outputs:
+    - stdout
+    - file
+
+shared_metrics: &metrics
+  enabled: true
+  interval: 60
+  endpoints:
+    - /metrics
+    - /health
+
+application:
+  logging: *logging
+  metrics: *metrics
+  features:
+    caching: true
+    compression: true

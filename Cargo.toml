@@ -9,6 +9,7 @@ members = [
     "rust/pypasswords",
     "rust/pyvalidation",
     "rust/test_schema_store",
+    "rust/yaml-parser",
 ]
 resolver = "2"
 
