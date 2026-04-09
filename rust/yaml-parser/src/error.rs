@@ -98,10 +98,6 @@ pub enum ErrorKind {
     #[display("invalid number format")]
     InvalidNumber,
 
-    /// Duplicate key in a mapping
-    #[display("duplicate key in mapping")]
-    DuplicateKey,
-
     /// Invalid anchor name
     #[display("invalid anchor name")]
     InvalidAnchor,
@@ -196,7 +192,6 @@ impl ErrorKind {
             Self::InvalidEscape(_) => {
                 Some("valid escape sequences: \\n, \\r, \\t, \\\\, \\\", \\', \\0, \\x##, \\u####")
             }
-            Self::DuplicateKey => Some("remove or rename one of the duplicate keys"),
             Self::UndefinedAlias => {
                 Some("define the anchor with &name before referencing it with *name")
             }
@@ -321,7 +316,6 @@ mod tests {
             ErrorKind::TabInIndentation,
             ErrorKind::UnterminatedString,
             ErrorKind::InvalidEscape('x'),
-            ErrorKind::DuplicateKey,
             ErrorKind::UndefinedAlias,
             ErrorKind::DuplicateAnchor,
             ErrorKind::DuplicateTag,

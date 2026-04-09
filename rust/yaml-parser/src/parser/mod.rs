@@ -36,14 +36,6 @@ struct ParsedNode<'input> {
     leading_comment: Option<Comment<'input>>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-enum MappingKeyIdentity<'input> {
-    Bool(bool),
-    Int(String),
-    Float(u64),
-    String(Cow<'input, str>),
-}
-
 /// Parser that builds AST from a streaming source of events.
 ///
 /// This parser consumes events and builds the AST.
@@ -352,7 +344,6 @@ where
         );
 
         let mut pairs: Vec<MappingPair<'input>> = Vec::with_capacity(8);
-        let mut seen_keys: HashSet<MappingKeyIdentity<'input>> = HashSet::with_capacity(8);
         let mut end_span = start_span;
 
         loop {
@@ -400,7 +391,6 @@ where
                     {
                         let key_node = parsed_key.node;
                         let value = parsed_value.node;
-                        self.report_duplicate_key(&key_node, &mut seen_keys);
                         let pair_span = Span::new(pair_start..value.span.end);
                         let mut pair = MappingPair::new(pair_span, key_node, value);
                         if let Some(comment) = parsed_value.leading_comment {
@@ -418,7 +408,6 @@ where
                     let key = self.parse_node().unwrap_or_else(|| Node::null(start_span));
                     if let Some(parsed_value) = self.parse_mapping_value_with_metadata() {
                         let value = parsed_value.node;
-                        self.report_duplicate_key(&key, &mut seen_keys);
                         let pair_span =
                             Span::from_usize_range(key.span.start_usize()..value.span.end_usize());
                         let mut pair = MappingPair::new(pair_span, key, value);
@@ -452,35 +441,6 @@ where
         let mapping_node = Self::apply_properties(Node::new(Value::Mapping(pairs), span), props);
         self.store_anchor_node(&mapping_node);
         mapping_node
-    }
-
-    fn report_duplicate_key(
-        &mut self,
-        key: &Node<'input>,
-        seen_keys: &mut HashSet<MappingKeyIdentity<'input>>,
-    ) {
-        let Some(identity) = Self::mapping_key_identity(key) else {
-            return;
-        };
-
-        if !seen_keys.insert(identity) {
-            self.error(ErrorKind::DuplicateKey, key.span);
-        }
-    }
-
-    fn mapping_key_identity(key: &Node<'input>) -> Option<MappingKeyIdentity<'input>> {
-        match &key.value {
-            // Empty mapping keys are represented as null nodes. The YAML test
-            // suite treats repeated missing keys as valid parse cases, so keep
-            // parser-level duplicate diagnostics focused on concrete keys.
-            Value::Null | Value::Sequence(_) | Value::Mapping(_) => None,
-            Value::Bool(value) => Some(MappingKeyIdentity::Bool(*value)),
-            Value::Int(value) => Some(MappingKeyIdentity::Int(
-                value.to_decimal_string().into_owned(),
-            )),
-            Value::Float(value) => Some(MappingKeyIdentity::Float(value.to_bits())),
-            Value::String(value) => Some(MappingKeyIdentity::String(value.clone())),
-        }
     }
 
     /// Parse a sequence node.
