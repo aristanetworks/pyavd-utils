@@ -371,7 +371,6 @@ where
                 }
                 Some(AstEvent::MappingKey { .. }) => {
                     // Parse key
-                    let consumed_before = self.events_consumed;
                     let Some(AstEvent::MappingKey {
                         pair_start,
                         key_event,
@@ -397,10 +396,6 @@ where
                             pair = pair.with_header_comment(comment);
                         }
                         pairs.push(pair);
-                    }
-                    // Ensure we made progress to avoid infinite loop
-                    if self.events_consumed == consumed_before {
-                        self.advance();
                     }
                 }
                 Some(_) => {
@@ -486,7 +481,6 @@ where
                     break;
                 }
                 Some(AstEvent::SequenceItem { .. }) => {
-                    let consumed_before = self.events_consumed;
                     let Some(AstEvent::SequenceItem {
                         item_start,
                         event,
@@ -507,10 +501,6 @@ where
                             item = item.with_header_comment(comment);
                         }
                         items.push(item);
-                    }
-                    // Ensure we made progress to avoid infinite loop
-                    if self.events_consumed == consumed_before {
-                        self.advance();
                     }
                 }
                 Some(_) => {

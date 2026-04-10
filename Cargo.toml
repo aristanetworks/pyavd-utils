@@ -106,7 +106,6 @@ str_to_string = "deny"
 string_add = "allow"                          # TODO: discuss
 string_lit_chars_any = "warn"
 string_slice = "warn"
-string_to_string = "deny"
 suspicious_xor_used_as_pow = "warn"
 tests_outside_test_module = "deny"
 todo = "deny"
