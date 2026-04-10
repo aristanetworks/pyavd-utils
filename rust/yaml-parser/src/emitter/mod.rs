@@ -300,18 +300,47 @@ impl<'input> Emitter<'input> {
         Some(Comment { text, span })
     }
 
-    fn take_same_line_comment_after_ws(&mut self) -> Option<Comment<'input>> {
-        let mut offset = 0;
-        while matches!(
-            self.peek_kind_nth(offset),
-            Some(TokenKind::Whitespace | TokenKind::WhitespaceWithTabs)
-        ) {
-            offset += 1;
-        }
+    #[inline]
+    fn can_start_same_line_comment_scan(&self) -> bool {
+        matches!(
+            self.peek_kind(),
+            Some(TokenKind::Whitespace | TokenKind::WhitespaceWithTabs | TokenKind::Comment)
+        )
+    }
 
-        if self.peek_kind_nth(offset) != Some(TokenKind::Comment) {
+    #[inline]
+    fn same_line_comment_offset(&self) -> Option<usize> {
+        match self.peek_kind() {
+            Some(TokenKind::Comment) => Some(0),
+            Some(TokenKind::Whitespace | TokenKind::WhitespaceWithTabs) => {
+                match self.peek_kind_nth(1) {
+                    Some(TokenKind::Comment) => Some(1),
+                    Some(TokenKind::Whitespace | TokenKind::WhitespaceWithTabs) => self
+                        .with_lookahead(32, |window| {
+                            let mut offset = 0;
+                            loop {
+                                match window.kind(offset) {
+                                    Some(TokenKind::Whitespace | TokenKind::WhitespaceWithTabs) => {
+                                        offset += 1;
+                                    }
+                                    Some(TokenKind::Comment) => return Some(offset),
+                                    _ => return None,
+                                }
+                            }
+                        }),
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    }
+
+    fn take_same_line_comment_after_ws(&mut self) -> Option<Comment<'input>> {
+        if !self.can_start_same_line_comment_scan() {
             return None;
         }
+
+        let offset = self.same_line_comment_offset()?;
 
         for _ in 0..offset {
             let _ = self.take_current();
@@ -363,11 +392,6 @@ impl<'input> Emitter<'input> {
         func: impl FnOnce(LookaheadWindow<'_, 'input>) -> R,
     ) -> R {
         self.cursor.with_window(self.pos, max_offset, func)
-    }
-
-    #[inline]
-    fn peek_nth(&self, n: usize) -> Option<(Token<'input>, Span)> {
-        self.cursor.peek_nth(self.pos, n)
     }
 
     /// Peek at the current token and apply a function to it without cloning.
@@ -835,6 +859,25 @@ impl<'input> Emitter<'input> {
         (crossed, ws_width)
     }
 
+    /// Fast pre-check for whitespace/comment skipping call sites.
+    ///
+    /// Local profiles showed that several hot value/mapping paths frequently
+    /// call `skip_ws_and_newlines_tracked()` when the current token is already
+    /// non-trivia. Keeping this guard at the call site avoids entering that
+    /// helper on the common no-op path.
+    #[inline]
+    fn current_token_starts_trivia_run(&self) -> bool {
+        matches!(
+            self.peek_kind(),
+            Some(
+                TokenKind::Whitespace
+                    | TokenKind::WhitespaceWithTabs
+                    | TokenKind::Comment
+                    | TokenKind::LineStart
+            )
+        )
+    }
+
     /// Core implementation of `skip_ws_and_newlines`.
     /// Returns (`crossed_line`, `last_linestart_span`, `ws_width_on_final_line`).
     fn skip_ws_and_newlines_impl(&mut self) -> (bool, Option<Span>, IndentLevel) {
@@ -883,7 +926,7 @@ impl<'input> Emitter<'input> {
                             )
                         }) == Some(true)
                         {
-                            // Content is at column 0 iff no whitespace was peeked past
+                            // Content is at column 0 if no whitespace was peeked past
                             // (indent is already 0 from the guard above).
                             if peek_offset == 0 {
                                 self.error(
@@ -1080,15 +1123,18 @@ impl<'input> Emitter<'input> {
         // storage representation.
         let mut idx = self.pos;
         loop {
-            let Some((token, _span)) = self.cursor.peek(idx) else {
-                break;
-            };
-            match token {
+            let Some(continue_scan) = self.cursor.peek_with(idx, |token, _| match token {
                 Token::TagDirective(handle, prefix) => {
                     self.tag_handles.insert(handle, prefix);
+                    true
                 }
-                Token::DocStart | Token::DocEnd => break,
-                _ => {}
+                Token::DocStart | Token::DocEnd => false,
+                _ => true,
+            }) else {
+                break;
+            };
+            if !continue_scan {
+                break;
             }
             idx += 1;
         }
@@ -1205,7 +1251,16 @@ impl<'input> Emitter<'input> {
                     mut ctx,
                     properties,
                 } => {
-                    if (ctx.prior_crossed_line || self.peek_kind() != Some(TokenKind::LineStart))
+                    let current_kind = self.peek_kind();
+                    if (ctx.prior_crossed_line || current_kind != Some(TokenKind::LineStart))
+                        && matches!(
+                            current_kind,
+                            Some(
+                                TokenKind::Whitespace
+                                    | TokenKind::WhitespaceWithTabs
+                                    | TokenKind::Comment
+                            )
+                        )
                         && let Some(comment) = self.take_same_line_comment_after_ws()
                     {
                         self.set_pending_ast_leading_comment(comment);
@@ -1213,7 +1268,11 @@ impl<'input> Emitter<'input> {
 
                     // Phase 1: Skip initial whitespace/newlines and update content_column.
                     let has_leading_linestart = self.peek_kind() == Some(TokenKind::LineStart);
-                    let (crossed, ws_width) = self.skip_ws_and_newlines_tracked();
+                    let (crossed, ws_width) = if self.current_token_starts_trivia_run() {
+                        self.skip_ws_and_newlines_tracked()
+                    } else {
+                        (false, 0)
+                    };
                     let initial_crossed_line =
                         ctx.prior_crossed_line || has_leading_linestart || crossed;
 
@@ -2420,7 +2479,11 @@ impl<'input> Emitter<'input> {
 
         // Skip any more whitespace/newlines after properties and record if we
         // cross additional line boundaries. UPDATE content_column.
-        let (additional_crossed, ws_width) = self.skip_ws_and_newlines_tracked();
+        let (additional_crossed, ws_width) = if self.current_token_starts_trivia_run() {
+            self.skip_ws_and_newlines_tracked()
+        } else {
+            (false, 0)
+        };
         crossed_line_after_properties |= additional_crossed;
         if additional_crossed {
             ctx.content_column = Some(self.current_indent + ws_width);
@@ -3497,7 +3560,11 @@ impl<'input> Emitter<'input> {
                     // been consumed by the nested structure before we reached AfterKey.
                     // Track if we've crossed a line boundary (for same-line detection).
                     let crossed_before = self.crossed_line_boundary;
-                    let (crossed, ws_after_key) = self.skip_ws_and_newlines_tracked();
+                    let (crossed, ws_after_key) = if self.current_token_starts_trivia_run() {
+                        self.skip_ws_and_newlines_tracked()
+                    } else {
+                        (false, 0)
+                    };
 
                     // Compute the colon's column from state:
                     // - If we crossed a line: colon is at current_indent (new line)
@@ -3513,15 +3580,15 @@ impl<'input> Emitter<'input> {
                         self.check_tabs_after_block_indicator();
                         let ws_width = self.skip_ws();
 
-                        let content_col =
-                            if matches!(self.peek_kind(), Some(TokenKind::LineStart) | None) {
-                                None
-                            } else {
-                                Some(colon_column + 1 + ws_width)
-                            };
+                        let next_kind = self.peek_kind();
+                        let content_col = if matches!(next_kind, Some(TokenKind::LineStart) | None)
+                        {
+                            None
+                        } else {
+                            Some(colon_column + 1 + ws_width)
+                        };
 
-                        if is_implicit_scalar_key
-                            && self.peek_kind() == Some(TokenKind::BlockSeqIndicator)
+                        if is_implicit_scalar_key && next_kind == Some(TokenKind::BlockSeqIndicator)
                         {
                             self.error(ErrorKind::ContentOnSameLine, self.current_span());
                         }
@@ -3685,22 +3752,34 @@ impl<'input> Emitter<'input> {
 
         // Collect content until StringEnd
         loop {
-            match self.peek() {
-                Some((Token::StringContent(text), _)) => {
-                    content.push_str(&text);
+            match self.peek_kind() {
+                Some(TokenKind::StringContent) => {
+                    let Some(()) = self.peek_with(|token, _| {
+                        if let Token::StringContent(text) = token {
+                            content.push_str(text);
+                        } else {
+                            debug_assert!(false, "peek_kind/string_content desynchronized");
+                        }
+                    }) else {
+                        debug_assert!(false, "expected StringContent token");
+                        break;
+                    };
                     let _ = self.take_current();
                 }
-                Some((Token::StringEnd(_), span)) => {
-                    let end_span = span;
+                Some(TokenKind::StringEnd) => {
+                    let Some(end_span) = self.peek_with(|_, span| span) else {
+                        debug_assert!(false, "expected StringEnd token");
+                        break;
+                    };
                     let _ = self.take_current();
                     let full_span =
                         Span::from_usize_range(start_span.start_usize()..end_span.end_usize());
                     return (Cow::Owned(content), Some(full_span));
                 }
-                None => break,
-                _ => {
+                Some(_) => {
                     let _ = self.take_current();
                 }
+                None => break,
             }
         }
         (Cow::Owned(content), None)
@@ -3874,22 +3953,26 @@ impl<'input> Emitter<'input> {
         consecutive_newlines: &mut usize,
         _min_indent: IndentLevel,
     ) -> bool {
-        match self.peek() {
-            Some((Token::Plain(next_text), next_span)) => {
+        match self.peek_kind() {
+            Some(TokenKind::Plain) => {
                 // Before consuming as continuation, check if it's a mapping key
                 if self.is_plain_followed_by_colon() {
                     return false;
                 }
+
+                let Some((Token::Plain(next_text), next_span)) = self.take_current() else {
+                    debug_assert!(false, "peek_kind/plain desynchronized");
+                    return false;
+                };
 
                 // Apply folding: single newline → space, multiple → n-1 newlines
                 Self::append_folded_separator(content, *consecutive_newlines);
                 content.push_str(&next_text);
                 *end_span = next_span;
                 *consecutive_newlines = 0;
-                let _ = self.take_current();
                 true
             }
-            Some((Token::LineStart(_), _)) => {
+            Some(TokenKind::LineStart) => {
                 // Another newline, continue counting (caller will handle)
                 true
             }
@@ -3899,7 +3982,8 @@ impl<'input> Emitter<'input> {
             // >= min_indent, so it's always plain text, never a valid entry marker.
             // (Valid entry markers are at indent < min_indent, handled by
             // has_continuation_after_low_indent.)
-            Some((Token::BlockSeqIndicator, span)) => {
+            Some(TokenKind::BlockSeqIndicator) => {
+                let span = self.current_span();
                 let start_pos = span.start_usize();
                 let (line_text, line_end) = self.consume_line_as_text(start_pos);
 
@@ -3915,13 +3999,14 @@ impl<'input> Emitter<'input> {
             // These look like special tokens but in plain scalar context they're just text.
             // IMPORTANT: If an Anchor/Tag is at the start of a line and followed by a
             // scalar+colon pattern, it's a mapping key, not continuation text.
-            Some((Token::Anchor(_) | Token::Tag(_) | Token::Alias(_), span)) => {
+            Some(TokenKind::Anchor | TokenKind::Tag | TokenKind::Alias) => {
                 // Check if this anchor/tag starts a mapping key pattern
                 // Look ahead: (Anchor|Tag)* (Plain|Quoted) Colon
                 if self.is_anchor_tag_mapping_key() {
                     return false;
                 }
 
+                let span = self.current_span();
                 let start_pos = span.start_usize();
                 let (line_text, line_end) = self.consume_line_as_text(start_pos);
 
@@ -4989,27 +5074,24 @@ impl<'input> Emitter<'input> {
         properties: EmitterProperties<'input>,
         min_indent: IndentLevel,
     ) -> Event<'input> {
-        match self.peek() {
-            Some((Token::Plain(text), span)) => {
-                // Extract values before releasing the borrow
-                let first_line = text.clone(); // Clone the Cow (cheap if Borrowed)
+        match self.peek_kind() {
+            Some(TokenKind::Plain) => {
+                let Some((Token::Plain(first_line), span)) = self.take_current() else {
+                    debug_assert!(false, "peek_kind/plain desynchronized");
+                    return self.emit_null();
+                };
                 let start_span = span;
-                let _ = self.take_current();
 
                 // Check for reserved indicator `%` at column 0 starting a plain scalar.
                 // Per YAML 1.2 spec production [22] c-indicator and [126] ns-plain-first,
                 // `%` is a c-indicator and cannot start a plain scalar.
 
                 if self.flow_depth > 0 {
-                    let mut offset = 0;
-                    while matches!(
-                        self.peek_kind_nth(offset),
-                        Some(TokenKind::Whitespace | TokenKind::WhitespaceWithTabs)
-                    ) {
-                        offset += 1;
-                    }
-                    let has_continuation = self.peek_kind_nth(offset) == Some(TokenKind::LineStart)
-                        && self.peek_kind_nth(offset + 1) == Some(TokenKind::Plain);
+                    let has_continuation = self.with_lookahead(16, |window| {
+                        let offset = Self::scan_skip_inline_whitespace_from(&window, 0);
+                        window.kind(offset) == Some(TokenKind::LineStart)
+                            && window.kind(offset + 1) == Some(TokenKind::Plain)
+                    });
                     if !has_continuation {
                         return Event::Scalar {
                             style: ScalarStyle::Plain,
@@ -5087,7 +5169,17 @@ impl<'input> Emitter<'input> {
                 }
             }
 
-            Some((Token::StringStart(quote_style), _)) => {
+            Some(TokenKind::StringStart) => {
+                let Some(quote_style) = self
+                    .peek_with(|tok, _| match tok {
+                        Token::StringStart(quote_style) => Some(*quote_style),
+                        _ => None,
+                    })
+                    .flatten()
+                else {
+                    debug_assert!(false, "peek_kind/string_start desynchronized");
+                    return self.emit_null();
+                };
                 self.parse_quoted_scalar(properties, quote_style, min_indent)
             }
 
@@ -5195,25 +5287,29 @@ impl<'input> Emitter<'input> {
         mut content: Option<String>,
     ) -> Event<'input> {
         loop {
-            while let Some(kind) = self.peek_kind() {
+            let next_kind = loop {
+                let kind = self.peek_kind();
                 match kind {
-                    TokenKind::Whitespace | TokenKind::WhitespaceWithTabs => {
+                    Some(TokenKind::Whitespace | TokenKind::WhitespaceWithTabs) => {
                         let _ = self.take_current();
                     }
-                    _ => break,
+                    _ => break kind,
                 }
-            }
+            };
 
-            if self.peek_kind() == Some(TokenKind::LineStart)
-                && let Some((Token::Plain(continuation), next_span)) = self.peek_nth(1)
+            if next_kind == Some(TokenKind::LineStart)
+                && self.peek_kind_nth(1) == Some(TokenKind::Plain)
             {
                 has_continuation = true;
+                let _ = self.take_current();
+                let Some((Token::Plain(continuation), next_span)) = self.take_current() else {
+                    debug_assert!(false, "peek_kind_nth/plain desynchronized");
+                    return self.emit_null();
+                };
                 let content_str = content.get_or_insert_with(|| first_line.clone().into_owned());
                 content_str.push(' ');
                 content_str.push_str(&continuation);
                 end_span = next_span;
-                let _ = self.take_current();
-                let _ = self.take_current();
                 continue;
             }
 
@@ -5249,17 +5345,31 @@ impl<'input> Emitter<'input> {
         let _ = self.take_current(); // consume StringStart
 
         // Try to optimize for single-content-token case (most common)
-        // Check if we have: StringContent followed immediately by StringEnd
+        // Check if we have: StringContent followed immediately by StringEnd.
+        // Keep this on borrowed token access; `self.peek()` would clone the
+        // common-case token and showed up in local profiles.
         let (single_token_value, first_content) =
-            if let Some((Token::StringContent(content), content_span)) = self.peek() {
-                let content_cow = content.clone();
+            if self.peek_kind() == Some(TokenKind::StringContent) {
+                let Some((content_cow, content_span)) = self
+                    .peek_with(|token, span| {
+                        if let Token::StringContent(content) = token {
+                            Some((content.clone(), span))
+                        } else {
+                            debug_assert!(false, "peek_kind/string_content desynchronized");
+                            None
+                        }
+                    })
+                    .flatten()
+                else {
+                    debug_assert!(false, "expected StringContent token");
+                    return self.emit_null();
+                };
                 let _ = self.take_current();
 
-                // Check if next is StringEnd
                 if self.peek_kind() == Some(TokenKind::StringEnd) {
-                    (Some((content_cow.clone(), content_span)), None)
+                    (Some((content_cow, content_span)), None)
                 } else {
-                    // Multi-line case: save the first content we already consumed
+                    // Multi-line case: save the first content we already consumed.
                     (None, Some(content_cow))
                 }
             } else {
@@ -5269,7 +5379,7 @@ impl<'input> Emitter<'input> {
         if let Some((content_cow, content_span)) = single_token_value {
             // Fast path: single content token, zero-copy!
             let end_span = if self.peek_kind() == Some(TokenKind::StringEnd) {
-                let span = self.current_span();
+                let span = self.peek_with(|_, span| span).unwrap_or(content_span);
                 let _ = self.take_current();
                 span
             } else {
@@ -5325,8 +5435,23 @@ impl<'input> Emitter<'input> {
         mut pending_newlines: usize,
         mut needs_trim: bool,
     ) -> Event<'input> {
-        match self.peek() {
-            Some((Token::StringContent(content), span)) => {
+        match self.peek_kind() {
+            Some(TokenKind::StringContent) => {
+                let Some((content, span)) = self
+                    .peek_with(|token, span| {
+                        if let Token::StringContent(content) = token {
+                            Some((content.clone(), span))
+                        } else {
+                            debug_assert!(false, "peek_kind/string_content desynchronized");
+                            None
+                        }
+                    })
+                    .flatten()
+                else {
+                    debug_assert!(false, "expected StringContent token");
+                    self.error(ErrorKind::UnterminatedString, start_span);
+                    return self.emit_null();
+                };
                 if needs_trim {
                     if let Some(last) = parts.last_mut() {
                         match last {
@@ -5373,7 +5498,22 @@ impl<'input> Emitter<'input> {
                     .process_state_stack()
                     .unwrap_or_else(|| self.emit_null());
             }
-            Some((Token::LineStart(indent), line_start_span)) => {
+            Some(TokenKind::LineStart) => {
+                let Some((indent, line_start_span)) = self
+                    .peek_with(|token, span| {
+                        if let Token::LineStart(indent) = token {
+                            Some((*indent, span))
+                        } else {
+                            debug_assert!(false, "peek_kind/line_start desynchronized");
+                            None
+                        }
+                    })
+                    .flatten()
+                else {
+                    debug_assert!(false, "expected LineStart token");
+                    self.error(ErrorKind::UnterminatedString, start_span);
+                    return self.emit_null();
+                };
                 let is_content_line = self.peek_kind_nth(1) == Some(TokenKind::StringContent);
                 if is_content_line && indent < min_indent {
                     self.error(
@@ -5403,7 +5543,12 @@ impl<'input> Emitter<'input> {
                     .process_state_stack()
                     .unwrap_or_else(|| self.emit_null());
             }
-            Some((Token::StringEnd(_), span)) => {
+            Some(TokenKind::StringEnd) => {
+                let Some(span) = self.peek_with(|_, span| span) else {
+                    debug_assert!(false, "expected StringEnd token");
+                    self.error(ErrorKind::UnterminatedString, start_span);
+                    return self.emit_null();
+                };
                 if needs_trim && let Some(last) = parts.last_mut() {
                     match last {
                         Cow::Borrowed(text) => {
@@ -5429,7 +5574,7 @@ impl<'input> Emitter<'input> {
                 end_span = span;
                 let _ = self.take_current();
             }
-            _ => {
+            Some(_) | None => {
                 self.error(ErrorKind::UnterminatedString, start_span);
             }
         }
@@ -5466,15 +5611,17 @@ impl<'input> Emitter<'input> {
         min_indent: IndentLevel,
         properties: EmitterProperties<'input>,
     ) -> Event<'input> {
-        let Some((
-            Token::LiteralBlockHeader(header) | Token::FoldedBlockHeader(header),
-            start_span,
-        )) = self.peek()
+        let Some((header, start_span, is_literal)) = self
+            .peek_with(|tok, span| match tok {
+                Token::LiteralBlockHeader(header) => Some((*header, span, true)),
+                Token::FoldedBlockHeader(header) => Some((*header, span, false)),
+                _ => None,
+            })
+            .flatten()
         else {
             return self.emit_null();
         };
 
-        let is_literal = self.peek_kind() == Some(TokenKind::LiteralBlockHeader);
         let _ = self.take_current(); // consume header
         self.state_stack.push(ParseState::BlockScalar {
             properties,
@@ -5538,6 +5685,7 @@ impl<'input> Emitter<'input> {
         while let Some((indent_level, line_start_span)) = self.peek_line_start() {
             let n = usize::from(indent_level);
             let _ = self.take_current();
+            let current_kind = self.peek_kind();
 
             // Check for tabs used as indentation in block scalar content.
             // Per YAML spec, tabs are allowed as content but not as indentation.
@@ -5545,7 +5693,7 @@ impl<'input> Emitter<'input> {
             // For example, in `foo: |\n\t\tbar`, if content_indent is 2, the tabs at column 0
             // are indentation (invalid). But in `foo: |\n  \tbar`, the tab at column 2 is
             // content (valid).
-            if self.peek_kind() == Some(TokenKind::WhitespaceWithTabs) {
+            if current_kind == Some(TokenKind::WhitespaceWithTabs) {
                 let tab_span = self.current_span();
                 // Tab is right after LineStart — its column is current_indent.
                 let tab_col = usize::from(self.current_indent);
@@ -5566,7 +5714,7 @@ impl<'input> Emitter<'input> {
 
             // Check if this line ends the block scalar
             let is_terminator = matches!(
-                self.peek_kind(),
+                current_kind,
                 None | Some(TokenKind::DocEnd | TokenKind::DocStart)
             );
             if is_terminator && n == 0 {
@@ -5578,7 +5726,7 @@ impl<'input> Emitter<'input> {
             // Also include block structure indicators (BlockSeqIndicator, MappingKey) since they
             // indicate sibling nodes and should trigger termination checks.
             let has_content = matches!(
-                self.peek_kind(),
+                current_kind,
                 Some(
                     TokenKind::Plain
                         | TokenKind::Whitespace
@@ -5661,21 +5809,33 @@ impl<'input> Emitter<'input> {
                 }
             }
 
-            while let Some((tok, span)) = self.peek() {
-                match tok {
-                    Token::Plain(text) => {
-                        line_parts.push(text.clone());
+            // Hot path: do not use `self.peek()` here. It clones the token
+            // payload, and this loop usually consumes the token immediately
+            // via `take_current()` anyway. Keep this loop on kind-based
+            // lookahead plus `take_current()` unless a future benchmark proves
+            // otherwise.
+            while let Some(kind) = self.peek_kind() {
+                match kind {
+                    TokenKind::Plain => {
+                        let Some((Token::Plain(text), span)) = self.take_current() else {
+                            debug_assert!(false, "peek_kind/plain desynchronized");
+                            break;
+                        };
+                        line_parts.push(text);
                         // `Plain` tokens always contain some non-whitespace content;
                         // the lexer emits dedicated whitespace tokens.
                         has_non_whitespace = true;
                         line_end_span = span;
-                        let _ = self.take_current();
                     }
-                    Token::Whitespace => {
+                    TokenKind::Whitespace => {
                         line_parts.push(Cow::Borrowed(" "));
                         let _ = self.take_current();
                     }
-                    Token::WhitespaceWithTabs => {
+                    TokenKind::WhitespaceWithTabs => {
+                        let Some((_, span)) = self.take_current() else {
+                            debug_assert!(false, "peek_kind/whitespace_with_tabs desynchronized");
+                            break;
+                        };
                         // Tabs in content are preserved - read actual content from input
                         // since it could be multiple characters (tab + space, etc.)
                         #[allow(
@@ -5694,60 +5854,77 @@ impl<'input> Emitter<'input> {
                             line_parts.push(Cow::Borrowed(ws));
                         }
                         line_end_span = span;
-                        let _ = self.take_current();
                     }
-                    Token::Comment(text) => {
-                        // In block scalars, # is NOT a comment indicator - it's literal content
-                        // The lexer incorrectly tokenizes it as a comment, so we need to
-                        // reconstruct the original text including the #
-                        // Optimize: avoid format! macro, use string concatenation
+                    TokenKind::Comment => {
+                        let Some((Token::Comment(text), span)) = self.take_current() else {
+                            debug_assert!(false, "peek_kind/comment desynchronized");
+                            break;
+                        };
+                        // In block scalars, # is NOT a comment indicator - it's literal content.
                         let mut comment_text = String::with_capacity(1 + text.len());
                         comment_text.push('#');
                         comment_text.push_str(&text);
                         line_parts.push(Cow::Owned(comment_text));
                         has_non_whitespace = true;
                         line_end_span = span;
-                        let _ = self.take_current();
                     }
                     // In block scalars, flow indicators are literal content, not structure.
                     // The lexer doesn't know we're in a block scalar context.
-                    Token::FlowSeqStart => {
+                    TokenKind::FlowSeqStart => {
+                        let Some((_, span)) = self.take_current() else {
+                            debug_assert!(false, "peek_kind/flow_seq_start desynchronized");
+                            break;
+                        };
                         line_parts.push(Cow::Borrowed("["));
                         has_non_whitespace = true;
                         line_end_span = span;
-                        let _ = self.take_current();
                     }
-                    Token::FlowSeqEnd => {
+                    TokenKind::FlowSeqEnd => {
+                        let Some((_, span)) = self.take_current() else {
+                            debug_assert!(false, "peek_kind/flow_seq_end desynchronized");
+                            break;
+                        };
                         line_parts.push(Cow::Borrowed("]"));
                         has_non_whitespace = true;
                         line_end_span = span;
-                        let _ = self.take_current();
                     }
-                    Token::FlowMapStart => {
+                    TokenKind::FlowMapStart => {
+                        let Some((_, span)) = self.take_current() else {
+                            debug_assert!(false, "peek_kind/flow_map_start desynchronized");
+                            break;
+                        };
                         line_parts.push(Cow::Borrowed("{"));
                         has_non_whitespace = true;
                         line_end_span = span;
-                        let _ = self.take_current();
                     }
-                    Token::FlowMapEnd => {
+                    TokenKind::FlowMapEnd => {
+                        let Some((_, span)) = self.take_current() else {
+                            debug_assert!(false, "peek_kind/flow_map_end desynchronized");
+                            break;
+                        };
                         line_parts.push(Cow::Borrowed("}"));
                         has_non_whitespace = true;
                         line_end_span = span;
-                        let _ = self.take_current();
                     }
-                    Token::Colon => {
-                        // Colon is literal content in block scalars
+                    TokenKind::Colon => {
+                        let Some((_, span)) = self.take_current() else {
+                            debug_assert!(false, "peek_kind/colon desynchronized");
+                            break;
+                        };
+                        // Colon is literal content in block scalars.
                         line_parts.push(Cow::Borrowed(":"));
                         has_non_whitespace = true;
                         line_end_span = span;
-                        let _ = self.take_current();
                     }
-                    Token::Comma => {
-                        // Comma is literal content in block scalars
+                    TokenKind::Comma => {
+                        let Some((_, span)) = self.take_current() else {
+                            debug_assert!(false, "peek_kind/comma desynchronized");
+                            break;
+                        };
+                        // Comma is literal content in block scalars.
                         line_parts.push(Cow::Borrowed(","));
                         has_non_whitespace = true;
                         line_end_span = span;
-                        let _ = self.take_current();
                     }
                     _ => break,
                 }
@@ -5882,10 +6059,9 @@ impl<'input> Emitter<'input> {
         // whitespace-only lines).
         let is_empty_scalar = !scalar_has_any_part;
 
-        // Apply chomping. We pass `is_empty_scalar` so that `Chomping::Clip`
-        // can distinguish truly empty scalars (like K858's `clip: >` with no
-        // content) from scalars that merely end with newlines.
-        let chomped_value = Self::apply_chomping(&value, header, is_empty_scalar);
+        // Apply chomping in place so block-scalar assembly only needs one
+        // full-string allocation.
+        Self::apply_chomping_in_place(&mut value, header, is_empty_scalar);
 
         let style = if is_literal {
             ScalarStyle::Literal
@@ -5901,7 +6077,7 @@ impl<'input> Emitter<'input> {
 
         Event::Scalar {
             style,
-            value: Cow::Owned(chomped_value),
+            value: Cow::Owned(value),
             properties: properties.into_event_box(),
             span: full_span,
         }
@@ -5910,25 +6086,24 @@ impl<'input> Emitter<'input> {
     // `join_folded_lines` logic is now inlined into `parse_block_scalar` for
     // a streaming implementation; helper removed.
 
-    /// Apply chomping indicator to block scalar value.
+    /// Apply chomping indicator to a block scalar value in place.
     ///
     /// `is_empty_scalar` is true when no logical line contributed any
     /// content parts at all. This lets us distinguish truly empty block
     /// scalars (like K858's `clip: >` with no content lines) from scalars
     /// that merely end with trailing newlines.
-    fn apply_chomping(
-        value: &str,
+    fn apply_chomping_in_place(
+        value: &mut String,
         header: crate::lexer::BlockScalarHeader,
         is_empty_scalar: bool,
-    ) -> String {
+    ) {
         use crate::lexer::Chomping;
 
         match header.chomping {
             Chomping::Strip => {
-                // Strip: remove all trailing newlines.
-                // Work on the borrowed input first, then allocate exactly once.
-                let trimmed = value.trim_end_matches('\n');
-                trimmed.to_owned()
+                // Strip: remove all trailing newlines without reallocating.
+                let trimmed_len = value.trim_end_matches('\n').len();
+                value.truncate(trimmed_len);
             }
             Chomping::Clip => {
                 // Clip: ensure at most one trailing newline, and only if
@@ -5939,33 +6114,28 @@ impl<'input> Emitter<'input> {
                 // `>` (clip). Treat those separately based on
                 // `is_empty_scalar` instead of just looking at `value`.
                 if is_empty_scalar {
-                    return String::new();
+                    value.clear();
+                    return;
                 }
 
                 if value.ends_with('\n') {
                     // Has at least one trailing newline: keep exactly one.
-                    let trimmed = value.trim_end_matches('\n');
-                    let mut result = String::with_capacity(trimmed.len() + 1);
-                    result.push_str(trimmed);
-                    result.push('\n');
-                    result
+                    let trimmed_len = value.trim_end_matches('\n').len();
+                    value.truncate(trimmed_len);
+                    value.push('\n');
                 } else if value.is_empty() {
                     // Non-empty scalar should always have at least one
                     // newline, but be defensive.
-                    String::new()
+                    value.clear();
                 } else {
                     // No trailing newline yet: add exactly one.
-                    let mut result = String::with_capacity(value.len() + 1);
-                    result.push_str(value);
-                    result.push('\n');
-                    result
+                    value.push('\n');
                 }
             }
             Chomping::Keep => {
                 // Keep: the builder for block scalars already preserves all
                 // trailing newlines and ensures at least one when there is
-                // content, so we can return the value unchanged.
-                value.to_owned()
+                // content, so no further work is required.
             }
         }
     }
