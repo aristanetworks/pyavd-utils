@@ -497,7 +497,7 @@ impl<'input> Emitter<'input> {
             // through the cursor.
             if self.pos > 0 {
                 let prev_span = self.cursor.current_span(self.pos - 1);
-                Span::from_usize_range(prev_span.end_usize()..prev_span.end_usize())
+                Span::at(prev_span.end)
             } else {
                 self.current_span()
             }
@@ -505,12 +505,12 @@ impl<'input> Emitter<'input> {
     }
 
     fn indented_line_error_span(line_span: Span, indent: IndentLevel) -> Span {
-        let width = usize::from(indent);
+        let width = BytePosition::from(indent);
         if width == 0 {
             line_span
         } else {
-            let end = line_span.end_usize();
-            Span::from_usize_range(end.saturating_sub(width)..end)
+            let end = line_span.end;
+            Span::new(end.saturating_sub(width)..end)
         }
     }
 
@@ -731,7 +731,7 @@ impl<'input> Emitter<'input> {
 
     /// Check for invalid content immediately after a flow collection in block context.
     /// e.g., `{ y: z }in: valid` - `in:` is immediately after `}` with no space.
-    fn check_content_after_flow(&mut self, flow_end: usize) {
+    fn check_content_after_flow(&mut self, flow_end: BytePosition) {
         if matches!(
             self.peek_kind(),
             Some(
@@ -744,7 +744,7 @@ impl<'input> Emitter<'input> {
             )
         ) {
             let span = self.current_span();
-            if span.start_usize() == flow_end {
+            if span.start == flow_end {
                 self.error(ErrorKind::ContentOnSameLine, span);
             }
         }
@@ -1158,7 +1158,7 @@ impl<'input> Emitter<'input> {
         } else {
             // Implicit document end: use the end position of the last content
             let span = if let Some(last_span) = self.last_content_span {
-                Span::from_usize_range(last_span.end_usize()..last_span.end_usize())
+                Span::at(last_span.end)
             } else {
                 // No content in document, use current position
                 self.current_span()
@@ -3772,8 +3772,7 @@ impl<'input> Emitter<'input> {
                         break;
                     };
                     let _ = self.take_current();
-                    let full_span =
-                        Span::from_usize_range(start_span.start_usize()..end_span.end_usize());
+                    let full_span = Span::new(start_span.start..end_span.end);
                     return (Cow::Owned(content), Some(full_span));
                 }
                 Some(_) => {
@@ -4440,7 +4439,7 @@ impl<'input> Emitter<'input> {
 
                     match self.peek_kind_with_span() {
                         Some((TokenKind::FlowSeqEnd, span)) => {
-                            let flow_end = span.end_usize();
+                            let flow_end = span.end;
                             let _ = self.take_current();
                             self.exit_flow_collection();
                             if self.flow_depth == 0 {
@@ -4652,7 +4651,7 @@ impl<'input> Emitter<'input> {
                         }
 
                         Some((TokenKind::FlowSeqEnd, span)) => {
-                            let flow_end = span.end_usize();
+                            let flow_end = span.end;
                             let _ = self.take_current();
                             self.exit_flow_collection();
                             if self.flow_depth == 0 {
@@ -4728,7 +4727,7 @@ impl<'input> Emitter<'input> {
 
                 match self.peek_kind_with_span() {
                     Some((TokenKind::FlowMapEnd, span)) => {
-                        let flow_end = span.end_usize();
+                        let flow_end = span.end;
                         let _ = self.take_current();
                         self.exit_flow_collection();
                         // Check for content immediately after flow collection in block context
@@ -4900,7 +4899,7 @@ impl<'input> Emitter<'input> {
                     }
 
                     Some((TokenKind::FlowMapEnd, span)) => {
-                        let flow_end = span.end_usize();
+                        let flow_end = span.end;
                         let _ = self.take_current();
                         self.exit_flow_collection();
                         // Check for content immediately after flow collection in block context
@@ -5114,10 +5113,8 @@ impl<'input> Emitter<'input> {
                         .unwrap_or_else(|| self.emit_null());
                 }
 
-                if self.peek_kind() == Some(TokenKind::LineStart) {
-                    if let Some((next_indent, _)) = self.peek_line_start()
-                        && next_indent < min_indent
-                    {
+                if let Some((next_indent, _)) = self.peek_line_start() {
+                    if next_indent < min_indent {
                         match self.peek_kind_nth(1) {
                             Some(
                                 TokenKind::BlockSeqIndicator
@@ -5261,7 +5258,7 @@ impl<'input> Emitter<'input> {
             }
         }
 
-        let final_span = Span::from_usize_range(start_span.start_usize()..end_span.end_usize());
+        let final_span = Span::new(start_span.start..end_span.end);
         let value = if has_continuation {
             Cow::Owned(content.unwrap_or_else(|| first_line.into_owned()))
         } else {
@@ -5313,7 +5310,7 @@ impl<'input> Emitter<'input> {
                 continue;
             }
 
-            let final_span = Span::from_usize_range(start_span.start_usize()..end_span.end_usize());
+            let final_span = Span::new(start_span.start..end_span.end);
             let value = if has_continuation {
                 Cow::Owned(content.unwrap_or_else(|| first_line.into_owned()))
             } else {
@@ -5348,33 +5345,27 @@ impl<'input> Emitter<'input> {
         // Check if we have: StringContent followed immediately by StringEnd.
         // Keep this on borrowed token access; `self.peek()` would clone the
         // common-case token and showed up in local profiles.
-        let (single_token_value, first_content) =
-            if self.peek_kind() == Some(TokenKind::StringContent) {
-                let Some((content_cow, content_span)) = self
-                    .peek_with(|token, span| {
-                        if let Token::StringContent(content) = token {
-                            Some((content.clone(), span))
-                        } else {
-                            debug_assert!(false, "peek_kind/string_content desynchronized");
-                            None
-                        }
-                    })
-                    .flatten()
-                else {
-                    debug_assert!(false, "expected StringContent token");
-                    return self.emit_null();
-                };
-                let _ = self.take_current();
-
-                if self.peek_kind() == Some(TokenKind::StringEnd) {
-                    (Some((content_cow, content_span)), None)
+        let (single_token_value, first_content) = if let Some((content_cow, content_span)) = self
+            .peek_with(|token, span| {
+                if let Token::StringContent(content) = token {
+                    Some((content.clone(), span))
                 } else {
-                    // Multi-line case: save the first content we already consumed.
-                    (None, Some(content_cow))
+                    None
                 }
+            })
+            .flatten()
+        {
+            let _ = self.take_current();
+
+            if self.peek_kind() == Some(TokenKind::StringEnd) {
+                (Some((content_cow, content_span)), None)
             } else {
-                (None, None)
-            };
+                // Multi-line case: save the first content we already consumed.
+                (None, Some(content_cow))
+            }
+        } else {
+            (None, None)
+        };
 
         if let Some((content_cow, content_span)) = single_token_value {
             // Fast path: single content token, zero-copy!
@@ -5391,7 +5382,7 @@ impl<'input> Emitter<'input> {
                 crate::lexer::QuoteStyle::Double => ScalarStyle::DoubleQuoted,
             };
 
-            let full_span = Span::from_usize_range(start_span.start_usize()..end_span.end_usize());
+            let full_span = Span::new(start_span.start..end_span.end);
 
             return Event::Scalar {
                 style,
@@ -5586,7 +5577,7 @@ impl<'input> Emitter<'input> {
             crate::lexer::QuoteStyle::Double => ScalarStyle::DoubleQuoted,
         };
 
-        let full_span = Span::from_usize_range(start_span.start_usize()..end_span.end_usize());
+        let full_span = Span::new(start_span.start..end_span.end);
 
         Event::Scalar {
             style,
@@ -5659,17 +5650,16 @@ impl<'input> Emitter<'input> {
 
         // Per YAML spec 8.1.1.1: content_indent = block_scalar_indent + explicit_indicator
         // The block_scalar_indent is min_indent - 1 (the parent block's indentation).
-        let explicit_indent: Option<usize> = header.indent.map(usize::from);
-        let min_indent_usize = usize::from(min_indent);
+        let explicit_indent: Option<IndentLevel> = header.indent.map(IndentLevel::from);
         // When explicit indicator is present, calculate content_indent from it
         // Otherwise, auto-detect from first content line
-        let mut content_indent: Option<usize> =
-            explicit_indent.map(|ei| min_indent_usize.saturating_sub(1) + ei);
+        let mut content_indent: Option<IndentLevel> =
+            explicit_indent.map(|ei| min_indent.saturating_sub(1).saturating_add(ei));
 
         // Track empty lines before content for indentation validation.
         // If an empty line has MORE indentation than the first content line,
         // it's an InvalidIndentation error.
-        let mut empty_lines_before_content: Vec<(usize, Span)> = Vec::new();
+        let mut empty_lines_before_content: Vec<(IndentLevel, Span)> = Vec::new();
 
         // Skip to first line of content
         while let Some(kind) = self.peek_kind() {
@@ -5683,7 +5673,6 @@ impl<'input> Emitter<'input> {
 
         // Expect LineStart to begin each line
         while let Some((indent_level, line_start_span)) = self.peek_line_start() {
-            let n = usize::from(indent_level);
             let _ = self.take_current();
             let current_kind = self.peek_kind();
 
@@ -5696,7 +5685,7 @@ impl<'input> Emitter<'input> {
             if current_kind == Some(TokenKind::WhitespaceWithTabs) {
                 let tab_span = self.current_span();
                 // Tab is right after LineStart — its column is current_indent.
-                let tab_col = usize::from(self.current_indent);
+                let tab_col = self.current_indent;
                 if let Some(ci) = content_indent {
                     // Content indent is known - tabs before it are indentation (invalid)
                     if tab_col < ci {
@@ -5706,7 +5695,7 @@ impl<'input> Emitter<'input> {
                     // Content indent not yet determined.
                     // Tabs before min_indent are definitely indentation (invalid).
                     // Tabs at or after min_indent might be content, so we can't check yet.
-                    if tab_col < min_indent_usize {
+                    if tab_col < min_indent {
                         self.error(ErrorKind::InvalidIndentation, tab_span);
                     }
                 }
@@ -5717,7 +5706,7 @@ impl<'input> Emitter<'input> {
                 current_kind,
                 None | Some(TokenKind::DocEnd | TokenKind::DocStart)
             );
-            if is_terminator && n == 0 {
+            if is_terminator && indent_level == 0 {
                 break;
             }
 
@@ -5750,22 +5739,22 @@ impl<'input> Emitter<'input> {
             //
             //   clip: >
             // The "clip:" is at the same indent as "strip:", so it's not block scalar content.
-            if content_indent.is_none() && has_content && n < min_indent_usize {
+            if content_indent.is_none() && has_content && indent_level < min_indent {
                 break;
             }
 
             // Track empty lines before content for indentation validation
             if content_indent.is_none() && !has_content {
-                empty_lines_before_content.push((n, line_start_span));
+                empty_lines_before_content.push((indent_level, line_start_span));
             }
 
             // Determine content indent from first non-empty line
-            if content_indent.is_none() && has_content && n > 0 {
-                content_indent = Some(n);
+            if content_indent.is_none() && has_content && indent_level > 0 {
+                content_indent = Some(indent_level);
                 // Validate preceding empty lines - they should not have MORE indentation
                 // than the first content line.
                 for (empty_indent, empty_span) in &empty_lines_before_content {
-                    if *empty_indent > n {
+                    if *empty_indent > indent_level {
                         self.error(ErrorKind::InvalidIndentation, *empty_span);
                     }
                 }
@@ -5774,7 +5763,7 @@ impl<'input> Emitter<'input> {
             // Check termination: lines with content at indent < content_indent terminate the block
             // When explicit indicator is present, content_indent was already calculated correctly
             let should_terminate = if let Some(ci) = content_indent {
-                has_content && n < ci
+                has_content && indent_level < ci
             } else {
                 false
             };
@@ -5785,144 +5774,59 @@ impl<'input> Emitter<'input> {
 
             had_any_line = true;
 
-            // Collect content on this line as parts (zero-copy where possible).
-            // Use a small pre-allocation since typical lines have a handful of
-            // segments (plain + some whitespace/punctuation).
-            let mut line_parts: Vec<Cow<'input, str>> = Vec::with_capacity(4);
+            // Track the raw source range for the accepted line content.
+            // Once a line is known to belong to this block scalar, the handled
+            // token kinds form one contiguous source slice, so we can rebuild
+            // the line from spans instead of assembling per-token fragments.
+            let mut line_start: Option<BytePosition> = None;
+            let mut line_end: Option<BytePosition> = None;
             // Track whether this line has any non-whitespace content so we can
-            // classify purely-whitespace lines without re-scanning all parts.
+            // classify purely-whitespace lines without re-scanning the text.
             let mut has_non_whitespace = false;
             let mut has_tab_in_prefix = false;
             let line_type;
             let mut line_end_span = line_start_span;
 
             // Check for extra indentation (more-indented)
-            let extra_indent = content_indent.map_or(0, |ci| n.saturating_sub(ci));
-            if extra_indent > 0 {
-                // Add extra spaces for more-indented lines
-                // Optimize: use a static buffer for common indent sizes
-                const SPACES: &str = "                                "; // 32 spaces
-                if let Some(spaces) = SPACES.get(..extra_indent) {
-                    line_parts.push(Cow::Borrowed(spaces));
-                } else {
-                    line_parts.push(Cow::Owned(" ".repeat(extra_indent)));
-                }
-            }
+            let extra_indent = content_indent.map_or(0, |ci| indent_level.saturating_sub(ci));
 
             // Hot path: do not use `self.peek()` here. It clones the token
             // payload, and this loop usually consumes the token immediately
             // via `take_current()` anyway. Keep this loop on kind-based
             // lookahead plus `take_current()` unless a future benchmark proves
             // otherwise.
-            while let Some(kind) = self.peek_kind() {
+            while let Some((kind, span)) = self.peek_kind_with_span() {
                 match kind {
-                    TokenKind::Plain => {
-                        let Some((Token::Plain(text), span)) = self.take_current() else {
-                            debug_assert!(false, "peek_kind/plain desynchronized");
-                            break;
-                        };
-                        line_parts.push(text);
-                        // `Plain` tokens always contain some non-whitespace content;
-                        // the lexer emits dedicated whitespace tokens.
-                        has_non_whitespace = true;
+                    TokenKind::Whitespace => {
+                        let _ = self.take_current();
+                        line_start.get_or_insert(span.start);
+                        line_end = Some(span.end);
                         line_end_span = span;
                     }
-                    TokenKind::Whitespace => {
-                        line_parts.push(Cow::Borrowed(" "));
-                        let _ = self.take_current();
-                    }
                     TokenKind::WhitespaceWithTabs => {
-                        let Some((_, span)) = self.take_current() else {
-                            debug_assert!(false, "peek_kind/whitespace_with_tabs desynchronized");
-                            break;
-                        };
-                        // Tabs in content are preserved - read actual content from input
-                        // since it could be multiple characters (tab + space, etc.)
-                        #[allow(
-                            clippy::string_slice,
-                            reason = "Span positions are UTF-8 boundaries"
-                        )]
-                        {
-                            let ws = &self.input[span.start_usize()..span.end_usize()];
-                            if !has_non_whitespace {
-                                // Tabs before any non-whitespace content are part of
-                                // the leading indentation within the block scalar
-                                // content. Treating such lines as "more-indented"
-                                // matches the YAML folding semantics tested by MJS9.
-                                has_tab_in_prefix = true;
-                            }
-                            line_parts.push(Cow::Borrowed(ws));
+                        let _ = self.take_current();
+                        line_start.get_or_insert(span.start);
+                        line_end = Some(span.end);
+                        if !has_non_whitespace {
+                            // Tabs before any non-whitespace content are part of
+                            // the leading indentation within the block scalar
+                            // content. Treat such lines as more-indented so folded
+                            // scalars preserve them more literally.
+                            has_tab_in_prefix = true;
                         }
                         line_end_span = span;
                     }
-                    TokenKind::Comment => {
-                        let Some((Token::Comment(text), span)) = self.take_current() else {
-                            debug_assert!(false, "peek_kind/comment desynchronized");
-                            break;
-                        };
-                        // In block scalars, # is NOT a comment indicator - it's literal content.
-                        let mut comment_text = String::with_capacity(1 + text.len());
-                        comment_text.push('#');
-                        comment_text.push_str(&text);
-                        line_parts.push(Cow::Owned(comment_text));
-                        has_non_whitespace = true;
-                        line_end_span = span;
-                    }
-                    // In block scalars, flow indicators are literal content, not structure.
-                    // The lexer doesn't know we're in a block scalar context.
-                    TokenKind::FlowSeqStart => {
-                        let Some((_, span)) = self.take_current() else {
-                            debug_assert!(false, "peek_kind/flow_seq_start desynchronized");
-                            break;
-                        };
-                        line_parts.push(Cow::Borrowed("["));
-                        has_non_whitespace = true;
-                        line_end_span = span;
-                    }
-                    TokenKind::FlowSeqEnd => {
-                        let Some((_, span)) = self.take_current() else {
-                            debug_assert!(false, "peek_kind/flow_seq_end desynchronized");
-                            break;
-                        };
-                        line_parts.push(Cow::Borrowed("]"));
-                        has_non_whitespace = true;
-                        line_end_span = span;
-                    }
-                    TokenKind::FlowMapStart => {
-                        let Some((_, span)) = self.take_current() else {
-                            debug_assert!(false, "peek_kind/flow_map_start desynchronized");
-                            break;
-                        };
-                        line_parts.push(Cow::Borrowed("{"));
-                        has_non_whitespace = true;
-                        line_end_span = span;
-                    }
-                    TokenKind::FlowMapEnd => {
-                        let Some((_, span)) = self.take_current() else {
-                            debug_assert!(false, "peek_kind/flow_map_end desynchronized");
-                            break;
-                        };
-                        line_parts.push(Cow::Borrowed("}"));
-                        has_non_whitespace = true;
-                        line_end_span = span;
-                    }
-                    TokenKind::Colon => {
-                        let Some((_, span)) = self.take_current() else {
-                            debug_assert!(false, "peek_kind/colon desynchronized");
-                            break;
-                        };
-                        // Colon is literal content in block scalars.
-                        line_parts.push(Cow::Borrowed(":"));
-                        has_non_whitespace = true;
-                        line_end_span = span;
-                    }
-                    TokenKind::Comma => {
-                        let Some((_, span)) = self.take_current() else {
-                            debug_assert!(false, "peek_kind/comma desynchronized");
-                            break;
-                        };
-                        // Comma is literal content in block scalars.
-                        line_parts.push(Cow::Borrowed(","));
+                    TokenKind::Plain
+                    | TokenKind::Comment
+                    | TokenKind::FlowSeqStart
+                    | TokenKind::FlowSeqEnd
+                    | TokenKind::FlowMapStart
+                    | TokenKind::FlowMapEnd
+                    | TokenKind::Colon
+                    | TokenKind::Comma => {
+                        let _ = self.take_current();
+                        line_start.get_or_insert(span.start);
+                        line_end = Some(span.end);
                         has_non_whitespace = true;
                         line_end_span = span;
                     }
@@ -5935,24 +5839,29 @@ impl<'input> Emitter<'input> {
             // If the next token is a LineStart, any gap between line_end_span.end and
             // LineStart.start is trailing whitespace to preserve.
             #[allow(clippy::string_slice, reason = "Span positions are UTF-8 boundaries")]
-            if !line_parts.is_empty()
+            if let Some(end_pos) = line_end
                 && let Some((_, next_span)) = self.peek_line_start()
             {
-                let end_pos = line_end_span.end_usize();
-                let next_start = next_span.start_usize();
+                let next_start = next_span.start;
                 if next_start > end_pos {
                     // There's a gap - check if it's all whitespace
-                    let trailing = &self.input[end_pos..next_start];
-                    if trailing.chars().all(|ch| ch == ' ' || ch == '\t') {
-                        // This is guaranteed to be whitespace-only
-                        line_parts.push(Cow::Borrowed(trailing));
+                    let trailing = &self.input[Span::new(end_pos..next_start).to_range()];
+                    if trailing
+                        .as_bytes()
+                        .iter()
+                        .all(|char| *char == b' ' || *char == b'\t')
+                    {
+                        // This is guaranteed to be whitespace-only.
+                        line_end = Some(next_start);
                     }
                 }
             }
 
+            let has_virtual_indent_content = extra_indent > 0;
+
             // Classify line type using the tracked non-whitespace flag.
-            if line_parts.is_empty() || !has_non_whitespace {
-                if line_parts.is_empty() {
+            if (line_start.is_none() && !has_virtual_indent_content) || !has_non_whitespace {
+                if line_start.is_none() && !has_virtual_indent_content {
                     line_type = LineType::Empty;
                 } else {
                     // Whitespace-only line: treat as more-indented whitespace.
@@ -5972,18 +5881,37 @@ impl<'input> Emitter<'input> {
 
             // Only update end_span if this line had actual content (including
             // whitespace-only content). Structurally empty lines don't extend the span.
-            if !line_parts.is_empty() {
+            if line_start.is_some() || has_virtual_indent_content {
                 end_span = line_end_span;
                 scalar_has_any_part = true;
             }
+
+            #[allow(clippy::string_slice, reason = "Span positions are UTF-8 boundaries")]
+            let line_slice = line_start
+                .zip(line_end)
+                .map(|(start, end)| &self.input[Span::new(start..end).to_range()]);
+            let line_text_len = line_slice.map_or(0, str::len);
+            let extra_indent_usize = usize::from(extra_indent);
+            let line_capacity = extra_indent_usize + line_text_len + 1;
 
             // Stream this line directly into the final value instead of
             // accumulating all lines first.
             if is_literal {
                 // Literal: preserve all newlines. Each logical line contributes
                 // exactly one newline, regardless of whether it has content.
-                for part in &line_parts {
-                    value.push_str(part);
+                value.reserve(line_capacity);
+                if extra_indent > 0 {
+                    const SPACES: &str = "                                ";
+                    if let Some(spaces) = SPACES.get(..extra_indent_usize) {
+                        value.push_str(spaces);
+                    } else {
+                        for _ in 0..extra_indent_usize {
+                            value.push(' ');
+                        }
+                    }
+                }
+                if let Some(line_text) = line_slice {
+                    value.push_str(line_text);
                 }
                 value.push('\n');
             } else {
@@ -5999,6 +5927,7 @@ impl<'input> Emitter<'input> {
                     LineType::MoreIndent => {
                         // More-indented lines preserve the preceding newline, but we
                         // need to be careful about Empty→MoreIndent transitions.
+                        value.reserve(line_capacity);
                         if !value.is_empty() {
                             match prev_type {
                                 LineType::Normal | LineType::MoreIndent => {
@@ -6017,12 +5946,23 @@ impl<'input> Emitter<'input> {
                                 }
                             }
                         }
-                        for part in &line_parts {
-                            value.push_str(part);
+                        if extra_indent > 0 {
+                            const SPACES: &str = "                                ";
+                            if let Some(spaces) = SPACES.get(..extra_indent_usize) {
+                                value.push_str(spaces);
+                            } else {
+                                for _ in 0..extra_indent_usize {
+                                    value.push(' ');
+                                }
+                            }
+                        }
+                        if let Some(line_text) = line_slice {
+                            value.push_str(line_text);
                         }
                         last_content_type = Some(LineType::MoreIndent);
                     }
                     LineType::Normal => {
+                        value.reserve(line_capacity);
                         if !value.is_empty() {
                             match prev_type {
                                 LineType::Normal => {
@@ -6036,8 +5976,8 @@ impl<'input> Emitter<'input> {
                                 }
                             }
                         }
-                        for part in &line_parts {
-                            value.push_str(part);
+                        if let Some(line_text) = line_slice {
+                            value.push_str(line_text);
                         }
                         last_content_type = Some(LineType::Normal);
                     }
@@ -6072,7 +6012,7 @@ impl<'input> Emitter<'input> {
         let full_span = if is_empty_scalar {
             start_span
         } else {
-            Span::from_usize_range(start_span.start_usize()..end_span.end_usize())
+            Span::new(start_span.start..end_span.end)
         };
 
         Event::Scalar {
@@ -6099,10 +6039,24 @@ impl<'input> Emitter<'input> {
     ) {
         use crate::lexer::Chomping;
 
+        #[inline]
+        #[allow(
+            clippy::indexing_slicing,
+            reason = "len > 0 guarantees len - 1 is in bounds"
+        )]
+        fn trim_trailing_newlines_len(input: &str) -> usize {
+            let bytes = input.as_bytes();
+            let mut len = bytes.len();
+            while len > 0 && bytes[len - 1] == b'\n' {
+                len -= 1;
+            }
+            len
+        }
+
         match header.chomping {
             Chomping::Strip => {
                 // Strip: remove all trailing newlines without reallocating.
-                let trimmed_len = value.trim_end_matches('\n').len();
+                let trimmed_len = trim_trailing_newlines_len(value);
                 value.truncate(trimmed_len);
             }
             Chomping::Clip => {
@@ -6120,7 +6074,7 @@ impl<'input> Emitter<'input> {
 
                 if value.ends_with('\n') {
                     // Has at least one trailing newline: keep exactly one.
-                    let trimmed_len = value.trim_end_matches('\n').len();
+                    let trimmed_len = trim_trailing_newlines_len(value);
                     value.truncate(trimmed_len);
                     value.push('\n');
                 } else if value.is_empty() {
