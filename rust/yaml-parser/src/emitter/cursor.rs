@@ -74,10 +74,6 @@ impl<'input> TokenCursor<'input> {
         }
 
         let mut buffer = self.buffer.borrow_mut();
-        if buffer.len() > index {
-            return;
-        }
-
         // Hot path: keep both RefCell borrows open across the fill loop so we
         // do not pay borrow/unborrow overhead once per buffered token.
         let mut lexer = self.lexer.borrow_mut();
@@ -136,7 +132,18 @@ impl<'input> TokenCursor<'input> {
     where
         F: FnOnce(LookaheadWindow<'_, 'input>) -> R,
     {
-        self.ensure_available(pos.saturating_add(max_offset));
+        let needed = pos.saturating_add(max_offset);
+        {
+            let buffer = self.buffer.borrow();
+            if buffer.len() > needed || self.eof.get() {
+                let start = pos.min(buffer.len());
+                return func(LookaheadWindow {
+                    tokens: buffer.get(start..).unwrap_or(&[]),
+                });
+            }
+        }
+
+        self.ensure_available(needed);
         let buffer = self.buffer.borrow();
         let start = pos.min(buffer.len());
         func(LookaheadWindow {
@@ -260,9 +267,9 @@ impl<'input> TokenCursor<'input> {
                 return rt.span;
             }
             if self.eof.get() {
-                return buffer.last().map_or(Span::from_usize_range(0..0), |rt| {
-                    Span::from_usize_range(rt.span.end_usize()..rt.span.end_usize())
-                });
+                return buffer
+                    .last()
+                    .map_or(Span::at(0), |rt| Span::at(rt.span.end));
             }
         }
         self.ensure_available(pos);
@@ -272,9 +279,9 @@ impl<'input> TokenCursor<'input> {
         }
 
         // At EOF, return span at end of last token.
-        buffer.last().map_or(Span::from_usize_range(0..0), |rt| {
-            Span::from_usize_range(rt.span.end_usize()..rt.span.end_usize())
-        })
+        buffer
+            .last()
+            .map_or(Span::at(0), |rt| Span::at(rt.span.end))
     }
 
     /// Take collected lexer errors, draining the lexer to EOF first so that

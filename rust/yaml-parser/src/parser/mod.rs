@@ -403,8 +403,7 @@ where
                     let key = self.parse_node().unwrap_or_else(|| Node::null(start_span));
                     if let Some(parsed_value) = self.parse_mapping_value_with_metadata() {
                         let value = parsed_value.node;
-                        let pair_span =
-                            Span::from_usize_range(key.span.start_usize()..value.span.end_usize());
+                        let pair_span = Span::new(key.span.start..value.span.end);
                         let mut pair = MappingPair::new(pair_span, key, value);
                         if let Some(comment) = parsed_value.leading_comment {
                             pair = pair.with_header_comment(comment);
@@ -421,17 +420,16 @@ where
 
         // Flow collections end at the closing brace. Block collections end at
         // the last successfully parsed value.
-        let start = start_span.start_usize();
         let end = if end_span.start == end_span.end {
             // Block: use last value's end
             pairs
                 .last()
-                .map_or(start, |pair| pair.value.span.end_usize())
+                .map_or(start_span.start, |pair| pair.value.span.end)
         } else {
             // Flow: end_span covers the closing brace
-            end_span.end_usize()
+            end_span.end
         };
-        let span = Span::from_usize_range(start..end);
+        let span = Span::new(start_span.start..end);
 
         let mapping_node = Self::apply_properties(Node::new(Value::Mapping(pairs), span), props);
         self.store_anchor_node(&mapping_node);
@@ -524,17 +522,16 @@ where
 
         // Flow collections end at the closing bracket. Block collections end
         // at the last successfully parsed item.
-        let start = start_span.start_usize();
         let end = if end_span.start == end_span.end {
             // Block: use last item's end
             items
                 .last()
-                .map_or(start, |item| item.node.span.end_usize())
+                .map_or(start_span.start, |item| item.node.span.end)
         } else {
             // Flow: end_span covers the closing bracket
-            end_span.end_usize()
+            end_span.end
         };
-        let span = Span::from_usize_range(start..end);
+        let span = Span::new(start_span.start..end);
 
         let sequence_node = Self::apply_properties(Node::new(Value::Sequence(items), span), props);
         self.store_anchor_node(&sequence_node);
