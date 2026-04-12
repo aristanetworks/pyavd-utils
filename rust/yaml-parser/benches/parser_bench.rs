@@ -150,36 +150,36 @@ fn bench_parse_throughput(criterion: &mut Criterion) {
 fn bench_parse_latency(criterion: &mut Criterion) {
     // Small document
     let small = "key: value\n";
-    let mut micro_group = criterion.benchmark_group("parse_latency");
-    micro_group.measurement_time(Duration::from_secs(15));
-    micro_group.sample_size(150);
-    micro_group.bench_function("yaml_parser/small", |bench| {
+    let mut smaller_group = criterion.benchmark_group("parse_latency");
+    smaller_group.measurement_time(Duration::from_secs(15));
+    smaller_group.sample_size(150);
+    smaller_group.bench_function("yaml_parser/small", |bench| {
         bench_yaml_parser_parse(bench, small);
     });
-    micro_group.bench_function("saphyr_marked/small", |bench| {
+    smaller_group.bench_function("saphyr_marked/small", |bench| {
         bench_saphyr_marked_parse(bench, small);
     });
-    micro_group.finish();
+    smaller_group.finish();
 
     // Medium document
     let medium = NESTED_MAPPING;
     // Large document (combine multiple files)
     let large = format!("{LARGE_MAPPING}\n---\n{LARGE_SEQUENCE}\n---\n{BLOCK_SCALARS}");
-    let mut macro_group = criterion.benchmark_group("parse_latency");
-    macro_group.bench_function("yaml_parser/medium", |bench| {
+    let mut larger_group = criterion.benchmark_group("parse_latency");
+    larger_group.bench_function("yaml_parser/medium", |bench| {
         bench_yaml_parser_parse(bench, medium);
     });
-    macro_group.bench_function("saphyr_marked/medium", |bench| {
+    larger_group.bench_function("saphyr_marked/medium", |bench| {
         bench_saphyr_marked_parse(bench, medium);
     });
-    macro_group.bench_function("yaml_parser/large", |bench| {
+    larger_group.bench_function("yaml_parser/large", |bench| {
         bench_yaml_parser_parse(bench, &large);
     });
-    macro_group.bench_function("saphyr_marked/large", |bench| {
+    larger_group.bench_function("saphyr_marked/large", |bench| {
         bench_saphyr_marked_parse(bench, &large);
     });
 
-    macro_group.finish();
+    larger_group.finish();
 }
 
 /// Benchmark specific scalar types to identify performance characteristics.
@@ -191,22 +191,22 @@ fn bench_scalar_types(criterion: &mut Criterion) {
 key2: "newline\nhere"
 key3: "tab\there"
 "#;
-    let mut micro_group = criterion.benchmark_group("scalar_types");
-    micro_group.measurement_time(Duration::from_secs(15));
-    micro_group.sample_size(150);
-    micro_group.bench_function("yaml_parser/plain", |bench| {
+    let mut smaller_group = criterion.benchmark_group("scalar_types");
+    smaller_group.measurement_time(Duration::from_secs(15));
+    smaller_group.sample_size(150);
+    smaller_group.bench_function("yaml_parser/plain", |bench| {
         bench_yaml_parser_parse(bench, plain);
     });
-    micro_group.bench_function("saphyr_marked/plain", |bench| {
+    smaller_group.bench_function("saphyr_marked/plain", |bench| {
         bench_saphyr_marked_parse(bench, plain);
     });
-    micro_group.bench_function("yaml_parser/double_quoted", |bench| {
+    smaller_group.bench_function("yaml_parser/double_quoted", |bench| {
         bench_yaml_parser_parse(bench, double_quoted);
     });
-    micro_group.bench_function("saphyr_marked/double_quoted", |bench| {
+    smaller_group.bench_function("saphyr_marked/double_quoted", |bench| {
         bench_saphyr_marked_parse(bench, double_quoted);
     });
-    micro_group.finish();
+    smaller_group.finish();
 
     // Block scalars
     let mut block_group = criterion.benchmark_group("scalar_types");
