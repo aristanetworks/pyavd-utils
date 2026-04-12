@@ -30,6 +30,9 @@
 //! Both serde implementations in the benchmark (`yaml_parser::serde::from_str`
 //! and `serde_yaml`) therefore build the same `OwnedYamlValue` tree.
 
+use std::hint::black_box;
+use std::time::Duration;
+
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use saphyr::LoadableYamlNode as _;
 
@@ -76,6 +79,27 @@ const FLOW_COLLECTIONS: &str = include_str!("data/flow_collections.yml");
 const ANCHORS_ALIASES: &str = include_str!("data/anchors_aliases.yml");
 const TAGS: &str = include_str!("data/tags.yml");
 
+fn bench_yaml_parser_parse(bench: &mut criterion::Bencher<'_>, input: &str) {
+    bench.iter(|| {
+        let value = yaml_parser::parse(black_box(input));
+        let _ = black_box(value);
+    });
+}
+
+fn bench_saphyr_marked_parse(bench: &mut criterion::Bencher<'_>, input: &str) {
+    bench.iter(|| {
+        let value = saphyr::MarkedYaml::load_from_str(black_box(input));
+        let _ = black_box(value);
+    });
+}
+
+fn bench_serde_yaml_value_parse(bench: &mut criterion::Bencher<'_>, input: &str) {
+    bench.iter(|| {
+        let value: serde_yaml::Value = serde_yaml::from_str(black_box(input)).unwrap();
+        black_box(value);
+    });
+}
+
 /// Benchmark parsing throughput for different document types.
 fn bench_parse_throughput(criterion: &mut Criterion) {
     let test_cases: &[(&str, &str)] = &[
@@ -97,18 +121,14 @@ fn bench_parse_throughput(criterion: &mut Criterion) {
         group.bench_with_input(
             BenchmarkId::new("yaml_parser", name),
             input,
-            |bench, data| {
-                bench.iter(|| yaml_parser::parse(data));
-            },
+            |bench, data| bench_yaml_parser_parse(bench, data),
         );
 
         // Benchmark saphyr with span tracking (fair comparison since yaml_parser always has spans)
         group.bench_with_input(
             BenchmarkId::new("saphyr_marked", name),
             input,
-            |bench, data| {
-                bench.iter(|| saphyr::MarkedYaml::load_from_str(data));
-            },
+            |bench, data| bench_saphyr_marked_parse(bench, data),
         );
 
         // Benchmark serde_yaml as an additional reference parser using its
@@ -119,12 +139,7 @@ fn bench_parse_throughput(criterion: &mut Criterion) {
         group.bench_with_input(
             BenchmarkId::new("serde_yaml", name),
             input,
-            |bench, data| {
-                bench.iter(|| {
-                    let value: serde_yaml::Value = serde_yaml::from_str(data).unwrap();
-                    std::hint::black_box(value);
-                });
-            },
+            |bench, data| bench_serde_yaml_value_parse(bench, data),
         );
     }
 
@@ -133,72 +148,76 @@ fn bench_parse_throughput(criterion: &mut Criterion) {
 
 /// Benchmark parsing latency (time per parse) for various document sizes.
 fn bench_parse_latency(criterion: &mut Criterion) {
-    let mut group = criterion.benchmark_group("parse_latency");
-
     // Small document
     let small = "key: value\n";
-    group.bench_function("yaml_parser/small", |bench| {
-        bench.iter(|| yaml_parser::parse(small));
+    let mut micro_group = criterion.benchmark_group("parse_latency");
+    micro_group.measurement_time(Duration::from_secs(15));
+    micro_group.sample_size(150);
+    micro_group.bench_function("yaml_parser/small", |bench| {
+        bench_yaml_parser_parse(bench, small);
     });
-    group.bench_function("saphyr_marked/small", |bench| {
-        bench.iter(|| saphyr::MarkedYaml::load_from_str(small));
+    micro_group.bench_function("saphyr_marked/small", |bench| {
+        bench_saphyr_marked_parse(bench, small);
     });
+    micro_group.finish();
 
     // Medium document
     let medium = NESTED_MAPPING;
-    group.bench_function("yaml_parser/medium", |bench| {
-        bench.iter(|| yaml_parser::parse(medium));
-    });
-    group.bench_function("saphyr_marked/medium", |bench| {
-        bench.iter(|| saphyr::MarkedYaml::load_from_str(medium));
-    });
-
     // Large document (combine multiple files)
     let large = format!("{LARGE_MAPPING}\n---\n{LARGE_SEQUENCE}\n---\n{BLOCK_SCALARS}");
-    group.bench_function("yaml_parser/large", |bench| {
-        bench.iter(|| yaml_parser::parse(&large));
+    let mut macro_group = criterion.benchmark_group("parse_latency");
+    macro_group.bench_function("yaml_parser/medium", |bench| {
+        bench_yaml_parser_parse(bench, medium);
     });
-    group.bench_function("saphyr_marked/large", |bench| {
-        bench.iter(|| saphyr::MarkedYaml::load_from_str(&large));
+    macro_group.bench_function("saphyr_marked/medium", |bench| {
+        bench_saphyr_marked_parse(bench, medium);
+    });
+    macro_group.bench_function("yaml_parser/large", |bench| {
+        bench_yaml_parser_parse(bench, &large);
+    });
+    macro_group.bench_function("saphyr_marked/large", |bench| {
+        bench_saphyr_marked_parse(bench, &large);
     });
 
-    group.finish();
+    macro_group.finish();
 }
 
 /// Benchmark specific scalar types to identify performance characteristics.
 fn bench_scalar_types(criterion: &mut Criterion) {
-    let mut group = criterion.benchmark_group("scalar_types");
-
     // Plain scalars (zero-copy opportunity)
     let plain = "key1: plain_value\nkey2: another_plain\nkey3: yet_another\n";
-    group.bench_function("yaml_parser/plain", |bench| {
-        bench.iter(|| yaml_parser::parse(plain));
-    });
-    group.bench_function("saphyr_marked/plain", |bench| {
-        bench.iter(|| saphyr::MarkedYaml::load_from_str(plain));
-    });
-
     // Double-quoted scalars (escape processing)
     let double_quoted = r#"key1: "with \"escapes\""
 key2: "newline\nhere"
 key3: "tab\there"
 "#;
-    group.bench_function("yaml_parser/double_quoted", |bench| {
-        bench.iter(|| yaml_parser::parse(double_quoted));
+    let mut micro_group = criterion.benchmark_group("scalar_types");
+    micro_group.measurement_time(Duration::from_secs(15));
+    micro_group.sample_size(150);
+    micro_group.bench_function("yaml_parser/plain", |bench| {
+        bench_yaml_parser_parse(bench, plain);
     });
-    group.bench_function("saphyr_marked/double_quoted", |bench| {
-        bench.iter(|| saphyr::MarkedYaml::load_from_str(double_quoted));
+    micro_group.bench_function("saphyr_marked/plain", |bench| {
+        bench_saphyr_marked_parse(bench, plain);
     });
+    micro_group.bench_function("yaml_parser/double_quoted", |bench| {
+        bench_yaml_parser_parse(bench, double_quoted);
+    });
+    micro_group.bench_function("saphyr_marked/double_quoted", |bench| {
+        bench_saphyr_marked_parse(bench, double_quoted);
+    });
+    micro_group.finish();
 
     // Block scalars
-    group.bench_function("yaml_parser/block_scalars", |bench| {
-        bench.iter(|| yaml_parser::parse(BLOCK_SCALARS));
+    let mut block_group = criterion.benchmark_group("scalar_types");
+    block_group.bench_function("yaml_parser/block_scalars", |bench| {
+        bench_yaml_parser_parse(bench, BLOCK_SCALARS);
     });
-    group.bench_function("saphyr_marked/block_scalars", |bench| {
-        bench.iter(|| saphyr::MarkedYaml::load_from_str(BLOCK_SCALARS));
+    block_group.bench_function("saphyr_marked/block_scalars", |bench| {
+        bench_saphyr_marked_parse(bench, BLOCK_SCALARS);
     });
 
-    group.finish();
+    block_group.finish();
 }
 
 /// Benchmark serde-based deserialization throughput for different document
@@ -231,8 +250,9 @@ fn bench_serde_deserialize_throughput(criterion: &mut Criterion) {
             input,
             |bench, data| {
                 bench.iter(|| {
-                    let value: OwnedYamlValue = yaml_parser::serde::from_str(data).unwrap();
-                    std::hint::black_box(value);
+                    let value: OwnedYamlValue =
+                        yaml_parser::serde::from_str(black_box(data)).unwrap();
+                    black_box(value);
                 });
             },
         );
@@ -245,8 +265,8 @@ fn bench_serde_deserialize_throughput(criterion: &mut Criterion) {
             input,
             |bench, data| {
                 bench.iter(|| {
-                    let value: OwnedYamlValue = serde_yaml::from_str(data).unwrap();
-                    std::hint::black_box(value);
+                    let value: OwnedYamlValue = serde_yaml::from_str(black_box(data)).unwrap();
+                    black_box(value);
                 });
             },
         );
