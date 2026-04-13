@@ -19,6 +19,10 @@ ARCHIVE_URL = f"https://codeload.github.com/yaml/yaml-test-suite/tar.gz/{PINNED_
 REPO_ROOT = Path(__file__).resolve().parent.parent
 TARGET_DIR = REPO_ROOT / "rust" / "yaml-parser" / "tests" / "yaml-test-suite"
 PLACEHOLDERS = {"README.md", ".gitignore"}
+# Upstream ships friendly alias trees as symlinks. The Rust tests already
+# ignore them, and copying them breaks on Windows when the archive is unpacked
+# without POSIX symlink semantics.
+SKIPPED_TOP_LEVEL_DIRS = {"name", "tags"}
 
 
 def clean_target_dir() -> None:
@@ -52,7 +56,7 @@ def extract_archive(archive_path: Path, extract_root: Path) -> Path:
 
 def copy_suite_contents(source_dir: Path) -> None:
     for child in source_dir.iterdir():
-        if child.name == ".git":
+        if child.name == ".git" or child.name in SKIPPED_TOP_LEVEL_DIRS:
             continue
         destination = TARGET_DIR / child.name
         if child.is_dir():
