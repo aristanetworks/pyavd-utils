@@ -2,8 +2,6 @@
 // Use of this source code is governed by the Apache License 2.0
 // that can be found in the LICENSE file.
 
-use rand::Rng;
-
 const SIMPLE_7_SEED: &[u8] = b"dsfd;kfoA,.iyewrkldJKDHSUBsgvca69834ncxv9873254k;fg87";
 
 #[derive(Debug, derive_more::Display, derive_more::From)]
@@ -12,6 +10,8 @@ pub enum Simple7Error {
     InvalidSaltFormat(std::num::ParseIntError),
     #[display("Invalid hex encoding in encrypted data")]
     InvalidHexEncoding(hex::FromHexError),
+    #[display("Failed to obtain random salt from the operating system")]
+    RandomSourceUnavailable(getrandom::Error),
     #[display("Decrypted data is not valid UTF-8")]
     InvalidUtf8(std::string::FromUtf8Error),
     #[display("Salt must be in the range 0-15, got {_0}")]
@@ -53,7 +53,11 @@ pub fn simple_7_encrypt(data: &str, salt: Option<u8>) -> Result<String, Simple7E
     let salt = match salt {
         Some(s) if s > 15 => return Err(Simple7Error::InvalidSaltValue(s)),
         Some(s) => s,
-        None => rand::thread_rng().gen_range(0..16),
+        None => {
+            let mut random_byte = [0_u8; 1];
+            getrandom::fill(&mut random_byte)?;
+            random_byte[0] & 0x0f
+        }
     };
 
     let cleartext = data.as_bytes();
