@@ -10,6 +10,13 @@ members = [
     "rust/pyvalidation",
     "rust/test_schema_store",
 ]
+default-members = [
+    "rust/avdschema",
+    "rust/validation",
+    "rust/passwords",
+    "rust/pypasswords",
+    "rust/pyvalidation",
+]
 resolver = "2"
 
 [workspace.dependencies]
