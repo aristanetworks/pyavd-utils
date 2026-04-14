@@ -4,10 +4,10 @@
 
 use crate::{Store, any::AnySchema};
 
-#[cfg(feature = "dump_load_files")]
-use std::sync::OnceLock;
 use serde::Deserialize as _;
 use serde_json::json;
+#[cfg(feature = "dump_load_files")]
+use std::sync::OnceLock;
 
 // Using a tmp path in the crate allows us to inspect the generated artifacts.
 // The files in the path are exempted from git.
@@ -260,10 +260,7 @@ static AVD_STORE: OnceLock<Store> = OnceLock::new();
 fn init_avd_store() -> Store {
     use crate::Load as _;
     let bytes = std::fs::read(test_schema_store::get_store_gz_path()).unwrap();
-    Store::from_gz_bytes(&bytes)
-        .unwrap()
-        .as_resolved()
-        .unwrap()
+    Store::from_gz_bytes(&bytes).unwrap().as_resolved().unwrap()
 }
 
 #[cfg(feature = "dump_load_files")]
