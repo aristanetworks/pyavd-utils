@@ -314,12 +314,6 @@ mod tests {
     // Initializing python only once. Otherwise things may crash when running in multiple threads.
     // Also downloading the test schema and extracting to fragments.
     static INIT_PY: OnceLock<()> = OnceLock::new();
-    static INIT_PY_ONLY: OnceLock<()> = OnceLock::new();
-
-    fn setup_python_only() {
-        INIT_PY_ONLY.get_or_init(pyo3::Python::initialize);
-    }
-
     fn setup() {
         INIT_PY.get_or_init(|| {
             pyo3::append_to_inittab!(validation);
@@ -393,7 +387,7 @@ mod tests {
 
     #[test]
     fn validation_result_from_validation_result_internal_error_returns_pyerr() {
-        setup_python_only();
+        setup();
         let result = ::validation::ValidationResult {
             errors: vec![::validation::feedback::Feedback {
                 path: vec![].into(),
@@ -421,7 +415,7 @@ mod tests {
 
     #[test]
     fn first_input_diagnostic_as_pyerr_maps_parse_diagnostic() {
-        setup_python_only();
+        setup();
         let diagnostic = ::validation::feedback::InputDiagnostic::ParseDiagnostic(
             ::validation::feedback::ParseDiagnostic {
                 kind: ::validation::feedback::ParseDiagnosticKind::JsonSyntax,
