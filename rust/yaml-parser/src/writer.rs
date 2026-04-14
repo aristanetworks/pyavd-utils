@@ -11,6 +11,15 @@
 //! correct output and successful round-tripping through the lexer + emitter
 //! pipeline over preserving every presentation detail from the original
 //! source.
+//!
+//! Public contract:
+//!
+//! - input is an event slice, not an AST,
+//! - output is valid YAML for supported event shapes,
+//! - explicit `---` and `...` document markers are preserved when present,
+//! - comments are not emitted,
+//! - formatting is chosen by the writer and is not intended to be a
+//!   presentation-perfect reproduction of the original source.
 
 use std::io::{self, Write};
 

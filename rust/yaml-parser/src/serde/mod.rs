@@ -11,6 +11,15 @@
 //! Deserialization uses the shared lexer/emitter pipeline and drives serde
 //! visitors directly from the YAML event stream instead of building an
 //! intermediate AST first.
+//!
+//! Public contract:
+//!
+//! - [`from_str`] expects exactly one YAML document,
+//! - [`stream_from_str_docs`] is the multi-document entry point,
+//! - anchor state is scoped to each document when streaming,
+//! - [`from_reader`] currently reads the full input into memory before parsing,
+//! - serialization is aimed at common configuration-shaped data,
+//! - non-finite floats are rejected during serialization.
 
 mod de;
 mod event_de;
