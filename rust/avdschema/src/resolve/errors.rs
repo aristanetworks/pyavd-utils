@@ -13,6 +13,7 @@ use super::walker::SchemaWalkError;
 pub enum SchemaResolverError {
     SchemaType(SchemaType),
     RefSyntax(RefSyntax),
+    RefRegexError(RefRegexError),
     SchemaPath(SchemaPath),
     SchemaStoreError(SchemaStoreError),
     SchemaWalkError(SchemaWalkError),
@@ -30,6 +31,13 @@ pub struct SchemaType {
 #[display("Invalid syntax for schema $ref '{schema_ref}'.")]
 pub struct RefSyntax {
     pub schema_ref: String,
+}
+
+#[derive(Debug, derive_more::Constructor, derive_more::Display)]
+#[display("Regex error for schema $ref '{schema_ref}': {regex_error}.")]
+pub struct RefRegexError {
+    pub schema_ref: String,
+    pub regex_error: String,
 }
 
 #[derive(Debug, derive_more::Constructor, derive_more::Display)]

@@ -4,7 +4,7 @@
 
 use std::sync::LazyLock;
 
-use crate::resolve::errors::{RefSyntax, SchemaResolverError};
+use crate::resolve::errors::{RefRegexError, RefSyntax, SchemaResolverError};
 use crate::{Store, any::AnySchema};
 use fancy_regex::Regex;
 
@@ -21,7 +21,10 @@ pub fn resolve_ref<'a>(ref_: &str, store: &'a Store) -> Result<&'a AnySchema, Sc
     let syntax_err = || RefSyntax {
         schema_ref: ref_.to_owned(),
     };
-    let captures = REF_REGEX.captures(ref_).ok().flatten().ok_or_else(syntax_err)?;
+    let captures = REF_REGEX
+        .captures(ref_)
+        .map_err(|e| RefRegexError::new(ref_.to_owned(), e.to_string()))?
+        .ok_or_else(syntax_err)?;
     let schema_name = captures.get(1).ok_or_else(syntax_err)?.as_str();
     let schema_path = captures.get(2).ok_or_else(syntax_err)?.as_str();
 
