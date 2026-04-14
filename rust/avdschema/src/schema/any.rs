@@ -2,6 +2,7 @@
 // Use of this source code is governed by the Apache License 2.0
 // that can be found in the LICENSE file.
 
+#[cfg(feature = "dump_load_files")]
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
@@ -10,14 +11,11 @@ use serde_json::Value;
 use crate::{
     base::Deprecation,
     delegate_anyschema_method,
-    utils::{
-        dump::Dump,
-        load::{Load, LoadError},
-    },
+    utils::{dump::Dump, load::Load},
 };
 
 #[cfg(feature = "dump_load_files")]
-use crate::utils::load::LoadFromFragments;
+use crate::utils::load::{LoadError, LoadFromFragments};
 
 use super::{boolean::Bool, dict::Dict, int::Int, list::List, str::Str};
 
