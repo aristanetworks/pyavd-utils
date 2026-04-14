@@ -72,7 +72,7 @@ fn validate_max_length(schema: &Str, input: &str, ctx: &mut Context) {
 fn validate_pattern(schema: &Str, input: &str, ctx: &mut Context) {
     if let Some(pattern) = &schema.pattern {
         let regex_pattern = pattern.get_compiled_pattern();
-        if !regex_pattern.is_match(input) {
+        if !regex_pattern.is_match(input).unwrap_or(false) {
             ctx.add_error(Violation::NotMatchingPattern {
                 pattern: pattern.to_string(),
                 found: input.into(),
@@ -350,6 +350,165 @@ mod tests {
                 issue: Violation::NotMatchingPattern {
                     pattern: "[a-z][A-Z][a-z]".into(),
                     found: "foo".into(),
+                }
+                .into()
+            }]
+        );
+    }
+
+    // --- lookaround tests (require fancy-regex) ---
+
+    #[test]
+    fn validate_pattern_positive_lookahead_ok() {
+        // Pattern: starts with a lowercase letter AND contains at least one digit
+        let schema = Str {
+            pattern: Some("(?=[a-z])(?=.*[0-9])[a-z0-9]+".into()),
+            ..Default::default()
+        };
+        let input = "abc123".into();
+        let store = get_test_store();
+        let mut ctx = Context::new(&store, None);
+        schema.validate_value(&input, &mut ctx);
+        assert!(ctx.result.errors.is_empty() && ctx.result.infos.is_empty());
+    }
+
+    #[test]
+    fn validate_pattern_positive_lookahead_err() {
+        // Same pattern — "abcdef" has no digit so the lookahead fails
+        let schema = Str {
+            pattern: Some("(?=[a-z])(?=.*[0-9])[a-z0-9]+".into()),
+            ..Default::default()
+        };
+        let input = "abcdef".into();
+        let store = get_test_store();
+        let mut ctx = Context::new(&store, None);
+        schema.validate_value(&input, &mut ctx);
+        assert!(ctx.result.infos.is_empty());
+        assert_eq!(
+            ctx.result.errors,
+            vec![Feedback {
+                path: vec![].into(),
+                issue: Violation::NotMatchingPattern {
+                    pattern: "(?=[a-z])(?=.*[0-9])[a-z0-9]+".into(),
+                    found: "abcdef".into(),
+                }
+                .into()
+            }]
+        );
+    }
+
+    #[test]
+    fn validate_pattern_negative_lookahead_ok() {
+        // Pattern: no uppercase letters allowed
+        let schema = Str {
+            pattern: Some("(?!.*[A-Z])[a-z0-9]+".into()),
+            ..Default::default()
+        };
+        let input = "abc123".into();
+        let store = get_test_store();
+        let mut ctx = Context::new(&store, None);
+        schema.validate_value(&input, &mut ctx);
+        assert!(ctx.result.errors.is_empty() && ctx.result.infos.is_empty());
+    }
+
+    #[test]
+    fn validate_pattern_negative_lookahead_err() {
+        // Same pattern — "abcABC" contains uppercase so the negative lookahead fails
+        let schema = Str {
+            pattern: Some("(?!.*[A-Z])[a-z0-9]+".into()),
+            ..Default::default()
+        };
+        let input = "abcABC".into();
+        let store = get_test_store();
+        let mut ctx = Context::new(&store, None);
+        schema.validate_value(&input, &mut ctx);
+        assert!(ctx.result.infos.is_empty());
+        assert_eq!(
+            ctx.result.errors,
+            vec![Feedback {
+                path: vec![].into(),
+                issue: Violation::NotMatchingPattern {
+                    pattern: "(?!.*[A-Z])[a-z0-9]+".into(),
+                    found: "abcABC".into(),
+                }
+                .into()
+            }]
+        );
+    }
+
+    #[test]
+    fn validate_pattern_positive_lookbehind_ok() {
+        // Pattern: "bar" must be preceded by "foo"
+        // [a-z]+(?<=foo)bar — the engine backtracks until [a-z]+ has consumed exactly "foo"
+        let schema = Str {
+            pattern: Some("[a-z]+(?<=foo)bar".into()),
+            ..Default::default()
+        };
+        let input = "foobar".into();
+        let store = get_test_store();
+        let mut ctx = Context::new(&store, None);
+        schema.validate_value(&input, &mut ctx);
+        assert!(ctx.result.errors.is_empty() && ctx.result.infos.is_empty());
+    }
+
+    #[test]
+    fn validate_pattern_positive_lookbehind_err() {
+        // "bazbar" — "bar" is not preceded by "foo" so the lookbehind fails
+        let schema = Str {
+            pattern: Some("[a-z]+(?<=foo)bar".into()),
+            ..Default::default()
+        };
+        let input = "bazbar".into();
+        let store = get_test_store();
+        let mut ctx = Context::new(&store, None);
+        schema.validate_value(&input, &mut ctx);
+        assert!(ctx.result.infos.is_empty());
+        assert_eq!(
+            ctx.result.errors,
+            vec![Feedback {
+                path: vec![].into(),
+                issue: Violation::NotMatchingPattern {
+                    pattern: "[a-z]+(?<=foo)bar".into(),
+                    found: "bazbar".into(),
+                }
+                .into()
+            }]
+        );
+    }
+
+    #[test]
+    fn validate_pattern_negative_lookbehind_ok() {
+        // Pattern: "bar" must NOT be preceded by "foo"
+        let schema = Str {
+            pattern: Some("[a-z]+(?<!foo)bar".into()),
+            ..Default::default()
+        };
+        let input = "bazbar".into();
+        let store = get_test_store();
+        let mut ctx = Context::new(&store, None);
+        schema.validate_value(&input, &mut ctx);
+        assert!(ctx.result.errors.is_empty() && ctx.result.infos.is_empty());
+    }
+
+    #[test]
+    fn validate_pattern_negative_lookbehind_err() {
+        // "foobar" — "bar" IS preceded by "foo" so the negative lookbehind fails
+        let schema = Str {
+            pattern: Some("[a-z]+(?<!foo)bar".into()),
+            ..Default::default()
+        };
+        let input = "foobar".into();
+        let store = get_test_store();
+        let mut ctx = Context::new(&store, None);
+        schema.validate_value(&input, &mut ctx);
+        assert!(ctx.result.infos.is_empty());
+        assert_eq!(
+            ctx.result.errors,
+            vec![Feedback {
+                path: vec![].into(),
+                issue: Violation::NotMatchingPattern {
+                    pattern: "[a-z]+(?<!foo)bar".into(),
+                    found: "foobar".into(),
                 }
                 .into()
             }]
