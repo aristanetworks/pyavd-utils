@@ -2,7 +2,7 @@
 // Use of this source code is governed by the Apache License 2.0
 // that can be found in the LICENSE file.
 
-use std::{path::PathBuf, sync::OnceLock};
+use std::sync::OnceLock;
 
 use crate::{Load as _, Store, any::AnySchema};
 use serde::Deserialize as _;
@@ -10,11 +10,16 @@ use serde_json::json;
 
 // Using a tmp path in the crate allows us to inspect the generated artifacts.
 // The files in the path are exempted from git.
+#[cfg(feature = "dump_load_files")]
+use std::path::PathBuf;
+#[cfg(feature = "dump_load_files")]
 const TMP_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tmp");
 
+#[cfg(feature = "dump_load_files")]
 pub(crate) fn get_tmp_path() -> PathBuf {
     PathBuf::from(TMP_PATH)
 }
+#[cfg(feature = "dump_load_files")]
 pub(crate) fn get_tmp_file(filename: &str) -> PathBuf {
     get_tmp_path().join(filename)
 }
@@ -247,16 +252,22 @@ pub(crate) fn get_test_dict_schema() -> AnySchema {
     .unwrap()
 }
 
+// AVD_STORE, init_avd_store and get_avd_store are always compiled (not gated behind
+// dump_load_files) to satisfy #![deny(unused_crate_dependencies)] for test_schema_store.
+// They are only called from dump_load_files-gated tests, hence the allow(dead_code).
+#[allow(dead_code)]
 static AVD_STORE: OnceLock<Store> = OnceLock::new();
 
+#[allow(dead_code)]
 fn init_avd_store() -> Store {
-    // Load schemas from fragments, resolve all $ref and save in a store we can compare the loaded store with.
-    Store::from_file(Some(test_schema_store::get_store_gz_path()))
+    let bytes = std::fs::read(test_schema_store::get_store_gz_path()).unwrap();
+    Store::from_gz_bytes(&bytes)
         .unwrap()
         .as_resolved()
         .unwrap()
 }
 
+#[allow(dead_code)]
 pub(crate) fn get_avd_store() -> &'static Store {
     AVD_STORE.get_or_init(init_avd_store)
 }
