@@ -122,7 +122,7 @@ pub enum LoadError {
     NoFilesFound {},
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "dump_load_files"))]
 mod tests {
     use super::Load;
     use crate::Store;

@@ -2,19 +2,22 @@
 // Use of this source code is governed by the Apache License 2.0
 // that can be found in the LICENSE file.
 
-use std::{path::PathBuf, sync::OnceLock};
+use crate::{Store, any::AnySchema};
 
-use crate::{Load as _, Store, any::AnySchema};
 use serde::Deserialize as _;
 use serde_json::json;
-
 // Using a tmp path in the crate allows us to inspect the generated artifacts.
 // The files in the path are exempted from git.
+#[cfg(feature = "dump_load_files")]
+use std::{path::PathBuf, sync::OnceLock};
+#[cfg(feature = "dump_load_files")]
 const TMP_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tmp");
 
+#[cfg(feature = "dump_load_files")]
 pub(crate) fn get_tmp_path() -> PathBuf {
     PathBuf::from(TMP_PATH)
 }
+#[cfg(feature = "dump_load_files")]
 pub(crate) fn get_tmp_file(filename: &str) -> PathBuf {
     get_tmp_path().join(filename)
 }
@@ -247,16 +250,19 @@ pub(crate) fn get_test_dict_schema() -> AnySchema {
     .unwrap()
 }
 
+#[cfg(feature = "dump_load_files")]
 static AVD_STORE: OnceLock<Store> = OnceLock::new();
 
+#[cfg(feature = "dump_load_files")]
 fn init_avd_store() -> Store {
-    // Load schemas from fragments, resolve all $ref and save in a store we can compare the loaded store with.
-    Store::from_file(Some(test_schema_store::get_store_gz_path()))
+    use crate::Load as _;
+    Store::from_file(Some(&test_schema_store::get_store_gz_path()))
         .unwrap()
         .as_resolved()
         .unwrap()
 }
 
+#[cfg(feature = "dump_load_files")]
 pub(crate) fn get_avd_store() -> &'static Store {
     AVD_STORE.get_or_init(init_avd_store)
 }
