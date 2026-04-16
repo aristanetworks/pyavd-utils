@@ -2,15 +2,27 @@
 // Use of this source code is governed by the Apache License 2.0
 // that can be found in the LICENSE file.
 
-use avdschema::{SchemaDataMapping, SchemaDataSequence, SchemaDataValue};
+use avdschema::SchemaDataMapping;
+use avdschema::SchemaDataSequence;
+use avdschema::SchemaDataValue;
 
-use crate::{MappingPair, SequenceItem, Value};
+use crate::MappingPair;
+use crate::SequenceItem;
+use crate::Value;
 
 #[derive(Debug, Clone, Copy)]
+/// Schema-data mapping view over a YAML mapping's raw pair slice.
 pub struct YamlMapping<'a, 'input>(&'a [MappingPair<'input>]);
 
 #[derive(Debug, Clone, Copy)]
 pub struct YamlSequence<'a, 'input>(&'a [SequenceItem<'input>]);
+
+impl<'a, 'input> YamlMapping<'a, 'input> {
+    /// Create a schema-data mapping view from a YAML mapping pair slice.
+    pub const fn new(pairs: &'a [MappingPair<'input>]) -> Self {
+        Self(pairs)
+    }
+}
 
 impl<'a, 'input: 'a> SchemaDataValue<'a> for &'a Value<'input> {
     type Mapping = YamlMapping<'a, 'input>;
@@ -77,14 +89,25 @@ impl<'a, 'input: 'a> SchemaDataSequence<'a> for YamlSequence<'a, 'input> {
 mod tests {
     use std::borrow::Cow;
 
-    use avdschema::{
-        SchemaDataMapping as _, SchemaDataSequence as _, SchemaDataValue as _, SchemaKeys, Store,
-        any::AnySchema, dict::Dict, get_schema_from_path,
-    };
+    use avdschema::SchemaDataMapping as _;
+    use avdschema::SchemaDataSequence as _;
+    use avdschema::SchemaDataValue as _;
+    use avdschema::SchemaKeys;
+    use avdschema::Store;
+    use avdschema::any::AnySchema;
+    use avdschema::dict::Dict;
+    use avdschema::get_schema_from_path;
     use serde_yaml::from_str;
 
-    use super::{YamlMapping, YamlSequence};
-    use crate::{Integer, MappingPair, Node, SequenceItem, Span, Value, parse};
+    use super::YamlMapping;
+    use super::YamlSequence;
+    use crate::Integer;
+    use crate::MappingPair;
+    use crate::Node;
+    use crate::SequenceItem;
+    use crate::Span;
+    use crate::Value;
+    use crate::parse;
 
     fn string_value(value: &'static str) -> Value<'static> {
         Value::String(Cow::Borrowed(value))

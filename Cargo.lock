@@ -2620,6 +2620,7 @@ dependencies = [
 name = "yaml-parser"
 version = "0.0.5-dev1"
 dependencies = [
+ "avdschema",
  "criterion 0.8.2",
  "derive_more",
  "saphyr",
