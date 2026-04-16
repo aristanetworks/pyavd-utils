@@ -162,6 +162,8 @@
 //! - `ARCHITECTURE.md` for implementation details
 
 mod ast_event;
+#[cfg(feature = "avdschema")]
+mod avdschema_data_impl;
 mod emitter;
 mod error;
 mod event;
