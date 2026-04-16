@@ -285,6 +285,7 @@ pub trait ValidatableSequence<'a> {
 // === Implementations ===
 
 mod serde_json_impl;
+mod yaml_parser_impl;
 
 #[cfg(test)]
 mod tests;

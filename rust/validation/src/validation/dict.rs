@@ -279,12 +279,14 @@ mod tests {
     use avdschema::str::Str;
     use ordermap::OrderMap;
     use serde::Deserialize as _;
+    use yaml_parser::parse;
 
     use super::*;
     use crate::context::Configuration;
     use crate::context::Context;
     use crate::feedback::CoercionNote;
     use crate::feedback::Feedback;
+    use crate::feedback::SourceSpan;
     use crate::feedback::WarningIssue;
     use crate::validation::test_utils::get_test_store;
 
@@ -698,6 +700,30 @@ mod tests {
         )
     }
 
+    #[test]
+    fn validate_yaml_unexpected_key_uses_key_span() {
+        let schema = Dict {
+            keys: Some(OrderMap::from_iter([("foo".into(), Str::default().into())])),
+            ..Default::default()
+        };
+        let (docs, errors) = parse("bar: 1\n");
+        assert!(errors.is_empty());
+        let input = docs.first().expect("expected a parsed document");
+
+        let store = get_test_store();
+        let mut ctx = Context::new(&store, None);
+        let _ = schema.validate(input, &mut ctx);
+
+        assert_eq!(
+            ctx.result.errors,
+            vec![Feedback {
+                path: vec!["bar".into()].into(),
+                span: Some(SourceSpan { start: 0, end: 3 }),
+                issue: Violation::UnexpectedKey().into()
+            }]
+        );
+    }
+
     /// Test that keys starting with underscore are preserved in output but not validated
     #[test]
     fn validate_underscore_key_preserved() {
@@ -775,6 +801,43 @@ mod tests {
                 .into()
             }]
         )
+    }
+
+    #[test]
+    fn validate_yaml_deprecated_key_uses_key_span() {
+        let schema: Dict = Dict::deserialize(serde_json::json!({
+            "keys": {
+                "foo": {
+                    "type": "str",
+                    "deprecation": {
+                        "warning": true,
+                        "remove_in_version": "1.2.3",
+                    }
+                }
+            }
+        }))
+        .unwrap();
+        let (docs, errors) = parse("foo: bar\n");
+        assert!(errors.is_empty());
+        let input = docs.first().expect("expected a parsed document");
+
+        let store = get_test_store();
+        let mut ctx = Context::new(&store, None);
+        let _ = schema.validate(input, &mut ctx);
+
+        assert_eq!(
+            ctx.result.warnings,
+            vec![Feedback {
+                path: vec!["foo".into()].into(),
+                span: Some(SourceSpan { start: 0, end: 3 }),
+                issue: WarningIssue::Deprecated(Deprecated {
+                    path: vec!["foo".into()].into(),
+                    replacement: None.into(),
+                    version: Some("1.2.3".into()).into(),
+                    url: None.into()
+                })
+            }]
+        );
     }
 
     // Tests a key that is marked as removed returns the proper error.
