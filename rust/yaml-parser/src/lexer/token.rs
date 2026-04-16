@@ -17,7 +17,7 @@ use crate::span::IndentLevel;
 
 /// Quote style for quoted strings.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, derive_more::Display)]
-pub enum QuoteStyle {
+pub(crate) enum QuoteStyle {
     /// Single quote (')
     #[display("'")]
     Single,
@@ -28,7 +28,7 @@ pub enum QuoteStyle {
 
 /// Block scalar header information.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct BlockScalarHeader {
+pub(crate) struct BlockScalarHeader {
     /// Explicit indentation indicator (1-9), or None for auto-detect.
     pub indent: Option<u8>,
     /// Chomping behavior for trailing newlines.
@@ -46,7 +46,7 @@ impl std::fmt::Display for BlockScalarHeader {
 
 /// Block scalar chomping indicator.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, derive_more::Display)]
-pub enum Chomping {
+pub(crate) enum Chomping {
     /// `-` strip all trailing newlines
     #[display("-")]
     Strip,
@@ -59,12 +59,82 @@ pub enum Chomping {
     Keep,
 }
 
+/// Plain-scalar boundary classification captured while lexing.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct PlainScalarMeta {
+    /// The scalar ended because `:` acts as a YAML value indicator.
+    pub terminated_by_colon: bool,
+    /// The scalar ended because whitespace before `#` starts a comment.
+    pub terminated_by_comment: bool,
+    /// In flow context, the next line begins another plain segment that should
+    /// be folded into the same scalar by the emitter.
+    pub may_continue_on_next_line_in_flow: bool,
+}
+
+/// Plain scalar payload plus lexer-owned boundary metadata.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PlainScalarToken<'input> {
+    text: Cow<'input, str>,
+    meta: PlainScalarMeta,
+}
+
+impl<'input> PlainScalarToken<'input> {
+    #[must_use]
+    pub(crate) fn new(text: Cow<'input, str>, meta: PlainScalarMeta) -> Self {
+        Self { text, meta }
+    }
+
+    #[must_use]
+    pub(crate) fn as_str(&self) -> &str {
+        self.text.as_ref()
+    }
+
+    #[must_use]
+    pub(crate) fn into_text(self) -> Cow<'input, str> {
+        self.text
+    }
+
+    #[must_use]
+    pub(crate) fn meta(&self) -> PlainScalarMeta {
+        self.meta
+    }
+
+    #[must_use]
+    pub(crate) fn terminated_by_mapping_value_indicator(&self) -> bool {
+        self.meta.terminated_by_colon
+    }
+}
+
+impl std::fmt::Display for PlainScalarToken<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.text.fmt(f)
+    }
+}
+
+impl<'input> From<Cow<'input, str>> for PlainScalarToken<'input> {
+    fn from(text: Cow<'input, str>) -> Self {
+        Self::new(text, PlainScalarMeta::default())
+    }
+}
+
+impl<'input> From<&'input str> for PlainScalarToken<'input> {
+    fn from(text: &'input str) -> Self {
+        Self::from(Cow::Borrowed(text))
+    }
+}
+
+impl From<String> for PlainScalarToken<'_> {
+    fn from(text: String) -> Self {
+        Self::from(Cow::Owned(text))
+    }
+}
+
 /// A YAML token.
 ///
 /// The lifetime `'input` refers to the input string being tokenized.
 /// Token content uses `Cow<'input, str>` for zero-copy when possible.
 #[derive(Debug, Clone, PartialEq, derive_more::Display)]
-pub enum Token<'input> {
+pub(crate) enum Token<'input> {
     // Indicators (single characters with special meaning)
     /// `-` block sequence entry indicator (when followed by whitespace or newline)
     #[display("'-'")]
@@ -102,7 +172,7 @@ pub enum Token<'input> {
     // Scalars
     /// A plain (unquoted) scalar
     #[display("plain scalar '{_0}'")]
-    Plain(Cow<'input, str>),
+    Plain(PlainScalarToken<'input>),
     /// Opening quote for a quoted string (' or ")
     #[display("string start ({_0})")]
     StringStart(QuoteStyle),

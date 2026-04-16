@@ -1,5 +1,5 @@
 [workspace]
-package.version = "0.0.3"
+package.version = "0.0.4"
 package.license = "Apache-2.0"
 
 members = [
@@ -10,6 +10,14 @@ members = [
     "rust/pyvalidation",
     "rust/test_schema_store",
     "rust/yaml-parser",
+]
+# Exclude test_schema_store from default members so cargo-about and cargo-deny will not pick this up.
+default-members = [
+    "rust/avdschema",
+    "rust/validation",
+    "rust/passwords",
+    "rust/pypasswords",
+    "rust/pyvalidation",
 ]
 resolver = "2"
 
@@ -29,6 +37,16 @@ serde_yaml = { version = "0.9.33" }
 [profile.release-lto]
 inherits = "release"
 lto = true
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+missing_debug_implementations = "warn"
+unreachable_pub = "warn"
+unused_qualifications = "warn"
+deprecated = "warn"
+semicolon_in_expressions_from_macros = "deny"
+rust_2024_compatibility = { level = "warn", priority = -1 }
 
 [workspace.lints.clippy]
 # Pedantic group

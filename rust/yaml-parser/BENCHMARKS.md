@@ -6,27 +6,43 @@
 
 # Benchmark Report
 
-**Date:** 2026-03-21
-**Parser Version:** 0.0.2
-**Source of truth for this snapshot:** `/tmp/yaml-parser-bench-20260321-full-final-cleanup.txt`
+**Date:** 2026-04-12
+**Parser Version:** 0.0.4
+**Source of truth for this snapshot:** `tmp/remote-bench/runs/20260412T143412Z-candidate-only/candidate_report.md`
+**Run type:** remote candidate-only workspace run over `parse_throughput`, `parse_latency`, `scalar_types`, and `serde_deserialize_throughput`
 
 ## How To Run
 
-From `rust/yaml-parser`:
+From the repository root, use the remote bench harness for stable numbers:
+
+```bash
+scripts/remote_bench.sh --baseline-ref HEAD \
+  --filter '^(parse_throughput|parse_latency|scalar_types|serde_deserialize_throughput)/'
+```
+
+The runner sources `tmp/remote-bench/config.env` by default. Set
+`REMOTE_BENCH_HOST` there and optionally `REMOTE_BENCH_SUBDIR` if the remote
+workspace should live somewhere other than `~/.cache/pyavd-utils-bench`.
+
+For focused follow-up work, either narrow the Criterion regex or pin exact
+bench ids:
+
+```bash
+scripts/remote_bench.sh --filter 'parse_latency/(yaml_parser|saphyr_marked)'
+scripts/remote_bench.sh --benchmark 'parse_latency/yaml_parser/small'
+scripts/remote_bench.sh --benchmark 'parse_throughput/yaml_parser/block_scalars'
+```
+
+Each comparison run writes fetched Criterion artifacts plus `metadata.txt`,
+`comparison.txt`, `baseline_report.md`, and `candidate_report.md` under
+`tmp/remote-bench/runs/<timestamp>/`.
+
+For local iteration only, you can still run the suite directly from
+`rust/yaml-parser`:
 
 ```bash
 cargo bench --bench parser_bench --features serde
 ```
-
-For analysis work, prefer one full captured run:
-
-```bash
-cargo bench -p yaml-parser --bench parser_bench --features serde \
-  > /tmp/yaml-parser-bench-YYYYMMDD-full.txt 2>&1
-```
-
-Then extract the comparisons you need from that file rather than re-running
-small slices repeatedly.
 
 ## Comparison Targets
 
@@ -40,55 +56,56 @@ Notes:
   as a useful reference rather than a perfect apples-to-apples parser match.
 - `serde_deserialize_throughput` compares deserialization into the same logical
   target type, `OwnedYamlValue(yaml_parser::Value<'static>)`.
-- Absolute numbers vary with machine load. Relative comparisons are the main
-  signal.
+- Absolute numbers vary with host and load. The remote host mainly reduces
+  variance; relative comparisons are still the main signal.
 
 ## Current Takeaways
 
-- Parse throughput is now ahead of both references on
-  `large_mapping`, `nested_mapping`, `large_sequence`, `flow_collections`, and
+- Relative to `saphyr_marked`, `yaml_parser` is ahead on 4/7 parse-throughput
+  datasets: `large_mapping`, `nested_mapping`, `flow_collections`, and
   `anchors_aliases`.
-- `tags` is still slightly behind `saphyr_marked`, but ahead of `serde_yaml`.
-- `block_scalars` remains the main parse-throughput gap versus `saphyr_marked`,
-  even though yaml-parser is well ahead of `serde_yaml`.
-- Serde throughput is now competitive or ahead on every benchmark corpus in
-  this run.
-- Latency is strong overall: yaml-parser is faster than `saphyr_marked` on all
-  three `parse_latency` cases in this snapshot.
+- Relative to `saphyr_marked`, `yaml_parser` is still behind on
+  `large_sequence`, `block_scalars`, and slightly behind on `tags`.
+- Relative to `saphyr_marked`, `yaml_parser` is ahead on `medium` and `large`
+  parse latency, but still behind on `small`.
+- Relative to `serde_yaml`, `yaml_parser` remains ahead on all 7/7
+  serde-deserialize throughput datasets.
+- The scalar microbenchmarks are still all behind `saphyr_marked`, with the
+  largest gap in `block_scalars`.
 
 ## Parse Throughput
 
-Median throughput from the captured full run.
+Median throughput from the remote candidate report.
 
 | Dataset | yaml_parser | saphyr_marked | serde_yaml | yaml_parser vs saphyr | yaml_parser vs serde_yaml |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| `large_mapping` | 29.312 MiB/s | 29.031 MiB/s | 21.746 MiB/s | 101.0% | 134.8% |
-| `nested_mapping` | 27.119 MiB/s | 21.308 MiB/s | 20.652 MiB/s | 127.3% | 131.3% |
-| `large_sequence` | 33.450 MiB/s | 30.464 MiB/s | 27.762 MiB/s | 109.8% | 120.5% |
-| `block_scalars` | 75.559 MiB/s | 93.617 MiB/s | 64.808 MiB/s | 80.7% | 116.6% |
-| `flow_collections` | 23.326 MiB/s | 20.349 MiB/s | 19.528 MiB/s | 114.6% | 119.4% |
-| `anchors_aliases` | 25.949 MiB/s | 18.170 MiB/s | 18.550 MiB/s | 142.8% | 139.9% |
-| `tags` | 26.321 MiB/s | 27.372 MiB/s | 24.459 MiB/s | 96.2% | 107.6% |
+| `large_mapping` | 18.245 MiB/s | 15.938 MiB/s | 12.624 MiB/s | 114.5% | 144.5% |
+| `nested_mapping` | 15.932 MiB/s | 12.856 MiB/s | 10.613 MiB/s | 123.9% | 150.1% |
+| `large_sequence` | 19.006 MiB/s | 19.983 MiB/s | 14.860 MiB/s | 95.1% | 127.9% |
+| `block_scalars` | 41.507 MiB/s | 51.897 MiB/s | 33.986 MiB/s | 80.0% | 122.1% |
+| `flow_collections` | 13.701 MiB/s | 12.664 MiB/s | 10.449 MiB/s | 108.2% | 131.1% |
+| `anchors_aliases` | 13.397 MiB/s | 11.100 MiB/s | 9.886 MiB/s | 120.7% | 135.5% |
+| `tags` | 16.169 MiB/s | 16.396 MiB/s | 12.845 MiB/s | 98.6% | 125.9% |
 
 ## Parse Latency
 
-Median time per parse from the captured full run.
+Median time per parse from the remote candidate report.
 
-| Dataset | yaml_parser | saphyr_marked |
-| --- | ---: | ---: |
-| `small` | 1.101 us | 1.147 us |
-| `medium` | 40.300 us | 59.862 us |
-| `large` | 133.71 us | 136.26 us |
+| Dataset | yaml_parser | saphyr_marked | yaml_parser vs saphyr |
+| --- | ---: | ---: | ---: |
+| `small` | 2.097 us | 1.987 us | 105.5% |
+| `medium` | 72.695 us | 91.034 us | 79.9% |
+| `large` | 207.021 us | 219.182 us | 94.5% |
 
 ## Scalar Microbenchmarks
 
-Median time per parse from the captured full run.
+Median time per parse from the remote candidate report.
 
-| Dataset | yaml_parser | saphyr_marked |
-| --- | ---: | ---: |
-| `plain` | 2.354 us | 2.628 us |
-| `double_quoted` | 2.956 us | 2.365 us |
-| `block_scalars` | 20.088 us | 18.910 us |
+| Dataset | yaml_parser | saphyr_marked | yaml_parser vs saphyr |
+| --- | ---: | ---: | ---: |
+| `plain` | 4.194 us | 4.107 us | 102.1% |
+| `double_quoted` | 4.933 us | 4.241 us | 116.3% |
+| `block_scalars` | 36.171 us | 28.752 us | 125.8% |
 
 ## Serde Deserialize Throughput
 
@@ -97,13 +114,13 @@ Both backends deserialize into the same logical target type:
 
 | Dataset | yaml_parser | serde_yaml | yaml_parser vs serde_yaml |
 | --- | ---: | ---: | ---: |
-| `large_mapping` | 30.771 MiB/s | 22.745 MiB/s | 135.3% |
-| `nested_mapping` | 28.542 MiB/s | 22.643 MiB/s | 126.0% |
-| `large_sequence` | 30.847 MiB/s | 30.192 MiB/s | 102.2% |
-| `block_scalars` | 76.748 MiB/s | 69.753 MiB/s | 110.0% |
-| `flow_collections` | 25.042 MiB/s | 20.402 MiB/s | 122.7% |
-| `anchors_aliases` | 23.579 MiB/s | 20.272 MiB/s | 116.3% |
-| `tags` | 31.040 MiB/s | 25.933 MiB/s | 119.7% |
+| `large_mapping` | 17.656 MiB/s | 12.701 MiB/s | 139.0% |
+| `nested_mapping` | 16.180 MiB/s | 11.316 MiB/s | 143.0% |
+| `large_sequence` | 19.336 MiB/s | 14.427 MiB/s | 134.0% |
+| `block_scalars` | 41.381 MiB/s | 35.021 MiB/s | 118.2% |
+| `flow_collections` | 13.773 MiB/s | 10.786 MiB/s | 127.7% |
+| `anchors_aliases` | 12.625 MiB/s | 10.572 MiB/s | 119.4% |
+| `tags` | 17.933 MiB/s | 13.091 MiB/s | 137.0% |
 
 ## Benchmark Matrix Notes
 
@@ -111,5 +128,5 @@ Both backends deserialize into the same logical target type:
   groups because they answer different questions.
 - `parse_throughput` is about the shared lexer/emitter/parser core.
 - `serde_deserialize_throughput` is about the public serde API on top of that core.
-- The current benchmark set no longer carries the old split naming for multiple
-  yaml-parser serde implementations; `yaml_parser` is the only serde path now.
+- `parse_latency` and `scalar_types` stay in the matrix because short-run and
+  scalar-heavy regressions are easy to miss in throughput-only views.

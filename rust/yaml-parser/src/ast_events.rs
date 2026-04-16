@@ -22,7 +22,7 @@ pub enum AstToEventsError {
 
 /// Convert a single AST node into a complete event stream representing a
 /// one-document YAML stream.
-pub fn node_to_events<'input>(
+pub(crate) fn node_to_events<'input>(
     node: &'input Node<'input>,
 ) -> Result<Vec<Event<'input>>, AstToEventsError> {
     let mut events = Vec::new();

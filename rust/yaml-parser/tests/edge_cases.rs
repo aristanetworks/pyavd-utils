@@ -238,7 +238,7 @@ fn tags_corpus_serde_deserializes_across_backends() {
 
 #[cfg(feature = "serde")]
 #[derive(Debug, PartialEq)]
-struct OwnedYamlValue(yaml_parser::Value<'static>);
+struct OwnedYamlValue(Value<'static>);
 
 #[cfg(feature = "serde")]
 impl<'de> Deserialize<'de> for OwnedYamlValue {
@@ -250,7 +250,7 @@ impl<'de> Deserialize<'de> for OwnedYamlValue {
         // then convert to an owned `Value<'static>` so the result is
         // independent of the input lifetime. This mirrors the bench-only
         // adapter used in `benches/parser_bench.rs`.
-        let borrowed: yaml_parser::Value<'de> = Deserialize::deserialize(deserializer)?;
+        let borrowed: Value<'de> = Deserialize::deserialize(deserializer)?;
         Ok(OwnedYamlValue(borrowed.into_owned()))
     }
 }

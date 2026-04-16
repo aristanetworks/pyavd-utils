@@ -255,6 +255,7 @@ impl Position {
 /// assert_eq!(pos.line, 2);
 /// assert_eq!(pos.column, 1);
 /// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SourceMap {
     /// Byte offset of each line start (0-indexed by line number - 1).
     /// `line_starts[0]` is always 0 (start of first line).
@@ -315,7 +316,7 @@ impl SourceMap {
     /// - The start of the next line (including the newline character)
     /// - The end of the input for the last line
     #[must_use]
-    pub fn line_range(&self, line: usize) -> Option<std::ops::Range<usize>> {
+    pub fn line_range(&self, line: usize) -> Option<Range<usize>> {
         if line == 0 || line > self.line_starts.len() {
             return None;
         }

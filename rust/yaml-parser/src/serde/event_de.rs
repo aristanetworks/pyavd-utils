@@ -13,7 +13,9 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
 
-use serde::de::{self, Deserialize, DeserializeSeed, MapAccess, SeqAccess, Visitor};
+use serde::de::{
+    self, Deserialize, DeserializeOwned, DeserializeSeed, MapAccess, SeqAccess, Visitor,
+};
 use serde::forward_to_deserialize_any;
 
 use crate::emitter::Emitter;
@@ -1061,6 +1063,14 @@ pub struct EventStreamDeserializer<'de, T> {
     _marker: std::marker::PhantomData<T>,
 }
 
+impl<T> std::fmt::Debug for EventStreamDeserializer<'_, T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EventStreamDeserializer")
+            .field("finished", &self.finished)
+            .finish_non_exhaustive()
+    }
+}
+
 impl<'de, T> EventStreamDeserializer<'de, T> {
     pub fn new(input: &'de str) -> Self {
         Self {
@@ -1073,7 +1083,7 @@ impl<'de, T> EventStreamDeserializer<'de, T> {
 
 impl<T> Iterator for EventStreamDeserializer<'_, T>
 where
-    T: serde::de::DeserializeOwned,
+    T: DeserializeOwned,
 {
     type Item = Result<T, DeError>;
 

@@ -75,7 +75,7 @@ pub(crate) struct ValueSerializer;
 
 impl ValueSerializer {
     /// Convenience helper to turn any `T: Serialize` into a `Value<'static>`.
-    pub fn to_value<T>(value: &T) -> Result<Value<'static>, SerError>
+    pub(crate) fn to_value<T>(value: &T) -> Result<Value<'static>, SerError>
     where
         T: Serialize,
     {
@@ -544,8 +544,8 @@ mod tests {
             .first()
             .expect("expected exactly one document before roundtrip");
 
-        let events = crate::ast_events::node_to_events(doc)
-            .expect("node_to_events should succeed for valid AST");
+        let events =
+            ast_events::node_to_events(doc).expect("node_to_events should succeed for valid AST");
         let mut buf = Vec::new();
         writer::write_yaml_from_events(&mut buf, &events)
             .expect("writing YAML from AST-derived events should succeed");

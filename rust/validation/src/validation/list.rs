@@ -9,6 +9,7 @@ use avdschema::{any::AnySchema, list::List, resolve_ref};
 use crate::feedback::{Type, Violation};
 use crate::validatable::{ValidatableSequence, ValidatableValue};
 use crate::{context::Context, validation::Validation};
+use avdschema::{SchemaDataValue as _, any::AnySchema, list::List, resolve_ref};
 
 impl Validation for List {
     fn validate<V: ValidatableValue>(&self, value: &V, ctx: &mut Context) -> Option<V::Coerced> {

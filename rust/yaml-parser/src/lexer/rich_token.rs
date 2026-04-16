@@ -83,7 +83,7 @@ impl<'input> From<&Token<'input>> for TokenKind {
 /// Errors during lexing are collected internally by the lexer and retrieved
 /// via [`Lexer::take_errors`](super::Lexer::take_errors).
 #[derive(Debug, Clone, PartialEq)]
-pub struct RichToken<'input> {
+pub(crate) struct RichToken<'input> {
     /// The actual token.
     pub token: Token<'input>,
     /// The source location of the token.
@@ -93,7 +93,7 @@ pub struct RichToken<'input> {
 impl<'input> RichToken<'input> {
     /// Create a new rich token.
     #[must_use]
-    pub fn new(token: Token<'input>, span: Span) -> Self {
+    pub(crate) fn new(token: Token<'input>, span: Span) -> Self {
         Self { token, span }
     }
 }

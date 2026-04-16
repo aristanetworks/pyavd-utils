@@ -73,18 +73,13 @@ impl<'input> TokenCursor<'input> {
             return;
         }
 
-        loop {
-            {
-                let buffer = self.buffer.borrow();
-                if buffer.len() > index {
-                    return;
-                }
-            }
-
-            let mut lexer = self.lexer.borrow_mut();
+        let mut buffer = self.buffer.borrow_mut();
+        // Hot path: keep both RefCell borrows open across the fill loop so we
+        // do not pay borrow/unborrow overhead once per buffered token.
+        let mut lexer = self.lexer.borrow_mut();
+        while buffer.len() <= index {
             if let Some(rt) = lexer.next() {
-                drop(lexer);
-                self.buffer.borrow_mut().push(rt);
+                buffer.push(rt);
             } else {
                 self.eof.set(true);
                 return;
@@ -98,11 +93,11 @@ impl<'input> TokenCursor<'input> {
             return;
         }
 
+        let mut buffer = self.buffer.borrow_mut();
+        let mut lexer = self.lexer.borrow_mut();
         loop {
-            let mut lexer = self.lexer.borrow_mut();
             if let Some(rt) = lexer.next() {
-                drop(lexer);
-                self.buffer.borrow_mut().push(rt);
+                buffer.push(rt);
             } else {
                 self.eof.set(true);
                 return;
@@ -111,9 +106,18 @@ impl<'input> TokenCursor<'input> {
     }
 
     /// Peek at the current token at `pos` without advancing.
+    ///
+    /// The duplicated buffer lookup is intentional: it keeps the already-buffered
+    /// fast path free of an `ensure_available()` call.
     #[inline]
     #[must_use]
     pub(crate) fn peek(&self, pos: usize) -> Option<(Token<'input>, Span)> {
+        {
+            let buffer = self.buffer.borrow();
+            if let Some(rt) = buffer.get(pos) {
+                return Some((rt.token.clone(), rt.span));
+            }
+        }
         self.ensure_available(pos);
         let buffer = self.buffer.borrow();
         buffer.get(pos).map(|rt| (rt.token.clone(), rt.span))
@@ -128,7 +132,18 @@ impl<'input> TokenCursor<'input> {
     where
         F: FnOnce(LookaheadWindow<'_, 'input>) -> R,
     {
-        self.ensure_available(pos.saturating_add(max_offset));
+        let needed = pos.saturating_add(max_offset);
+        {
+            let buffer = self.buffer.borrow();
+            if buffer.len() > needed || self.eof.get() {
+                let start = pos.min(buffer.len());
+                return func(LookaheadWindow {
+                    tokens: buffer.get(start..).unwrap_or(&[]),
+                });
+            }
+        }
+
+        self.ensure_available(needed);
         let buffer = self.buffer.borrow();
         let start = pos.min(buffer.len());
         func(LookaheadWindow {
@@ -146,7 +161,9 @@ impl<'input> TokenCursor<'input> {
     /// Panics if `pos` is out of bounds.
     #[inline]
     pub(crate) fn take(&self, pos: usize) -> Option<(Token<'input>, Span)> {
-        self.ensure_available(pos);
+        if self.buffer.borrow().len() <= pos {
+            self.ensure_available(pos);
+        }
         let mut buffer = self.buffer.borrow_mut();
         buffer.get_mut(pos).map(|rt| {
             // Replace with a zero-size sentinel token
@@ -164,6 +181,12 @@ impl<'input> TokenCursor<'input> {
     where
         F: FnOnce(&Token<'input>, Span) -> R,
     {
+        {
+            let buffer = self.buffer.borrow();
+            if let Some(rt) = buffer.get(pos) {
+                return Some(func(&rt.token, rt.span));
+            }
+        }
         self.ensure_available(pos);
         let buffer = self.buffer.borrow();
         buffer.get(pos).map(|rt| func(&rt.token, rt.span))
@@ -176,6 +199,12 @@ impl<'input> TokenCursor<'input> {
         F: FnOnce(&Token<'input>, Span) -> R,
     {
         let index = pos + n;
+        {
+            let buffer = self.buffer.borrow();
+            if let Some(rt) = buffer.get(index) {
+                return Some(func(&rt.token, rt.span));
+            }
+        }
         self.ensure_available(index);
         let buffer = self.buffer.borrow();
         buffer.get(index).map(|rt| func(&rt.token, rt.span))
@@ -188,6 +217,12 @@ impl<'input> TokenCursor<'input> {
     #[inline]
     #[must_use]
     pub(crate) fn peek_kind(&self, pos: usize) -> Option<TokenKind> {
+        {
+            let buffer = self.buffer.borrow();
+            if let Some(rt) = buffer.get(pos) {
+                return Some(TokenKind::from(&rt.token));
+            }
+        }
         self.ensure_available(pos);
         let buffer = self.buffer.borrow();
         buffer.get(pos).map(|rt| TokenKind::from(&rt.token))
@@ -198,25 +233,24 @@ impl<'input> TokenCursor<'input> {
     #[must_use]
     pub(crate) fn peek_kind_nth(&self, pos: usize, n: usize) -> Option<TokenKind> {
         let index = pos + n;
+        {
+            let buffer = self.buffer.borrow();
+            if let Some(rt) = buffer.get(index) {
+                return Some(TokenKind::from(&rt.token));
+            }
+        }
         self.ensure_available(index);
         let buffer = self.buffer.borrow();
         buffer.get(index).map(|rt| TokenKind::from(&rt.token))
-    }
-
-    /// Peek `n` tokens ahead (0-based offset from `pos`).
-    #[inline]
-    #[must_use]
-    pub(crate) fn peek_nth(&self, pos: usize, n: usize) -> Option<(Token<'input>, Span)> {
-        let index = pos + n;
-        self.ensure_available(index);
-        let buffer = self.buffer.borrow();
-        buffer.get(index).map(|rt| (rt.token.clone(), rt.span))
     }
 
     /// Return `true` if `pos` is at or past the end of the token stream.
     #[inline]
     #[must_use]
     pub(crate) fn is_eof(&self, pos: usize) -> bool {
+        if self.buffer.borrow().len() > pos {
+            return false;
+        }
         self.ensure_available(pos);
         let buffer_len = self.buffer.borrow().len();
         pos >= buffer_len
@@ -227,6 +261,17 @@ impl<'input> TokenCursor<'input> {
     #[inline]
     #[must_use]
     pub(crate) fn current_span(&self, pos: usize) -> Span {
+        {
+            let buffer = self.buffer.borrow();
+            if let Some(rt) = buffer.get(pos) {
+                return rt.span;
+            }
+            if self.eof.get() {
+                return buffer
+                    .last()
+                    .map_or(Span::at(0), |rt| Span::at(rt.span.end));
+            }
+        }
         self.ensure_available(pos);
         let buffer = self.buffer.borrow();
         if let Some(rt) = buffer.get(pos) {
@@ -234,9 +279,9 @@ impl<'input> TokenCursor<'input> {
         }
 
         // At EOF, return span at end of last token.
-        buffer.last().map_or(Span::from_usize_range(0..0), |rt| {
-            Span::from_usize_range(rt.span.end_usize()..rt.span.end_usize())
-        })
+        buffer
+            .last()
+            .map_or(Span::at(0), |rt| Span::at(rt.span.end))
     }
 
     /// Take collected lexer errors, draining the lexer to EOF first so that

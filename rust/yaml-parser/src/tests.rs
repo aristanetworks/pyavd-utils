@@ -35,21 +35,15 @@ use super::*;
 )]
 fn check_struct_sizes() {
     use std::mem::size_of;
-    let (emitter_properties_size, parse_state_size) = crate::emitter::internal_type_sizes();
+    let (emitter_properties_size, parse_state_size) = emitter::internal_type_sizes();
     println!("\n=== Struct Sizes ===");
-    println!("Event: {} bytes", size_of::<crate::Event>());
-    println!("Token: {} bytes", size_of::<crate::lexer::Token>());
-    println!("Span: {} bytes", size_of::<crate::Span>());
+    println!("Event: {} bytes", size_of::<Event>());
+    println!("Token: {} bytes", size_of::<lexer::Token>());
+    println!("Span: {} bytes", size_of::<Span>());
     println!("Cow<str>: {} bytes", size_of::<std::borrow::Cow<str>>());
-    println!(
-        "Properties: {} bytes",
-        size_of::<crate::event::Properties>()
-    );
-    println!("Property: {} bytes", size_of::<crate::event::Property>());
-    println!(
-        "Option<Property>: {} bytes",
-        size_of::<Option<crate::event::Property>>()
-    );
+    println!("Properties: {} bytes", size_of::<Properties>());
+    println!("Property: {} bytes", size_of::<Property>());
+    println!("Option<Property>: {} bytes", size_of::<Option<Property>>());
     println!("EmitterProperties: {emitter_properties_size} bytes");
     println!("ParseState: {parse_state_size} bytes");
     println!("===================\n");
@@ -87,29 +81,36 @@ fn test_simple_mapping() {
 }
 
 #[test]
-fn test_duplicate_mapping_key_reports_second_key_span() {
+fn test_duplicate_mapping_keys_are_accepted() {
     let input = "\
 foo: 1
 foo: 2
 ";
     let (docs, errors) = parse(input);
 
-    let duplicate_key = errors
-        .iter()
-        .find(|error| error.kind == ErrorKind::DuplicateKey)
-        .expect("Expected DuplicateKey error");
-    let second_key_start = input.rfind("foo").expect("second foo should exist");
-    assert_eq!(
-        duplicate_key.span.start_usize(),
-        second_key_start,
-        "DuplicateKey should point at the later duplicate key"
-    );
-    assert_eq!(
-        duplicate_key.span.end_usize(),
-        second_key_start + "foo".len(),
-        "DuplicateKey should cover only the later duplicate key"
+    assert!(
+        errors.is_empty(),
+        "duplicate mapping keys should be accepted"
     );
     assert_eq!(docs.len(), 1, "Should still produce 1 document");
+
+    let Value::Mapping(pairs) = &docs[0].value else {
+        panic!("expected mapping, got docs: {docs:#?}");
+    };
+
+    assert_eq!(pairs.len(), 2, "Should keep both duplicate-key entries");
+    assert_eq!(
+        pairs
+            .iter()
+            .filter(|pair| matches!(&pair.key.value, Value::String(value) if value == "foo"))
+            .count(),
+        2,
+        "AST should preserve both duplicate foo keys"
+    );
+    assert!(matches!(&pairs[0].key.value, Value::String(value) if value == "foo"));
+    assert!(matches!(&pairs[0].value.value, Value::Int(value) if value.to_decimal_string() == "1"));
+    assert!(matches!(&pairs[1].key.value, Value::String(value) if value == "foo"));
+    assert!(matches!(&pairs[1].value.value, Value::Int(value) if value.to_decimal_string() == "2"));
 }
 
 #[test]
@@ -631,15 +632,13 @@ mod error_recovery {
     }
 
     #[test]
-    fn test_duplicate_empty_mapping_keys_do_not_error() {
+    fn test_duplicate_empty_mapping_keys_are_accepted() {
         let input = ": a\n: b\n";
         let (docs, errors) = parse(input);
 
         assert!(
-            errors
-                .iter()
-                .all(|error| error.kind != ErrorKind::DuplicateKey),
-            "missing keys should not trigger DuplicateKey, got: {errors:?}"
+            errors.is_empty(),
+            "missing keys should be accepted, got: {errors:?}"
         );
         assert_eq!(docs.len(), 1, "Should produce 1 document");
     }
@@ -1090,7 +1089,7 @@ ipv4_prefix_list_catalog:
 #[test]
 fn measure_type_sizes() {
     use std::mem::size_of;
-    let (emitter_properties_size, parse_state_size) = crate::emitter::internal_type_sizes();
+    let (emitter_properties_size, parse_state_size) = emitter::internal_type_sizes();
 
     // Verify the optimizations are effective
     assert!(
@@ -1179,7 +1178,7 @@ fn test_block_scalar_chomping() {
 
     // Helper to extract the scalar value from a sequence
     fn get_seq_scalar(input: &str) -> String {
-        let (nodes, errors) = crate::parse(input);
+        let (nodes, errors) = parse(input);
         assert!(errors.is_empty(), "Unexpected errors: {errors:?}");
         assert_eq!(nodes.len(), 1);
 
@@ -1212,7 +1211,7 @@ fn test_block_scalar_chomping() {
     // strip: no trailing newlines
     // clip: exactly one trailing newline
     // keep: preserve all trailing newlines
-    let (nodes, errors) = crate::parse("keep: |+\n  text\n");
+    let (nodes, errors) = parse("keep: |+\n  text\n");
     assert!(errors.is_empty());
     let map = match &nodes.first().unwrap().value {
         Value::Mapping(map) => Some(map),
@@ -1236,7 +1235,7 @@ fn test_block_scalar_chomping() {
 fn test_emit_events_zero_copy() {
     // Verify that emit_events returns events that borrow from the input
     let input = "key: value";
-    let (events, errors) = crate::emit_events(input);
+    let (events, errors) = emit_events(input);
     assert!(errors.is_empty());
 
     // Find the scalar events and verify they point to the input string

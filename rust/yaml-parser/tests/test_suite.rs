@@ -441,7 +441,7 @@ fn load_subtests(parent_dir: &Path, parent_id: &str) -> Vec<TestCase> {
         .collect();
 
     // Sort for deterministic order
-    subtest_dirs.sort_by_key(std::fs::DirEntry::path);
+    subtest_dirs.sort_by_key(fs::DirEntry::path);
 
     // Get parent name from === file (shared across subtests)
     let parent_name_file = parent_dir.join("===");
@@ -846,7 +846,7 @@ fn yaml_test_suite_roundtrip_via_writer() {
         panic!("Failed to read test directory {test_dir:?}");
     };
     let mut entries: Vec<_> = dir_entries.filter_map(Result::ok).collect();
-    entries.sort_by_key(std::fs::DirEntry::path);
+    entries.sort_by_key(fs::DirEntry::path);
 
     let mut all_tests: Vec<TestCase> = Vec::new();
     for entry in &entries {
@@ -913,7 +913,7 @@ fn run_test_suite_via_events(test_dir: &Path) -> (usize, usize, Vec<String>) {
         return (0, 0, Vec::new());
     };
     let mut entries: Vec<_> = dir_entries.filter_map(Result::ok).collect();
-    entries.sort_by_key(std::fs::DirEntry::path);
+    entries.sort_by_key(fs::DirEntry::path);
 
     let mut all_tests: Vec<TestCase> = Vec::new();
     for entry in &entries {
@@ -965,7 +965,7 @@ fn run_single_test_via_events(test: &TestCase) -> Result<(), String> {
     // event-based pipeline *and* the core AST parser to succeed without
     // any reported parse errors. This keeps the YAML test suite aligned
     // with the stricter behaviour expected by `yaml_parser::serde::from_str`.
-    let (_docs, parse_errors) = yaml_parser::parse(&test.input);
+    let (_docs, parse_errors) = parse(&test.input);
     if !parse_errors.is_empty() {
         return Err(format!(
             "Core parse() produced errors for a non-error test: {parse_errors:?}\n\

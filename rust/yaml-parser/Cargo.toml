@@ -4,6 +4,7 @@ version.workspace = true
 edition = "2024"
 license.workspace = true
 description = "A YAML 1.2 parser with error recovery, span tracking, and multiple error collection"
+readme = "README.md"
 
 [dependencies]
 derive_more = { workspace = true, features = ["display"] }

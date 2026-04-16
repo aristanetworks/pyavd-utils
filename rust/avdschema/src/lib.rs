@@ -15,6 +15,7 @@ pub use self::{
     inherit::Inherit, resolve::resolve_ref::resolve_ref, resolve::resolve_schema, schema::any,
     schema::base, schema::boolean, schema::dict, schema::int, schema::list, schema::str,
     store::SchemaStoreError, store::Store, utils::dump::Dump, utils::load::Load,
-    utils::schema_from_path::SchemaKeys, utils::schema_from_path::get_schema_from_path,
-    utils::walker::Walker,
+    utils::schema_data::SchemaDataMapping, utils::schema_data::SchemaDataSequence,
+    utils::schema_data::SchemaDataValue, utils::schema_from_path::SchemaKeys,
+    utils::schema_from_path::get_schema_from_path,
 };
