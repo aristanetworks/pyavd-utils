@@ -1,0 +1,66 @@
+# Block scalar test file
+# Tests literal and folded block scalars
+
+literal_basic: |
+  This is a literal block scalar.
+  Line breaks are preserved.
+  Each line appears as-is.
+  No folding happens.
+
+literal_with_indent: |2
+    This literal scalar has explicit indent.
+    The content is indented by 2 extra spaces.
+    All indentation is preserved.
+
+literal_strip: |-
+  This literal scalar uses strip chomping.
+  The trailing newlines will be removed.
+  Only content is preserved.
+
+literal_keep: |+
+  This literal scalar uses keep chomping.
+  All trailing newlines are preserved.
+  Including empty lines at the end.
+
+
+folded_basic: >
+  This is a folded block scalar.
+  Single newlines become spaces.
+  But blank lines
+
+  create paragraph breaks.
+
+folded_with_indent: >2
+    This folded scalar has explicit indent.
+    The content starts with extra spaces.
+    Folding still applies to newlines.
+
+folded_strip: >-
+  This folded scalar uses strip chomping.
+  No trailing newlines will remain.
+  Clean ending guaranteed.
+
+folded_keep: >+
+  This folded scalar uses keep chomping.
+  All trailing newlines are kept.
+  Even multiple ones.
+
+
+# Multiple scalars in a mapping
+document:
+  description: |
+    A longer description that spans
+    multiple lines using a literal
+    block scalar for clarity.
+  notes: >
+    This section uses a folded scalar
+    so that the text flows naturally
+    when rendered as a single paragraph.
+  code: |
+    fn main() {
+        println!("Hello, world!");
+    }
+  config: |-
+    key=value
+    another_key=another_value
+    no_trailing_newline=true

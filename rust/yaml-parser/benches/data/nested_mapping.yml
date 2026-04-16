@@ -1,0 +1,75 @@
+# Deeply nested mapping structure
+root:
+  level1:
+    level2:
+      level3:
+        level4:
+          level5:
+            value: deeply nested
+            number: 12345
+            boolean: true
+    another_branch:
+      items:
+        - name: item1
+          value: 100
+        - name: item2
+          value: 200
+        - name: item3
+          value: 300
+  sibling:
+    data:
+      nested_array:
+        - first
+        - second
+        - third
+      nested_map:
+        a: 1
+        b: 2
+        c: 3
+
+config:
+  database:
+    host: localhost
+    port: 5432
+    credentials:
+      username: admin
+      password: secret
+    options:
+      ssl: true
+      timeout: 30
+  server:
+    address: 0.0.0.0
+    port: 8080
+    workers: 4
+    settings:
+      debug: false
+      log_level: info
+      features:
+        - auth
+        - cache
+        - metrics
+
+users:
+  - id: 1
+    name: Alice
+    roles:
+      - admin
+      - user
+    profile:
+      email: alice@example.com
+      age: 30
+  - id: 2
+    name: Bob
+    roles:
+      - user
+    profile:
+      email: bob@example.com
+      age: 25
+  - id: 3
+    name: Charlie
+    roles:
+      - moderator
+      - user
+    profile:
+      email: charlie@example.com
+      age: 35
