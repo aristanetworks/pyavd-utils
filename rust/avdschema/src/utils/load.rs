@@ -40,13 +40,13 @@ where
     #[cfg(feature = "dump_load_files")]
     fn from_stdin() -> Result<Self, LoadError> {
         let reader = io::stdin();
-        Ok(serde_yaml::from_reader(reader)?)
+        Ok(yaml_parser::serde::from_reader(reader)?)
     }
     #[cfg(feature = "dump_load_files")]
     fn from_yaml_file(path: &Path) -> Result<Self, LoadError> {
         let file = File::open(path)?;
         let reader = BufReader::new(file);
-        Ok(serde_yaml::from_reader(reader)?)
+        Ok(yaml_parser::serde::from_reader(reader)?)
     }
     #[cfg(feature = "xz2")]
     fn from_xz2_file(path: &Path) -> Result<Self, LoadError> {
@@ -111,7 +111,7 @@ where
 #[derive(Debug, derive_more::Display, derive_more::From)]
 pub enum LoadError {
     JsonError(serde_json::Error),
-    YamlError(serde_yaml::Error),
+    YamlError(yaml_parser::serde::DeError),
     #[cfg(feature = "dump_load_files")]
     IoError(std::io::Error),
     #[cfg(feature = "dump_load_files")]
