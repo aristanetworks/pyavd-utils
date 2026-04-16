@@ -7,6 +7,7 @@ description = "A YAML 1.2 parser with error recovery, span tracking, and multipl
 readme = "README.md"
 
 [dependencies]
+avdschema = { path = "../avdschema", optional = true }
 derive_more = { workspace = true, features = ["display"] }
 serde = { workspace = true, optional = true }
 
@@ -17,6 +18,7 @@ serde_yaml = { workspace = true } # Used for serde benchmarking
 
 [features]
 default = []
+avdschema = ["dep:avdschema"]
 serde = ["dep:serde"]
 
 [[bench]]
