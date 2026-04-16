@@ -182,6 +182,8 @@ pub mod writer;
 pub mod serde;
 
 // Public API: high-level parsing, AST, spans, and errors.
+#[cfg(feature = "avdschema")]
+pub use avdschema_data_impl::YamlMapping;
 pub use error::{ErrorKind, ParseError};
 pub use event::{CollectionStyle, Event, ScalarStyle};
 pub use span::{

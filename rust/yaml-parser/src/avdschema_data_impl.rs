@@ -7,10 +7,18 @@ use avdschema::{SchemaDataMapping, SchemaDataSequence, SchemaDataValue};
 use crate::{MappingPair, SequenceItem, Value};
 
 #[derive(Debug, Clone, Copy)]
+/// Schema-data mapping view over a YAML mapping's raw pair slice.
 pub struct YamlMapping<'a, 'input>(&'a [MappingPair<'input>]);
 
 #[derive(Debug, Clone, Copy)]
 pub struct YamlSequence<'a, 'input>(&'a [SequenceItem<'input>]);
+
+impl<'a, 'input> YamlMapping<'a, 'input> {
+    /// Create a schema-data mapping view from a YAML mapping pair slice.
+    pub const fn new(pairs: &'a [MappingPair<'input>]) -> Self {
+        Self(pairs)
+    }
+}
 
 impl<'a, 'input: 'a> SchemaDataValue<'a> for &'a Value<'input> {
     type Mapping = YamlMapping<'a, 'input>;
