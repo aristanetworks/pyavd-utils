@@ -14,9 +14,12 @@ use super::Validation;
 
 impl Validation for Bool {
     fn validate<V: ValidatableValue>(&self, value: &V, ctx: &mut Context) -> Option<V::Coerced> {
+        if let Some(ref_result) = validate_ref(self, value, ctx) {
+            return ref_result;
+        }
+
         if let Some(v) = value.as_bool() {
             // Bool schema has no constraints to validate beyond type checking
-            validate_ref(self, value, ctx);
             if ctx.configuration.return_coerced_data {
                 Some(value.coerce_bool(v))
             } else {
@@ -41,12 +44,17 @@ impl Validation for Bool {
 }
 
 /// Validate against a referenced schema (for unresolved $ref ending with #).
-fn validate_ref<V: ValidatableValue>(schema: &Bool, value: &V, ctx: &mut Context) {
+fn validate_ref<V: ValidatableValue>(
+    schema: &Bool,
+    value: &V,
+    ctx: &mut Context,
+) -> Option<Option<V::Coerced>> {
     if let Some(ref_) = schema.base.schema_ref.as_ref()
         && let Ok(AnySchema::Bool(ref_schema)) = resolve_ref(ref_, ctx.store)
     {
-        let _ = ref_schema.validate(value, ctx);
+        return Some(ref_schema.validate(value, ctx));
     }
+    None
 }
 
 #[cfg(test)]

@@ -14,6 +14,10 @@ use super::{Validation, valid_values::ValidateValidValues};
 
 impl Validation for Int {
     fn validate<V: ValidatableValue>(&self, value: &V, ctx: &mut Context) -> Option<V::Coerced> {
+        if let Some(ref_result) = validate_ref(self, value, ctx) {
+            return ref_result;
+        }
+
         // Lenient type check - accept anything coercible to int (e.g., "123" -> 123)
         if let Some(v) = value.as_i64() {
             // Emit coercion info if the original value was not an int
@@ -21,7 +25,6 @@ impl Validation for Int {
             self.valid_values.validate(value, &v, ctx);
             validate_min(self, value, &v, ctx);
             validate_max(self, value, &v, ctx);
-            validate_ref(self, value, ctx);
             if ctx.configuration.return_coerced_data {
                 Some(value.coerce_int(v))
             } else {
@@ -46,12 +49,17 @@ impl Validation for Int {
 }
 
 /// Validate against a referenced schema (for unresolved $ref ending with #).
-fn validate_ref<V: ValidatableValue>(schema: &Int, value: &V, ctx: &mut Context) {
+fn validate_ref<V: ValidatableValue>(
+    schema: &Int,
+    value: &V,
+    ctx: &mut Context,
+) -> Option<Option<V::Coerced>> {
     if let Some(ref_) = schema.base.schema_ref.as_ref()
         && let Ok(AnySchema::Int(ref_schema)) = resolve_ref(ref_, ctx.store)
     {
-        let _ = ref_schema.validate(value, ctx);
+        return Some(ref_schema.validate(value, ctx));
     }
+    None
 }
 
 /// Emit coercion info if the original value was coerced to int.

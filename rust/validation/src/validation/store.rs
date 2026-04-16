@@ -32,13 +32,6 @@ pub struct InputValidationResult<T> {
     pub document: ValidationOutput<T>,
 }
 
-#[derive(Debug)]
-/// Result of validating a YAML input source that may contain multiple documents.
-pub struct YamlValidationResult<T> {
-    pub input_diagnostics: Vec<InputDiagnostic>,
-    pub documents: Vec<ValidationOutput<T>>,
-}
-
 /// Validate already-parsed values against a schema.
 pub trait StoreValidate<V>
 where
@@ -53,7 +46,7 @@ where
     ) -> Result<ValidationOutput<V::Coerced>, StoreValidateError>;
 }
 
-/// Parse JSON or YAML input and validate the resulting value against a schema.
+/// Parse JSON input and validate the resulting value against a schema.
 pub trait StoreValidateInput {
     fn validate_json(
         &self,
@@ -61,13 +54,6 @@ pub trait StoreValidateInput {
         schema_name: &str,
         configuration: Option<&Configuration>,
     ) -> Result<InputValidationResult<Value>, StoreValidateError>;
-
-    fn validate_yaml(
-        &self,
-        yaml: &str,
-        schema_name: &str,
-        configuration: Option<&Configuration>,
-    ) -> Result<YamlValidationResult<Node<'static>>, StoreValidateError>;
 }
 
 impl<V> StoreValidate<V> for Store
@@ -125,39 +111,6 @@ impl StoreValidateInput for Store {
             document,
         })
     }
-
-    fn validate_yaml(
-        &self,
-        yaml: &str,
-        schema_name: &str,
-        configuration: Option<&Configuration>,
-    ) -> Result<YamlValidationResult<Node<'static>>, StoreValidateError> {
-        debug!("Validating YAML");
-        let _ = self.get(schema_name)?;
-        let (yaml_docs, parse_errors) = parse(yaml);
-        debug!("Deserialization of YAML done");
-
-        let input_diagnostics = parse_errors
-            .into_iter()
-            .map(|parse_error| InputDiagnostic::ParseDiagnostic(ParseDiagnostic::from(parse_error)))
-            .collect();
-
-        let mut documents = Vec::with_capacity(yaml_docs.len());
-        for document in &yaml_docs {
-            documents.push(<Store as StoreValidate<Node<'static>>>::validate_value(
-                self,
-                document,
-                schema_name,
-                configuration,
-            )?);
-        }
-
-        debug!("Validating YAML done");
-        Ok(YamlValidationResult {
-            input_diagnostics,
-            documents,
-        })
-    }
 }
 
 #[derive(Debug, derive_more::Display, derive_more::From)]
@@ -176,90 +129,7 @@ fn empty_validation_output<T>() -> ValidationOutput<T> {
 mod tests {
     use super::*;
 
-    use crate::{
-        feedback::{Feedback, ParseDiagnosticKind, SourceSpan, Type, ValidationIssue, Violation},
-        validation::test_utils::get_test_store,
-    };
-
-    #[test]
-    fn validate_yaml_err() {
-        let input = "key3:\n  some_key: some_value\n";
-        let store = get_test_store();
-        let result = store.validate_yaml(input, "avd_design", None);
-        assert!(result.is_ok());
-        let output = result.unwrap();
-        assert!(output.input_diagnostics.is_empty());
-        assert_eq!(output.documents.len(), 1);
-        assert!(output.documents[0].result.infos.is_empty());
-        assert_eq!(
-            output.documents[0].result.errors,
-            vec![Feedback {
-                path: vec!["key3".into()].into(),
-                span: Some(SourceSpan { start: 8, end: 28 }),
-                issue: Violation::InvalidType {
-                    expected: Type::Str,
-                    found: Type::Dict
-                }
-                .into()
-            },]
-        )
-    }
-
-    #[test]
-    fn validate_yaml_invalid_schema() {
-        let input = "";
-        let store = get_test_store();
-        let result = store.validate_yaml(input, "invalid_schema", None);
-        assert!(matches!(
-            result,
-            Err(StoreValidateError::SchemaStore(
-                avdschema::SchemaStoreError::InvalidSchemaName(schema)
-            ))
-                if schema == "invalid_schema"
-        ));
-    }
-
-    #[test]
-    fn validate_yaml_parse_error_is_returned_as_feedback() {
-        let input = "[\n---\nfoo: bar\n";
-        let store = get_test_store();
-        let result = store.validate_yaml(input, "avd_design", None);
-        assert!(result.is_ok());
-        let output = result.unwrap();
-
-        assert!(output.input_diagnostics.iter().any(|diagnostic| {
-            matches!(
-                diagnostic,
-                InputDiagnostic::ParseDiagnostic(parse_diagnostic)
-                    if parse_diagnostic.kind == ParseDiagnosticKind::YamlSyntax
-                        && parse_diagnostic.span.end >= parse_diagnostic.span.start
-            )
-        }));
-        assert!(!output.documents.is_empty());
-    }
-
-    #[test]
-    fn validate_yaml_multiple_documents() {
-        let input = "foo: bar\n---\nkey3:\n  some_key: some_value\n";
-        let store = get_test_store();
-        let result = store.validate_yaml(input, "avd_design", None);
-        assert!(result.is_ok());
-        let output = result.unwrap();
-        assert_eq!(output.documents.len(), 2);
-        assert!(output.documents[0].result.errors.is_empty());
-        assert_eq!(
-            output.documents[1].result.errors,
-            vec![Feedback {
-                path: vec!["key3".into()].into(),
-                span: Some(SourceSpan { start: 21, end: 41 }),
-                issue: Violation::InvalidType {
-                    expected: Type::Str,
-                    found: Type::Dict
-                }
-                .into()
-            },]
-        );
-    }
+    use crate::{feedback::ParseDiagnosticKind, validation::test_utils::get_test_store};
 
     #[test]
     fn validate_json_invalid_schema() {
@@ -304,17 +174,5 @@ mod tests {
             ))
                 if schema == "invalid_schema"
         ));
-    }
-
-    #[test]
-    fn yaml_feedback_span_is_populated() {
-        let input = "key3:\n  some_key: some_value\n";
-        let store = get_test_store();
-        let result = store.validate_yaml(input, "avd_design", None).unwrap();
-        let Some(feedback) = result.documents[0].result.errors.first() else {
-            panic!("expected validation feedback")
-        };
-        assert!(matches!(&feedback.issue, ValidationIssue::Violation(_)));
-        assert!(feedback.span.is_some());
     }
 }

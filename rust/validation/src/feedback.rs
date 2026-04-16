@@ -131,7 +131,7 @@ pub enum InputDiagnostic {
     ParseDiagnostic(ParseDiagnostic),
 }
 
-/// Validation issue is wrapped in Feedback and added to the Context during coercion and validation.
+/// ErrorIssue is wrapped in Feedback and added to the Context during validation.
 #[derive(Clone, Debug, PartialEq, Serialize, derive_more::From, derive_more::Display)]
 pub enum ValidationIssue {
     /// Violation found during validation.
@@ -141,7 +141,7 @@ pub enum ValidationIssue {
     InternalError { message: String },
 }
 
-/// WarningIssue is wrapped in Feedback and added to the Context during coercion and validation.
+/// WarningIssue is wrapped in Feedback and added to the Context during validation.
 #[derive(Clone, Debug, PartialEq, Serialize, derive_more::From, derive_more::Display)]
 pub enum WarningIssue {
     /// Deprecation of data model.
@@ -150,7 +150,7 @@ pub enum WarningIssue {
     IgnoredEosConfigKey(IgnoredEosConfigKey),
 }
 
-/// InfoIssue is wrapped in Feedback and added to the Context during coercion and validation.
+/// InfoIssue is wrapped in Feedback and added to the Context during validation.
 #[derive(Clone, Debug, PartialEq, Serialize, derive_more::From, derive_more::Display)]
 pub enum InfoIssue {
     /// Coercion performed during coercion.
@@ -160,7 +160,7 @@ pub enum InfoIssue {
     DefaultValueInserted(),
 }
 
-/// One coercion performed during recursive coercion.
+/// One coercion performed during validation.
 #[derive(Clone, Debug, PartialEq, Serialize, derive_more::Display)]
 #[display("Coerced value from {found} to {made}.")]
 pub struct CoercionNote {
@@ -175,15 +175,6 @@ pub struct SourceSpan {
     pub end: usize,
 }
 
-impl From<yaml_parser::Span> for SourceSpan {
-    fn from(value: yaml_parser::Span) -> Self {
-        Self {
-            start: value.start_usize(),
-            end: value.end_usize(),
-        }
-    }
-}
-
 /// Parse diagnostic reported while decoding structured input.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct ParseDiagnostic {
@@ -191,17 +182,6 @@ pub struct ParseDiagnostic {
     pub message: String,
     pub suggestion: Option<String>,
     pub span: SourceSpan,
-}
-
-impl From<yaml_parser::ParseError> for ParseDiagnostic {
-    fn from(value: yaml_parser::ParseError) -> Self {
-        Self {
-            kind: ParseDiagnosticKind::YamlSyntax,
-            message: value.to_string(),
-            suggestion: value.suggestion().map(str::to_string),
-            span: value.span.into(),
-        }
-    }
 }
 
 impl ParseDiagnostic {
@@ -213,17 +193,25 @@ impl ParseDiagnostic {
             span: source_span_from_json_error(input, value),
         }
     }
+    fn capitalize_first(input: &str) -> String {
+        let mut chars = input.chars();
+        match chars.next() {
+            Some(first) => first.to_uppercase().chain(chars).collect(),
+            None => String::new(),
+        }
+    }
 }
 
 impl Display for ParseDiagnostic {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "{} at bytes {}..{}: {}",
-            self.kind, self.span.start, self.span.end, self.message
+            "{}: {}.",
+            self.kind,
+            ParseDiagnostic::capitalize_first(&self.message)
         )?;
         if let Some(suggestion) = &self.suggestion {
-            write!(f, " Suggestion: {suggestion}")?;
+            write!(f, " {}.", ParseDiagnostic::capitalize_first(suggestion))?;
         }
         Ok(())
     }

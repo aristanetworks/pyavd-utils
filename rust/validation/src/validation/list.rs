@@ -9,12 +9,14 @@ use avdschema::{any::AnySchema, list::List, resolve_ref};
 use crate::feedback::{Type, Violation};
 use crate::validatable::{ValidatableSequence, ValidatableValue};
 use crate::{context::Context, validation::Validation};
-use avdschema::{SchemaDataValue as _, any::AnySchema, list::List, resolve_ref};
 
 impl Validation for List {
     fn validate<V: ValidatableValue>(&self, value: &V, ctx: &mut Context) -> Option<V::Coerced> {
+        if let Some(ref_result) = validate_ref(self, value, ctx) {
+            return ref_result;
+        }
+
         if let Some(seq) = value.as_sequence() {
-            validate_ref(self, value, ctx);
             validate_min_length(self, value, &seq, ctx);
             validate_max_length(self, value, &seq, ctx);
             validate_unique_keys(self, &seq, ctx);
@@ -39,12 +41,17 @@ impl Validation for List {
 }
 
 /// Validate against a referenced schema (for unresolved $ref ending with #).
-fn validate_ref<V: ValidatableValue>(schema: &List, value: &V, ctx: &mut Context) {
+fn validate_ref<V: ValidatableValue>(
+    schema: &List,
+    value: &V,
+    ctx: &mut Context,
+) -> Option<Option<V::Coerced>> {
     if let Some(ref_) = schema.base.schema_ref.as_ref()
         && let Ok(AnySchema::List(ref_schema)) = resolve_ref(ref_, ctx.store)
     {
-        let _ = ref_schema.validate(value, ctx);
+        return Some(ref_schema.validate(value, ctx));
     }
+    None
 }
 
 /// Validate and optionally coerce sequence items.

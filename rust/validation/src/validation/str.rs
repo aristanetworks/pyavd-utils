@@ -14,6 +14,10 @@ use super::{Validation, valid_values::ValidateValidValues as _};
 
 impl Validation for Str {
     fn validate<V: ValidatableValue>(&self, value: &V, ctx: &mut Context) -> Option<V::Coerced> {
+        if let Some(ref_result) = validate_ref(self, value, ctx) {
+            return ref_result;
+        }
+
         // Lenient type check - accept anything coercible to string
         if let Some(v) = value.as_str() {
             let s = v.into_owned();
@@ -25,7 +29,6 @@ impl Validation for Str {
             validate_min_length(self, value, &s, ctx);
             validate_max_length(self, value, &s, ctx);
             validate_pattern(self, value, &s, ctx);
-            validate_ref(self, value, ctx);
             if ctx.configuration.return_coerced_data {
                 Some(value.coerce_str(s))
             } else {
@@ -91,13 +94,17 @@ fn convert_to_lower_case<V: ValidatableValue>(
 }
 
 /// Validate against a referenced schema (for unresolved $ref ending with #).
-fn validate_ref<V: ValidatableValue>(schema: &Str, value: &V, ctx: &mut Context) {
+fn validate_ref<V: ValidatableValue>(
+    schema: &Str,
+    value: &V,
+    ctx: &mut Context,
+) -> Option<Option<V::Coerced>> {
     if let Some(ref_) = schema.base.schema_ref.as_ref()
         && let Ok(AnySchema::Str(ref_schema)) = resolve_ref(ref_, ctx.store)
     {
-        // Note: We ignore the coerced result from ref validation since we already have our coerced value
-        let _ = ref_schema.validate(value, ctx);
+        return Some(ref_schema.validate(value, ctx));
     }
+    None
 }
 
 fn validate_min_length<V: ValidatableValue>(

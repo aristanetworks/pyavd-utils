@@ -3,7 +3,6 @@
 // that can be found in the LICENSE file.
 
 use avdschema::{
-    SchemaDataValue as _,
     any::{AnySchema, Shortcuts as _},
     dict::Dict,
     resolve_ref,
@@ -13,9 +12,7 @@ use ordermap::OrderMap;
 use crate::{
     context::Context,
     feedback::{Deprecated, IgnoredEosConfigKey, Removed, Type, Violation},
-    validatable::{
-        ValidatableMapping, ValidatableMappingPair, ValidatableSequence, ValidatableValue,
-    },
+    validatable::{ValidatableMapping, ValidatableMappingPair, ValidatableValue},
 };
 
 use super::Validation;
@@ -35,8 +32,11 @@ const EOS_CLI_CONFIG_GEN_ROLE_KEYS: [&str; 8] = [
 
 impl Validation for Dict {
     fn validate<V: ValidatableValue>(&self, value: &V, ctx: &mut Context) -> Option<V::Coerced> {
+        if let Some(ref_result) = validate_ref(self, value, ctx) {
+            return ref_result;
+        }
+
         if let Some(mapping) = value.as_mapping() {
-            validate_ref(self, value, ctx);
             let coerced_items = validate_keys(self, &mapping, ctx);
             validate_required_keys(self, value, &mapping, ctx);
             coerced_items.map(|items| value.coerce_mapping(items))
@@ -60,7 +60,11 @@ impl Validation for Dict {
 /// Validation of ref which will not merge in the schema, so it only works as expected
 /// when there are no local variables set. In practice this is only used for
 /// structured_config, where we $ref in the full eos_config schema.
-fn validate_ref<V: ValidatableValue>(schema: &Dict, value: &V, ctx: &mut Context) {
+fn validate_ref<V: ValidatableValue>(
+    schema: &Dict,
+    value: &V,
+    ctx: &mut Context,
+) -> Option<Option<V::Coerced>> {
     if let Some(ref_) = schema.base.schema_ref.as_ref() {
         // Ignoring not being able to resolve the schema.
         // Ignoring a wrong schema type at the ref. Since Validation is infallible.
@@ -71,199 +75,12 @@ fn validate_ref<V: ValidatableValue>(schema: &Dict, value: &V, ctx: &mut Context
             if schema.relaxed_validation.unwrap_or_default() {
                 ctx.state.relaxed_validation = true
             }
-            let _ = ref_schema.validate(value, ctx);
+            let result = ref_schema.validate(value, ctx);
             ctx.state.relaxed_validation = previous_relaxed_validation;
-        }
-    }
-}
-
-// === Generic versions for ValidatableValue ===
-
-/// Check for deprecation settings in the given schema and return a bool if there was an error that should stop further validation.
-fn check_deprecation<'a, M: ValidatableMapping<'a>>(
-    _key: &str,
-    key_schema: &AnySchema,
-    key_span: Option<crate::feedback::SourceSpan>,
-    parent_dict_input: &M,
-    ctx: &mut Context,
-) -> bool {
-    if let Some(deprecation) = key_schema.deprecation()
-        && deprecation.warning
-    {
-        if deprecation.removed.unwrap_or_default() {
-            ctx.add_error_with_span(
-                key_span,
-                Violation::Removed(Removed::from_schema(&ctx.state.path, deprecation)),
-            );
-            true
-        } else {
-            ctx.add_warning_with_span(
-                key_span.clone(),
-                Deprecated::from_schema(&ctx.state.path, deprecation),
-            );
-            if !deprecation.allow_with_new_key.unwrap_or_default()
-                && let Some(schema_new_key) = deprecation.new_key.as_ref()
-            {
-                // Split the new_key on ' or ' in case of multiple new keys.
-                // Then check if any of the new keys are set in the inputs at the same time as the deprecated key,
-                // adding conflict errors if found
-                schema_new_key.split(" or ").for_each(|new_key| {
-                    let mut path_parts = new_key.split('.');
-                    if let Some(root_key) = path_parts.next()
-                        && let Some(root_value) = parent_dict_input.get(root_key)
-                    {
-                        // Check if the rest of the path exists
-                        let rest_of_path: Vec<_> = path_parts.collect();
-                        let exists = if rest_of_path.is_empty() {
-                            true
-                        } else {
-                            !root_value.walk_path(&rest_of_path.join(".")).is_empty()
-                        };
-                        if exists {
-                            ctx.add_error_with_span(
-                                key_span.clone(),
-                                Violation::DeprecatedConflict {
-                                    other_path: new_key.into(),
-                                    url: deprecation.url.to_owned().into(),
-                                },
-                            );
-                        }
-                    }
-                });
-            }
-            // Even with a conflict error we still want to validate everything else.
-            false
-        }
-    } else {
-        false
-    }
-}
-
-/// Check if an input key matches a dynamic key from the schema.
-/// Returns the schema for the dynamic key if found.
-fn find_dynamic_key_schema<'a, 'b, M: ValidatableMapping<'b>>(
-    schema: &'a Dict,
-    input: &M,
-    input_key: &str,
-) -> Option<&'a AnySchema> {
-    let dynamic_keys = schema.dynamic_keys.as_ref()?;
-
-    // Get defaults for dynamic keys (lazily initialized)
-    let default_dynamic_keys = schema
-        .default_dynamic_keys
-        .get_or_init(|| schema.init_default_dynamic_keys());
-
-    for (dynamic_key_path, dynamic_key_schema) in dynamic_keys {
-        if dynamic_key_schema.is_removed() {
-            continue;
-        }
-
-        // First check if the input key is in the input at this path
-        if has_dynamic_key_value(input, dynamic_key_path, input_key) {
-            return Some(dynamic_key_schema);
-        }
-
-        // If not found in input, check the defaults
-        if let Some(defaults) = default_dynamic_keys.as_ref()
-            && let Some(default_keys) = defaults.get(dynamic_key_path)
-            && default_keys.contains(&input_key.to_string())
-        {
-            return Some(dynamic_key_schema);
+            return Some(result);
         }
     }
     None
-}
-
-/// Check if the input has a value at the given path that matches the target key.
-fn has_dynamic_key_value<'a, M: ValidatableMapping<'a>>(
-    input: &M,
-    path: &str,
-    target_key: &str,
-) -> bool {
-    let mut path_parts = path.split('.');
-    let Some(first_key) = path_parts.next() else {
-        return false;
-    };
-
-    let Some(value) = input.get(first_key) else {
-        return false;
-    };
-
-    // Collect remaining path
-    let rest: Vec<_> = path_parts.collect();
-
-    if rest.is_empty() {
-        // If it's a sequence, check all items
-        if let Some(seq) = value.as_sequence() {
-            for item in ValidatableSequence::iter(&seq) {
-                if let Some(s) = item.as_str()
-                    && s == target_key
-                {
-                    return true;
-                }
-            }
-            return false;
-        }
-        // Single value
-        if let Some(s) = value.as_str() {
-            return s == target_key;
-        }
-        return false;
-    }
-
-    // Navigate further
-    let rest_path = rest.join(".");
-    has_nested_dynamic_key_value(value, &rest_path, target_key)
-}
-
-/// Recursively check for a dynamic key value at a nested path.
-fn has_nested_dynamic_key_value<V: ValidatableValue>(
-    value: &V,
-    path: &str,
-    target_key: &str,
-) -> bool {
-    let mut path_parts = path.split('.');
-    let Some(first_key) = path_parts.next() else {
-        // At the end of the path, check if value matches
-        if let Some(s) = value.as_str() {
-            return s == target_key;
-        }
-        return false;
-    };
-
-    let rest: Vec<_> = path_parts.collect();
-    let rest_path = rest.join(".");
-
-    // If it's a sequence, check each item
-    if let Some(seq) = value.as_sequence() {
-        for item in ValidatableSequence::iter(&seq) {
-            if let Some(child) = item.get(first_key) {
-                if rest.is_empty() {
-                    if let Some(s) = child.as_str()
-                        && s == target_key
-                    {
-                        return true;
-                    }
-                } else if has_nested_dynamic_key_value(child, &rest_path, target_key) {
-                    return true;
-                }
-            }
-        }
-        return false;
-    }
-
-    // If it's a mapping, look up the key
-    if let Some(child) = value.get(first_key) {
-        if rest.is_empty() {
-            if let Some(s) = child.as_str() {
-                return s == target_key;
-            }
-            return false;
-        }
-        return has_nested_dynamic_key_value(child, &rest_path, target_key);
-    }
-
-    false
 }
 
 /// Validate and optionally coerce mapping keys.
@@ -303,6 +120,7 @@ fn validate_keys<'a, M: ValidatableMapping<'a>>(
             None
         }
     };
+    let dynamic_keys_infos = schema.get_dynamic_keys(input.as_schema_data_mapping());
 
     for pair in input.iter() {
         let input_key = pair.key();
@@ -327,7 +145,10 @@ fn validate_keys<'a, M: ValidatableMapping<'a>>(
                 items.push((input_key_str.to_owned(), input_value.clone_to_coerced()));
             }
             false // Already handled
-        } else if let Some(key_schema) = find_dynamic_key_schema(schema, input, input_key_str) {
+        } else if let Some(dynamic_keys_infos) = &dynamic_keys_infos
+            && let Some(dynamic_key_info) = dynamic_keys_infos.get(input_key_str)
+        {
+            let key_schema = dynamic_key_info.schema;
             if !check_deprecation(input_key_str, key_schema, key_span, input, ctx) {
                 if let Some(ref mut items) = coerced_items {
                     let coerced = key_schema
@@ -393,6 +214,66 @@ fn validate_required_keys<'a, M: ValidatableMapping<'a>>(
                 );
             }
         }
+    }
+}
+
+/// Check for deprecation settings in the given schema and return a bool if there was an error that should stop further validation.
+fn check_deprecation<'a, M: ValidatableMapping<'a>>(
+    _key: &str,
+    key_schema: &AnySchema,
+    key_span: Option<crate::feedback::SourceSpan>,
+    parent_dict_input: &M,
+    ctx: &mut Context,
+) -> bool {
+    if let Some(deprecation) = key_schema.deprecation()
+        && deprecation.warning
+    {
+        if deprecation.removed.unwrap_or_default() {
+            ctx.add_error_with_span(
+                key_span,
+                Violation::Removed(Removed::from_schema(&ctx.state.path, deprecation)),
+            );
+            true
+        } else {
+            ctx.add_warning_with_span(
+                key_span.clone(),
+                Deprecated::from_schema(&ctx.state.path, deprecation),
+            );
+            if !deprecation.allow_with_new_key.unwrap_or_default()
+                && let Some(schema_new_key) = deprecation.new_key.as_ref()
+            {
+                // Split the new_key on ' or ' in case of multiple new keys.
+                // Then check if any of the new keys are set in the inputs at the same time as the deprecated key,
+                // adding conflict errors if found
+                schema_new_key.split(" or ").for_each(|new_key| {
+                    let mut path_parts = new_key.split('.');
+                    if let Some(root_key) = path_parts.next()
+                        && let Some(root_value) = parent_dict_input.get(root_key)
+                    {
+                        // Check if the rest of the path exists
+                        let rest_of_path: Vec<_> = path_parts.collect();
+                        let exists = if rest_of_path.is_empty() {
+                            true
+                        } else {
+                            !root_value.walk_path(&rest_of_path.join(".")).is_empty()
+                        };
+                        if exists {
+                            ctx.add_error_with_span(
+                                key_span.clone(),
+                                Violation::DeprecatedConflict {
+                                    other_path: new_key.into(),
+                                    url: deprecation.url.to_owned().into(),
+                                },
+                            );
+                        }
+                    }
+                });
+            }
+            // Even with a conflict error we still want to validate everything else.
+            false
+        }
+    } else {
+        false
     }
 }
 
@@ -544,6 +425,41 @@ mod tests {
             coerced,
             Some(serde_json::json!({ "foo": "321", "bar": 123 }))
         );
+    }
+
+    #[test]
+    fn validate_ref_returns_referenced_coercion_result() {
+        let schema = Dict {
+            base: Base {
+                schema_ref: Some("eos_config#".into()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let input = serde_json::json!({ "key1": 123 });
+        let store = get_test_store();
+        let configuration = Configuration {
+            return_coercion_infos: true,
+            return_coerced_data: true,
+            ..Default::default()
+        };
+        let mut ctx = Context::new(&store, Some(&configuration));
+        let coerced = schema.validate(&input, &mut ctx);
+
+        assert!(ctx.result.errors.is_empty());
+        assert_eq!(
+            ctx.result.infos,
+            vec![Feedback {
+                path: vec!["key1".into()].into(),
+                span: None,
+                issue: CoercionNote {
+                    found: 123.into(),
+                    made: "123".into(),
+                }
+                .into(),
+            }]
+        );
+        assert_eq!(coerced, Some(serde_json::json!({ "key1": "123" })));
     }
 
     #[test]
@@ -786,30 +702,6 @@ mod tests {
         )
     }
 
-    #[test]
-    fn validate_yaml_unexpected_key_uses_key_span() {
-        let schema = Dict {
-            keys: Some(OrderMap::from_iter([("foo".into(), Str::default().into())])),
-            ..Default::default()
-        };
-        let (docs, errors) = parse("bar: 1\n");
-        assert!(errors.is_empty());
-        let input = docs.first().expect("expected a parsed document");
-
-        let store = get_test_store();
-        let mut ctx = Context::new(&store, None);
-        let _ = schema.validate(input, &mut ctx);
-
-        assert_eq!(
-            ctx.result.errors,
-            vec![Feedback {
-                path: vec!["bar".into()].into(),
-                span: Some(SourceSpan { start: 0, end: 3 }),
-                issue: Violation::UnexpectedKey().into()
-            }]
-        );
-    }
-
     /// Test that keys starting with underscore are preserved in output but not validated
     #[test]
     fn validate_underscore_key_preserved() {
@@ -887,43 +779,6 @@ mod tests {
                 .into()
             }]
         )
-    }
-
-    #[test]
-    fn validate_yaml_deprecated_key_uses_key_span() {
-        let schema: Dict = Dict::deserialize(serde_json::json!({
-            "keys": {
-                "foo": {
-                    "type": "str",
-                    "deprecation": {
-                        "warning": true,
-                        "remove_in_version": "1.2.3",
-                    }
-                }
-            }
-        }))
-        .unwrap();
-        let (docs, errors) = parse("foo: bar\n");
-        assert!(errors.is_empty());
-        let input = docs.first().expect("expected a parsed document");
-
-        let store = get_test_store();
-        let mut ctx = Context::new(&store, None);
-        let _ = schema.validate(input, &mut ctx);
-
-        assert_eq!(
-            ctx.result.warnings,
-            vec![Feedback {
-                path: vec!["foo".into()].into(),
-                span: Some(SourceSpan { start: 0, end: 3 }),
-                issue: WarningIssue::Deprecated(Deprecated {
-                    path: vec!["foo".into()].into(),
-                    replacement: None.into(),
-                    version: Some("1.2.3".into()).into(),
-                    url: None.into()
-                })
-            }]
-        );
     }
 
     // Tests a key that is marked as removed returns the proper error.
