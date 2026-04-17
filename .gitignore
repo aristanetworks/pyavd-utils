@@ -64,3 +64,7 @@ Cargo.lock
 # Generated license files (cargo-about)
 licenses.html
 THIRD_PARTY_LICENSES.txt
+
+# Codex bug causing these empty files to be left behind.
+# Adding here to avoid them being checked in accidentally.
+.codex
