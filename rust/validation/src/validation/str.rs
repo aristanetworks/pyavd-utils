@@ -34,20 +34,8 @@ impl Validation for Str {
             } else {
                 None
             }
-        } else if value.is_null() && !ctx.configuration.restrict_null_values {
-            // Null is allowed when not restricted
-            ctx.configuration
-                .return_coerced_data
-                .then(|| value.coerce_null())
         } else {
-            ctx.add_error_for(
-                value,
-                Violation::InvalidType {
-                    expected: Type::Str,
-                    found: value.value_type(),
-                },
-            );
-            None
+            Self::handle_invalid_type(value, ctx, Type::Str)
         }
     }
 }

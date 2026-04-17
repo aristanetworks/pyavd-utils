@@ -61,12 +61,10 @@ fn validate_items<'a, S: ValidatableSequence<'a>>(
     input: &S,
     ctx: &mut Context,
 ) -> Option<Vec<<S::Value as ValidatableValue>::Coerced>> {
-    let return_coerced = ctx.configuration.return_coerced_data;
-    let mut coerced = if return_coerced {
-        Some(Vec::with_capacity(input.len()))
-    } else {
-        None
-    };
+    let mut coerced = ctx
+        .configuration
+        .return_coerced_data
+        .then(|| Vec::with_capacity(input.len()));
 
     for (i, item) in input.iter().enumerate() {
         ctx.state.path.push(i.to_string());

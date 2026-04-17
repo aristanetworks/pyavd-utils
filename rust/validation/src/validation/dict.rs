@@ -65,20 +65,17 @@ fn validate_ref<V: ValidatableValue>(
     value: &V,
     ctx: &mut Context,
 ) -> Option<Option<V::Coerced>> {
-    if let Some(ref_) = schema.base.schema_ref.as_ref() {
-        // Ignoring not being able to resolve the schema.
-        // Ignoring a wrong schema type at the ref. Since Validation is infallible.
-        // TODO: What to do?
-        if let Ok(AnySchema::Dict(ref_schema)) = resolve_ref(ref_, ctx.store) {
-            // Handle relaxed validation here, since the places we use it is also where we skip resolving the $ref before validation.
-            let previous_relaxed_validation = ctx.state.relaxed_validation;
-            if schema.relaxed_validation.unwrap_or_default() {
-                ctx.state.relaxed_validation = true
-            }
-            let result = ref_schema.validate(value, ctx);
-            ctx.state.relaxed_validation = previous_relaxed_validation;
-            return Some(result);
+    if let Some(ref_) = schema.base.schema_ref.as_ref()
+        && let Ok(AnySchema::Dict(ref_schema)) = resolve_ref(ref_, ctx.store)
+    {
+        // Handle relaxed validation here, since the places we use it is also where we skip resolving the $ref before validation.
+        let previous_relaxed_validation = ctx.state.relaxed_validation;
+        if schema.relaxed_validation.unwrap_or_default() {
+            ctx.state.relaxed_validation = true
         }
+        let result = ref_schema.validate(value, ctx);
+        ctx.state.relaxed_validation = previous_relaxed_validation;
+        return Some(result);
     }
     None
 }
@@ -90,12 +87,7 @@ fn validate_keys<'a, M: ValidatableMapping<'a>>(
     input: &M,
     ctx: &mut Context,
 ) -> Option<Vec<(String, <M::Value as ValidatableValue>::Coerced)>> {
-    let return_coerced = ctx.configuration.return_coerced_data;
-    let mut coerced_items = if return_coerced {
-        Some(Vec::new())
-    } else {
-        None
-    };
+    let mut coerced_items = ctx.configuration.return_coerced_data.then(Vec::new);
 
     let Some(keys) = &schema.keys else {
         // No schema keys - preserve all input as-is when coercing
@@ -708,7 +700,7 @@ mod tests {
             keys: Some(OrderMap::from_iter([("foo".into(), Str::default().into())])),
             ..Default::default()
         };
-        // _internal key should be preserved but not validated, foo1 should error
+        // _internal key should be preserved but not validated
         let input = serde_json::json!({ "foo": "ok", "_internal": {"nested": "data"} });
         let store = get_test_store();
         let configuration = Configuration {

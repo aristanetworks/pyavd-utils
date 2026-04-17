@@ -14,8 +14,8 @@ use super::Validation;
 
 impl Validation for Bool {
     fn validate<V: ValidatableValue>(&self, value: &V, ctx: &mut Context) -> Option<V::Coerced> {
-        if let Some(ref_result) = validate_ref(self, value, ctx) {
-            return ref_result;
+        if let Some(maybe_coerced) = validate_ref(self, value, ctx) {
+            return maybe_coerced;
         }
 
         if let Some(v) = value.as_bool() {
@@ -25,20 +25,8 @@ impl Validation for Bool {
             } else {
                 None
             }
-        } else if value.is_null() && !ctx.configuration.restrict_null_values {
-            // Null is allowed when not restricted
-            ctx.configuration
-                .return_coerced_data
-                .then(|| value.coerce_null())
         } else {
-            ctx.add_error_for(
-                value,
-                Violation::InvalidType {
-                    expected: Type::Bool,
-                    found: value.value_type(),
-                },
-            );
-            None
+            Self::handle_invalid_type(value, ctx, Type::Bool)
         }
     }
 }

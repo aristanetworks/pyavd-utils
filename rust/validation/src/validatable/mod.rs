@@ -56,6 +56,9 @@ pub trait ValidatableValue: Sized {
     /// Returns `true` if this value is a boolean type.
     fn is_bool(&self) -> bool;
 
+    /// Returns true if this value is a float.
+    fn is_float(&self) -> bool;
+
     // === Value extraction with coercion ===
 
     /// Try to get this value as a string, coercing if possible.
@@ -102,9 +105,6 @@ pub trait ValidatableValue: Sized {
     /// Convert to feedback::Value for use in CoercionNote.
     /// This is used to record what value was coerced from.
     fn to_feedback_value(&self) -> crate::feedback::Value;
-
-    /// Returns true if this value is a float.
-    fn is_float(&self) -> bool;
 
     /// Get the source span for this value, if available.
     fn source_span(&self) -> Option<SourceSpan> {
