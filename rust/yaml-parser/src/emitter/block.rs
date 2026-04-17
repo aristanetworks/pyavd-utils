@@ -239,15 +239,31 @@ impl<'input> Emitter<'input> {
                         }
 
                         _ => {
-                            // No more entries - check for trailing content at seq_indent level.
-                            // Use current_indent as the content column: in this catch-all,
-                            // the token is on the current line at or past current_indent.
-                            // This is an error diagnostic for malformed input.
-                            if self.current_indent == indent
-                                && self.peek_kind() == Some(TokenKind::Plain)
-                                && self.peek_kind_nth(1) != Some(TokenKind::Colon)
-                            {
-                                self.error(ErrorKind::TrailingContent, self.current_span());
+                            // Recover from malformed content at the sequence indentation by
+                            // dropping the offending line and resuming entry scan. Keep this
+                            // narrow so document markers and other structural cleanup still
+                            // follow their dedicated paths.
+                            let recoverable_same_indent_content = self.current_indent == indent
+                                && matches!(
+                                    self.peek_kind(),
+                                    Some(
+                                        TokenKind::Plain
+                                            | TokenKind::StringStart
+                                            | TokenKind::MappingKey
+                                            | TokenKind::Colon
+                                            | TokenKind::Anchor
+                                            | TokenKind::Tag
+                                            | TokenKind::Alias
+                                            | TokenKind::FlowSeqStart
+                                            | TokenKind::FlowMapStart
+                                    )
+                                );
+                            if recoverable_same_indent_content {
+                                self.error(ErrorKind::InvalidIndentation, self.current_span());
+                                self.skip_to_line_end();
+                                self.skip_invalid_indented_recovery_lines(indent);
+                                phase = BlockSeqPhase::BeforeEntryScan;
+                                continue;
                             }
                             // Root-level check
                             if self.is_root_level_sequence(indent) {
@@ -472,10 +488,14 @@ impl<'input> Emitter<'input> {
                             if self.current_indent > indent
                                 && !self.is_valid_indent(self.current_indent)
                             {
-                                self.pop_indent();
-                                return Some(Event::MappingEnd {
-                                    span: self.collection_end_span(),
-                                });
+                                self.report_invalid_indent();
+                                self.skip_to_line_end();
+                                self.skip_invalid_indented_recovery_lines(indent);
+                                phase = BlockMapPhase::BeforeKeyScan {
+                                    require_line_boundary: false,
+                                    crossed_line: false,
+                                };
+                                continue;
                             }
 
                             if self.is_implicit_key() {
