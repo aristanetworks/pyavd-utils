@@ -121,10 +121,17 @@ impl<'a> FromIterator<&'a str> for Path {
 pub struct Feedback<T: Clone + Debug + PartialEq + Serialize + Display> {
     /// Data path which the feedback concerns.
     pub path: Path,
+    pub span: Option<SourceSpan>,
     pub issue: T,
 }
 
-/// Error issue is wrapped in Feedback and added to the Context during coercion and validation.
+/// Input-wide diagnostic found while decoding or selecting the input.
+#[derive(Clone, Debug, PartialEq, Serialize, derive_more::Display)]
+pub enum InputDiagnostic {
+    ParseDiagnostic(ParseDiagnostic),
+}
+
+/// ErrorIssue is wrapped in Feedback and added to the Context during validation.
 #[derive(Clone, Debug, PartialEq, Serialize, derive_more::From, derive_more::Display)]
 pub enum ErrorIssue {
     /// Violation found during validation.
@@ -134,7 +141,7 @@ pub enum ErrorIssue {
     InternalError { message: String },
 }
 
-/// WarningIssue is wrapped in Feedback and added to the Context during coercion and validation.
+/// WarningIssue is wrapped in Feedback and added to the Context during validation.
 #[derive(Clone, Debug, PartialEq, Serialize, derive_more::From, derive_more::Display)]
 pub enum WarningIssue {
     /// Deprecation of data model.
@@ -143,7 +150,7 @@ pub enum WarningIssue {
     IgnoredEosConfigKey(IgnoredEosConfigKey),
 }
 
-/// InfoIssue is wrapped in Feedback and added to the Context during coercion and validation.
+/// InfoIssue is wrapped in Feedback and added to the Context during validation.
 #[derive(Clone, Debug, PartialEq, Serialize, derive_more::From, derive_more::Display)]
 pub enum InfoIssue {
     /// Coercion performed during coercion.
@@ -153,12 +160,100 @@ pub enum InfoIssue {
     DefaultValueInserted(),
 }
 
-/// One coercion performed during recursive coercion.
+/// One coercion performed during validation.
 #[derive(Clone, Debug, PartialEq, Serialize, derive_more::Display)]
 #[display("Coerced value from {found} to {made}.")]
 pub struct CoercionNote {
     pub found: Value,
     pub made: Value,
+}
+
+/// Absolute byte range within the original source input.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct SourceSpan {
+    pub start: usize,
+    pub end: usize,
+}
+
+/// Parse diagnostic reported while decoding structured input.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct ParseDiagnostic {
+    pub kind: ParseDiagnosticKind,
+    pub message: String,
+    pub suggestion: Option<String>,
+    pub span: SourceSpan,
+}
+
+impl ParseDiagnostic {
+    pub fn from_json_error(value: &serde_json::Error, input: &str) -> Self {
+        Self {
+            kind: ParseDiagnosticKind::JsonSyntax,
+            message: value.to_string(),
+            suggestion: None,
+            span: source_span_from_json_error(input, value),
+        }
+    }
+    fn capitalize_first(input: &str) -> String {
+        let mut chars = input.chars();
+        match chars.next() {
+            Some(first) => first.to_uppercase().chain(chars).collect(),
+            None => String::new(),
+        }
+    }
+}
+
+impl Display for ParseDiagnostic {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}: {}.",
+            self.kind,
+            ParseDiagnostic::capitalize_first(&self.message)
+        )?;
+        if let Some(suggestion) = &self.suggestion {
+            write!(f, " {}.", ParseDiagnostic::capitalize_first(suggestion))?;
+        }
+        Ok(())
+    }
+}
+
+/// Parse diagnostic category.
+#[derive(Clone, Debug, PartialEq, Serialize, derive_more::Display)]
+pub enum ParseDiagnosticKind {
+    #[display("JSON syntax error")]
+    JsonSyntax,
+}
+
+fn source_span_from_json_error(input: &str, error: &serde_json::Error) -> SourceSpan {
+    let line = error.line();
+    let column = error.column();
+
+    if line == 0 || column == 0 {
+        let end = input.len();
+        return SourceSpan { start: end, end };
+    }
+
+    let mut current_line = 1;
+    let mut current_column = 1;
+
+    for (index, ch) in input.char_indices() {
+        if current_line == line && current_column == column {
+            return SourceSpan {
+                start: index,
+                end: index,
+            };
+        }
+
+        if ch == '\n' {
+            current_line += 1;
+            current_column = 1;
+        } else {
+            current_column += 1;
+        }
+    }
+
+    let end = input.len();
+    SourceSpan { start: end, end }
 }
 
 /// One violation found during recursive validation.
@@ -196,7 +291,10 @@ pub enum Violation {
     ValueBelowMinimum { minimum: i64, found: i64 },
     /// The value is not unique as required.
     #[display("The value is not unique among similar items. Conflicting item: {other_path}")]
-    ValueNotUnique { other_path: Path },
+    ValueNotUnique {
+        other_path: Path,
+        other_span: Option<SourceSpan>,
+    },
     /// The input data model is deprecated and cannot be used in conjunction with the new data model.
     #[display(
         "The input data model is deprecated and cannot be used in conjunction with the new data model '{other_path}'.{url}"
@@ -212,6 +310,7 @@ pub enum Type {
     Null,
     Bool,
     Int,
+    Float,
     Str,
     List,
     Dict,
@@ -221,7 +320,13 @@ impl From<&serde_json::Value> for Type {
         match value {
             serde_json::Value::Null => Self::Null,
             serde_json::Value::Bool(_) => Self::Bool,
-            serde_json::Value::Number(_) => Self::Int,
+            serde_json::Value::Number(number) => {
+                if number.is_f64() {
+                    Self::Float
+                } else {
+                    Self::Int
+                }
+            }
             serde_json::Value::String(_) => Self::Str,
             serde_json::Value::Array(_) => Self::List,
             serde_json::Value::Object(_) => Self::Dict,
@@ -370,6 +475,8 @@ mod tests {
         assert_eq!(type_, Type::Bool);
         let type_ = Type::from(&serde_json::json!(-123));
         assert_eq!(type_, Type::Int);
+        let type_ = Type::from(&serde_json::json!(123.45));
+        assert_eq!(type_, Type::Float);
         let type_ = Type::from(&serde_json::json!("string"));
         assert_eq!(type_, Type::Str);
         let type_ = Type::from(&serde_json::json!({"key": "value"}));

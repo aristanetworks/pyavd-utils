@@ -4,70 +4,164 @@
 
 use std::collections::HashMap;
 
-use serde_json::Value;
+use avdschema::{any::AnySchema, list::List, resolve_ref};
 
 use crate::feedback::{Type, Violation};
-
+use crate::validatable::{ValidatableSequence, ValidatableValue};
 use crate::{context::Context, validation::Validation};
-use avdschema::{SchemaDataValue as _, any::AnySchema, list::List, resolve_ref};
 
-impl Validation<Vec<Value>> for List {
-    fn validate(&self, input: &Vec<Value>, ctx: &mut Context) {
-        validate_min_length(self, input, ctx);
-        validate_max_length(self, input, ctx);
-        validate_items(self, input, ctx);
-        validate_unique_keys(self, input, ctx);
-    }
-
-    fn validate_value(&self, value: &Value, ctx: &mut Context) {
-        if let Some(v) = value.as_array() {
-            self.validate(v, ctx)
-        } else if value.is_null() && !ctx.configuration.restrict_null_values {
-        } else {
-            ctx.add_error(Violation::InvalidType {
-                expected: Type::List,
-                found: value.into(),
-            })
+impl Validation for List {
+    fn validate<V: ValidatableValue>(&self, value: &V, ctx: &mut Context) -> Option<V::Coerced> {
+        if let Some(ref_result) = validate_ref(self, value, ctx) {
+            return ref_result;
         }
-    }
 
-    fn validate_ref(&self, value: &Vec<Value>, ctx: &mut Context) {
-        if let Some(ref_) = self.base.schema_ref.as_ref() {
-            // Ignoring not being able to resolve the schema.
-            // Ignoring a wrong schema type at the ref. Since Validation is infallible.
-            // TODO: What to do?
-            if let Ok(AnySchema::List(ref_schema)) = resolve_ref(ref_, ctx.store) {
-                ref_schema.validate(value, ctx);
-            }
+        if let Some(seq) = value.as_sequence() {
+            validate_min_length(self, value, &seq, ctx);
+            validate_max_length(self, value, &seq, ctx);
+            validate_unique_keys(self, &seq, ctx);
+            // Validate items and optionally collect coerced results
+            let coerced_items = validate_items(self, &seq, ctx);
+            coerced_items.map(|items| value.coerce_sequence(items))
+        } else if value.is_null() && !ctx.configuration.restrict_null_values {
+            ctx.configuration
+                .return_coerced_data
+                .then(|| value.coerce_null())
+        } else {
+            ctx.add_error_for(
+                value,
+                Violation::InvalidType {
+                    expected: Type::List,
+                    found: value.value_type(),
+                },
+            );
+            None
         }
     }
 }
 
-fn validate_min_length(schema: &List, input: &[Value], ctx: &mut Context) {
+/// Validate against a referenced schema (for unresolved $ref ending with #).
+fn validate_ref<V: ValidatableValue>(
+    schema: &List,
+    value: &V,
+    ctx: &mut Context,
+) -> Option<Option<V::Coerced>> {
+    if let Some(ref_) = schema.base.schema_ref.as_ref()
+        && let Ok(AnySchema::List(ref_schema)) = resolve_ref(ref_, ctx.store)
+    {
+        return Some(ref_schema.validate(value, ctx));
+    }
+    None
+}
+
+/// Validate and optionally coerce sequence items.
+/// Returns Some(coerced_items) when coercion is enabled, None otherwise.
+fn validate_items<'a, S: ValidatableSequence<'a>>(
+    schema: &List,
+    input: &S,
+    ctx: &mut Context,
+) -> Option<Vec<<S::Value as ValidatableValue>::Coerced>> {
+    let mut coerced = ctx
+        .configuration
+        .return_coerced_data
+        .then(|| Vec::with_capacity(input.len()));
+
+    for (i, item) in input.iter().enumerate() {
+        ctx.state.path.push(i.to_string());
+        validate_item_primary_key(schema, item, ctx);
+        if let Some(ref mut items) = coerced {
+            let coerced_item = validate_item_schema(schema, item, ctx);
+            items.push(coerced_item);
+        } else {
+            validate_item_schema_only(schema, item, ctx);
+        }
+        ctx.state.path.pop();
+    }
+    coerced
+}
+
+fn validate_item_schema<V: ValidatableValue>(
+    schema: &List,
+    item: &V,
+    ctx: &mut Context,
+) -> V::Coerced {
+    if let Some(item_schema) = &schema.items {
+        // validate() returns Option, but we know return_coerced_data is true here
+        item_schema
+            .validate(item, ctx)
+            .unwrap_or_else(|| item.clone_to_coerced())
+    } else {
+        // No item schema - preserve the value as-is
+        item.clone_to_coerced()
+    }
+}
+
+fn validate_item_schema_only<V: ValidatableValue>(schema: &List, item: &V, ctx: &mut Context) {
+    if let Some(item_schema) = &schema.items {
+        let _ = item_schema.validate(item, ctx);
+    }
+}
+
+fn validate_min_length<'a, V: ValidatableValue, S: ValidatableSequence<'a>>(
+    schema: &List,
+    value: &V,
+    input: &S,
+    ctx: &mut Context,
+) {
     if let Some(min_length) = schema.min_length {
         let length = input.len() as u64;
         if min_length > length {
-            ctx.add_error(Violation::LengthBelowMinimum {
-                minimum: min_length,
-                found: length,
-            });
+            ctx.add_error_for(
+                value,
+                Violation::LengthBelowMinimum {
+                    minimum: min_length,
+                    found: length,
+                },
+            );
         }
     }
 }
 
-fn validate_max_length(schema: &List, input: &[Value], ctx: &mut Context) {
+fn validate_max_length<'a, V: ValidatableValue, S: ValidatableSequence<'a>>(
+    schema: &List,
+    value: &V,
+    input: &S,
+    ctx: &mut Context,
+) {
     if let Some(max_length) = schema.max_length {
         let length = input.len() as u64;
         if max_length < length {
-            ctx.add_error(Violation::LengthAboveMaximum {
-                maximum: max_length,
-                found: length,
-            });
+            ctx.add_error_for(
+                value,
+                Violation::LengthAboveMaximum {
+                    maximum: max_length,
+                    found: length,
+                },
+            );
         }
     }
 }
 
-fn validate_unique_keys(schema: &List, items: &[Value], ctx: &mut Context) {
+fn validate_item_primary_key<V: ValidatableValue>(schema: &List, item: &V, ctx: &mut Context) {
+    if let Some(primary_key) = &schema.primary_key
+        && item.get(primary_key).is_none_or(|value| value.is_null())
+    {
+        ctx.add_error_for(
+            item,
+            Violation::MissingRequiredKey {
+                key: primary_key.to_owned(),
+            },
+        );
+    }
+}
+
+fn validate_unique_keys<'a, S: ValidatableSequence<'a>>(
+    schema: &List,
+    items: &S,
+    ctx: &mut Context,
+) {
+    type SeenItem<'a, T> = (Vec<String>, &'a T);
+
     let unique_keys = schema.unique_keys.iter().flatten().chain(
         // the primary key is considered unique unless told otherwise
         schema
@@ -77,64 +171,65 @@ fn validate_unique_keys(schema: &List, items: &[Value], ctx: &mut Context) {
     );
 
     for unique_key in unique_keys {
-        let path = unique_key.split('.');
-        let mut seen_items_trail_map: HashMap<&Value, Vec<Vec<String>>> = HashMap::new();
-        items
-            .iter()
-            .enumerate()
-            .flat_map(|(i, item)| {
+        // Map from stringified value to list of (trail, value) pairs.
+        let mut seen_items: HashMap<String, Vec<SeenItem<'a, S::Value>>> = HashMap::new();
+
+        for (i, item) in items.iter().enumerate() {
+            for (trail_suffix, value) in item.walk_path(unique_key) {
+                // Build the full trail
                 let mut trail = vec![i.to_string()];
-                item.walk(path.clone(), Some(&mut trail))
-            })
-            .for_each(|(item_trail, item)| {
-                seen_items_trail_map
-                    .entry(item)
+                trail.extend(trail_suffix);
+
+                // Convert value to string for comparison
+                let value_str = value_to_string(value);
+
+                seen_items
+                    .entry(value_str)
                     .and_modify(|seen_item_trails| {
                         // We found at least one other item, so we know we have a duplicate
                         // Add violations for all duplicates in both directions.
-                        for seen_item_trail in seen_item_trails {
-                            ctx.add_duplicate_violation_pair(seen_item_trail, &item_trail);
+                        for (seen_item_trail, seen_value) in seen_item_trails.iter() {
+                            ctx.add_duplicate_violation_pair_for(
+                                *seen_value,
+                                seen_item_trail,
+                                value,
+                                &trail,
+                            );
                         }
                     })
-                    .or_insert(Vec::from_iter([item_trail]));
-            });
+                    .or_insert_with(|| vec![(trail, value)]);
+            }
+        }
     }
 }
 
-fn validate_items(schema: &List, items: &[Value], ctx: &mut Context) {
-    for (i, item) in items.iter().enumerate() {
-        ctx.state.path.push(i.to_string());
-        validate_item_schema(schema, item, ctx);
-        validate_item_primary_key(schema, item, ctx);
-        ctx.state.path.pop();
+/// Convert a ValidatableValue to a string for comparison purposes.
+fn value_to_string<V: ValidatableValue>(value: &V) -> String {
+    if let Some(s) = value.as_str() {
+        return s.into_owned();
     }
-}
-
-fn validate_item_schema(schema: &List, item: &Value, ctx: &mut Context) {
-    if let Some(schema) = &schema.items {
-        schema.validate_value(item, ctx);
+    if let Some(i) = value.as_i64() {
+        return i.to_string();
     }
-}
-
-fn validate_item_primary_key(schema: &List, item: &Value, ctx: &mut Context) {
-    if let Some(primary_key) = &schema.primary_key
-        && item.get(primary_key).is_none_or(|value| value.is_null())
-    {
-        ctx.add_error(Violation::MissingRequiredKey {
-            key: primary_key.to_owned(),
-        });
+    if let Some(b) = value.as_bool() {
+        return b.to_string();
     }
+    if value.is_null() {
+        return "null".to_string();
+    }
+    // For complex types, we can't easily compare
+    "<complex>".to_string()
 }
 
 #[cfg(test)]
 mod tests {
     use avdschema::{any::AnySchema, dict::Dict, str::Str};
     use ordermap::OrderMap;
+    use serde_json::Value;
 
     use super::*;
     use crate::{
         Configuration,
-        coercion::Coercion as _,
         feedback::{CoercionNote, Feedback},
         validation::test_utils::get_test_store,
     };
@@ -145,22 +240,23 @@ mod tests {
         let input = serde_json::json!(["foo", "bar"]);
         let store = get_test_store();
         let mut ctx = Context::new(&store, None);
-        schema.validate_value(&input, &mut ctx);
+        let _ = schema.validate(&input, &mut ctx);
         assert!(ctx.result.errors.is_empty() && ctx.result.infos.is_empty());
     }
 
     #[test]
     fn validate_type_err() {
         let schema = List::default();
-        let input = true.into();
+        let input: Value = true.into();
         let store = get_test_store();
         let mut ctx = Context::new(&store, None);
-        schema.validate_value(&input, &mut ctx);
+        let _ = schema.validate(&input, &mut ctx);
         assert!(ctx.result.infos.is_empty());
         assert_eq!(
             ctx.result.errors,
             vec![Feedback {
                 path: vec![].into(),
+                span: None,
                 issue: Violation::InvalidType {
                     expected: Type::List,
                     found: Type::Bool
@@ -179,7 +275,7 @@ mod tests {
         let input = serde_json::json!(["foo", "bar"]);
         let store = get_test_store();
         let mut ctx = Context::new(&store, None);
-        schema.validate_value(&input, &mut ctx);
+        let _ = schema.validate(&input, &mut ctx);
         assert!(ctx.result.errors.is_empty() && ctx.result.infos.is_empty());
     }
 
@@ -192,13 +288,14 @@ mod tests {
         let input = serde_json::json!([{}, {}]);
         let store = get_test_store();
         let mut ctx = Context::new(&store, None);
-        schema.validate_value(&input, &mut ctx);
+        let _ = schema.validate(&input, &mut ctx);
         assert!(ctx.result.infos.is_empty());
         assert_eq!(
             ctx.result.errors,
             vec![
                 Feedback {
                     path: vec!["0".into()].into(),
+                    span: None,
                     issue: Violation::InvalidType {
                         expected: Type::Str,
                         found: Type::Dict
@@ -207,6 +304,7 @@ mod tests {
                 },
                 Feedback {
                     path: vec!["1".into()].into(),
+                    span: None,
                     issue: Violation::InvalidType {
                         expected: Type::Str,
                         found: Type::Dict
@@ -223,19 +321,21 @@ mod tests {
             items: Some(Box::new(Str::default().into())),
             ..Default::default()
         };
-        let mut input = serde_json::json!([1, []]);
+        let input = serde_json::json!([1, []]);
         let store = get_test_store();
         let configuration = Configuration {
             return_coercion_infos: true,
+            return_coerced_data: true,
             ..Default::default()
         };
         let mut ctx = Context::new(&store, Some(&configuration));
-        schema.coerce(&mut input, &mut ctx);
-        schema.validate_value(&input, &mut ctx);
+        let coerced = schema.validate(&input, &mut ctx);
+        // Int 1 is coerced to String "1"
         assert_eq!(
             ctx.result.infos,
             vec![Feedback {
                 path: vec!["0".into()].into(),
+                span: None,
                 issue: CoercionNote {
                     found: 1.into(),
                     made: "1".into()
@@ -243,10 +343,12 @@ mod tests {
                 .into()
             }]
         );
+        // Second item [] is invalid (List, not Str)
         assert_eq!(
             ctx.result.errors,
             vec![Feedback {
                 path: vec!["1".into()].into(),
+                span: None,
                 issue: Violation::InvalidType {
                     expected: Type::Str,
                     found: Type::List
@@ -254,6 +356,8 @@ mod tests {
                 .into()
             },]
         );
+        // Coerced output should have "1" for first item, original [] preserved for invalid second item
+        assert_eq!(coerced, Some(serde_json::json!(["1", []])));
     }
 
     #[test]
@@ -265,7 +369,7 @@ mod tests {
         let input = serde_json::json!(["foo", "bar"]);
         let store = get_test_store();
         let mut ctx = Context::new(&store, None);
-        schema.validate_value(&input, &mut ctx);
+        let _ = schema.validate(&input, &mut ctx);
         assert!(ctx.result.errors.is_empty() && ctx.result.infos.is_empty());
     }
 
@@ -278,12 +382,13 @@ mod tests {
         let input = serde_json::json!(["foo", "bar"]);
         let store = get_test_store();
         let mut ctx = Context::new(&store, None);
-        schema.validate_value(&input, &mut ctx);
+        let _ = schema.validate(&input, &mut ctx);
         assert!(ctx.result.infos.is_empty());
         assert_eq!(
             ctx.result.errors,
             vec![Feedback {
                 path: vec![].into(),
+                span: None,
                 issue: Violation::LengthBelowMinimum {
                     minimum: 3,
                     found: 2
@@ -302,7 +407,7 @@ mod tests {
         let input = serde_json::json!(["foo", "bar"]);
         let store = get_test_store();
         let mut ctx = Context::new(&store, None);
-        schema.validate_value(&input, &mut ctx);
+        let _ = schema.validate(&input, &mut ctx);
         assert!(ctx.result.errors.is_empty() && ctx.result.infos.is_empty());
     }
 
@@ -315,12 +420,13 @@ mod tests {
         let input = serde_json::json!(["foo", "bar", "baz"]);
         let store = get_test_store();
         let mut ctx = Context::new(&store, None);
-        schema.validate_value(&input, &mut ctx);
+        let _ = schema.validate(&input, &mut ctx);
         assert!(ctx.result.infos.is_empty());
         assert_eq!(
             ctx.result.errors,
             vec![Feedback {
                 path: vec![].into(),
+                span: None,
                 issue: Violation::LengthAboveMaximum {
                     maximum: 2,
                     found: 3
@@ -346,7 +452,7 @@ mod tests {
         let input = serde_json::json!([{ "foo": "v1" }, { "foo": "v2" }]);
         let store = get_test_store();
         let mut ctx = Context::new(&store, None);
-        schema.validate_value(&input, &mut ctx);
+        let _ = schema.validate(&input, &mut ctx);
         assert!(ctx.result.errors.is_empty() && ctx.result.infos.is_empty());
     }
 
@@ -366,12 +472,13 @@ mod tests {
         let input = serde_json::json!([{ "foo": null }, { "foo": "v1" }]);
         let store = get_test_store();
         let mut ctx = Context::new(&store, None);
-        schema.validate_value(&input, &mut ctx);
+        let _ = schema.validate(&input, &mut ctx);
         assert!(ctx.result.infos.is_empty());
         assert_eq!(
             ctx.result.errors,
             vec![Feedback {
                 path: vec!["0".into()].into(),
+                span: None,
                 issue: Violation::MissingRequiredKey { key: "foo".into() }.into()
             }]
         );
@@ -393,22 +500,26 @@ mod tests {
         let input = serde_json::json!([{ "foo": "111" }, { "foo": "222" }, { "foo": "111" }]);
         let store = get_test_store();
         let mut ctx = Context::new(&store, None);
-        schema.validate_value(&input, &mut ctx);
+        let _ = schema.validate(&input, &mut ctx);
         assert!(ctx.result.infos.is_empty());
         assert_eq!(
             ctx.result.errors,
             vec![
                 Feedback {
                     path: vec!["0".into(), "foo".into()].into(),
+                    span: None,
                     issue: Violation::ValueNotUnique {
-                        other_path: vec!["2".into(), "foo".into()].into()
+                        other_path: vec!["2".into(), "foo".into()].into(),
+                        other_span: None,
                     }
                     .into()
                 },
                 Feedback {
                     path: vec!["2".into(), "foo".into()].into(),
+                    span: None,
                     issue: Violation::ValueNotUnique {
-                        other_path: vec!["0".into(), "foo".into()].into()
+                        other_path: vec!["0".into(), "foo".into()].into(),
+                        other_span: None,
                     }
                     .into()
                 }
@@ -433,8 +544,72 @@ mod tests {
         let input = serde_json::json!([{ "foo": "111" }, { "foo": "222" }, { "foo": "111" }]);
         let store = get_test_store();
         let mut ctx = Context::new(&store, None);
-        schema.validate_value(&input, &mut ctx);
+        let _ = schema.validate(&input, &mut ctx);
         assert!(ctx.result.infos.is_empty());
         assert!(ctx.result.errors.is_empty());
+    }
+
+    #[test]
+    fn validate_unique_keys_through_nested_list_err() {
+        let schema = List {
+            items: Some(Box::new(
+                Dict {
+                    keys: Some(OrderMap::from_iter([(
+                        "aliases".into(),
+                        List {
+                            items: Some(Box::new(
+                                Dict {
+                                    keys: Some(OrderMap::from_iter([(
+                                        "name".into(),
+                                        Str::default().into(),
+                                    )])),
+                                    ..Default::default()
+                                }
+                                .into(),
+                            )),
+                            ..Default::default()
+                        }
+                        .into(),
+                    )])),
+                    ..Default::default()
+                }
+                .into(),
+            )),
+            unique_keys: Some(vec!["aliases.name".into()]),
+            ..Default::default()
+        };
+        let input = serde_json::json!([
+            {"aliases": [{"name": "dup"}]},
+            {"aliases": [{"name": "dup"}]}
+        ]);
+        let store = get_test_store();
+        let mut ctx = Context::new(&store, None);
+        let _ = schema.validate(&input, &mut ctx);
+
+        assert_eq!(
+            ctx.result.errors,
+            vec![
+                Feedback {
+                    path: vec!["0".into(), "aliases".into(), "0".into(), "name".into()].into(),
+                    span: None,
+                    issue: Violation::ValueNotUnique {
+                        other_path: vec!["1".into(), "aliases".into(), "0".into(), "name".into()]
+                            .into(),
+                        other_span: None,
+                    }
+                    .into()
+                },
+                Feedback {
+                    path: vec!["1".into(), "aliases".into(), "0".into(), "name".into()].into(),
+                    span: None,
+                    issue: Violation::ValueNotUnique {
+                        other_path: vec!["0".into(), "aliases".into(), "0".into(), "name".into()]
+                            .into(),
+                        other_span: None,
+                    }
+                    .into()
+                }
+            ]
+        );
     }
 }
