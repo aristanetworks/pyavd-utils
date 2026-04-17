@@ -2,7 +2,10 @@
 // Use of this source code is governed by the Apache License 2.0
 // that can be found in the LICENSE file.
 
+use std::sync::Arc;
+
 use avdschema::Store;
+use avdschema::dict::DynamicKeyOverrides;
 
 use crate::feedback::CoercionNote;
 use crate::feedback::ErrorIssue;
@@ -170,6 +173,11 @@ pub struct Configuration {
     /// When validating `avd_design`, emit warnings for top-level keys that exist in `eos_config`
     /// but not in `avd_design`.
     pub warn_eos_config_keys: bool,
+    /// Optional caller-supplied dynamic keys keyed by schema dynamic-key path.
+    /// The overrides will take precedence over the dynamic keys defined in the inputes.
+    /// This is used by the LSP when interpreting # comments on keys.
+    /// Stored behind Arc so cloning Configuration for each new Context stays cheap.
+    pub dynamic_key_overrides: Option<Arc<DynamicKeyOverrides>>,
 }
 
 #[derive(Clone, Debug, Default)]

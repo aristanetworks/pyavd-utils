@@ -9,6 +9,7 @@ use crate::Store;
 use crate::any::AnySchema;
 use crate::dict::Dict;
 use crate::dict::DynamicKeyInfo;
+use crate::dict::DynamicKeyOverrides;
 use crate::resolve::errors::SchemaResolverError;
 use crate::resolve::resolve_ref::resolve_ref;
 use crate::store::SchemaStoreError;
@@ -56,6 +57,7 @@ impl SchemaKeys {
     pub fn try_from_schema_with_value<'a, V>(
         schema: &AnySchema,
         value: V,
+        dynamic_key_overrides: Option<&DynamicKeyOverrides>,
     ) -> Result<Self, SchemaKeysError>
     where
         V: SchemaDataValue<'a>,
@@ -78,7 +80,7 @@ impl SchemaKeys {
 
         schema_keys.keys.extend(
             dict_schema
-                .get_dynamic_keys(dict)
+                .get_dynamic_keys(dict, dynamic_key_overrides)
                 .unwrap_or_default()
                 .into_iter()
                 .map(|(key, dynamic_key_info)| (key.clone(), SchemaKey::from(&dynamic_key_info))),
@@ -114,13 +116,15 @@ pub fn get_schema_from_path<'store, 'value>(
     store: &'store Store,
     data_path: &'_ [String],
     data_value: impl SchemaDataValue<'value>,
+    dynamic_key_overrides: Option<&DynamicKeyOverrides>,
 ) -> Result<Option<&'store AnySchema>, GetSchemaFromPathError> {
     let mut path = data_path.iter();
     let schema = store.get(schema_name)?;
     match path.next() {
         None => Ok(Some(schema)),
         Some(root_key) => {
-            let schema_keys = SchemaKeys::try_from_schema_with_value(schema, data_value)?;
+            let schema_keys =
+                SchemaKeys::try_from_schema_with_value(schema, data_value, dynamic_key_overrides)?;
             match schema_keys.keys.get(root_key) {
                 None => Ok(None),
                 Some(schema_key) => {
@@ -184,7 +188,7 @@ mod tests {
             ..Default::default()
         });
         let value = json!({"outer": [ {"inner": "one"}, {"inner": "two"}, {"inner": "three"}]});
-        let result = SchemaKeys::try_from_schema_with_value(&schema, &value);
+        let result = SchemaKeys::try_from_schema_with_value(&schema, &value, None);
         assert!(result.is_ok());
         let schema_keys = result.unwrap();
         assert_eq!(
@@ -220,7 +224,7 @@ mod tests {
             ..Default::default()
         });
         let value = json!({});
-        let result = SchemaKeys::try_from_schema_with_value(&schema, &value);
+        let result = SchemaKeys::try_from_schema_with_value(&schema, &value, None);
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(matches!(err, SchemaKeysError::SchemaNotDict));
@@ -231,7 +235,7 @@ mod tests {
             ..Default::default()
         });
         let value = json!([]);
-        let result = SchemaKeys::try_from_schema_with_value(&schema, &value);
+        let result = SchemaKeys::try_from_schema_with_value(&schema, &value, None);
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(matches!(err, SchemaKeysError::ValueNotADict));
@@ -242,7 +246,7 @@ mod tests {
         let value = json!(
             {"dynamic": [ {"key": "one"}, {"key": "two"}, {"key": "three"}]});
         let store = get_test_store();
-        let result = get_schema_from_path("eos_config", &store, &[], &value);
+        let result = get_schema_from_path("eos_config", &store, &[], &value, None);
         assert!(result.is_ok());
         let opt = result.unwrap();
         assert!(opt.is_some());
@@ -255,7 +259,7 @@ mod tests {
         let value = json!(
             {"dynamic": [ {"key": "one"}, {"key": "two"}, {"key": "three"}]});
         let store = get_test_store();
-        let result = get_schema_from_path("eos_config", &store, &["key2".into()], &value);
+        let result = get_schema_from_path("eos_config", &store, &["key2".into()], &value, None);
         assert!(result.is_ok());
         let opt = result.unwrap();
         assert!(opt.is_some());
@@ -273,7 +277,32 @@ mod tests {
         let value = json!(
             {"dynamic": [ {"key": "one"}, {"key": "two"}, {"key": "three"}]});
         let store = get_test_store();
-        let result = get_schema_from_path("eos_config", &store, &["two".into()], &value);
+        let result = get_schema_from_path("eos_config", &store, &["two".into()], &value, None);
+        assert!(result.is_ok());
+        let opt = result.unwrap();
+        assert!(opt.is_some());
+        let schema = opt.unwrap();
+        let expected_schema: AnySchema = serde_json::from_value(json!({
+            "type": "int",
+            "max": 10,
+        }))
+        .unwrap();
+        assert_eq!(schema, &expected_schema);
+    }
+
+    #[test]
+    fn get_schema_from_path_dynamic_key_from_overrides_some_ok() {
+        let value = json!({});
+        let overrides =
+            DynamicKeyOverrides::from_iter([("dynamic.key".into(), vec!["two".into()])]);
+        let store = get_test_store();
+        let result = get_schema_from_path(
+            "eos_config",
+            &store,
+            &["two".into()],
+            &value,
+            Some(&overrides),
+        );
         assert!(result.is_ok());
         let opt = result.unwrap();
         assert!(opt.is_some());

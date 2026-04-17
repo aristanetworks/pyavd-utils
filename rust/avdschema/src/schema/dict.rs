@@ -21,6 +21,7 @@ use crate::utils::schema_data::SchemaDataMapping;
 use crate::utils::schema_data::SchemaDataSequence as _;
 
 pub type DefaultDynamicKeys = OrderMap<String, Vec<String>>;
+pub type DynamicKeyOverrides = OrderMap<String, Vec<String>>;
 type CachedDefaultDynamicKeys = Option<Box<DefaultDynamicKeys>>;
 
 /// AVD Schema for dictionary data.
@@ -66,41 +67,56 @@ impl<'a> Dict {
 
     /// Get map of dynamic keys and their corresponding schema.
     /// Reads the `dynamic_keys` definition in the schema, resolves the pointers in the given inputs (or use the default values for the schema).
+    /// The overrides will take precedence over the dynamic keys defined in the inputes. This is used by the LSP when interpreting # comments on keys.
     pub fn get_dynamic_keys<'input, M>(
         &'a self,
         dict: M,
+        overrides: Option<&DynamicKeyOverrides>,
     ) -> Option<OrderMap<String, DynamicKeyInfo<'a>>>
     where
         M: SchemaDataMapping<'input>,
     {
         self.dynamic_keys.as_ref().map(|dynamic_keys| {
-            let default_dynamic_keys = self.default_dynamic_keys();
             dynamic_keys
                 .iter()
                 .skip_while(|(_, dynamic_key_schema)| dynamic_key_schema.is_removed())
                 .flat_map(|(dynamic_key_path, dynamic_key_schema)| {
-                    Dict::get_all(dynamic_key_path, dict)
-                        .or_else(|| {
-                            default_dynamic_keys.and_then(|default_dynamic_keys| {
-                                default_dynamic_keys.get(dynamic_key_path).cloned()
-                            })
-                        })
-                        .map(|keys| {
-                            keys.into_iter().map(|key| {
-                                (
-                                    key.clone(),
-                                    DynamicKeyInfo {
-                                        dynamic_key_path: dynamic_key_path.clone(),
-                                        schema: dynamic_key_schema,
-                                    },
-                                )
-                            })
-                        })
+                    self.get_dynamic_key_values(dynamic_key_path, dict, overrides)
                         .into_iter()
                         .flatten()
+                        .map(|key| {
+                            (
+                                key,
+                                DynamicKeyInfo {
+                                    dynamic_key_path: dynamic_key_path.clone(),
+                                    schema: dynamic_key_schema,
+                                },
+                            )
+                        })
                 })
                 .collect()
         })
+    }
+
+    /// Resolve dynamic-key values with precedence: overrides, input values, then schema defaults.
+    fn get_dynamic_key_values<'input, M>(
+        &self,
+        dynamic_key_path: &str,
+        dict: M,
+        overrides: Option<&DynamicKeyOverrides>,
+    ) -> Option<Vec<String>>
+    where
+        M: SchemaDataMapping<'input>,
+    {
+        if let Some(keys) = overrides.and_then(|overrides| overrides.get(dynamic_key_path)) {
+            Some(keys.clone())
+        } else if let Some(keys) = Dict::get_all(dynamic_key_path, dict) {
+            Some(keys)
+        } else if let Some(default_dynamic_keys) = self.default_dynamic_keys() {
+            default_dynamic_keys.get(dynamic_key_path).cloned()
+        } else {
+            None
+        }
     }
 
     fn init_default_dynamic_keys(&self) -> CachedDefaultDynamicKeys {
@@ -217,6 +233,7 @@ mod tests {
     use super::DefaultDynamicKeys;
     use super::Dict;
     use super::DynamicKeyInfo;
+    use super::DynamicKeyOverrides;
     use crate::any::AnySchema;
     use crate::boolean::Bool;
     use crate::utils::test_utils::get_test_dict_schema;
@@ -246,7 +263,7 @@ mod tests {
         };
         let value: Value =
             json!({"outer": [ {"inner": "one"}, {"inner": "two"}, {"inner": "three"}]});
-        let result = dict_schema.get_dynamic_keys(value.as_object().unwrap());
+        let result = dict_schema.get_dynamic_keys(value.as_object().unwrap(), None);
         assert_eq!(
             result,
             Some(OrderMap::from_iter([
@@ -285,7 +302,7 @@ mod tests {
             ..Default::default()
         };
         let value: Value = json!({"list": ["one", "two", "three"]});
-        let result = dict_schema.get_dynamic_keys(value.as_object().unwrap());
+        let result = dict_schema.get_dynamic_keys(value.as_object().unwrap(), None);
         assert_eq!(
             result,
             Some(OrderMap::from_iter([
@@ -324,7 +341,7 @@ mod tests {
             .get("outer.inner")
             .unwrap();
         let value: Value = json!({"outer": [{"inner": "one"}, {"inner": "two"}]});
-        let result = dict_schema.get_dynamic_keys(value.as_object().unwrap());
+        let result = dict_schema.get_dynamic_keys(value.as_object().unwrap(), None);
         assert_eq!(
             result,
             Some(OrderMap::from_iter([
@@ -357,7 +374,7 @@ mod tests {
             .get("outer.inner")
             .unwrap();
         let value: Value = json!({"bool_key": true});
-        let result = dict_schema.get_dynamic_keys(value.as_object().unwrap());
+        let result = dict_schema.get_dynamic_keys(value.as_object().unwrap(), None);
         assert_eq!(
             result,
             Some(OrderMap::from_iter([(
@@ -367,6 +384,32 @@ mod tests {
                     schema: dynamic_key_schema,
                 }
             ),]))
+        );
+    }
+
+    #[test]
+    fn get_dynamic_keys_overrides_resolved_keys() {
+        let dynamic_key_schema: AnySchema = Bool::default().into();
+        let dict_schema = Dict {
+            dynamic_keys: Some(OrderMap::from_iter([(
+                "list".to_owned(),
+                dynamic_key_schema.clone(),
+            )])),
+            ..Default::default()
+        };
+        let value: Value = json!({"list": ["one"]});
+        let overrides =
+            DynamicKeyOverrides::from_iter([("list".to_owned(), vec!["two".to_owned()])]);
+        let result = dict_schema.get_dynamic_keys(value.as_object().unwrap(), Some(&overrides));
+        assert_eq!(
+            result,
+            Some(OrderMap::from_iter([(
+                "two".to_owned(),
+                DynamicKeyInfo {
+                    dynamic_key_path: "list".to_owned(),
+                    schema: &dynamic_key_schema,
+                }
+            )]))
         );
     }
 
