@@ -86,6 +86,10 @@ pub enum ErrorKind {
         found: IndentLevel,
     },
 
+    /// Missing a block-sequence indicator (`-`) at sequence indentation.
+    #[display("missing '-' for sequence entry")]
+    MissingSequenceIndicator,
+
     /// Unterminated string literal
     #[display("unterminated string literal")]
     UnterminatedString,
@@ -185,6 +189,9 @@ impl ErrorKind {
             Self::InvalidIndentation | Self::InvalidIndentationContext { .. } => {
                 Some("YAML uses spaces for indentation; ensure consistent indentation levels")
             }
+            Self::MissingSequenceIndicator => Some(
+                "add '-' to start a sequence entry, or adjust the indentation to match the intended structure",
+            ),
             Self::TabInIndentation => {
                 Some("replace tabs with spaces; YAML requires space-based indentation")
             }
@@ -313,6 +320,7 @@ mod tests {
                 expected: 4,
                 found: 2,
             },
+            ErrorKind::MissingSequenceIndicator,
             ErrorKind::TabInIndentation,
             ErrorKind::UnterminatedString,
             ErrorKind::InvalidEscape('x'),

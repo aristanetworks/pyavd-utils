@@ -259,7 +259,10 @@ impl<'input> Emitter<'input> {
                                     )
                                 );
                             if recoverable_same_indent_content {
-                                self.error(ErrorKind::InvalidIndentation, self.current_span());
+                                self.error(
+                                    ErrorKind::MissingSequenceIndicator,
+                                    self.current_span(),
+                                );
                                 self.skip_to_line_end();
                                 self.skip_invalid_indented_recovery_lines(indent);
                                 phase = BlockSeqPhase::BeforeEntryScan;

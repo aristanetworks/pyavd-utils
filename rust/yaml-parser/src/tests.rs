@@ -1071,8 +1071,8 @@ e: foo
         assert!(
             errors
                 .iter()
-                .any(|error| error.kind == ErrorKind::InvalidIndentation),
-            "Expected InvalidIndentation for orphan mapping content at sequence indent, got: {errors:?}"
+                .any(|error| error.kind == ErrorKind::MissingSequenceIndicator),
+            "Expected MissingSequenceIndicator for orphan mapping content at sequence indent, got: {errors:?}"
         );
         assert!(
             !errors
@@ -1121,8 +1121,8 @@ e: foo
         assert!(
             errors
                 .iter()
-                .any(|error| error.kind == ErrorKind::InvalidIndentation),
-            "Expected InvalidIndentation for orphan mapping content at sequence indent, got: {errors:?}"
+                .any(|error| error.kind == ErrorKind::MissingSequenceIndicator),
+            "Expected MissingSequenceIndicator for orphan mapping content at sequence indent, got: {errors:?}"
         );
         assert!(
             !errors
@@ -1182,8 +1182,8 @@ foo: bar
         assert!(
             errors
                 .iter()
-                .any(|error| error.kind == ErrorKind::InvalidIndentation),
-            "Expected InvalidIndentation for malformed root-sequence content, got: {errors:?}"
+                .any(|error| error.kind == ErrorKind::MissingSequenceIndicator),
+            "Expected MissingSequenceIndicator for malformed root-sequence content, got: {errors:?}"
         );
         assert!(
             !errors
