@@ -173,8 +173,8 @@ pub struct Configuration {
     /// When validating `avd_design`, emit warnings for top-level keys that exist in `eos_config`
     /// but not in `avd_design`.
     pub warn_eos_config_keys: bool,
-    /// Optional caller-supplied dynamic keys keyed by schema dynamic-key path.
-    /// The overrides will take precedence over the dynamic keys defined in the inputes.
+    /// Optional caller-supplied dynamic key overrides keyed by concrete input key.
+    /// The override value is the schema dynamic-key path that should be used for that key.
     /// This is used by the LSP when interpreting # comments on keys.
     /// Stored behind Arc so cloning Configuration for each new Context stays cheap.
     pub dynamic_key_overrides: Option<Arc<DynamicKeyOverrides>>,

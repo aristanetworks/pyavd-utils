@@ -142,6 +142,7 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+    use crate::base::Base;
     use crate::int::Int;
     use crate::list::List;
     use crate::str::Str;
@@ -293,8 +294,7 @@ mod tests {
     #[test]
     fn get_schema_from_path_dynamic_key_from_overrides_some_ok() {
         let value = json!({});
-        let overrides =
-            DynamicKeyOverrides::from_iter([("dynamic.key".into(), vec!["two".into()])]);
+        let overrides = DynamicKeyOverrides::from_iter([("two".into(), "dynamic.key".into())]);
         let store = get_test_store();
         let result = get_schema_from_path(
             "eos_config",
@@ -313,5 +313,49 @@ mod tests {
         }))
         .unwrap();
         assert_eq!(schema, &expected_schema);
+    }
+
+    #[test]
+    fn schema_keys_override_beats_default_collision() {
+        let override_schema: AnySchema = Str::default().into();
+        let schema = AnySchema::Dict(Dict {
+            keys: Some(OrderMap::from_iter([(
+                "tenants".into(),
+                List {
+                    items: Some(Box::new(AnySchema::Dict(Dict {
+                        keys: Some(OrderMap::from_iter([(
+                            "name".into(),
+                            Str::default().into(),
+                        )])),
+                        ..Default::default()
+                    }))),
+                    base: Base {
+                        default: Some(vec![json!({"name": "l3spine"})]),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                }
+                .into(),
+            )])),
+            dynamic_keys: Some(OrderMap::from_iter([
+                ("tenants.name".into(), Int::default().into()),
+                ("network_services_keys.name".into(), override_schema.clone()),
+            ])),
+            ..Default::default()
+        });
+        let overrides = DynamicKeyOverrides::from_iter([(
+            "l3spine".into(),
+            "network_services_keys.name".into(),
+        )]);
+
+        let schema_keys =
+            SchemaKeys::try_from_schema_with_value(&schema, &json!({}), Some(&overrides)).unwrap();
+
+        assert_eq!(
+            schema_keys.keys.get("l3spine"),
+            Some(&SchemaKey::DynamicKey {
+                dynamic_key_path: "network_services_keys.name".into()
+            })
+        );
     }
 }

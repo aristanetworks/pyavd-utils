@@ -594,8 +594,8 @@ mod tests {
         let store = get_test_store();
         let configuration = Configuration {
             dynamic_key_overrides: Some(Arc::new(DynamicKeyOverrides::from_iter([(
+                "dynkey1".into(),
                 "my_dynamic_keys.key".into(),
-                vec!["dynkey1".into()],
             )]))),
             ..Default::default()
         };
