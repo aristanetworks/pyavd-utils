@@ -1055,6 +1055,180 @@ ipv4_prefix_list_catalog:
         );
     }
 
+    /// Test that malformed content at the sequence indentation after a compact
+    /// mapping entry is dropped locally and does not poison later root keys.
+    #[test]
+    fn test_invalid_mapping_line_after_compact_sequence_entry_recovers_to_following_root_key() {
+        let input = "\
+a:
+  - b: c
+  c: d
+
+e: foo
+";
+        let (docs, errors) = parse(input);
+
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.kind == ErrorKind::InvalidIndentation),
+            "Expected InvalidIndentation for orphan mapping content at sequence indent, got: {errors:?}"
+        );
+        assert!(
+            !errors
+                .iter()
+                .any(|error| error.kind == ErrorKind::TrailingContent),
+            "unexpected TrailingContent cascade after malformed compact sequence entry: {errors:?}"
+        );
+        assert_eq!(docs.len(), 1, "Should produce 1 document");
+
+        let Value::Mapping(root_pairs) = &docs[0].value else {
+            panic!("expected root mapping, got docs: {docs:#?}");
+        };
+
+        let root_keys: Vec<_> = root_pairs
+            .iter()
+            .map(|pair| match &pair.key.value {
+                Value::String(value) => value.as_ref(),
+                other => panic!("expected string key, got {other:?} in docs: {docs:#?}"),
+            })
+            .collect();
+
+        assert!(
+            root_keys.contains(&"a"),
+            "expected first key to survive recovery, got root keys: {root_keys:?}\ndocs: {docs:#?}"
+        );
+        assert!(
+            root_keys.contains(&"e"),
+            "expected later top-level key to recover at root, got root keys: {root_keys:?}\ndocs: {docs:#?}"
+        );
+    }
+
+    /// Test that malformed content at sequence indentation is dropped locally
+    /// so later sequence entries can still survive.
+    #[test]
+    fn test_invalid_mapping_line_inside_sequence_recovers_later_sequence_item() {
+        let input = "\
+a:
+  - b: c
+  c: d
+  - f: q
+
+e: foo
+";
+        let (docs, errors) = parse(input);
+
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.kind == ErrorKind::InvalidIndentation),
+            "Expected InvalidIndentation for orphan mapping content at sequence indent, got: {errors:?}"
+        );
+        assert!(
+            !errors
+                .iter()
+                .any(|error| error.kind == ErrorKind::TrailingContent),
+            "unexpected TrailingContent cascade after malformed sequence content: {errors:?}"
+        );
+
+        let Value::Mapping(root_pairs) = &docs[0].value else {
+            panic!("expected root mapping, got docs: {docs:#?}");
+        };
+
+        let a_pair = root_pairs
+            .iter()
+            .find(|pair| matches!(&pair.key.value, Value::String(value) if value == "a"))
+            .expect("expected `a` mapping pair");
+        let Value::Sequence(items) = &a_pair.value.value else {
+            panic!("expected `a` value to remain a sequence, got docs: {docs:#?}");
+        };
+        assert_eq!(
+            items.len(),
+            2,
+            "expected both valid sequence items to survive"
+        );
+
+        let first_keys: Vec<_> = items
+            .iter()
+            .map(|item| match &item.node.value {
+                Value::Mapping(pairs) => pairs
+                    .first()
+                    .and_then(|pair| match &pair.key.value {
+                        Value::String(value) => Some(value.as_ref()),
+                        _ => None,
+                    })
+                    .unwrap_or("<non-string-key>"),
+                _ => "<non-mapping>",
+            })
+            .collect();
+        assert_eq!(
+            first_keys,
+            vec!["b", "f"],
+            "unexpected recovered sequence items"
+        );
+    }
+
+    /// Test that root-level sequences recover the same way: malformed
+    /// same-indent content is dropped locally and later entries survive.
+    #[test]
+    fn test_invalid_mapping_line_inside_root_sequence_recovers_later_item() {
+        let input = "\
+- a
+foo: bar
+- b
+";
+        let (docs, errors) = parse(input);
+
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.kind == ErrorKind::InvalidIndentation),
+            "Expected InvalidIndentation for malformed root-sequence content, got: {errors:?}"
+        );
+        assert!(
+            !errors
+                .iter()
+                .any(|error| error.kind == ErrorKind::TrailingContent),
+            "unexpected TrailingContent cascade after malformed root sequence content: {errors:?}"
+        );
+
+        let Value::Sequence(items) = &docs[0].value else {
+            panic!("expected root sequence, got docs: {docs:#?}");
+        };
+        let scalars: Vec<_> = items
+            .iter()
+            .map(|item| match &item.node.value {
+                Value::String(value) => value.as_ref(),
+                other => panic!("expected scalar item, got {other:?} in docs: {docs:#?}"),
+            })
+            .collect();
+        assert_eq!(
+            scalars,
+            vec!["a", "b"],
+            "expected later valid item to survive"
+        );
+    }
+
+    /// Test that explicit document markers still take precedence over sequence
+    /// recovery, so content after `...` is not recovered into the same sequence.
+    #[test]
+    fn test_document_end_inside_sequence_does_not_recover_later_item() {
+        let input = "\
+- a
+...
+- b
+";
+        let (docs, _errors) = parse(input);
+        let Value::Sequence(items) = &docs[0].value else {
+            panic!("expected first document to stay a sequence, got docs: {docs:#?}");
+        };
+        assert_eq!(
+            items.len(),
+            1,
+            "expected recovery to stop at the document end"
+        );
+    }
+
     /// Test error spans are accurate.
     #[test]
     fn test_error_span_accuracy() {
