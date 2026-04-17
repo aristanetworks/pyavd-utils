@@ -11,7 +11,11 @@ pub(crate) mod store;
 pub(crate) mod str;
 pub(crate) mod valid_values;
 
-use crate::{context::Context, validatable::ValidatableValue};
+use crate::{
+    context::Context,
+    feedback::{Type, Violation},
+    validatable::ValidatableValue,
+};
 
 /// Trait for validating values against a schema.
 ///
@@ -32,6 +36,28 @@ pub trait Validation {
     ///
     /// The coerced value preserves metadata exposed by the original value type.
     fn validate<V: ValidatableValue>(&self, value: &V, ctx: &mut Context) -> Option<V::Coerced>;
+
+    fn handle_invalid_type<V: ValidatableValue>(
+        value: &V,
+        ctx: &mut Context,
+        expected: Type,
+    ) -> Option<V::Coerced> {
+        if value.is_null() && !ctx.configuration.restrict_null_values {
+            // Null is allowed when not restricted
+            ctx.configuration
+                .return_coerced_data
+                .then(|| value.coerce_null())
+        } else {
+            ctx.add_error_for(
+                value,
+                Violation::InvalidType {
+                    expected,
+                    found: value.value_type(),
+                },
+            );
+            None
+        }
+    }
 }
 
 #[cfg(test)]
