@@ -1,0 +1,29 @@
+[package]
+name = "yaml-parser"
+version.workspace = true
+edition = "2024"
+license.workspace = true
+description = "A YAML 1.2 parser with error recovery, span tracking, and multiple error collection"
+readme = "README.md"
+
+[dependencies]
+avdschema = { path = "../avdschema", optional = true }
+derive_more = { workspace = true, features = ["display"] }
+serde = { workspace = true, optional = true }
+
+[dev-dependencies]
+criterion = "0.8.2" # Used for benchmarking
+saphyr = "0.0.6"    # Used for benchmarking
+serde_yaml = { workspace = true } # Used for serde benchmarking
+
+[features]
+default = []
+avdschema = ["dep:avdschema"]
+serde = ["dep:serde"]
+
+[[bench]]
+name = "parser_bench"
+harness = false
+
+[lints]
+workspace = true
