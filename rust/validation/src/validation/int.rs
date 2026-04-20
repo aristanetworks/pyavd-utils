@@ -21,7 +21,9 @@ impl Validation for Int {
         // Lenient type check - accept anything coercible to int (e.g., "123" -> 123)
         if let Some(v) = value.as_i64() {
             // Emit coercion info if the original value was not an int
-            emit_coercion_info(value, v, ctx);
+            if !value.is_int() {
+                ctx.add_coercion_for(value, v)
+            }
             self.valid_values.validate(value, &v, ctx);
             validate_min(self, value, &v, ctx);
             validate_max(self, value, &v, ctx);
@@ -48,20 +50,6 @@ fn validate_ref<V: ValidatableValue>(
         return Some(ref_schema.validate(value, ctx));
     }
     None
-}
-
-/// Emit coercion info if the original value was coerced to int.
-fn emit_coercion_info<V: ValidatableValue>(value: &V, coerced_value: i64, ctx: &mut Context) {
-    if !ctx.configuration.return_coercion_infos || value.is_int() {
-        return;
-    }
-    ctx.add_info_for(
-        value,
-        CoercionNote {
-            found: value.to_feedback_value(),
-            made: coerced_value.into(),
-        },
-    );
 }
 
 fn validate_min<V: ValidatableValue>(schema: &Int, value: &V, input: &i64, ctx: &mut Context) {

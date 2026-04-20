@@ -115,7 +115,7 @@ impl<'a> FromIterator<&'a str> for Path {
     }
 }
 
-/// Feedback item carried in the Context under either `coercions` or `violations`
+/// Feedback wrapper around errors, warnings or infos providing context for the issue.
 #[derive(Clone, Debug, PartialEq, Serialize, derive_more::Display)]
 #[display("Feedback for path {path:?}: {issue}.")]
 pub struct Feedback<T: Clone + Debug + PartialEq + Serialize + Display> {

@@ -756,7 +756,7 @@ mod tests {
                 })
             }]
         );
-        // With lenient validation, int 123 coerces to string "123"
+        // Int 123 coerces to string "123"
         // The min_length: 5 constraint is violated (3 < 5)
         assert_eq!(
             ctx.result.errors,

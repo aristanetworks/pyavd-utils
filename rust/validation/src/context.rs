@@ -5,7 +5,9 @@
 use avdschema::Store;
 
 use crate::{
-    feedback::{ErrorIssue, Feedback, InfoIssue, Path, Type, Violation, WarningIssue},
+    feedback::{
+        CoercionNote, ErrorIssue, Feedback, InfoIssue, Path, Type, Value, Violation, WarningIssue,
+    },
     validatable::ValidatableValue,
 };
 
@@ -73,6 +75,22 @@ impl<'a> Context<'a> {
         });
     }
 
+    pub(crate) fn add_coercion_for<V: ValidatableValue>(
+        &mut self,
+        value: &V,
+        made: impl Into<Value>,
+    ) {
+        if self.configuration.return_coercion_infos {
+            self.add_info_for(
+                value,
+                CoercionNote {
+                    found: value.to_feedback_value(),
+                    made: made.into(),
+                },
+            );
+        }
+    }
+
     pub(crate) fn add_duplicate_violation_pair_for<A: ValidatableValue, B: ValidatableValue>(
         &mut self,
         value_a: &A,
@@ -119,18 +137,18 @@ pub(crate) struct State {
 #[derive(Clone, Debug, Default)]
 pub struct Configuration {
     pub ignore_required_keys_on_root_dict: bool,
-    pub return_coercion_infos: bool,
-    /// By default Null/None values are ignored no matter which data type is expected.
-    /// Setting this will instead emit type errors for Null values.
     pub restrict_null_values: bool,
     /// When validating avd_design, emit warnings for top-level keys that exist in eos_config
     /// but not in avd_design.
-    pub warn_eos_config_keys: bool,
+    pub return_coerced_data: bool,
+    /// By default Null/None values are ignored no matter which data type is expected.
+    /// Setting this will instead emit type errors for Null values.
+    pub return_coercion_infos: bool,
     /// When true, validation returns coerced data with types adjusted according to the schema.
     /// When false (default), validation returns a null placeholder to avoid expensive cloning.
     /// Set to true when you need the coerced output (e.g., for data transformation).
     /// Set to false for validation-only use cases (e.g., LSP diagnostics).
-    pub return_coerced_data: bool,
+    pub warn_eos_config_keys: bool,
 }
 
 #[derive(Clone, Debug, Default)]

@@ -14,7 +14,7 @@ use crate::{
 
 use super::Validation;
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 /// Result of validation for a single parsed value or YAML document.
 pub struct ValidationOutput<T> {
     /// The validation result with errors, warnings, and infos.

@@ -22,7 +22,9 @@ impl Validation for Str {
         if let Some(v) = value.as_str() {
             let s = v.into_owned();
             // Emit coercion info if original was not a string
-            emit_coercion_info(value, &s, ctx);
+            if !value.is_str() {
+                ctx.add_coercion_for(value, s.as_str());
+            }
             // Apply convert_to_lower_case if specified
             let s = convert_to_lower_case(self, value, s, ctx);
             self.valid_values.validate(value, &s, ctx);
@@ -40,42 +42,19 @@ impl Validation for Str {
     }
 }
 
-/// Emit coercion info if the original value was coerced to string.
-fn emit_coercion_info<V: ValidatableValue>(value: &V, coerced_str: &str, ctx: &mut Context) {
-    if !ctx.configuration.return_coercion_infos || value.is_str() {
-        return;
-    }
-    ctx.add_info_for(
-        value,
-        CoercionNote {
-            found: value.to_feedback_value(),
-            made: coerced_str.to_owned().into(),
-        },
-    );
-}
-
 fn convert_to_lower_case<V: ValidatableValue>(
     schema: &Str,
     value: &V,
     s: String,
     ctx: &mut Context,
 ) -> String {
-    if schema.convert_to_lower_case.unwrap_or_default() {
-        let lower = s.to_lowercase();
-        if lower != s {
-            if ctx.configuration.return_coercion_infos {
-                ctx.add_info_for(
-                    value,
-                    CoercionNote {
-                        found: s.into(),
-                        made: lower.clone().into(),
-                    },
-                );
-            }
-            lower
-        } else {
-            s
-        }
+    if !schema.convert_to_lower_case.unwrap_or_default() {
+        return s;
+    }
+    let lower = s.to_lowercase();
+    if lower != s {
+        ctx.add_coercion_for(value, lower.as_str());
+        lower
     } else {
         s
     }
