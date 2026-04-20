@@ -4,7 +4,7 @@
 
 use crate::{
     context::Context,
-    feedback::{CoercionNote, Type, Violation},
+    feedback::{Type, Violation},
     validatable::ValidatableValue,
 };
 

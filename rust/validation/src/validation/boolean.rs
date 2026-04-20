@@ -4,11 +4,7 @@
 
 use avdschema::{any::AnySchema, boolean::Bool, resolve_ref};
 
-use crate::{
-    context::Context,
-    feedback::{Type, Violation},
-    validatable::ValidatableValue,
-};
+use crate::{context::Context, feedback::Type, validatable::ValidatableValue};
 
 use super::Validation;
 

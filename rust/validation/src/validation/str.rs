@@ -6,7 +6,7 @@ use avdschema::{any::AnySchema, resolve_ref, str::Str};
 
 use crate::{
     context::Context,
-    feedback::{CoercionNote, ErrorIssue, Type, Violation},
+    feedback::{ErrorIssue, Type, Violation},
     validatable::ValidatableValue,
 };
 
@@ -126,7 +126,12 @@ fn validate_pattern<V: ValidatableValue>(schema: &Str, value: &V, input: &str, c
                     found: input.into(),
                 },
             ),
-            Err(e) => ctx.add_error_for(value, ErrorIssue::InternalError { message: e.to_string() }),
+            Err(e) => ctx.add_error_for(
+                value,
+                ErrorIssue::InternalError {
+                    message: e.to_string(),
+                },
+            ),
         }
     }
 }
@@ -488,5 +493,4 @@ mod tests {
             }]
         );
     }
-
 }

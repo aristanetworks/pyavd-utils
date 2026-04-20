@@ -6,7 +6,7 @@ use avdschema::Store;
 
 use crate::{
     feedback::{
-        CoercionNote, ErrorIssue, Feedback, InfoIssue, Path, Type, Value, Violation, WarningIssue,
+        CoercionNote, ErrorIssue, Feedback, InfoIssue, Path, Value, Violation, WarningIssue,
     },
     validatable::ValidatableValue,
 };
