@@ -93,7 +93,7 @@ impl StoreValidateInput for Store {
                     input_diagnostics: vec![InputDiagnostic::ParseDiagnostic(
                         ParseDiagnostic::from_json_error(&parse_error, json),
                     )],
-                    document: empty_validation_output(),
+                    document: Default::default(),
                 });
             }
         };
@@ -115,13 +115,6 @@ impl StoreValidateInput for Store {
 #[derive(Debug, derive_more::Display, derive_more::From)]
 pub enum StoreValidateError {
     SchemaStore(avdschema::SchemaStoreError),
-}
-
-fn empty_validation_output<T>() -> ValidationOutput<T> {
-    ValidationOutput {
-        result: ValidationResult::default(),
-        coerced: None,
-    }
 }
 
 #[cfg(test)]
