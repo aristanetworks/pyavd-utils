@@ -1,0 +1,58 @@
+# Flow collection test file
+# Tests inline sequences and mappings
+
+# Simple flow sequence
+simple_array: [1, 2, 3, 4, 5]
+
+# Flow sequence with mixed types
+mixed_array: [hello, 42, true, null, 3.14, "quoted"]
+
+# Nested flow sequences
+nested_arrays: [[1, 2], [3, 4], [5, 6]]
+
+# Simple flow mapping
+simple_map: {a: 1, b: 2, c: 3}
+
+# Flow mapping with mixed types
+mixed_map: {name: John, age: 30, active: true, score: 95.5}
+
+# Nested flow mappings
+nested_maps: {outer: {inner: {deep: value}}}
+
+# Array of flow mappings
+array_of_maps:
+  - {id: 1, name: first}
+  - {id: 2, name: second}
+  - {id: 3, name: third}
+
+# Flow mapping with arrays
+map_with_arrays: {
+  numbers: [1, 2, 3],
+  letters: [a, b, c],
+  flags: [true, false, true]
+}
+
+# Complex nested structure
+complex: {
+  users: [
+    {id: 1, roles: [admin, user]},
+    {id: 2, roles: [user]},
+    {id: 3, roles: [moderator, user]}
+  ],
+  config: {
+    enabled: true,
+    settings: {debug: false, level: 5}
+  }
+}
+
+# Long flow sequence
+long_sequence: [
+  alpha, bravo, charlie, delta, echo,
+  foxtrot, golf, hotel, india, juliet,
+  kilo, lima, mike, november, oscar,
+  papa, quebec, romeo, sierra, tango,
+  uniform, victor, whiskey, xray, yankee, zulu
+]
+
+# Flow with JSON-style adjacent colons
+json_style: {"key":"value","number":42,"nested":{"a":"b"}}

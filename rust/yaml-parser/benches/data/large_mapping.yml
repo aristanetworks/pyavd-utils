@@ -1,0 +1,112 @@
+# Large flat mapping for benchmark testing
+# 100 key-value pairs with various scalar types
+
+key_001: value_001
+key_002: value_002
+key_003: 42
+key_004: 3.14159
+key_005: true
+key_006: false
+key_007: null
+key_008: "double quoted string"
+key_009: 'single quoted string'
+key_010: value with spaces
+
+key_011: value_011
+key_012: value_012
+key_013: 123
+key_014: 2.71828
+key_015: true
+key_016: false
+key_017: ~
+key_018: "another \"quoted\" string"
+key_019: 'another ''quoted'' string'
+key_020: yet another value
+
+key_021: value_021
+key_022: value_022
+key_023: 999
+key_024: 1.41421
+key_025: yes
+key_026: no
+key_027: null
+key_028: "multiword double quoted"
+key_029: 'multiword single quoted'
+key_030: plain scalar thirty
+
+key_031: value_031
+key_032: value_032
+key_033: 777
+key_034: 0.12345
+key_035: true
+key_036: false
+key_037: null
+key_038: "string with \n newline escape"
+key_039: 'string with no escapes'
+key_040: value_040
+
+key_041: value_041
+key_042: value_042
+key_043: 123456789
+key_044: 9.87654
+key_045: true
+key_046: false
+key_047: ~
+key_048: "unicode: \u0041\u0042\u0043"
+key_049: 'literal single quotes'
+key_050: halfway there
+
+key_051: value_051
+key_052: value_052
+key_053: 111
+key_054: 6.28318
+key_055: true
+key_056: false
+key_057: null
+key_058: "more quoted content"
+key_059: 'more single quoted'
+key_060: value_060
+
+key_061: value_061
+key_062: value_062
+key_063: 222
+key_064: 1.61803
+key_065: true
+key_066: false
+key_067: null
+key_068: "phi ratio related"
+key_069: 'golden ratio nearby'
+key_070: value_070
+
+key_071: value_071
+key_072: value_072
+key_073: 333
+key_074: 2.23606
+key_075: true
+key_076: false
+key_077: ~
+key_078: "sqrt of 5"
+key_079: 'mathematical constant'
+key_080: value_080
+
+key_081: value_081
+key_082: value_082
+key_083: 444
+key_084: 1.73205
+key_085: true
+key_086: false
+key_087: null
+key_088: "sqrt of 3"
+key_089: 'another constant'
+key_090: ninety percent done
+
+key_091: value_091
+key_092: value_092
+key_093: 555
+key_094: 2.44948
+key_095: true
+key_096: false
+key_097: null
+key_098: "almost done"
+key_099: 'final stretch'
+key_100: the end

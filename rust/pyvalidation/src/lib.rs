@@ -25,7 +25,21 @@ pub mod validation {
         types::PyModule,
     };
     use std::path::PathBuf;
-    use validation::{Coercion as _, Context, StoreValidate as _, Validation as _};
+    use validation::{
+        Context, StoreValidateInput as _, Validation as _, feedback::InputDiagnostic,
+    };
+
+    fn invalid_json_in_data_err(message: impl std::fmt::Display) -> pyo3::PyErr {
+        PyRuntimeError::new_err(format!("Invalid JSON in data: {message}"))
+    }
+
+    pub(crate) fn first_input_diagnostic_as_pyerr(
+        diagnostic: Option<&InputDiagnostic>,
+    ) -> Option<pyo3::PyErr> {
+        diagnostic.map(|InputDiagnostic::ParseDiagnostic(diagnostic)| {
+            invalid_json_in_data_err(&diagnostic.message)
+        })
+    }
 
     fn get_store() -> PyResult<&'static Store> {
         STORE.get().ok_or_else(|| {
@@ -69,23 +83,26 @@ pub mod validation {
         pub return_coercion_infos: bool,
         pub restrict_null_values: bool,
         pub warn_eos_config_keys: bool,
+        pub return_coerced_data: bool,
     }
 
     #[pymethods]
     impl Configuration {
         #[new]
-        #[pyo3(signature = (*, ignore_required_keys_on_root_dict=false, return_coercion_infos=false, restrict_null_values=false, warn_eos_config_keys=false))]
+        #[pyo3(signature = (*, ignore_required_keys_on_root_dict=false, return_coercion_infos=false, restrict_null_values=false, warn_eos_config_keys=false, return_coerced_data=false))]
         fn new(
             ignore_required_keys_on_root_dict: bool,
             return_coercion_infos: bool,
             restrict_null_values: bool,
             warn_eos_config_keys: bool,
+            return_coerced_data: bool,
         ) -> Self {
             Self {
                 ignore_required_keys_on_root_dict,
                 return_coercion_infos,
                 restrict_null_values,
                 warn_eos_config_keys,
+                return_coerced_data,
             }
         }
     }
@@ -97,6 +114,7 @@ pub mod validation {
                 return_coercion_infos: config.return_coercion_infos,
                 restrict_null_values: config.restrict_null_values,
                 warn_eos_config_keys: config.warn_eos_config_keys,
+                ..Default::default()
             }
         }
     }
@@ -108,48 +126,46 @@ pub mod validation {
         pub deprecations: Vec<Deprecation>,
         pub ignored_eos_config_keys: Vec<IgnoredEosConfigKey>,
     }
-    impl TryFrom<validation::ValidationResult> for ValidationResult {
-        type Error = pyo3::PyErr;
-        fn try_from(value: validation::ValidationResult) -> Result<ValidationResult, Self::Error> {
+    impl ValidationResult {
+        pub(crate) fn from_validation_result(
+            value: validation::ValidationResult,
+        ) -> PyResult<ValidationResult> {
             let mut result = ValidationResult::default();
-            value
-                .errors
-                .iter()
-                .try_for_each(|feedback| match &feedback.issue {
+            for feedback in value.errors {
+                match feedback.issue {
                     validation::feedback::ErrorIssue::Violation(violation) => {
                         result.violations.push(Violation {
                             message: violation.to_string(),
-                            path: feedback.path.to_owned().into(),
+                            path: feedback.path.into(),
                         });
-                        Ok(())
                     }
                     validation::feedback::ErrorIssue::InternalError { message } => {
-                        Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
+                        return Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
                             "Error occurred during validation: {message}"
-                        )))
+                        )));
                     }
-                })?;
-            value
-                .warnings
-                .iter()
-                .for_each(|feedback| match &feedback.issue {
+                }
+            }
+            for feedback in value.warnings {
+                match feedback.issue {
                     validation::feedback::WarningIssue::Deprecated(deprecated) => {
                         result.deprecations.push(Deprecation {
                             message: deprecated.to_string(),
-                            path: feedback.path.to_owned().into(),
+                            path: feedback.path.into(),
                             removed: false,
-                            version: deprecated.version.to_owned().into(),
-                            replacement: deprecated.replacement.to_owned().into(),
-                            url: deprecated.url.to_owned().into(),
+                            version: deprecated.version.into(),
+                            replacement: deprecated.replacement.into(),
+                            url: deprecated.url.into(),
                         })
                     }
                     validation::feedback::WarningIssue::IgnoredEosConfigKey(ignored) => {
                         result.ignored_eos_config_keys.push(IgnoredEosConfigKey {
                             message: ignored.to_string(),
-                            path: feedback.path.to_owned().into(),
+                            path: feedback.path.into(),
                         })
                     }
-                });
+                }
+            }
             Ok(result)
         }
     }
@@ -203,10 +219,15 @@ pub mod validation {
         configuration: Option<Configuration>,
     ) -> PyResult<ValidationResult> {
         let config = configuration.map(Into::into);
-        get_store()?
+        let output = get_store()?
             .validate_json(data_as_json, schema_name, config.as_ref())
-            .map_err(|err| PyRuntimeError::new_err(format!("Invalid JSON in data: {err}")))
-            .and_then(|result| result.try_into())
+            .map_err(|err| {
+                PyRuntimeError::new_err(format!("Error while validating the data: {err}"))
+            })?;
+        if let Some(err) = first_input_diagnostic_as_pyerr(output.input_diagnostics.first()) {
+            return Err(err);
+        }
+        ValidationResult::from_validation_result(output.document.result)
     }
 
     #[pyfunction]
@@ -219,27 +240,36 @@ pub mod validation {
     ) -> PyResult<ValidatedDataResult> {
         debug!("pyvalidation::get_validated_data Begin");
         let result: PyResult<ValidatedDataResult> = py.detach(|| {
-            // The Value here will be in-place coerced to the correct data types.
-            let mut data_as_value = serde_json::from_str::<serde_json::Value>(data_as_json)
-                .map_err(|err| PyRuntimeError::new_err(format!("Invalid JSON in data: {err}")))?;
-            debug!("pyvalidation::get_validated_data Deserialization Done");
-
-            let config = configuration.map(Into::into);
-            let validation_result = get_store()?
-                .validate_value(&mut data_as_value, schema_name, config.as_ref())
+            // Enable return_coerced_data since this function returns validated data
+            let mut config: validation::Configuration =
+                configuration.map(Into::into).unwrap_or_default();
+            config.return_coerced_data = true;
+            let output = get_store()?
+                .validate_json(data_as_json, schema_name, Some(&config))
                 .map_err(|err| {
                     PyRuntimeError::new_err(format!("Error while validating the data: {err}"))
                 })?;
+            if let Some(err) = first_input_diagnostic_as_pyerr(output.input_diagnostics.first()) {
+                return Err(err);
+            }
             debug!("pyvalidation::get_validated_data Validation Done");
-            let validated_data = if validation_result.errors.is_empty() {
-                Some(serde_json::to_string(&data_as_value).map_err(|err| {
-                    PyRuntimeError::new_err(format!("Invalid JSON in coerced data: {err}"))
-                })?)
+            let validated_data = if output.document.result.errors.is_empty() {
+                output
+                    .document
+                    .coerced
+                    .map(|coerced| {
+                        serde_json::to_string(&coerced).map_err(|err| {
+                            PyRuntimeError::new_err(format!("Invalid JSON in coerced data: {err}"))
+                        })
+                    })
+                    .transpose()?
             } else {
                 None
             };
             Ok(ValidatedDataResult {
-                validation_result: validation_result.try_into()?,
+                validation_result: ValidationResult::from_validation_result(
+                    output.document.result,
+                )?,
                 validated_data,
             })
         });
@@ -259,16 +289,17 @@ pub mod validation {
             PyRuntimeError::new_err(format!("Invalid JSON in adhoc schema: {err}"))
         })?;
         // Parse data JSON
-        let mut data: serde_json::Value = serde_json::from_str(data_as_json)
-            .map_err(|err| PyRuntimeError::new_err(format!("Invalid JSON in data: {err}")))?;
+        let data: serde_json::Value =
+            serde_json::from_str(data_as_json).map_err(invalid_json_in_data_err)?;
 
         let config: Option<validation::Configuration> = configuration.map(Into::into);
         let mut ctx = Context::new(get_store()?, config.as_ref());
-        schema.coerce(&mut data, &mut ctx);
-        schema.validate_value(&data, &mut ctx);
+
+        // Validate returns the coerced value, but we only need the validation result here
+        let _ = schema.validate(&data, &mut ctx);
 
         let validation_result: validation::ValidationResult = ctx.result;
-        validation_result.try_into()
+        ValidationResult::from_validation_result(validation_result)
     }
 }
 
@@ -280,6 +311,8 @@ mod tests {
 
     use super::{STORE, validation};
     use pyo3::types::PyAnyMethods as _;
+
+    use crate::validation::{ValidationResult, first_input_diagnostic_as_pyerr};
 
     // Initializing python only once. Otherwise things may crash when running in multiple threads.
     // Also downloading the test schema and extracting to fragments.
@@ -332,6 +365,77 @@ mod tests {
             .unwrap()
             .to_string();
         (path, message)
+    }
+
+    #[test]
+    fn validation_result_from_validation_result_maps_violation() {
+        let result = ::validation::ValidationResult {
+            errors: vec![::validation::feedback::Feedback {
+                path: vec!["foo".into()].into(),
+                span: None,
+                issue: ::validation::feedback::Violation::UnexpectedKey().into(),
+            }],
+            warnings: vec![],
+            infos: vec![],
+        };
+
+        let py_result = ValidationResult::from_validation_result(result).unwrap();
+
+        assert_eq!(py_result.violations.len(), 1);
+        assert_eq!(py_result.violations[0].path, vec!["foo"]);
+        assert_eq!(py_result.violations[0].message, "Invalid key.");
+        assert!(py_result.deprecations.is_empty());
+        assert!(py_result.ignored_eos_config_keys.is_empty());
+    }
+
+    #[test]
+    fn validation_result_from_validation_result_internal_error_returns_pyerr() {
+        setup();
+        let result = ::validation::ValidationResult {
+            errors: vec![::validation::feedback::Feedback {
+                path: vec![].into(),
+                span: None,
+                issue: ::validation::feedback::ErrorIssue::InternalError {
+                    message: "boom".into(),
+                },
+            }],
+            warnings: vec![],
+            infos: vec![],
+        };
+
+        let err = match ValidationResult::from_validation_result(result) {
+            Ok(_) => panic!("expected internal error to convert into PyErr"),
+            Err(err) => err,
+        };
+
+        pyo3::Python::attach(|py| {
+            assert_eq!(
+                err.value(py).to_string(),
+                "Error occurred during validation: boom"
+            );
+        });
+    }
+
+    #[test]
+    fn first_input_diagnostic_as_pyerr_maps_parse_diagnostic() {
+        setup();
+        let diagnostic = ::validation::feedback::InputDiagnostic::ParseDiagnostic(
+            ::validation::feedback::ParseDiagnostic {
+                kind: ::validation::feedback::ParseDiagnosticKind::JsonSyntax,
+                message: "expected value at line 1 column 1".into(),
+                suggestion: None,
+                span: ::validation::feedback::SourceSpan { start: 0, end: 0 },
+            },
+        );
+
+        let err = first_input_diagnostic_as_pyerr(Some(&diagnostic)).unwrap();
+
+        pyo3::Python::attach(|py| {
+            assert_eq!(
+                err.value(py).to_string(),
+                "Invalid JSON in data: expected value at line 1 column 1"
+            );
+        });
     }
 
     #[test]

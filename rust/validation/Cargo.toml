@@ -14,7 +14,7 @@ serde_json = { workspace = true, features = [
     "arbitrary_precision", # To support very big numbers
     "preserve_order",
 ] }
-serde_yaml = { workspace = true }
+yaml-parser = { path = "../yaml-parser" }
 
 [lib]
 crate-type = ["cdylib", "lib"]
