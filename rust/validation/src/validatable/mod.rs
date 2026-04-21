@@ -74,7 +74,10 @@ pub trait ValidatableValue: Sized {
     /// Try to get this value as a 64-bit signed integer, coercing if possible.
     ///
     /// Coerces:
+    /// - Number → Int (if representable as `i64`; this also
+    ///   includes finite integral floats such as `123.0` → `123`)
     /// - String → Int (if parseable, e.g., `"123"` → `123`)
+    /// - Bool → Int (`true` → `1`, `false` → `0`)
     fn as_i64(&self) -> Option<i64>;
 
     /// Try to get this value as a boolean (strict, no coercion).

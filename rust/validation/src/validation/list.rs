@@ -208,17 +208,11 @@ fn value_to_string<V: ValidatableValue>(value: &V) -> String {
     if let Some(s) = value.as_str() {
         return s.into_owned();
     }
-    if let Some(i) = value.as_i64() {
-        return i.to_string();
-    }
-    if let Some(b) = value.as_bool() {
-        return b.to_string();
-    }
     if value.is_null() {
-        return "null".to_string();
+        return "__NULL__".to_string();
     }
     // For complex types, we can't easily compare
-    "<complex>".to_string()
+    "__COMPLEX__".to_string()
 }
 
 #[cfg(test)]
