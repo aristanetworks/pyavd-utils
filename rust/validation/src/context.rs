@@ -6,7 +6,8 @@ use avdschema::Store;
 
 use crate::{
     feedback::{
-        CoercionNote, ErrorIssue, Feedback, InfoIssue, Path, Value, Violation, WarningIssue,
+        CoercionNote, ErrorIssue, Feedback, InfoIssue, Path, StringLoweredNote, Value, Violation,
+        WarningIssue,
     },
     validatable::ValidatableValue,
 };
@@ -91,6 +92,23 @@ impl<'a> Context<'a> {
         }
     }
 
+    pub(crate) fn add_string_lowered_for<V: ValidatableValue>(
+        &mut self,
+        value: &V,
+        found: &str,
+        made: &str,
+    ) {
+        if self.configuration.return_coercion_infos {
+            self.add_info_for(
+                value,
+                StringLoweredNote {
+                    found: found.to_owned(),
+                    made: made.to_owned(),
+                },
+            );
+        }
+    }
+
     pub(crate) fn add_duplicate_violation_pair_for<A: ValidatableValue, B: ValidatableValue>(
         &mut self,
         value_a: &A,
@@ -137,15 +155,15 @@ pub(crate) struct State {
 #[derive(Clone, Debug, Default)]
 pub struct Configuration {
     pub ignore_required_keys_on_root_dict: bool,
-    pub restrict_null_values: bool,
-    /// When validating avd_design, emit warnings for top-level keys that exist in eos_config
-    /// but not in avd_design.
-    pub return_coerced_data: bool,
     /// By default Null/None values are ignored no matter which data type is expected.
     /// Setting this will instead emit type errors for Null values.
-    pub return_coercion_infos: bool,
+    pub restrict_null_values: bool,
     /// When true, validation returns coerced data with types adjusted according to the schema.
     /// When false (default), validation returns a null placeholder to avoid expensive cloning.
+    pub return_coerced_data: bool,
+    /// When validating avd_design, emit warnings for top-level keys that exist in eos_config
+    /// but not in avd_design.
+    pub return_coercion_infos: bool,
     /// Set to true when you need the coerced output (e.g., for data transformation).
     /// Set to false for validation-only use cases (e.g., LSP diagnostics).
     pub warn_eos_config_keys: bool,

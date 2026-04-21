@@ -6,7 +6,7 @@ use avdschema::{any::AnySchema, resolve_ref, str::Str};
 
 use crate::{
     context::Context,
-    feedback::{CoercionNote, ErrorIssue, Type, Violation},
+    feedback::{ErrorIssue, Type, Violation},
     validatable::ValidatableValue,
 };
 
@@ -53,15 +53,7 @@ fn convert_to_lower_case<V: ValidatableValue>(
     }
     let lower = s.to_lowercase();
     if lower != s {
-        if ctx.configuration.return_coercion_infos {
-            ctx.add_info_for(
-                value,
-                CoercionNote {
-                    found: s.into(),
-                    made: lower.clone().into(),
-                },
-            );
-        }
+        ctx.add_string_lowered_for(value, &s, &lower);
         lower
     } else {
         s

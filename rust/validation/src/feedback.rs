@@ -153,8 +153,10 @@ pub enum WarningIssue {
 /// InfoIssue is wrapped in Feedback and added to the Context during validation.
 #[derive(Clone, Debug, PartialEq, Serialize, derive_more::From, derive_more::Display)]
 pub enum InfoIssue {
-    /// Coercion performed during coercion.
+    /// Coercion performed during validation.
     Coercion(CoercionNote),
+    /// String lowered during validation.
+    StringLowered(StringLoweredNote),
     /// Default value as specified in the schema was inserted into the data.
     #[display("Inserted default value.")]
     DefaultValueInserted(),
@@ -166,6 +168,14 @@ pub enum InfoIssue {
 pub struct CoercionNote {
     pub found: Value,
     pub made: Value,
+}
+
+/// String value lowered during validation.
+#[derive(Clone, Debug, PartialEq, Serialize, derive_more::Display)]
+#[display("Lowered string from {found} to {made}.")]
+pub struct StringLoweredNote {
+    pub found: String,
+    pub made: String,
 }
 
 /// Absolute byte range within the original source input.
