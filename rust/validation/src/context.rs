@@ -161,11 +161,11 @@ pub struct Configuration {
     /// When true, validation returns coerced data with types adjusted according to the schema.
     /// When false (default), validation returns a null placeholder to avoid expensive cloning.
     pub return_coerced_data: bool,
-    /// When validating avd_design, emit warnings for top-level keys that exist in eos_config
-    /// but not in avd_design.
-    pub return_coercion_infos: bool,
     /// Set to true when you need the coerced output (e.g., for data transformation).
     /// Set to false for validation-only use cases (e.g., LSP diagnostics).
+    pub return_coercion_infos: bool,
+    /// When validating avd_design, emit warnings for top-level keys that exist in eos_config
+    /// but not in avd_design.
     pub warn_eos_config_keys: bool,
 }
 
