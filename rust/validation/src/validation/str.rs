@@ -144,7 +144,7 @@ mod tests {
     use super::*;
     use crate::{
         Configuration,
-        feedback::{CoercionNote, Feedback},
+        feedback::{CoercionNote, Feedback, StringLoweredNote},
         validation::test_utils::get_test_store,
     };
 
@@ -249,7 +249,7 @@ mod tests {
             vec![Feedback {
                 path: vec![].into(),
                 span: None,
-                issue: CoercionNote {
+                issue: StringLoweredNote {
                     found: "FOO".into(),
                     made: "foo".into()
                 }
@@ -296,7 +296,7 @@ mod tests {
                 Feedback {
                     path: vec![].into(),
                     span: None,
-                    issue: CoercionNote {
+                    issue: StringLoweredNote {
                         found: "True".into(),
                         made: "true".into()
                     }
