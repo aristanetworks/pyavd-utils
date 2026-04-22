@@ -8,15 +8,6 @@ members = [
     "rust/passwords",
     "rust/pypasswords",
     "rust/pyvalidation",
-    "rust/test_schema_store",
-]
-# Exclude test_schema_store from default members so cargo-about and cargo-deny will not pick this up.
-default-members = [
-    "rust/avdschema",
-    "rust/validation",
-    "rust/passwords",
-    "rust/pypasswords",
-    "rust/pyvalidation",
 ]
 resolver = "2"
 
