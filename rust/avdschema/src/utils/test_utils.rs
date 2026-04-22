@@ -256,7 +256,7 @@ static AVD_STORE: OnceLock<Store> = OnceLock::new();
 #[cfg(feature = "dump_load_files")]
 fn init_avd_store() -> Store {
     use crate::Load as _;
-    Store::from_file(Some(&test_schema_store::get_store_gz_path()))
+    Store::from_file(Some(test_schema_store::get_store_gz_path()))
         .unwrap()
         .as_resolved()
         .unwrap()
