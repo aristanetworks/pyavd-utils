@@ -260,8 +260,9 @@ impl<'input> Lexer<'input> {
         has_tabs
     }
 
+    /// YAML 1.2.2 line breaks are limited to LF and CR (including CRLF).
     fn is_newline(ch: char) -> bool {
-        matches!(ch, '\n' | '\r' | '\u{0085}' | '\u{2028}' | '\u{2029}')
+        matches!(ch, '\n' | '\r')
     }
 
     fn is_flow_indicator(ch: char) -> bool {

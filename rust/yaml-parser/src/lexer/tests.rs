@@ -336,3 +336,39 @@ fn test_multi_document_with_directives() {
         "Should have one DocEnd marker"
     );
 }
+
+#[test]
+fn test_multi_document_with_directives_crlf() {
+    let input = "%YAML 1.2\r\n---\r\ndoc1\r\n...\r\n%TAG !e! tag:example,2000:\r\n---\r\ndoc2\r\n";
+    let tokens = get_tokens(input);
+
+    assert!(
+        tokens.iter().any(|t| matches!(t, Token::YamlDirective(_))),
+        "Should have YAML directive"
+    );
+    assert!(
+        tokens
+            .iter()
+            .any(|token| matches!(token, Token::TagDirective(..))),
+        "Should have TAG directive after ..."
+    );
+    assert_eq!(
+        tokens
+            .iter()
+            .filter(|t| matches!(t, Token::DocStart))
+            .count(),
+        2,
+        "Should have two DocStart markers"
+    );
+    assert_eq!(
+        tokens.iter().filter(|t| matches!(t, Token::DocEnd)).count(),
+        1,
+        "Should have one DocEnd marker"
+    );
+}
+
+#[test]
+fn test_non_ascii_line_separators_are_not_newlines() {
+    let tokens = get_tokens("foo\u{0085}bar\u{2028}baz\u{2029}qux");
+    assert_eq!(tokens, vec![plain("foo\u{0085}bar\u{2028}baz\u{2029}qux")]);
+}
