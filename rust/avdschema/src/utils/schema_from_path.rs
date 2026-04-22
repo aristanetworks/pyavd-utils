@@ -12,17 +12,19 @@ use crate::{
     dict::{Dict, DictKeyMatch},
 };
 
-// Keys that are accepted by the schema from either keys or dynamic keys.
+// Keys that are accepted by the schema from keys, dynamic keys or prefix keys.
 #[derive(Debug, PartialEq)]
 pub enum SchemaKey {
     StaticKey,
     DynamicKey { dynamic_key_path: String },
+    PrefixKey { schema_ref: String },
 }
 impl SchemaKey {
     /// Return a schema $ref like
     /// "eos_config#/keys/somekey/items/" or
     /// "avd_design#/dynamic_keys/connected_endpoint_keys.key"
-    /// For dynamic keys the first item of the path is replaced with with dynamic key path.
+    /// For dynamic keys the first item of the path is replaced with the dynamic key path.
+    /// For prefix keys the resolved prefix schema_ref is used directly.
     pub fn get_schema_ref_from_path(&self, schema_name: &str, data_path: &[String]) -> String {
         let mut path = data_path.iter();
         let mut schema_ref = format!("{schema_name}#");
@@ -31,17 +33,30 @@ impl SchemaKey {
                 SchemaKey::DynamicKey { dynamic_key_path } => {
                     schema_ref.push_str(format!("/dynamic_keys/{dynamic_key_path}").as_str())
                 }
+                SchemaKey::PrefixKey {
+                    schema_ref: prefix_schema_ref,
+                } => {
+                    schema_ref = prefix_schema_ref.clone();
+                }
                 SchemaKey::StaticKey => schema_ref.push_str(format!("/keys/{root_key}").as_str()),
             },
             None => return schema_ref,
         }
-        for step in path {
-            if step.parse::<usize>().is_ok() {
-                schema_ref.push_str("/items");
-            } else {
-                schema_ref.push_str("/keys/");
-                schema_ref.push_str(step);
+        let mut append_path = |steps: &mut dyn Iterator<Item = &String>| {
+            for step in steps {
+                if step.parse::<usize>().is_ok() {
+                    schema_ref.push_str("/items");
+                } else {
+                    schema_ref.push_str("/keys/");
+                    schema_ref.push_str(step);
+                }
             }
+        };
+        if matches!(self, SchemaKey::PrefixKey { .. }) {
+            let mut steps = data_path.iter().skip(1);
+            append_path(&mut steps);
+        } else {
+            append_path(&mut path);
         }
         schema_ref
     }
@@ -92,8 +107,8 @@ impl SchemaKeys {
                 .get_prefix_keys(dict, store)
                 .unwrap_or_default()
                 .into_iter()
-                .map(|(key, dynamic_key_info)| {
-                    (key.to_owned(), SchemaKey::from(&dynamic_key_info))
+                .map(|(key, prefix_key_match)| {
+                    (key.to_owned(), SchemaKey::from(&prefix_key_match))
                 }),
         );
         Ok(schema_keys)
@@ -103,6 +118,14 @@ impl From<&crate::dict::DynamicKeyInfo<'_>> for SchemaKey {
     fn from(value: &crate::dict::DynamicKeyInfo) -> Self {
         Self::DynamicKey {
             dynamic_key_path: value.dynamic_key_path.to_owned(),
+        }
+    }
+}
+
+impl From<&crate::dict::prefix_keys::PrefixKeyMatch<'_>> for SchemaKey {
+    fn from(value: &crate::dict::prefix_keys::PrefixKeyMatch) -> Self {
+        Self::PrefixKey {
+            schema_ref: value.schema_ref.to_owned(),
         }
     }
 }

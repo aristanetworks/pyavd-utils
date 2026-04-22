@@ -11,15 +11,18 @@ use crate::{
     resolve::resolve_ref::resolve_ref,
 };
 
-use super::{Dict, DictKeyMatch, DynamicKeyInfo};
+use super::{Dict, DictKeyMatch};
 
 /// PrefixKeys represents keys like custom_structured_configuration_*.
 #[skip_serializing_none]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PrefixKeys {
     /// The key in the schema that defines the list of prefixes to look for.
-    /// Ex. this could be "custom_structured_configuration_prefixes" which by default holds ["custom_structured_configuration_"]
-    pub prefixes_key: String,
+    /// Ex. this could be "custom_structured_configuration_prefixes" which holds ["custom_structured_configuration_"] in input or by schema default.
+    pub prefixes_key: Option<String>,
+    /// Static list of prefixes to look for.
+    /// If set, this takes precedence over `prefixes_key`.
+    pub prefixes: Option<Vec<String>>,
     /// Whether to include the suffix (everything after the prefix part of the data key) in the resulting data being validated.
     pub include_suffix_in_data: bool,
     /// Schema reference to use for the dynamic key.
@@ -29,7 +32,7 @@ pub struct PrefixKeys {
 /// Helper struct for prefix matching - contains resolved schema and configuration
 #[derive(Debug)]
 pub struct ResolvedPrefixConfig<'a> {
-    pub dynamic_key_path: String,
+    pub prefixes_key: Option<String>,
     pub schema_ref: String,
     pub prefixes: Vec<String>,
     pub schema: &'a AnySchema,
@@ -39,7 +42,8 @@ pub struct ResolvedPrefixConfig<'a> {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct PrefixKeyMatch<'a> {
-    pub dynamic_key_info: DynamicKeyInfo<'a>,
+    pub prefixes_key: Option<String>,
+    pub schema: &'a AnySchema,
     pub schema_ref: String,
 }
 
@@ -50,7 +54,7 @@ pub enum PrefixMatchResult<'a> {
 }
 
 impl PrefixKeys {
-    /// Resolve this prefix config with the given dict and store
+    /// Resolve this prefix config with the given dict and store.
     /// Returns None if prefixes list is empty or schema cannot be resolved
     pub fn resolve<'a, 'input, M>(
         &self,
@@ -61,14 +65,20 @@ impl PrefixKeys {
     where
         M: SchemaDataMapping<'input>,
     {
-        // Get the list of prefixes from the dict, or use the default value from the schema
-        let prefixes = match dict.get(&self.prefixes_key) {
-            Some(value) => Self::get_prefixes(value),
-            None => dict_schema
-                .get_default_for_key(&self.prefixes_key)
-                .as_ref()
-                .map(Self::get_prefixes)
-                .unwrap_or_default(),
+        // Get the list of prefixes from the static schema config or from input/defaults via prefixes_key.
+        let prefixes = match &self.prefixes {
+            Some(prefixes) => prefixes.clone(),
+            None => match self.prefixes_key.as_deref() {
+                Some(prefixes_key) => match dict.get(prefixes_key) {
+                    Some(value) => Self::get_prefixes(value),
+                    None => dict_schema
+                        .get_default_for_key(prefixes_key)
+                        .as_ref()
+                        .map(Self::get_prefixes)
+                        .unwrap_or_default(),
+                },
+                None => Vec::new(),
+            },
         };
 
         if prefixes.is_empty() {
@@ -86,7 +96,7 @@ impl PrefixKeys {
             .flatten();
 
         Some(ResolvedPrefixConfig {
-            dynamic_key_path: self.prefixes_key.clone(),
+            prefixes_key: self.prefixes_key.clone(),
             schema_ref: self.schema_ref.clone(),
             prefixes,
             schema,
@@ -113,7 +123,8 @@ impl PrefixKeys {
 impl<'a> ResolvedPrefixConfig<'a> {
     /// Check if a key matches any of the prefixes and return the appropriate schema
     pub fn resolve_match(&self, key: &str) -> Option<PrefixMatchResult<'a>> {
-        if key == self.dynamic_key_path {
+        // Quick return for the key given in prefixes_key since it often overlaps with the actual prefixes.
+        if self.prefixes_key.as_deref() == Some(key) {
             return None;
         }
 
@@ -133,10 +144,8 @@ impl<'a> ResolvedPrefixConfig<'a> {
                     (self.schema, self.schema_ref.clone())
                 };
                 return Some(PrefixMatchResult::Valid(PrefixKeyMatch {
-                    dynamic_key_info: DynamicKeyInfo {
-                        dynamic_key_path: self.dynamic_key_path.clone(),
-                        schema,
-                    },
+                    prefixes_key: self.prefixes_key.clone(),
+                    schema,
                     schema_ref,
                 }));
             }
@@ -170,29 +179,24 @@ impl<'a> Dict {
         &'a self,
         dict: M,
         store: &'a Store,
-    ) -> Option<OrderMap<String, DynamicKeyInfo<'a>>>
+    ) -> Option<OrderMap<String, PrefixKeyMatch<'a>>>
     where
         M: SchemaDataMapping<'input>,
     {
-        // Quick return if there are no prefix_keys.
         self.prefix_keys.as_ref()?;
 
         let resolved_dict_keys = self.resolve_dict_keys(dict, store);
+        let result = dict
+            .keys()
+            .filter_map(|key| match resolved_dict_keys.resolve(key) {
+                Some(DictKeyMatch::Prefix(prefix_key_match)) => {
+                    Some((key.to_string(), prefix_key_match))
+                }
+                _ => None,
+            })
+            .collect::<OrderMap<_, _>>();
 
-        // Build a map of matching keys to their DynamicKeyInfo
-        let mut result = OrderMap::new();
-
-        for key in dict.keys() {
-            if let Some(DictKeyMatch::Prefix(prefix_key_match)) = resolved_dict_keys.resolve(key) {
-                result.insert(key.to_string(), prefix_key_match.dynamic_key_info);
-            }
-        }
-
-        if result.is_empty() {
-            None
-        } else {
-            Some(result)
-        }
+        (!result.is_empty()).then_some(result)
     }
 }
 
@@ -212,7 +216,8 @@ mod tests {
         let store = get_test_store();
         let dict_schema = Dict {
             prefix_keys: Some(vec![PrefixKeys {
-                prefixes_key: "custom_structured_configuration_prefixes".to_string(),
+                prefixes_key: Some("custom_structured_configuration_prefixes".to_string()),
+                prefixes: None,
                 include_suffix_in_data: false,
                 schema_ref: "eos_cli_config_gen#/keys/key2".to_string(),
             }]),
@@ -235,13 +240,13 @@ mod tests {
         assert!(result.contains_key("custom_structured_configuration_bar"));
         assert!(!result.contains_key("other_key"));
 
-        let foo_info = result.get("custom_structured_configuration_foo").unwrap();
+        let foo_match = result.get("custom_structured_configuration_foo").unwrap();
         assert_eq!(
-            foo_info.dynamic_key_path,
-            "custom_structured_configuration_prefixes"
+            foo_match.prefixes_key.as_deref(),
+            Some("custom_structured_configuration_prefixes")
         );
         // Verify the schema is a Str (key2 in the test store is a Str)
-        let str_schema: Result<&Str, _> = foo_info.schema.try_into();
+        let str_schema: Result<&Str, _> = foo_match.schema.try_into();
         assert!(str_schema.is_ok());
     }
 
@@ -269,7 +274,8 @@ mod tests {
 
         let dict_schema = Dict {
             prefix_keys: Some(vec![PrefixKeys {
-                prefixes_key: "custom_structured_configuration_prefixes".to_string(),
+                prefixes_key: None,
+                prefixes: Some(vec!["custom_structured_configuration_".to_string()]),
                 include_suffix_in_data: true,
                 schema_ref: "eos_cli_config_gen#/keys/suffix_dict".to_string(),
             }]),
@@ -277,7 +283,6 @@ mod tests {
         };
 
         let value: Value = json!({
-            "custom_structured_configuration_prefixes": ["custom_structured_configuration_"],
             "custom_structured_configuration_foo": "value1",
             "custom_structured_configuration_bar": 42,
             "other_key": "value3"
@@ -291,12 +296,12 @@ mod tests {
         assert_eq!(result.len(), 2);
 
         // Check that the schema is offset by the suffix
-        let foo_info = result.get("custom_structured_configuration_foo").unwrap();
-        let foo_schema: Result<&Str, _> = foo_info.schema.try_into();
+        let foo_match = result.get("custom_structured_configuration_foo").unwrap();
+        let foo_schema: Result<&Str, _> = foo_match.schema.try_into();
         assert!(foo_schema.is_ok());
 
-        let bar_info = result.get("custom_structured_configuration_bar").unwrap();
-        let bar_schema: Result<&Int, _> = bar_info.schema.try_into();
+        let bar_match = result.get("custom_structured_configuration_bar").unwrap();
+        let bar_schema: Result<&Int, _> = bar_match.schema.try_into();
         assert!(bar_schema.is_ok());
     }
 
@@ -331,7 +336,8 @@ mod tests {
                 .into(),
             )])),
             prefix_keys: Some(vec![PrefixKeys {
-                prefixes_key: "custom_structured_configuration_prefixes".to_string(),
+                prefixes_key: Some("custom_structured_configuration_prefixes".to_string()),
+                prefixes: None,
                 include_suffix_in_data: false,
                 schema_ref: "eos_cli_config_gen#/keys/key2".to_string(),
             }]),
@@ -355,13 +361,40 @@ mod tests {
         assert!(result.contains_key("custom_structured_configuration_bar"));
         assert!(!result.contains_key("other_key"));
 
-        let foo_info = result.get("custom_structured_configuration_foo").unwrap();
+        let foo_match = result.get("custom_structured_configuration_foo").unwrap();
         assert_eq!(
-            foo_info.dynamic_key_path,
-            "custom_structured_configuration_prefixes"
+            foo_match.prefixes_key.as_deref(),
+            Some("custom_structured_configuration_prefixes")
         );
         // Verify the schema is a Str (key2 in the test store is a Str)
-        let str_schema: Result<&Str, _> = foo_info.schema.try_into();
+        let str_schema: Result<&Str, _> = foo_match.schema.try_into();
         assert!(str_schema.is_ok());
+    }
+
+    #[test]
+    fn get_prefix_keys_ignores_input_override() {
+        use crate::utils::test_utils::get_test_store;
+
+        let store = get_test_store();
+        let dict_schema = Dict {
+            prefix_keys: Some(vec![PrefixKeys {
+                prefixes_key: None,
+                prefixes: Some(vec!["custom_structured_configuration_".to_string()]),
+                include_suffix_in_data: false,
+                schema_ref: "eos_cli_config_gen#/keys/key2".to_string(),
+            }]),
+            ..Default::default()
+        };
+
+        let value: Value = json!({
+            "custom_structured_configuration_prefixes": ["wrong_"],
+            "custom_structured_configuration_foo": "value1",
+            "wrong_bar": "value2"
+        });
+        let dict = value.as_object().unwrap();
+        let result = dict_schema.get_prefix_keys(dict, &store).unwrap();
+
+        assert!(result.contains_key("custom_structured_configuration_foo"));
+        assert!(!result.contains_key("wrong_bar"));
     }
 }

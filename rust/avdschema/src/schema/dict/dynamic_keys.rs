@@ -32,7 +32,7 @@ impl<'a> DictKeyMatch<'a> {
         match self {
             Self::Static(schema) => schema,
             Self::Dynamic(dynamic_key_info) => dynamic_key_info.schema,
-            Self::Prefix(prefix_key_match) => prefix_key_match.dynamic_key_info.schema,
+            Self::Prefix(prefix_key_match) => prefix_key_match.schema,
             Self::PrefixInvalidSuffix => unreachable!("invalid suffix does not carry a schema"),
         }
     }

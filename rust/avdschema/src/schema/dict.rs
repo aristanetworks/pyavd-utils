@@ -466,7 +466,8 @@ mod tests {
                 Int::default().into(),
             )])),
             prefix_keys: Some(vec![crate::dict::PrefixKeys {
-                prefixes_key: "custom_prefixes".into(),
+                prefixes_key: Some("custom_prefixes".into()),
+                prefixes: None,
                 include_suffix_in_data: false,
                 schema_ref: "eos_config#/keys/key1".into(),
             }]),
@@ -495,7 +496,7 @@ mod tests {
         assert!(matches!(
             resolved_dict_keys.resolve("custom_foo"),
             Some(DictKeyMatch::Prefix(prefix_key_match))
-                if prefix_key_match.dynamic_key_info.dynamic_key_path == "custom_prefixes"
+                if prefix_key_match.prefixes_key.as_deref() == Some("custom_prefixes")
         ));
         assert!(resolved_dict_keys.resolve("missing").is_none());
     }
@@ -540,12 +541,12 @@ mod tests {
         assert!(matches!(
             resolved_dict_keys.resolve("custom_foo"),
             Some(DictKeyMatch::Prefix(prefix_key_match))
-                if matches!(prefix_key_match.dynamic_key_info.schema, AnySchema::Str(_))
+                if matches!(prefix_key_match.schema, AnySchema::Str(_))
         ));
         assert!(matches!(
             resolved_dict_keys.resolve("custom_bar"),
             Some(DictKeyMatch::Prefix(prefix_key_match))
-                if matches!(prefix_key_match.dynamic_key_info.schema, AnySchema::Int(_))
+                if matches!(prefix_key_match.schema, AnySchema::Int(_))
         ));
         assert!(matches!(
             resolved_dict_keys.resolve("custom_baz"),

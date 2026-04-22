@@ -1346,6 +1346,50 @@ mod tests {
     }
 
     #[test]
+    fn validate_prefix_keys_static_ignores_input_override() {
+        let store = avdschema::Store::deserialize(serde_json::json!({
+            "myschema": {
+                "type": "dict",
+                "keys": {
+                    "custom_prefixes": {
+                        "type": "list",
+                        "items": {
+                            "type": "str"
+                        }
+                    },
+                    "prefix_schema": {
+                        "type": "int",
+                        "max": 100
+                    }
+                },
+                "prefix_keys": [{
+                    "prefixes": ["custom_"],
+                    "include_suffix_in_data": false,
+                    "schema_ref": "myschema#/keys/prefix_schema"
+                }],
+                "allow_other_keys": false
+            }
+        }))
+        .unwrap();
+
+        let input = serde_json::json!({
+            "custom_prefixes": ["wrong_"],
+            "custom_foo": 50,
+            "wrong_bar": 75
+        });
+        let result = store.validate_value(&input, "myschema", None).unwrap();
+        assert!(result.result.infos.is_empty());
+        assert_eq!(
+            result.result.errors,
+            vec![Feedback {
+                path: vec!["wrong_bar".into()].into(),
+                span: None,
+                issue: Violation::UnexpectedKey().into()
+            }]
+        );
+    }
+
+    #[test]
     fn validate_prefix_keys_err() {
         // Create a store with a schema for prefix keys
         let store = avdschema::Store::deserialize(serde_json::json!({
