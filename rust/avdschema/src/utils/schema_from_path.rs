@@ -4,10 +4,13 @@
 
 use ordermap::OrderMap;
 
-use crate::dict::DynamicKeyInfo;
 use crate::resolve::{errors::SchemaResolverError, resolve_ref::resolve_ref};
 use crate::store::SchemaStoreError;
-use crate::{SchemaDataValue, Store, any::AnySchema, dict::Dict};
+use crate::{
+    SchemaDataValue, Store,
+    any::AnySchema,
+    dict::{Dict, DictKeyMatch},
+};
 
 // Keys that are accepted by the schema from either keys or dynamic keys.
 #[derive(Debug, PartialEq)]
@@ -44,6 +47,7 @@ impl SchemaKey {
     }
 }
 
+// TODO: Consider removing SchemaKeys since it is no longer used internally.
 #[derive(Debug, PartialEq)]
 pub struct SchemaKeys {
     pub keys: OrderMap<String, SchemaKey>,
@@ -83,7 +87,6 @@ impl SchemaKeys {
                 }),
         );
 
-        // Add prefix keys
         schema_keys.keys.extend(
             dict_schema
                 .get_prefix_keys(dict, store)
@@ -96,8 +99,8 @@ impl SchemaKeys {
         Ok(schema_keys)
     }
 }
-impl From<&DynamicKeyInfo<'_>> for SchemaKey {
-    fn from(value: &DynamicKeyInfo) -> Self {
+impl From<&crate::dict::DynamicKeyInfo<'_>> for SchemaKey {
+    fn from(value: &crate::dict::DynamicKeyInfo) -> Self {
         Self::DynamicKey {
             dynamic_key_path: value.dynamic_key_path.to_owned(),
         }
@@ -130,13 +133,40 @@ pub fn get_schema_from_path<'store, 'value>(
     match path.next() {
         None => Ok(Some(schema)),
         Some(root_key) => {
-            let schema_keys = SchemaKeys::try_from_schema_with_value(schema, data_value, store)?;
-            match schema_keys.keys.get(root_key) {
+            let dict_schema: &Dict = schema
+                .try_into()
+                .map_err(|_err| SchemaKeysError::SchemaNotDict)?;
+            let dict = data_value
+                .as_mapping()
+                .ok_or(GetSchemaFromPathError::Keys(SchemaKeysError::ValueNotADict))?;
+            let resolved_dict_keys = dict_schema.resolve_dict_keys(dict, store);
+            match resolved_dict_keys.resolve(root_key) {
                 None => Ok(None),
-                Some(schema_key) => {
-                    let schema_ref = schema_key.get_schema_ref_from_path(schema_name, data_path);
+                Some(DictKeyMatch::Static(_)) => {
+                    let schema_ref =
+                        SchemaKey::StaticKey.get_schema_ref_from_path(schema_name, data_path);
                     Ok(Some(resolve_ref(&schema_ref, store)?))
                 }
+                Some(DictKeyMatch::Dynamic(dynamic_key_info)) => {
+                    let schema_ref = SchemaKey::DynamicKey {
+                        dynamic_key_path: dynamic_key_info.dynamic_key_path,
+                    }
+                    .get_schema_ref_from_path(schema_name, data_path);
+                    Ok(Some(resolve_ref(&schema_ref, store)?))
+                }
+                Some(DictKeyMatch::Prefix(prefix_key_match)) => {
+                    let mut schema_ref = prefix_key_match.schema_ref;
+                    for step in path {
+                        if step.parse::<usize>().is_ok() {
+                            schema_ref.push_str("/items");
+                        } else {
+                            schema_ref.push_str("/keys/");
+                            schema_ref.push_str(step);
+                        }
+                    }
+                    Ok(Some(resolve_ref(&schema_ref, store)?))
+                }
+                Some(DictKeyMatch::PrefixInvalidSuffix) => Ok(None),
             }
         }
     }
@@ -144,6 +174,8 @@ pub fn get_schema_from_path<'store, 'value>(
 
 #[cfg(test)]
 mod tests {
+    use serde::Deserialize as _;
+
     use crate::{int::Int, list::List, str::Str, utils::test_utils::get_test_store};
 
     use super::*;
@@ -291,6 +323,51 @@ mod tests {
         let expected_schema: AnySchema = serde_json::from_value(json!({
             "type": "int",
             "max": 10,
+        }))
+        .unwrap();
+        assert_eq!(schema, &expected_schema);
+    }
+
+    #[test]
+    fn get_schema_from_path_prefix_key_some_ok() {
+        let store = Store::deserialize(json!({
+            "myschema": {
+                "type": "dict",
+                "keys": {
+                    "custom_prefixes": {
+                        "type": "list",
+                        "items": {
+                            "type": "str"
+                        }
+                    },
+                    "prefix_schema": {
+                        "type": "int",
+                        "max": 100
+                    }
+                },
+                "prefix_keys": [
+                    {
+                        "prefixes_key": "custom_prefixes",
+                        "include_suffix_in_data": false,
+                        "schema_ref": "myschema#/keys/prefix_schema"
+                    }
+                ],
+                "allow_other_keys": true
+            }
+        }))
+        .unwrap();
+        let value = json!({
+            "custom_prefixes": ["custom_"],
+            "custom_foo": 42
+        });
+
+        let result = get_schema_from_path("myschema", &store, &["custom_foo".into()], &value);
+
+        assert!(result.is_ok());
+        let schema = result.unwrap().unwrap();
+        let expected_schema: AnySchema = serde_json::from_value(json!({
+            "type": "int",
+            "max": 100,
         }))
         .unwrap();
         assert_eq!(schema, &expected_schema);
