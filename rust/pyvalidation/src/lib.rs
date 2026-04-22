@@ -421,7 +421,9 @@ mod tests {
                 kind: ::validation::feedback::ParseDiagnosticKind::JsonSyntax,
                 message: "expected value at line 1 column 1".into(),
                 suggestion: None,
-                span: ::validation::feedback::SourceSpan { start: 0, end: 0 },
+                location: ::validation::feedback::DiagnosticLocation::LineColumn(
+                    ::validation::feedback::LineColumn { line: 1, column: 1 },
+                ),
             },
         );
 
