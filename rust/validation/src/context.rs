@@ -4,7 +4,13 @@
 
 use avdschema::Store;
 
-use crate::feedback::{ErrorIssue, Feedback, InfoIssue, Path, Violation, WarningIssue};
+use crate::{
+    feedback::{
+        CoercionNote, ErrorIssue, Feedback, InfoIssue, Path, StringLoweredNote, Value, Violation,
+        WarningIssue,
+    },
+    validatable::ValidatableValue,
+};
 
 /// The Context object is passed along during coercion and validation.
 /// All coercions and violations will be registered in the context with the path carried in the context.
@@ -26,33 +32,97 @@ impl<'a> Context<'a> {
             state: Default::default(),
         }
     }
-    pub(crate) fn add_error(&mut self, error: impl Into<ErrorIssue>) {
+    pub(crate) fn add_error_for<V: ValidatableValue>(
+        &mut self,
+        value: &V,
+        error: impl Into<ErrorIssue>,
+    ) {
+        self.add_error_with_span(value.source_span(), error);
+    }
+
+    pub(crate) fn add_error_with_span(
+        &mut self,
+        span: Option<crate::feedback::SourceSpan>,
+        error: impl Into<ErrorIssue>,
+    ) {
         self.result.errors.push(Feedback {
             path: self.state.path.to_owned(),
+            span,
             issue: error.into(),
         });
     }
 
-    pub(crate) fn add_warning(&mut self, warning: impl Into<WarningIssue>) {
+    pub(crate) fn add_warning_with_span(
+        &mut self,
+        span: Option<crate::feedback::SourceSpan>,
+        warning: impl Into<WarningIssue>,
+    ) {
         self.result.warnings.push(Feedback {
             path: self.state.path.to_owned(),
+            span,
             issue: warning.into(),
         });
     }
 
-    pub(crate) fn add_info(&mut self, info: impl Into<InfoIssue>) {
+    pub(crate) fn add_info_for<V: ValidatableValue>(
+        &mut self,
+        value: &V,
+        info: impl Into<InfoIssue>,
+    ) {
         self.result.infos.push(Feedback {
             path: self.state.path.to_owned(),
+            span: value.source_span(),
             issue: info.into(),
         });
     }
 
-    pub(crate) fn add_duplicate_violation_pair(&mut self, trail_a: &[String], trail_b: &[String]) {
+    pub(crate) fn add_coercion_for<V: ValidatableValue>(
+        &mut self,
+        value: &V,
+        made: impl Into<Value>,
+    ) {
+        if self.configuration.return_coercion_infos {
+            self.add_info_for(
+                value,
+                CoercionNote {
+                    found: value.to_feedback_value(),
+                    made: made.into(),
+                },
+            );
+        }
+    }
+
+    pub(crate) fn add_string_lowered_for<V: ValidatableValue>(
+        &mut self,
+        value: &V,
+        found: &str,
+        made: &str,
+    ) {
+        if self.configuration.return_coercion_infos {
+            self.add_info_for(
+                value,
+                StringLoweredNote {
+                    found: found.to_owned(),
+                    made: made.to_owned(),
+                },
+            );
+        }
+    }
+
+    pub(crate) fn add_duplicate_violation_pair_for<A: ValidatableValue, B: ValidatableValue>(
+        &mut self,
+        value_a: &A,
+        trail_a: &[String],
+        value_b: &B,
+        trail_b: &[String],
+    ) {
         // Violation from A's perspective (A sees B as duplicate)
         let violation_a = Feedback {
             path: self.state.path.clone_with_slice(trail_a),
+            span: value_a.source_span(),
             issue: Violation::ValueNotUnique {
                 other_path: self.state.path.clone_with_slice(trail_b),
+                other_span: value_b.source_span(),
             }
             .into(),
         };
@@ -60,8 +130,10 @@ impl<'a> Context<'a> {
         // Violation from B's perspective (B sees A as duplicate)
         let violation_b = Feedback {
             path: self.state.path.clone_with_slice(trail_b),
+            span: value_b.source_span(),
             issue: Violation::ValueNotUnique {
                 other_path: self.state.path.clone_with_slice(trail_a),
+                other_span: value_a.source_span(),
             }
             .into(),
         };
@@ -83,10 +155,15 @@ pub(crate) struct State {
 #[derive(Clone, Debug, Default)]
 pub struct Configuration {
     pub ignore_required_keys_on_root_dict: bool,
-    pub return_coercion_infos: bool,
     /// By default Null/None values are ignored no matter which data type is expected.
     /// Setting this will instead emit type errors for Null values.
     pub restrict_null_values: bool,
+    /// When true, validation returns coerced data with types adjusted according to the schema.
+    /// When false (default), validation returns a null placeholder to avoid expensive cloning.
+    pub return_coerced_data: bool,
+    /// Set to true when you need the coerced output (e.g., for data transformation).
+    /// Set to false for validation-only use cases (e.g., LSP diagnostics).
+    pub return_coercion_infos: bool,
     /// When validating avd_design, emit warnings for top-level keys that exist in eos_config
     /// but not in avd_design.
     pub warn_eos_config_keys: bool,

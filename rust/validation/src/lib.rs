@@ -3,12 +3,13 @@
 // that can be found in the LICENSE file.
 #![deny(unused_crate_dependencies)]
 
-mod coercion;
 mod context;
 pub mod feedback;
+mod validatable;
 mod validation;
 
-pub use self::coercion::Coercion;
 pub use self::context::{Configuration, Context, ValidationResult};
 pub use self::validation::Validation;
-pub use self::validation::store::StoreValidate;
+pub use self::validation::store::{
+    InputValidationResult, StoreValidate, StoreValidateInput, ValidationOutput,
+};
