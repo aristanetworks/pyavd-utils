@@ -22,7 +22,10 @@ pub fn resolve_ref<'a>(ref_: &str, store: &'a Store) -> Result<&'a AnySchema, Sc
         schema_ref: ref_.to_owned(),
     };
     // unwrap_or_default() cannot fail: the regex is compiled above and uses no lookarounds.
-    let captures = REF_REGEX.captures(ref_).unwrap_or_default().ok_or_else(syntax_err)?;
+    let captures = REF_REGEX
+        .captures(ref_)
+        .unwrap_or_default()
+        .ok_or_else(syntax_err)?;
     let schema_name = captures.get(1).ok_or_else(syntax_err)?.as_str();
     let schema_path = captures.get(2).ok_or_else(syntax_err)?.as_str();
 
@@ -127,5 +130,4 @@ mod tests {
             SchemaResolverError::SchemaStoreError(SchemaStoreError::InvalidSchemaName(_))
         ))
     }
-
 }
