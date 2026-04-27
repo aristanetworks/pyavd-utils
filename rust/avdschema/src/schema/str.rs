@@ -91,7 +91,7 @@ impl<'x> TryFrom<&'x AnySchema> for &'x Str {
 pub struct Pattern {
     pub pattern: String,
     #[serde(skip)]
-    compiled_pattern: OnceLock<Regex>,
+    compiled_pattern: OnceLock<Result<Regex, String>>,
 }
 impl Pattern {
     fn new(pattern: String) -> Self {
@@ -100,9 +100,11 @@ impl Pattern {
             compiled_pattern: Default::default(),
         }
     }
-    pub fn get_compiled_pattern(&self) -> &Regex {
+    pub fn get_compiled_pattern(&self) -> Result<&Regex, &str> {
         self.compiled_pattern
-            .get_or_init(|| Regex::new(format!("^{}$", &self.pattern).as_str()).unwrap())
+            .get_or_init(|| Regex::new(format!("^{}$", &self.pattern).as_str()).map_err(|e| e.to_string()))
+            .as_ref()
+            .map_err(String::as_str)
     }
 }
 impl PartialEq for Pattern {
