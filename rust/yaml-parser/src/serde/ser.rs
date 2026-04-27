@@ -21,7 +21,7 @@ use serde::ser::{
     SerializeTuple, SerializeTupleStruct, SerializeTupleVariant, Serializer,
 };
 
-use crate::ast_events::{self, AstToEventsError};
+use crate::ast_to_events::{self, AstToEventsError};
 use crate::value::{Integer, MappingPair, SequenceItem};
 use crate::{Node, Value, writer};
 
@@ -480,7 +480,7 @@ where
 {
     let root_value = ValueSerializer::to_value(value)?;
     let node = node_from_value(root_value);
-    let events = ast_events::node_to_events(&node)?;
+    let events = ast_to_events::node_to_events(&node)?;
     writer::write_yaml_from_events(&mut writer, &events)?;
     Ok(())
 }
@@ -544,8 +544,8 @@ mod tests {
             .first()
             .expect("expected exactly one document before roundtrip");
 
-        let events =
-            ast_events::node_to_events(doc).expect("node_to_events should succeed for valid AST");
+        let events = ast_to_events::node_to_events(doc)
+            .expect("node_to_events should succeed for valid AST");
         let mut buf = Vec::new();
         writer::write_yaml_from_events(&mut buf, &events)
             .expect("writing YAML from AST-derived events should succeed");

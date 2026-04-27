@@ -172,7 +172,7 @@ mod stream;
 mod value;
 
 #[cfg(feature = "serde")]
-mod ast_events;
+mod ast_to_events;
 
 pub mod writer;
 
