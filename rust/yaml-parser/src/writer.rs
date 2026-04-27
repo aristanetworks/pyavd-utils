@@ -29,6 +29,7 @@ const EMPTY_PROPERTIES: Properties<'static> = Properties {
     anchor: None,
     tag: None,
 };
+const INDENT_CHUNK: [u8; 64] = [b' '; 64];
 
 /// Write YAML text from a sequence of events.
 ///
@@ -722,9 +723,15 @@ impl<'a, 'input, W: Write> WriterState<'a, 'input, W> {
         Ok(())
     }
 
+    #[allow(clippy::indexing_slicing, reason = "chunk size handled")]
     fn write_indent(&mut self) -> io::Result<()> {
-        for _ in 0..self.indent {
-            self.out.write_all(b" ")?;
+        let mut remaining = self.indent;
+        while remaining >= INDENT_CHUNK.len() {
+            self.out.write_all(&INDENT_CHUNK)?;
+            remaining -= INDENT_CHUNK.len();
+        }
+        if remaining > 0 {
+            self.out.write_all(&INDENT_CHUNK[..remaining])?;
         }
         self.at_line_start = false;
         Ok(())

@@ -12,6 +12,7 @@ import sys
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
+from statistics import median
 
 PREFERRED_BACKEND_ORDER = ("yaml_parser", "saphyr_marked", "serde_yaml")
 
@@ -25,6 +26,8 @@ class Benchmark:
     backend: str
     dataset: str
     median_ns: float
+    median_ci_lower_ns: float
+    median_ci_upper_ns: float
     throughput_bytes: float | None
 
     @property
@@ -33,6 +36,22 @@ class Benchmark:
         if self.throughput_bytes is None:
             return None
         return (self.throughput_bytes * 1_000_000_000.0) / (self.median_ns * 1024.0 * 1024.0)
+
+    @property
+    def median_ci_half_width_pct(self) -> float:
+        """Return the displayed metric's relative 95% CI half-width in percent."""
+        if self.throughput_bytes is None:
+            lower = self.median_ci_lower_ns
+            upper = self.median_ci_upper_ns
+            point = self.median_ns
+        else:
+            point = self.throughput_mib_s
+            lower = (self.throughput_bytes * 1_000_000_000.0) / (self.median_ci_upper_ns * 1024.0 * 1024.0)
+            upper = (self.throughput_bytes * 1_000_000_000.0) / (self.median_ci_lower_ns * 1024.0 * 1024.0)
+
+        if point is None:
+            return 0.0
+        return max(abs(point - lower), abs(upper - point)) / point * 100.0
 
 
 def parse_benchmark_identity(name: str) -> tuple[str, str, str]:
@@ -146,6 +165,9 @@ def load_benchmarks(root: Path) -> dict[str, Benchmark]:
         point_estimate = median.get("point_estimate")
         if point_estimate is None:
             continue
+        confidence_interval = median.get("confidence_interval", {})
+        lower_bound = float(confidence_interval.get("lower_bound", point_estimate))
+        upper_bound = float(confidence_interval.get("upper_bound", point_estimate))
 
         group, backend, dataset = parse_benchmark_identity(benchmark_name)
         benchmarks[benchmark_name] = Benchmark(
@@ -154,6 +176,8 @@ def load_benchmarks(root: Path) -> dict[str, Benchmark]:
             backend=backend,
             dataset=dataset,
             median_ns=float(point_estimate),
+            median_ci_lower_ns=lower_bound,
+            median_ci_upper_ns=upper_bound,
             throughput_bytes=throughput_bytes,
         )
 
@@ -242,9 +266,13 @@ def render_group_report(group: str, benchmarks: list[Benchmark], output_format: 
                 row.append(format_ns(benchmark.median_ns))
         rows.append(tuple(row))
 
+    ci_half_widths = [benchmark.median_ci_half_width_pct for benchmark in benchmarks]
+    ci_summary = (
+        f"Criterion 95% CI half-width for these medians stays within ±{max(ci_half_widths):.2f}% in this section (median row: ±{median(ci_half_widths):.2f}%)."
+    )
     title = f"## {group}"
     table = render_markdown_table(headers, rows) if output_format == "markdown" else render_text_table(headers, rows)
-    return f"{title}\n\n{table}"
+    return f"{title}\n\n{ci_summary}\n\n{table}"
 
 
 def run_compare(args: argparse.Namespace) -> int:
