@@ -86,6 +86,8 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
+      - name: Install YAML test suite fixture
+        run: python scripts/fetch_yaml_test_suite.py
       - name: Check code formatting with cargo fmt
         run: cargo fmt --verbose
         if: |
