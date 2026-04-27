@@ -167,3 +167,17 @@ fn writer_roundtrip_big_integer() {
     let input = "huge: 12345678901234567890123456789012345678901234567890\n";
     roundtrip_value(input);
 }
+
+#[test]
+fn writer_preserves_explicit_document_markers() {
+    let input = "---\nkey: value\n...\n";
+    let (events, errors) = emit_events(input);
+    assert!(errors.is_empty(), "unexpected emit errors: {errors:?}");
+
+    let mut buf = Vec::new();
+    writer::write_yaml_from_events(&mut buf, &events)
+        .expect("writing YAML from events should succeed");
+
+    let output = String::from_utf8(buf).expect("writer must produce valid UTF-8");
+    assert_eq!(output, input);
+}

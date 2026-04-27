@@ -560,7 +560,7 @@ mod error_recovery {
     }
 
     /// Test that a malformed flow mapping entry without a colon is dropped
-    /// instead of recovered as a fake `null` pair.
+    /// instead of recovered as an Invalid pair.
     #[test]
     fn test_missing_colon_in_flow_mapping_drops_pair_and_recovers() {
         let input = "{\"a\" [1], c: 3}";

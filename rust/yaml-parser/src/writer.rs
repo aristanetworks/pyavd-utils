@@ -113,27 +113,17 @@ impl<'a, 'input, W: Write> WriterState<'a, 'input, W> {
                     }
                     self.write_node()?;
                 }
-                Event::DocumentEnd { .. } => {
-                    // End of the current document. For now we do not emit an
-                    // explicit `...` marker, but we ensure we advance past the
-                    // event and terminate the current line.
-                    // If the document had an explicit end marker in the
-                    // original stream, preserve that here so that
-                    // `DocumentEnd { explicit: true, .. }` roundtrips.
-                    if let Some(Event::DocumentEnd { explicit, .. }) = self.peek().cloned() {
-                        self.advance();
-                        if explicit {
-                            if !self.at_line_start {
-                                self.out.write_all(b"\n")?;
-                            }
-                            self.out.write_all(b"...\n")?;
-                            self.at_line_start = true;
-                        } else if !self.at_line_start {
+                Event::DocumentEnd { explicit, .. } => {
+                    self.advance();
+                    if explicit {
+                        if !self.at_line_start {
                             self.out.write_all(b"\n")?;
-                            self.at_line_start = true;
                         }
-                    } else {
-                        self.advance();
+                        self.out.write_all(b"...\n")?;
+                        self.at_line_start = true;
+                    } else if !self.at_line_start {
+                        self.out.write_all(b"\n")?;
+                        self.at_line_start = true;
                     }
                 }
                 _ => {
