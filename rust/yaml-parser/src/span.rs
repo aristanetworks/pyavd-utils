@@ -269,11 +269,27 @@ impl SourceMap {
     #[must_use]
     pub fn new(input: &str) -> Self {
         let mut line_starts = vec![0];
+        let bytes = input.as_bytes();
+        let mut byte_pos = 0;
 
-        for (byte_pos, ch) in input.char_indices() {
-            if ch == '\n' {
-                // The next line starts after this newline
-                line_starts.push(byte_pos + 1);
+        while let Some(byte) = bytes.get(byte_pos) {
+            match byte {
+                b'\n' => {
+                    // The next line starts after this newline.
+                    line_starts.push(byte_pos + 1);
+                    byte_pos += 1;
+                }
+                b'\r' => {
+                    // Treat CRLF as a single line break to match lexer behavior.
+                    byte_pos += 1;
+                    if bytes.get(byte_pos) == Some(&b'\n') {
+                        byte_pos += 1;
+                    }
+                    line_starts.push(byte_pos);
+                }
+                _ => {
+                    byte_pos += 1;
+                }
             }
         }
 
@@ -402,5 +418,37 @@ mod tests {
 
         // "- item" starts at byte 21
         assert_eq!(map.position(21), Position::new(3, 3));
+    }
+
+    #[test]
+    fn test_source_map_cr_newlines() {
+        let map = SourceMap::new("ab\rcd\ref");
+
+        assert_eq!(map.line_count(), 3);
+        assert_eq!(map.position(2), Position::new(1, 3)); // '\r'
+        assert_eq!(map.position(3), Position::new(2, 1));
+        assert_eq!(map.position(5), Position::new(2, 3)); // '\r'
+        assert_eq!(map.position(6), Position::new(3, 1));
+
+        assert_eq!(map.line_range(1), Some(0..3)); // "ab\r"
+        assert_eq!(map.line_range(2), Some(3..6)); // "cd\r"
+        assert_eq!(map.line_range(3), Some(6..8)); // "ef"
+    }
+
+    #[test]
+    fn test_source_map_crlf_newlines() {
+        let map = SourceMap::new("ab\r\ncd\r\nef");
+
+        assert_eq!(map.line_count(), 3);
+        assert_eq!(map.position(2), Position::new(1, 3)); // '\r'
+        assert_eq!(map.position(3), Position::new(1, 4)); // '\n'
+        assert_eq!(map.position(4), Position::new(2, 1));
+        assert_eq!(map.position(6), Position::new(2, 3)); // '\r'
+        assert_eq!(map.position(7), Position::new(2, 4)); // '\n'
+        assert_eq!(map.position(8), Position::new(3, 1));
+
+        assert_eq!(map.line_range(1), Some(0..4)); // "ab\r\n"
+        assert_eq!(map.line_range(2), Some(4..8)); // "cd\r\n"
+        assert_eq!(map.line_range(3), Some(8..10)); // "ef"
     }
 }

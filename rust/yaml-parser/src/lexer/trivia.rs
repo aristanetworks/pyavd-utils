@@ -74,23 +74,13 @@ impl<'input> Lexer<'input> {
             let span = self.current_span(start);
             self.add_error(ErrorKind::InvalidComment, span);
             // Try to recover by consuming rest of line as if it were a comment
-            while let Some(peek_ch) = self.peek() {
-                if Self::is_newline(peek_ch) {
-                    break;
-                }
-                self.advance();
-            }
+            self.advance_until_newline();
             return Some((Token::Comment(Cow::Borrowed("")), self.current_span(start)));
         }
 
         self.advance(); // consume #
         let content_start = self.byte_pos;
-        while let Some(peek_ch) = self.peek() {
-            if Self::is_newline(peek_ch) {
-                break;
-            }
-            self.advance();
-        }
+        self.advance_until_newline();
         // Borrow directly from input (zero-copy)
         // Byte positions are always at UTF-8 boundaries (maintained by advance())
         let content = self

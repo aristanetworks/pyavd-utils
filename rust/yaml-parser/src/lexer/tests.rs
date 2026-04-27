@@ -372,3 +372,60 @@ fn test_non_ascii_line_separators_are_not_newlines() {
     let tokens = get_tokens("foo\u{0085}bar\u{2028}baz\u{2029}qux");
     assert_eq!(tokens, vec![plain("foo\u{0085}bar\u{2028}baz\u{2029}qux")]);
 }
+
+#[test]
+fn test_invalid_hex_escape_character_has_single_char_span() {
+    let (tokens, errors) = tokenize_document("\"\\u12g\"");
+
+    assert_eq!(
+        get_tokens("\"\\u12g\""),
+        vec![
+            Token::StringStart(QuoteStyle::Double),
+            Token::StringContent("\\u12g".into()),
+            Token::StringEnd(QuoteStyle::Double),
+        ]
+    );
+    assert_eq!(tokens.len(), 4);
+    assert_eq!(errors.len(), 1);
+    assert_eq!(errors[0].kind, ErrorKind::InvalidEscapeCharacter);
+    assert_eq!(errors[0].span, Span::from_usize_range(5..6));
+}
+
+#[test]
+fn test_incomplete_hex_escape_has_consumed_prefix_span() {
+    let (tokens, errors) = tokenize_document("\"\\u12\"");
+
+    assert_eq!(
+        get_tokens("\"\\u12\""),
+        vec![
+            Token::StringStart(QuoteStyle::Double),
+            Token::StringContent("\\u12".into()),
+            Token::StringEnd(QuoteStyle::Double),
+        ]
+    );
+    assert_eq!(tokens.len(), 4);
+    assert_eq!(errors.len(), 1);
+    assert_eq!(
+        errors[0].kind,
+        ErrorKind::InvalidEscapeLength { expected: 4 }
+    );
+    assert_eq!(errors[0].span, Span::from_usize_range(1..5));
+}
+
+#[test]
+fn test_invalid_unicode_escape_has_full_escape_span() {
+    let (tokens, errors) = tokenize_document("\"\\U00110000\"");
+
+    assert_eq!(
+        get_tokens("\"\\U00110000\""),
+        vec![
+            Token::StringStart(QuoteStyle::Double),
+            Token::StringContent("\\U00110000".into()),
+            Token::StringEnd(QuoteStyle::Double),
+        ]
+    );
+    assert_eq!(tokens.len(), 4);
+    assert_eq!(errors.len(), 1);
+    assert_eq!(errors[0].kind, ErrorKind::InvalidUnicodeEscape);
+    assert_eq!(errors[0].span, Span::from_usize_range(1..11));
+}
