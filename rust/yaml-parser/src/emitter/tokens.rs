@@ -119,6 +119,23 @@ impl<'input> Emitter<'input> {
         .unwrap_or(false)
     }
 
+    #[allow(
+        clippy::string_slice,
+        reason = "Positions from tokens are UTF-8 boundaries"
+    )]
+    pub(super) fn scan_skip_inline_whitespace_from(
+        window: &LookaheadWindow<'_, 'input>,
+        mut offset: usize,
+    ) -> usize {
+        while matches!(
+            window.kind(offset),
+            Some(TokenKind::Whitespace | TokenKind::WhitespaceWithTabs)
+        ) {
+            offset += 1;
+        }
+        offset
+    }
+
     pub(super) fn collection_end_span(&self) -> Span {
         if let Some(span) = self.last_content_span {
             Span::new(span.end..span.end)

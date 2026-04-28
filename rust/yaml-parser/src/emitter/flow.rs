@@ -64,7 +64,6 @@ impl<'input> Emitter<'input> {
     ///
     /// Inside flow sequences, `[ key: value ]` creates an implicit mapping.
     /// This looks ahead to detect if the current entry is followed by a Colon.
-    #[allow(clippy::too_many_lines, reason = "Complex lookahead logic")]
     pub(super) fn is_implicit_flow_mapping_entry(&self) -> bool {
         self.with_lookahead(200, |window| {
             Self::scan_is_implicit_flow_mapping_entry(&window)
@@ -81,30 +80,6 @@ impl<'input> Emitter<'input> {
                 _ => break,
             }
         }
-    }
-
-    /// Try to consume a plain scalar continuation.
-    /// Returns true if continuation was found, false if we should stop.
-    ///
-    /// `min_indent` specifies the minimum indent for content. A `BlockSeqIndicator`
-    /// at column `c` is only a valid entry marker if `c < min_indent`. Otherwise,
-    /// it's part of the plain scalar text (e.g., `- foo\n - bar` where the second
-    /// `-` is at the content indent level, not the sequence indent level).
-    #[allow(
-        clippy::string_slice,
-        reason = "Positions from tokens are UTF-8 boundaries"
-    )]
-    pub(super) fn scan_skip_inline_whitespace_from(
-        window: &LookaheadWindow<'_, 'input>,
-        mut offset: usize,
-    ) -> usize {
-        while matches!(
-            window.kind(offset),
-            Some(TokenKind::Whitespace | TokenKind::WhitespaceWithTabs)
-        ) {
-            offset += 1;
-        }
-        offset
     }
 
     #[inline]

@@ -40,13 +40,15 @@ fn percent_decode(input: &str) -> Result<Cow<'_, str>, PercentDecodeError> {
 
     while idx < input_bytes.len() {
         if input_bytes[idx] == b'%' {
-            let Some((&hi, &lo)) = input_bytes.get(idx + 1).zip(input_bytes.get(idx + 2)) else {
+            let Some((&hi_digit, &lo_digit)) =
+                input_bytes.get(idx + 1).zip(input_bytes.get(idx + 2))
+            else {
                 return Err(PercentDecodeError::InvalidEscape);
             };
-            let Some(hi) = decode_hex_digit(hi) else {
+            let Some(hi) = decode_hex_digit(hi_digit) else {
                 return Err(PercentDecodeError::InvalidEscape);
             };
-            let Some(lo) = decode_hex_digit(lo) else {
+            let Some(lo) = decode_hex_digit(lo_digit) else {
                 return Err(PercentDecodeError::InvalidEscape);
             };
 
@@ -1061,16 +1063,10 @@ impl<'input> Emitter<'input> {
             Some(TokenKind::Plain) => {
                 !self.plain_at_offset_terminated_by_mapping_value_indicator(idx)
             }
-            Some(TokenKind::Alias) => {
-                let mut idx = idx + 1;
-                while matches!(
-                    self.peek_kind_nth(idx),
-                    Some(TokenKind::Whitespace | TokenKind::WhitespaceWithTabs)
-                ) {
-                    idx += 1;
-                }
-                self.peek_kind_nth(idx) != Some(TokenKind::Colon)
-            }
+            Some(TokenKind::Alias) => !self.with_lookahead(idx + 8, |window| {
+                let colon_idx = Self::scan_skip_inline_whitespace_from(&window, idx + 1);
+                window.kind(colon_idx) == Some(TokenKind::Colon)
+            }),
             Some(TokenKind::StringStart | TokenKind::FlowSeqStart | TokenKind::FlowMapStart) => {
                 !self.is_implicit_key_at_offset_incremental(idx)
             }
@@ -1079,24 +1075,17 @@ impl<'input> Emitter<'input> {
     }
 
     fn is_implicit_key_at_offset_incremental(&self, start_idx: usize) -> bool {
-        fn skip_inline_whitespace(emitter: &Emitter<'_>, mut idx: usize) -> usize {
-            while matches!(
-                emitter.peek_kind_nth(idx),
-                Some(TokenKind::Whitespace | TokenKind::WhitespaceWithTabs)
-            ) {
-                idx += 1;
-            }
-            idx
-        }
-
         match self.peek_kind_nth(start_idx) {
             Some(TokenKind::StringStart) => {
                 let mut idx = start_idx + 1;
                 while idx <= start_idx + 200 {
                     match self.peek_kind_nth(idx) {
                         Some(TokenKind::StringEnd) => {
-                            let idx = skip_inline_whitespace(self, idx + 1);
-                            return self.peek_kind_nth(idx) == Some(TokenKind::Colon);
+                            return self.with_lookahead(idx + 8, |window| {
+                                let colon_idx =
+                                    Self::scan_skip_inline_whitespace_from(&window, idx + 1);
+                                window.kind(colon_idx) == Some(TokenKind::Colon)
+                            });
                         }
                         Some(TokenKind::DocStart | TokenKind::DocEnd) | None => return false,
                         _ => idx += 1,
@@ -1137,14 +1126,11 @@ impl<'input> Emitter<'input> {
                 Some(TokenKind::FlowSeqEnd | TokenKind::FlowMapEnd) => {
                     depth -= 1;
                     if depth == 0 && self.peek_kind_nth(idx) == Some(target_end) {
-                        let mut colon_idx = idx + 1;
-                        while matches!(
-                            self.peek_kind_nth(colon_idx),
-                            Some(TokenKind::Whitespace | TokenKind::WhitespaceWithTabs)
-                        ) {
-                            colon_idx += 1;
-                        }
-                        return self.peek_kind_nth(colon_idx) == Some(TokenKind::Colon);
+                        return self.with_lookahead(idx + 8, |window| {
+                            let colon_idx =
+                                Self::scan_skip_inline_whitespace_from(&window, idx + 1);
+                            window.kind(colon_idx) == Some(TokenKind::Colon)
+                        });
                     }
                 }
                 Some(TokenKind::DocStart | TokenKind::DocEnd) | None => return false,
@@ -1227,15 +1213,11 @@ impl<'input> Emitter<'input> {
             let suffix = &tag_str[second_bang_pos + 1..];
             // Look up handle using as_str() since HashMap keys are &str
             if let Some(prefix) = self.tag_handles.get(handle) {
-                match percent_decode(suffix) {
-                    Ok(decoded_suffix) => {
-                        return Cow::Owned(join_prefix_and_suffix(prefix, decoded_suffix.as_ref()));
-                    }
-                    Err(_) => {
-                        self.error(ErrorKind::InvalidTag, span);
-                        return tag_cow;
-                    }
+                if let Ok(decoded_suffix) = percent_decode(suffix) {
+                    return Cow::Owned(join_prefix_and_suffix(prefix, decoded_suffix.as_ref()));
                 }
+                self.error(ErrorKind::InvalidTag, span);
+                return tag_cow;
             }
             // Handle not declared - emit error and return unexpanded
             self.error(ErrorKind::UndefinedTagHandle, span);
@@ -1248,15 +1230,11 @@ impl<'input> Emitter<'input> {
             if prefix == "!" && !suffix.contains('%') {
                 return tag_cow;
             }
-            match percent_decode(suffix) {
-                Ok(decoded_suffix) => {
-                    return Cow::Owned(join_prefix_and_suffix(prefix, decoded_suffix.as_ref()));
-                }
-                Err(_) => {
-                    self.error(ErrorKind::InvalidTag, span);
-                    return tag_cow;
-                }
+            if let Ok(decoded_suffix) = percent_decode(suffix) {
+                return Cow::Owned(join_prefix_and_suffix(prefix, decoded_suffix.as_ref()));
             }
+            self.error(ErrorKind::InvalidTag, span);
+            return tag_cow;
         }
 
         // Shouldn't reach here, but return as-is
