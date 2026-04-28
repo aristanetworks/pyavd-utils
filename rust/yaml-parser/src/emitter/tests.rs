@@ -273,6 +273,27 @@ mod event_generation {
     }
 
     #[test]
+    fn test_tagged_scalar_with_percent_encoded_unicode_suffix() {
+        let events = events_from("!!caf%C3%A9 42");
+
+        let has_tag = events.iter().any(|ev| {
+            matches!(
+                ev,
+                Event::Scalar { properties, .. }
+                    if properties
+                        .as_ref()
+                        .and_then(|event_props| event_props.tag.as_ref())
+                        .map(|prop| prop.value.as_ref())
+                        == Some("tag:yaml.org,2002:café")
+            )
+        });
+        assert!(
+            has_tag,
+            "Expected scalar with decoded Unicode tag suffix, got: {events:?}"
+        );
+    }
+
+    #[test]
     fn test_nested_block_structures() {
         // Test nested mapping inside sequence
         let events = events_from("- a: 1\n- b: 2");
