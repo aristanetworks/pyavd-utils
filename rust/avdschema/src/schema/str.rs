@@ -85,13 +85,18 @@ impl<'x> TryFrom<&'x AnySchema> for &'x Str {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, derive_more::Display)]
+#[derive(Debug, Serialize, Deserialize, derive_more::Display)]
 #[display("{pattern}")]
 #[serde(transparent)]
 pub struct Pattern {
     pub pattern: String,
     #[serde(skip)]
-    compiled_pattern: OnceLock<Result<Regex, String>>,
+    compiled_pattern: OnceLock<Result<Regex, fancy_regex::Error>>,
+}
+impl Clone for Pattern {
+    fn clone(&self) -> Self {
+        Self::new(self.pattern.clone())
+    }
 }
 impl Pattern {
     fn new(pattern: String) -> Self {
@@ -100,11 +105,10 @@ impl Pattern {
             compiled_pattern: Default::default(),
         }
     }
-    pub fn get_compiled_pattern(&self) -> Result<&Regex, &str> {
+    pub fn get_compiled_pattern(&self) -> Result<&Regex, &fancy_regex::Error> {
         self.compiled_pattern
-            .get_or_init(|| Regex::new(format!("^{}$", &self.pattern).as_str()).map_err(|e| e.to_string()))
+            .get_or_init(|| Regex::new(format!("^{}$", &self.pattern).as_str()))
             .as_ref()
-            .map_err(String::as_str)
     }
 }
 impl PartialEq for Pattern {
