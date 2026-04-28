@@ -345,6 +345,116 @@ mod event_generation {
     }
 
     #[test]
+    fn test_tagged_flow_mapping_implicit_key_keeps_tag_on_key_node() {
+        let input = "!!map\n!foo {a: b}: c\n";
+        let (events, errors) = events_and_errors_from(input);
+
+        assert!(
+            errors.is_empty(),
+            "expected tagged flow-map key to parse without errors: {errors:?}"
+        );
+        assert!(
+            events.iter().any(|event| {
+                matches!(
+                    event,
+                    Event::MappingStart { properties, .. }
+                        if properties
+                            .as_ref()
+                            .and_then(|event_props| event_props.tag.as_ref())
+                            .map(|tag| tag.value.as_ref())
+                            == Some("!foo")
+                )
+            }),
+            "expected tagged flow mapping key event, got: {events:?}"
+        );
+    }
+
+    #[test]
+    fn test_tagged_flow_sequence_implicit_key_keeps_tag_on_key_node() {
+        let input = "!!map\n!foo [a, b]: c\n";
+        let (events, errors) = events_and_errors_from(input);
+
+        assert!(
+            errors.is_empty(),
+            "expected tagged flow-sequence key to parse without errors: {errors:?}"
+        );
+        assert!(
+            events.iter().any(|event| {
+                matches!(
+                    event,
+                    Event::SequenceStart { properties, .. }
+                        if properties
+                            .as_ref()
+                            .and_then(|event_props| event_props.tag.as_ref())
+                            .map(|tag| tag.value.as_ref())
+                            == Some("!foo")
+                )
+            }),
+            "expected tagged flow sequence key event, got: {events:?}"
+        );
+    }
+
+    #[test]
+    fn test_tagged_double_quoted_implicit_key_keeps_tag_on_key_scalar() {
+        let input = "!!map\n!foo \"a, b\": c\n";
+        let (events, errors) = events_and_errors_from(input);
+
+        assert!(
+            errors.is_empty(),
+            "expected tagged double-quoted key to parse without errors: {errors:?}"
+        );
+        assert!(
+            events.iter().any(|event| {
+                matches!(
+                    event,
+                    Event::Scalar {
+                        style: ScalarStyle::DoubleQuoted,
+                        value,
+                        properties,
+                        ..
+                    } if value == "a, b"
+                        && properties
+                            .as_ref()
+                            .and_then(|event_props| event_props.tag.as_ref())
+                            .map(|tag| tag.value.as_ref())
+                            == Some("!foo")
+                )
+            }),
+            "expected tagged double-quoted key event, got: {events:?}"
+        );
+    }
+
+    #[test]
+    fn test_tagged_single_quoted_implicit_key_keeps_tag_on_key_scalar() {
+        let input = "!!map\n!foo 'a, b': c\n";
+        let (events, errors) = events_and_errors_from(input);
+
+        assert!(
+            errors.is_empty(),
+            "expected tagged single-quoted key to parse without errors: {errors:?}"
+        );
+        assert!(
+            events.iter().any(|event| {
+                matches!(
+                    event,
+                    Event::Scalar {
+                        style: ScalarStyle::SingleQuoted,
+                        value,
+                        properties,
+                        ..
+                    } if value == "a, b"
+                        && properties
+                            .as_ref()
+                            .and_then(|event_props| event_props.tag.as_ref())
+                            .map(|tag| tag.value.as_ref())
+                            == Some("!foo")
+                )
+            }),
+            "expected tagged single-quoted key event, got: {events:?}"
+        );
+    }
+
+    #[test]
     fn test_pending_event_single_slot_stress_cases() {
         let input = "\
 ---

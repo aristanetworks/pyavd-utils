@@ -1034,7 +1034,7 @@ impl<'input> Emitter<'input> {
     pub(super) fn should_continue_collecting_properties(&self) -> bool {
         let mut idx = 1; // Start after the LineStart at position 0
 
-        // First, check if there are any properties on the next line
+        // First, check if there are any properties on the next line.
         let mut found_property = false;
         loop {
             match self.peek_kind_nth(idx) {
@@ -1053,58 +1053,106 @@ impl<'input> Emitter<'input> {
         }
 
         if !found_property {
-            // No property on the next line - don't continue collecting
+            // No property on the next line - don't continue collecting.
             return false;
         }
 
-        // Now check what follows the properties.
-        // If it's LineStart, this line is "property-only" - continue collecting.
-        // If it's content, check if that content is an implicit key (followed by colon).
         match self.peek_kind_nth(idx) {
-            Some(TokenKind::FlowSeqStart | TokenKind::FlowMapStart) => {
-                // Flow collection - check if it's a complex key
-                // Look for matching close bracket, then colon
-                let is_key = self.is_implicit_key_at_offset(idx);
-                // If it's a key, DON'T continue (parent mapping gets first props)
-                !is_key
-            }
             Some(TokenKind::Plain) => {
-                let is_key = self.plain_at_offset_terminated_by_mapping_value_indicator(idx);
-                // If it's a key, DON'T continue
-                !is_key
+                !self.plain_at_offset_terminated_by_mapping_value_indicator(idx)
             }
-            _ => {
-                // Property-only line - continue collecting
-                // Other content (quoted string, etc.) - continue collecting
-                // These cases generally don't form implicit keys in this context
-                true
+            Some(TokenKind::Alias) => {
+                let mut idx = idx + 1;
+                while matches!(
+                    self.peek_kind_nth(idx),
+                    Some(TokenKind::Whitespace | TokenKind::WhitespaceWithTabs)
+                ) {
+                    idx += 1;
+                }
+                self.peek_kind_nth(idx) != Some(TokenKind::Colon)
             }
+            Some(TokenKind::StringStart | TokenKind::FlowSeqStart | TokenKind::FlowMapStart) => {
+                !self.is_implicit_key_at_offset_incremental(idx)
+            }
+            _ => true,
         }
     }
 
-    /// Check if token at offset `start_idx` is an implicit mapping key.
-    pub(super) fn is_implicit_key_at_offset(&self, start_idx: usize) -> bool {
-        self.with_lookahead(start_idx + 200, |window| match window.kind(start_idx) {
-            Some(TokenKind::Plain) => window
-                .token(start_idx)
-                .and_then(|token| match token {
-                    Token::Plain(plain) => Some(plain.terminated_by_mapping_value_indicator()),
-                    _ => None,
-                })
-                .unwrap_or(false),
-            Some(TokenKind::FlowSeqStart) => {
-                let Some(end) = Self::scan_find_flow_collection_end(
-                    &window,
+    fn is_implicit_key_at_offset_incremental(&self, start_idx: usize) -> bool {
+        fn skip_inline_whitespace(emitter: &Emitter<'_>, mut idx: usize) -> usize {
+            while matches!(
+                emitter.peek_kind_nth(idx),
+                Some(TokenKind::Whitespace | TokenKind::WhitespaceWithTabs)
+            ) {
+                idx += 1;
+            }
+            idx
+        }
+
+        match self.peek_kind_nth(start_idx) {
+            Some(TokenKind::StringStart) => {
+                let mut idx = start_idx + 1;
+                while idx <= start_idx + 200 {
+                    match self.peek_kind_nth(idx) {
+                        Some(TokenKind::StringEnd) => {
+                            let idx = skip_inline_whitespace(self, idx + 1);
+                            return self.peek_kind_nth(idx) == Some(TokenKind::Colon);
+                        }
+                        Some(TokenKind::DocStart | TokenKind::DocEnd) | None => return false,
+                        _ => idx += 1,
+                    }
+                }
+                false
+            }
+            Some(TokenKind::FlowSeqStart) => self
+                .flow_collection_at_offset_terminated_by_mapping_value_indicator(
                     start_idx,
                     TokenKind::FlowSeqStart,
-                ) else {
-                    return false;
-                };
-                let idx = Self::scan_skip_inline_whitespace_from(&window, end + 1);
-                window.kind(idx) == Some(TokenKind::Colon)
-            }
+                ),
+            Some(TokenKind::FlowMapStart) => self
+                .flow_collection_at_offset_terminated_by_mapping_value_indicator(
+                    start_idx,
+                    TokenKind::FlowMapStart,
+                ),
             _ => false,
-        })
+        }
+    }
+
+    fn flow_collection_at_offset_terminated_by_mapping_value_indicator(
+        &self,
+        start_idx: usize,
+        start_kind: TokenKind,
+    ) -> bool {
+        let target_end = match start_kind {
+            TokenKind::FlowSeqStart => TokenKind::FlowSeqEnd,
+            TokenKind::FlowMapStart => TokenKind::FlowMapEnd,
+            _ => return false,
+        };
+
+        let mut depth = 0;
+        let mut idx = start_idx;
+        while idx <= start_idx + 200 {
+            match self.peek_kind_nth(idx) {
+                Some(TokenKind::FlowSeqStart | TokenKind::FlowMapStart) => depth += 1,
+                Some(TokenKind::FlowSeqEnd | TokenKind::FlowMapEnd) => {
+                    depth -= 1;
+                    if depth == 0 && self.peek_kind_nth(idx) == Some(target_end) {
+                        let mut colon_idx = idx + 1;
+                        while matches!(
+                            self.peek_kind_nth(colon_idx),
+                            Some(TokenKind::Whitespace | TokenKind::WhitespaceWithTabs)
+                        ) {
+                            colon_idx += 1;
+                        }
+                        return self.peek_kind_nth(colon_idx) == Some(TokenKind::Colon);
+                    }
+                }
+                Some(TokenKind::DocStart | TokenKind::DocEnd) | None => return false,
+                _ => {}
+            }
+            idx += 1;
+        }
+        false
     }
 
     /// Expand a tag handle to its full form.
