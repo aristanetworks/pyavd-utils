@@ -19,8 +19,10 @@ use serde::de::{
 use serde::forward_to_deserialize_any;
 
 use crate::emitter::Emitter;
-use crate::event::{Event, ScalarStyle};
-use crate::value::Integer;
+use crate::event::{Event, Properties, ScalarStyle};
+use crate::scalar_resolver::{
+    ResolvedScalar, ScalarResolutionError, resolve_tagged_scalar, resolve_untagged_scalar,
+};
 
 use super::DeError;
 
@@ -152,8 +154,10 @@ impl<'de> EventStream<'de> {
         if let Event::Alias { ref name, .. } = event {
             let name_str = name.to_string();
             if let Some(recorded) = self.anchors.get(&name_str) {
-                // Clear any peeked event to avoid confusion during replay
-                self.peeked = None;
+                debug_assert!(
+                    self.peeked.is_none(),
+                    "peeked event must be empty before starting alias replay"
+                );
                 self.replay_buffer = Some(recorded.clone().into_iter());
                 // Recursively call to get the first replayed event
                 return self.next_event();
@@ -174,8 +178,10 @@ impl<'de> EventStream<'de> {
         };
 
         if let Some(name) = anchor_name {
-            // Clear any peeked event to avoid it interfering with recording/replay
-            self.peeked = None;
+            debug_assert!(
+                self.peeked.is_none(),
+                "peeked event must be empty before starting anchor recording"
+            );
             let initial_depth = match &event {
                 Event::MappingStart { .. } | Event::SequenceStart { .. } => 1,
                 _ => 0, // Scalar - will complete immediately
@@ -278,172 +284,68 @@ impl<'de> EventStream<'de> {
     fn deserialize_scalar<V>(
         style: ScalarStyle,
         value: Cow<'de, str>,
+        properties: Option<&Properties<'de>>,
         visitor: V,
     ) -> Result<V::Value, DeError>
     where
         V: Visitor<'de>,
     {
-        // Fast path for quoted scalars - always strings
-        if style != ScalarStyle::Plain {
-            return match value {
-                Cow::Borrowed(str_ref) => visitor.visit_borrowed_str(str_ref),
-                Cow::Owned(str_owned) => visitor.visit_string(str_owned),
-            };
-        }
-
-        // Plain scalars need type inference
-        let kind = infer_scalar_kind(value);
-        match kind {
-            ScalarKind::Null => visitor.visit_unit(),
-            ScalarKind::Bool(bool_val) => visitor.visit_bool(bool_val),
-            ScalarKind::Int(num) => match num {
-                Integer::I64(int_val) => visitor.visit_i64(int_val),
-                Integer::U64(uint_val) => visitor.visit_u64(uint_val),
-                Integer::I128(int_val) => visitor.visit_i128(int_val),
-                Integer::U128(uint_val) => visitor.visit_u128(uint_val),
-                Integer::BigIntStr(text) => match text {
+        let resolution = Self::resolve_scalar_event(style, value, properties)?;
+        match resolution {
+            ResolvedScalar::Null => visitor.visit_unit(),
+            ResolvedScalar::Bool(bool_val) => visitor.visit_bool(bool_val),
+            ResolvedScalar::Int(num) => match num {
+                crate::value::Integer::I64(int_val) => visitor.visit_i64(int_val),
+                crate::value::Integer::U64(uint_val) => visitor.visit_u64(uint_val),
+                crate::value::Integer::I128(int_val) => visitor.visit_i128(int_val),
+                crate::value::Integer::U128(uint_val) => visitor.visit_u128(uint_val),
+                crate::value::Integer::BigIntStr(text) => match text {
                     Cow::Borrowed(str_ref) => visitor.visit_borrowed_str(str_ref),
                     Cow::Owned(str_owned) => visitor.visit_string(str_owned),
                 },
             },
-            ScalarKind::Float(float_val) => visitor.visit_f64(float_val),
-            ScalarKind::String(text) => match text {
+            ResolvedScalar::Float(float_val) => visitor.visit_f64(float_val),
+            ResolvedScalar::String(text) => match text {
                 Cow::Borrowed(str_ref) => visitor.visit_borrowed_str(str_ref),
                 Cow::Owned(str_owned) => visitor.visit_string(str_owned),
             },
         }
     }
-}
 
-/// Internal classification of a plain scalar value used by the event-based
-/// serde backend. This mirrors the parser's scalar inference but avoids
-/// constructing a full `Value`.
-#[derive(Debug)]
-enum ScalarKind<'de> {
-    Null,
-    Bool(bool),
-    Int(Integer<'de>),
-    Float(f64),
-    String(Cow<'de, str>),
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum NumericKind {
-    Integer,
-    Float,
-    NotNumeric,
-}
-
-#[inline]
-fn classify_numeric(input: &str) -> NumericKind {
-    let bytes = input.as_bytes();
-    if bytes.is_empty() {
-        return NumericKind::NotNumeric;
-    }
-
-    let mut idx = 0;
-    if matches!(bytes.get(idx), Some(b'+' | b'-')) {
-        idx += 1;
-        if idx == bytes.len() {
-            return NumericKind::NotNumeric;
+    fn resolve_scalar_event(
+        style: ScalarStyle,
+        value: Cow<'de, str>,
+        properties: Option<&Properties<'de>>,
+    ) -> Result<ResolvedScalar<'de>, DeError> {
+        if let Some(tag) = properties.and_then(|event_props| event_props.tag.as_ref()) {
+            resolve_tagged_scalar(value, style, tag.value.as_ref())
+                .map_err(Self::scalar_resolution_error)
+        } else {
+            Ok(resolve_untagged_scalar(value, style))
         }
     }
 
-    let mut saw_digit = false;
-    let mut saw_dot = false;
-    let mut saw_exp = false;
-    let mut expect_exp_digit = false;
-
-    while idx < bytes.len() {
-        match bytes.get(idx) {
-            Some(b'0'..=b'9') => {
-                saw_digit = true;
-                expect_exp_digit = false;
-            }
-            Some(b'.') if !saw_dot && !saw_exp => {
-                saw_dot = true;
-            }
-            Some(b'e' | b'E') if saw_digit && !saw_exp => {
-                saw_exp = true;
-                expect_exp_digit = true;
-                saw_digit = false;
-                if matches!(bytes.get(idx + 1), Some(b'+' | b'-')) {
-                    idx += 1;
-                }
-            }
-            _ => return NumericKind::NotNumeric,
-        }
-        idx += 1;
-    }
-
-    if !saw_digit || expect_exp_digit {
-        return NumericKind::NotNumeric;
-    }
-    if saw_dot || saw_exp {
-        NumericKind::Float
-    } else {
-        NumericKind::Integer
-    }
-}
-
-fn infer_scalar_kind(value: Cow<'_, str>) -> ScalarKind<'_> {
-    let text = value.as_ref();
-
-    match text.as_bytes().first() {
-        None => return ScalarKind::Null,
-        Some(b'~') if text.len() == 1 => return ScalarKind::Null,
-        Some(b'n') if text == "null" => return ScalarKind::Null,
-        Some(b'N') if matches!(text, "Null" | "NULL") => return ScalarKind::Null,
-        Some(b't') if text == "true" => return ScalarKind::Bool(true),
-        Some(b'T') if matches!(text, "True" | "TRUE") => return ScalarKind::Bool(true),
-        Some(b'f') if text == "false" => return ScalarKind::Bool(false),
-        Some(b'F') if matches!(text, "False" | "FALSE") => return ScalarKind::Bool(false),
-        Some(b'0'..=b'9' | b'+' | b'-' | b'.') => {
-            match text {
-                ".inf" | ".Inf" | ".INF" => return ScalarKind::Float(f64::INFINITY),
-                "-.inf" | "-.Inf" | "-.INF" => return ScalarKind::Float(f64::NEG_INFINITY),
-                ".nan" | ".NaN" | ".NAN" => return ScalarKind::Float(f64::NAN),
-                _ => {}
-            }
-
-            match classify_numeric(text) {
-                NumericKind::Float => {
-                    if let Ok(float) = text.parse::<f64>() {
-                        return ScalarKind::Float(float);
-                    }
-                }
-                NumericKind::Integer => {
-                    if let Ok(int) = text.parse::<i64>() {
-                        return ScalarKind::Int(Integer::I64(int));
-                    }
-                    if let Ok(int) = text.parse::<i128>() {
-                        return ScalarKind::Int(Integer::I128(int));
-                    }
-                    if let Ok(uint) = text.parse::<u128>() {
-                        return ScalarKind::Int(Integer::U128(uint));
-                    }
-                    return ScalarKind::Int(Integer::BigIntStr(value));
-                }
-                NumericKind::NotNumeric => {}
+    fn scalar_resolution_error(error: ScalarResolutionError<'_>) -> DeError {
+        match error {
+            ScalarResolutionError::InvalidExplicitBuiltinTagValue { tag, original_text } => {
+                DeError::Custom(format!(
+                    "invalid value for explicit {} tag: {}",
+                    tag.display_name(),
+                    original_text.as_ref()
+                ))
             }
         }
-        _ => {}
     }
 
-    ScalarKind::String(value)
-}
-
-/// Parse a YAML 1.2 core schema boolean literal (case-insensitive variants of
-/// `true` / `false`). This mirrors the bool handling in `infer_scalar_kind`
-/// but is cheap enough to use in the hot paths of primitive `deserialize_*`
-/// methods without running full scalar inference.
-#[inline]
-fn parse_core_bool(input: &str) -> Option<bool> {
-    // Fast path: check first byte and length to avoid full string comparison
-    match (input.len(), input.as_bytes().first()?) {
-        (4, b't' | b'T') => input.eq_ignore_ascii_case("true").then_some(true),
-        (5, b'f' | b'F') => input.eq_ignore_ascii_case("false").then_some(false),
-        _ => None,
+    fn unexpected_scalar_kind(expected: &str, value: &ResolvedScalar<'_>) -> DeError {
+        let found = match value {
+            ResolvedScalar::Null => "null",
+            ResolvedScalar::Bool(_) => "bool",
+            ResolvedScalar::Int(_) => "int",
+            ResolvedScalar::Float(_) => "float",
+            ResolvedScalar::String(_) => "string",
+        };
+        DeError::Custom(format!("expected {expected}, found {found}"))
     }
 }
 
@@ -563,9 +465,12 @@ impl<'de> de::Deserializer<'de> for &mut EventStream<'de> {
         // Anchors and aliases are now handled transparently in next_event(),
         // so we just process the event normally
         match event {
-            Event::Scalar { style, value, .. } => {
-                EventStream::deserialize_scalar(style, value, visitor)
-            }
+            Event::Scalar {
+                style,
+                value,
+                properties,
+                ..
+            } => EventStream::deserialize_scalar(style, value, properties.as_deref(), visitor),
             Event::SequenceStart { .. } => {
                 let seq = SeqAccessImpl {
                     stream: self,
@@ -602,15 +507,20 @@ impl<'de> de::Deserializer<'de> for &mut EventStream<'de> {
             return Err(EventStream::invalid_pair_error());
         }
 
-        // Fast null check: avoid full scalar inference by checking patterns directly.
-        let is_plain_null = match event {
-            Event::Scalar { style, value, .. } if *style == ScalarStyle::Plain => {
-                matches!(value.as_ref(), "null" | "Null" | "NULL" | "~" | "")
-            }
+        let is_null = match event {
+            Event::Scalar {
+                style,
+                value,
+                properties,
+                ..
+            } => matches!(
+                EventStream::resolve_scalar_event(*style, value.clone(), properties.as_deref())?,
+                ResolvedScalar::Null
+            ),
             _ => false,
         };
 
-        if is_plain_null {
+        if is_null {
             // Consume the null and report `None`.
             self.next_event();
             visitor.visit_none()
@@ -620,6 +530,7 @@ impl<'de> de::Deserializer<'de> for &mut EventStream<'de> {
         }
     }
 
+    // TODO: Improve this to deserialize struct and tuple variants. Same for serializer.
     fn deserialize_enum<V>(
         self,
         _name: &str,
@@ -633,30 +544,16 @@ impl<'de> de::Deserializer<'de> for &mut EventStream<'de> {
 
         let event = self.next_value_event()?;
 
-        if let Event::Scalar { style, value, .. } = event {
-            // Fast path: quoted scalars are always strings.
-            // For plain scalars, only reject explicit null/bool patterns.
-            let is_string = if style == ScalarStyle::Plain {
-                // Check only for YAML special values that would NOT be strings.
-                !matches!(
-                    value.as_ref(),
-                    "null"
-                        | "Null"
-                        | "NULL"
-                        | "~"
-                        | ""
-                        | "true"
-                        | "True"
-                        | "TRUE"
-                        | "false"
-                        | "False"
-                        | "FALSE"
-                ) && matches!(classify_numeric(value.as_ref()), NumericKind::NotNumeric)
-            } else {
-                true
-            };
-            if is_string {
-                let owned = value.into_owned();
+        if let Event::Scalar {
+            style,
+            value,
+            properties,
+            ..
+        } = event
+        {
+            let resolved = EventStream::resolve_scalar_event(style, value, properties.as_deref())?;
+            if let ResolvedScalar::String(text) = resolved {
+                let owned = text.into_owned();
                 let de = StringDeserializer::new(owned);
                 visitor.visit_enum(de)
             } else {
@@ -674,22 +571,15 @@ impl<'de> de::Deserializer<'de> for &mut EventStream<'de> {
         let event = self.next_value_event()?;
 
         match event {
-            Event::Scalar { style, value, .. } => {
-                if style != ScalarStyle::Plain {
-                    return Err(DeError::Custom(format!(
-                        "invalid bool value: {}",
-                        value.as_ref()
-                    )));
-                }
-                if let Some(bool_val) = parse_core_bool(value.as_ref()) {
-                    visitor.visit_bool(bool_val)
-                } else {
-                    Err(DeError::Custom(format!(
-                        "invalid bool value: {}",
-                        value.as_ref()
-                    )))
-                }
-            }
+            Event::Scalar {
+                style,
+                value,
+                properties,
+                ..
+            } => match EventStream::resolve_scalar_event(style, value, properties.as_deref())? {
+                ResolvedScalar::Bool(bool_val) => visitor.visit_bool(bool_val),
+                other => Err(EventStream::unexpected_scalar_kind("bool", &other)),
+            },
             _ => Err(DeError::Custom("expected scalar for bool".into())),
         }
     }
@@ -701,23 +591,21 @@ impl<'de> de::Deserializer<'de> for &mut EventStream<'de> {
         let event = self.next_value_event()?;
 
         match event {
-            Event::Scalar { style, value, .. } => {
-                if style != ScalarStyle::Plain {
-                    return Err(DeError::Custom(format!(
-                        "invalid i64 value: {}",
-                        value.as_ref()
-                    )));
-                }
-                let scalar = value.as_ref();
-                if let Ok(int) = scalar.parse::<i64>() {
-                    visitor.visit_i64(int)
-                } else if let Some(bool_val) = parse_core_bool(scalar) {
-                    // Allow bool -> integer conversion via serde's visitors.
-                    visitor.visit_bool(bool_val)
-                } else {
-                    Err(DeError::Custom(format!("invalid i64 value: {scalar}")))
-                }
-            }
+            Event::Scalar {
+                style,
+                value,
+                properties,
+                ..
+            } => match EventStream::resolve_scalar_event(style, value, properties.as_deref())? {
+                ResolvedScalar::Int(crate::value::Integer::I64(int)) => visitor.visit_i64(int),
+                ResolvedScalar::Int(crate::value::Integer::I128(int)) => visitor.visit_i128(int),
+                ResolvedScalar::Int(crate::value::Integer::U64(int)) => visitor.visit_u64(int),
+                ResolvedScalar::Int(crate::value::Integer::U128(int)) => visitor.visit_u128(int),
+                other => Err(EventStream::unexpected_scalar_kind(
+                    "i64-compatible integer",
+                    &other,
+                )),
+            },
             _ => Err(DeError::Custom("expected scalar for integer".into())),
         }
     }
@@ -728,22 +616,21 @@ impl<'de> de::Deserializer<'de> for &mut EventStream<'de> {
     {
         let event = self.next_value_event()?;
         match event {
-            Event::Scalar { style, value, .. } => {
-                if style != ScalarStyle::Plain {
-                    return Err(DeError::Custom(format!(
-                        "invalid u64 value: {}",
-                        value.as_ref()
-                    )));
-                }
-                let scalar = value.as_ref();
-                if let Ok(int) = scalar.parse::<u64>() {
-                    visitor.visit_u64(int)
-                } else if let Some(bool_val) = parse_core_bool(scalar) {
-                    visitor.visit_bool(bool_val)
-                } else {
-                    Err(DeError::Custom(format!("invalid u64 value: {scalar}")))
-                }
-            }
+            Event::Scalar {
+                style,
+                value,
+                properties,
+                ..
+            } => match EventStream::resolve_scalar_event(style, value, properties.as_deref())? {
+                ResolvedScalar::Int(crate::value::Integer::I64(int)) => visitor.visit_i64(int),
+                ResolvedScalar::Int(crate::value::Integer::I128(int)) => visitor.visit_i128(int),
+                ResolvedScalar::Int(crate::value::Integer::U64(int)) => visitor.visit_u64(int),
+                ResolvedScalar::Int(crate::value::Integer::U128(int)) => visitor.visit_u128(int),
+                other => Err(EventStream::unexpected_scalar_kind(
+                    "u64-compatible integer",
+                    &other,
+                )),
+            },
             _ => Err(DeError::Custom("expected scalar for integer".into())),
         }
     }
@@ -754,22 +641,21 @@ impl<'de> de::Deserializer<'de> for &mut EventStream<'de> {
     {
         let event = self.next_value_event()?;
         match event {
-            Event::Scalar { style, value, .. } => {
-                if style != ScalarStyle::Plain {
-                    return Err(DeError::Custom(format!(
-                        "invalid i128 value: {}",
-                        value.as_ref()
-                    )));
-                }
-                let scalar = value.as_ref();
-                if let Ok(int) = scalar.parse::<i128>() {
-                    visitor.visit_i128(int)
-                } else if let Some(bool_val) = parse_core_bool(scalar) {
-                    visitor.visit_bool(bool_val)
-                } else {
-                    Err(DeError::Custom(format!("invalid i128 value: {scalar}")))
-                }
-            }
+            Event::Scalar {
+                style,
+                value,
+                properties,
+                ..
+            } => match EventStream::resolve_scalar_event(style, value, properties.as_deref())? {
+                ResolvedScalar::Int(crate::value::Integer::I64(int)) => visitor.visit_i64(int),
+                ResolvedScalar::Int(crate::value::Integer::I128(int)) => visitor.visit_i128(int),
+                ResolvedScalar::Int(crate::value::Integer::U64(int)) => visitor.visit_u64(int),
+                ResolvedScalar::Int(crate::value::Integer::U128(int)) => visitor.visit_u128(int),
+                other => Err(EventStream::unexpected_scalar_kind(
+                    "i128-compatible integer",
+                    &other,
+                )),
+            },
             _ => Err(DeError::Custom("expected scalar for integer".into())),
         }
     }
@@ -780,22 +666,21 @@ impl<'de> de::Deserializer<'de> for &mut EventStream<'de> {
     {
         let event = self.next_value_event()?;
         match event {
-            Event::Scalar { style, value, .. } => {
-                if style != ScalarStyle::Plain {
-                    return Err(DeError::Custom(format!(
-                        "invalid u128 value: {}",
-                        value.as_ref()
-                    )));
-                }
-                let scalar = value.as_ref();
-                if let Ok(int) = scalar.parse::<u128>() {
-                    visitor.visit_u128(int)
-                } else if let Some(bool_val) = parse_core_bool(scalar) {
-                    visitor.visit_bool(bool_val)
-                } else {
-                    Err(DeError::Custom(format!("invalid u128 value: {scalar}")))
-                }
-            }
+            Event::Scalar {
+                style,
+                value,
+                properties,
+                ..
+            } => match EventStream::resolve_scalar_event(style, value, properties.as_deref())? {
+                ResolvedScalar::Int(crate::value::Integer::I64(int)) => visitor.visit_i64(int),
+                ResolvedScalar::Int(crate::value::Integer::I128(int)) => visitor.visit_i128(int),
+                ResolvedScalar::Int(crate::value::Integer::U64(int)) => visitor.visit_u64(int),
+                ResolvedScalar::Int(crate::value::Integer::U128(int)) => visitor.visit_u128(int),
+                other => Err(EventStream::unexpected_scalar_kind(
+                    "u128-compatible integer",
+                    &other,
+                )),
+            },
             _ => Err(DeError::Custom("expected scalar for integer".into())),
         }
     }
@@ -814,32 +699,15 @@ impl<'de> de::Deserializer<'de> for &mut EventStream<'de> {
     {
         let event = self.next_value_event()?;
         match event {
-            Event::Scalar { style, value, .. } => {
-                if style != ScalarStyle::Plain {
-                    return Err(DeError::Custom(format!(
-                        "invalid f64 value: {}",
-                        value.as_ref()
-                    )));
-                }
-                let scalar = value.as_ref();
-                if let Ok(float) = scalar.parse::<f64>() {
-                    visitor.visit_f64(float)
-                } else {
-                    // Handle special YAML float values.
-                    match scalar {
-                        ".inf" | ".Inf" | ".INF" => visitor.visit_f64(f64::INFINITY),
-                        "-.inf" | "-.Inf" | "-.INF" => visitor.visit_f64(f64::NEG_INFINITY),
-                        ".nan" | ".NaN" | ".NAN" => visitor.visit_f64(f64::NAN),
-                        _ => {
-                            if let Some(bool_val) = parse_core_bool(scalar) {
-                                visitor.visit_bool(bool_val)
-                            } else {
-                                Err(DeError::Custom(format!("invalid f64 value: {scalar}")))
-                            }
-                        }
-                    }
-                }
-            }
+            Event::Scalar {
+                style,
+                value,
+                properties,
+                ..
+            } => match EventStream::resolve_scalar_event(style, value, properties.as_deref())? {
+                ResolvedScalar::Float(float) => visitor.visit_f64(float),
+                other => Err(EventStream::unexpected_scalar_kind("float", &other)),
+            },
             _ => Err(DeError::Custom("expected scalar for float".into())),
         }
     }
@@ -850,7 +718,14 @@ impl<'de> de::Deserializer<'de> for &mut EventStream<'de> {
     {
         let event = self.next_value_event()?;
         match event {
-            Event::Scalar { value, .. } => {
+            Event::Scalar {
+                style,
+                value,
+                properties,
+                ..
+            } => {
+                let _ =
+                    EventStream::resolve_scalar_event(style, value.clone(), properties.as_deref())?;
                 let scalar = value.as_ref();
                 let mut chars = scalar.chars();
                 if let (Some(ch), None) = (chars.next(), chars.next()) {
@@ -871,10 +746,19 @@ impl<'de> de::Deserializer<'de> for &mut EventStream<'de> {
     {
         let event = self.next_value_event()?;
         match event {
-            Event::Scalar { value, .. } => match value {
-                Cow::Borrowed(str_ref) => visitor.visit_borrowed_str(str_ref),
-                Cow::Owned(str_owned) => visitor.visit_string(str_owned),
-            },
+            Event::Scalar {
+                style,
+                value,
+                properties,
+                ..
+            } => {
+                let _ =
+                    EventStream::resolve_scalar_event(style, value.clone(), properties.as_deref())?;
+                match value {
+                    Cow::Borrowed(str_ref) => visitor.visit_borrowed_str(str_ref),
+                    Cow::Owned(str_owned) => visitor.visit_string(str_owned),
+                }
+            }
             _ => Err(DeError::Custom("expected scalar for str".into())),
         }
     }
@@ -892,13 +776,17 @@ impl<'de> de::Deserializer<'de> for &mut EventStream<'de> {
     {
         let event = self.next_value_event()?;
         match event {
-            Event::Scalar { style, value, .. } => {
-                EventStream::deserialize_scalar(style, value, visitor)
-            }
+            Event::Scalar {
+                style,
+                value,
+                properties,
+                ..
+            } => EventStream::deserialize_scalar(style, value, properties.as_deref(), visitor),
             _ => Err(DeError::Custom("expected scalar for bytes".into())),
         }
     }
 
+    // TODO: Improve and add roundtrip tests
     fn deserialize_byte_buf<V>(self, visitor: V) -> Result<V::Value, DeError>
     where
         V: Visitor<'de>,
@@ -912,13 +800,17 @@ impl<'de> de::Deserializer<'de> for &mut EventStream<'de> {
     {
         let event = self.next_value_event()?;
         match event {
-            Event::Scalar { style, value, .. } => {
-                EventStream::deserialize_scalar(style, value, visitor)
-            }
+            Event::Scalar {
+                style,
+                value,
+                properties,
+                ..
+            } => EventStream::deserialize_scalar(style, value, properties.as_deref(), visitor),
             _ => Err(DeError::Custom("expected scalar for unit".into())),
         }
     }
 
+    // TODO: Improve and add roundtrip tests
     fn deserialize_unit_struct<V>(
         self,
         _name: &'static str,
@@ -1144,9 +1036,15 @@ where
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::expect_used,
+    reason = "Approved for test assertions in this module"
+)]
 mod tests {
     use super::from_str_internal;
     use serde::Deserialize;
+
+    use crate::value::{Integer, Value};
 
     #[test]
     fn deserializes_simple_scalars() {
@@ -1257,5 +1155,53 @@ mod tests {
             quoted_int.is_err(),
             "quoted YAML string should not deserialize as integer"
         );
+    }
+
+    #[test]
+    fn shared_resolver_handles_core_schema_numbers_and_tags() {
+        let octal: i64 = from_str_internal("0o52").expect("octal integer should deserialize");
+        assert_eq!(octal, 42);
+
+        let tagged_hex: i64 =
+            from_str_internal("!!int 0x2A").expect("explicit int tag should deserialize");
+        assert_eq!(tagged_hex, 42);
+
+        let tagged_str: String =
+            from_str_internal("!!str 42").expect("explicit str tag should deserialize");
+        assert_eq!(tagged_str, "42");
+
+        let positive_inf: f64 =
+            from_str_internal("+.INF").expect("positive infinity should deserialize");
+        assert!(positive_inf.is_infinite() && positive_inf.is_sign_positive());
+    }
+
+    #[test]
+    fn deserialize_any_and_typed_deserialization_agree_on_scalar_meaning() {
+        let value: Value<'_> = from_str_internal("0x2A").expect("Value should deserialize");
+        assert!(matches!(value, Value::Int(Integer::I64(42))));
+
+        let typed: i64 = from_str_internal("0x2A").expect("i64 should deserialize");
+        assert_eq!(typed, 42);
+
+        let tagged_string_value: Value<'_> =
+            from_str_internal("!custom 42").expect("custom-tagged string should deserialize");
+        assert!(matches!(tagged_string_value, Value::String(text) if text == "42"));
+
+        let typed_custom_int = from_str_internal::<i64>("!custom 42");
+        assert!(
+            typed_custom_int.is_err(),
+            "custom-tagged scalar should not implicitly deserialize as integer"
+        );
+    }
+
+    #[test]
+    fn invalid_explicit_builtin_tag_content_returns_error() {
+        for input in ["!!int hello", "!!float nope", "!!bool 1", "!!null ~"] {
+            let error = from_str_internal::<Value<'_>>(input).expect_err("expected tag error");
+            assert!(
+                error.to_string().contains("invalid value for explicit"),
+                "unexpected error for {input:?}: {error}",
+            );
+        }
     }
 }

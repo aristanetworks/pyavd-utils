@@ -18,6 +18,7 @@ where
     I::Item: Into<AstEvent<'input>>,
 {
     /// Build a resolved alias node.
+    /// TODO: Reconsider storage model of the anchors to avoid the clone on consumption.
     pub(super) fn build_alias(
         &mut self,
         name: &Cow<'input, str>,

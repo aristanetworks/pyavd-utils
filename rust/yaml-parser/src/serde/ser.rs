@@ -486,6 +486,10 @@ where
 }
 
 /// Serialize any `T: Serialize` to a YAML string.
+// TODO: Fix inconsistent behavior for various examples like
+//       yaml_parser::serde::to_string(&Vec::::new())
+//       yaml_parser::serde::to_string(&BTreeMap::<String, i32>::new())
+//       yaml_parser::serde::to_string(&EmptySeqField { items: vec![] })
 pub fn to_string<T>(value: &T) -> Result<String, SerError>
 where
     T: Serialize,

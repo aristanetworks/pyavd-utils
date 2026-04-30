@@ -203,6 +203,7 @@ impl<'a, 'input, W: Write> WriterState<'a, 'input, W> {
         }
     }
 
+    // TODO: Add representation for empty map.
     #[allow(
         clippy::too_many_lines,
         reason = "block mapping writer is intentionally monolithic for now; refactoring would be non-trivial"
@@ -465,6 +466,7 @@ impl<'a, 'input, W: Write> WriterState<'a, 'input, W> {
         Ok(())
     }
 
+    // TODO: Add representation for empty sequence.
     fn write_block_sequence(&mut self, sequence_props: &Properties<'input>) -> io::Result<()> {
         self.advance(); // consume SequenceStart
         let base_indent = self.indent;

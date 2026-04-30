@@ -74,6 +74,11 @@
 //! - Root-level unresolved aliases are dropped from the AST.
 //! - Unresolved aliases inside sequences or mappings cause only the affected
 //!   item or mapping pair to be dropped while surrounding content is retained.
+//! - Plain untagged scalars follow YAML 1.2 Core implicit resolution.
+//! - Quoted and block scalars do not undergo implicit scalar resolution.
+//! - Explicit built-in scalar tags override implicit resolution.
+//! - Custom/local tags and the non-specific `!` tag preserve scalar text
+//!   rather than implicitly interpreting it as a built-in native type.
 //!
 //! # AST Model
 //!
@@ -167,6 +172,7 @@ mod error;
 mod event;
 mod lexer;
 mod parser;
+mod scalar_resolver;
 mod span;
 mod stream;
 mod value;

@@ -462,15 +462,17 @@ fn bench_corpora_serde_equivalence_against_serde_yaml() {
 
         // For most corpora we expect serde_yaml to produce a value tree that is
         // *semantically* equivalent to yaml-parser's serde backend when
-        // deserializing into `OwnedYamlValue`. However, on some highly
-        // specification-sensitive inputs (notably `block_scalars` and
-        // `tags`), different implementations legitimately disagree:
+        // deserializing into `OwnedYamlValue`. Two corpora still contain
+        // implementation-defined areas where different libraries may
+        // legitimately disagree:
         //
         // - `block_scalars`: exact string result for certain folded+keep
         //   combinations.
-        // - `tags`: how strongly to interpret core tags, e.g. whether
-        //   `!!int 0o52` must be treated as the integer 42 or may remain the
-        //   string `"0o52"` when using Core Schema style inference.
+        // - `tags`: generic-value deserialization of custom tags such as
+        //   `!timestamp 2024-01-15T10:30:00Z`. Our serde path preserves these
+        //   as tagged string-like scalars, while `serde_yaml` may deserialize
+        //   them through tagged-value machinery into a different generic
+        //   representation.
         //
         // For now we treat those corpora as known divergences rather than
         // forcing either library's behaviour.
