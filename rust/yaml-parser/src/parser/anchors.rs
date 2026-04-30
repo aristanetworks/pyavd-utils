@@ -19,6 +19,7 @@ where
 {
     /// Build a resolved alias node.
     /// TODO: Reconsider storage model of the anchors to avoid the clone on consumption.
+    ///       But consider that the cost is fairly low because of Cow.
     pub(super) fn build_alias(
         &mut self,
         name: &Cow<'input, str>,

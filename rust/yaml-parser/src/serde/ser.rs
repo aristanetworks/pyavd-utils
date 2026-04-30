@@ -40,6 +40,10 @@ pub enum SerError {
     #[display("value without corresponding key in mapping")]
     ValueWithoutKey,
 
+    /// A mapping ended after serializing a key but before its value.
+    #[display("key without corresponding value in mapping")]
+    KeyWithoutValue,
+
     /// Generic serde error created via `serde::ser::Error::custom`.
     #[display("serde custom error: {}", _0)]
     Custom(String),
@@ -402,6 +406,9 @@ impl SerializeMap for MapSerializer {
     }
 
     fn end(self) -> Result<Self::Ok, Self::Error> {
+        if self.next_key.is_some() {
+            return Err(SerError::KeyWithoutValue);
+        }
         Ok(Value::Mapping(self.entries))
     }
 }
@@ -511,7 +518,7 @@ mod tests {
         span::Span,
         value::{Comment, Value},
     };
-    use serde::{Deserialize, Serialize};
+    use serde::{Deserialize, Serialize, Serializer};
 
     #[derive(Debug, Serialize, Deserialize, PartialEq)]
     struct SimpleConfig {
@@ -573,6 +580,27 @@ mod tests {
             normalize_value(&doc.value),
             "AST value changed after roundtrip"
         );
+    }
+
+    struct MapWithDanglingKey;
+
+    impl Serialize for MapWithDanglingKey {
+        fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: Serializer,
+        {
+            let mut map = serializer.serialize_map(Some(1))?;
+            map.serialize_key("dangling")?;
+            map.end()
+        }
+    }
+
+    #[test]
+    fn serialize_map_end_rejects_key_without_value() {
+        let err = ValueSerializer::to_value(&MapWithDanglingKey)
+            .expect_err("serializing a map with a dangling key should fail");
+
+        assert!(matches!(err, SerError::KeyWithoutValue));
     }
 
     fn normalize_value(value: &Value<'_>) -> Value<'static> {
