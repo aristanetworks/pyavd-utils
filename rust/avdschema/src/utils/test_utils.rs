@@ -6,6 +6,7 @@ use crate::{Store, any::AnySchema};
 
 use serde::Deserialize as _;
 use serde_json::json;
+use test_schema_store as _;
 // Using a tmp path in the crate allows us to inspect the generated artifacts.
 // The files in the path are exempted from git.
 #[cfg(feature = "dump_load_files")]
