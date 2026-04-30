@@ -25,6 +25,14 @@ The crate exposes two main user-facing parsing styles:
 
 Both share the same lexer and emitter.
 
+## Limitations
+
+- No circular references in Anchors/Aliases
+- serde feature is experimental / incomplete
+- comment handling is incomplete but covers what is needed for the LSP
+- Maximum document size is 4GB. Code is prepared for a feature to tweak this (BytePosition = u32).
+- Maximum indentation level is 65,535. Code is prepared for a feature to tweak this (IndentLevel = u16)
+
 ## Pipeline
 
 The public pipeline is intentionally simple:
