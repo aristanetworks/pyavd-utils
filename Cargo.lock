@@ -2180,6 +2180,7 @@ dependencies = [
  "ordermap",
  "serde",
  "serde_json",
+ "yaml-parser",
 ]
 
 [[package]]
