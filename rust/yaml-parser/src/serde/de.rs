@@ -71,6 +71,10 @@ pub type StreamDeserializer<'de, T> = super::event_de::EventStreamDeserializer<'
 ///
 /// This uses the event-based serde backend, which drives serde visitors
 /// directly from the YAML event stream without building an intermediate AST.
+/// Scalar resolution matches the AST parser: plain untagged scalars follow the
+/// YAML 1.2 Core schema, quoted/block scalars stay strings unless overridden
+/// by an explicit built-in tag, and invalid explicit built-in tags return an
+/// error.
 pub fn from_str<T>(input: &str) -> Result<T, DeError>
 where
     T: DeserializeOwned,

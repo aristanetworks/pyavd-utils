@@ -221,6 +221,13 @@ impl<'input> Emitter<'input> {
     }
 
     fn set_pending_event(&mut self, event: Event<'input>) {
+        // Hot path: once we have parsed enough input to know this is a mapping, we must
+        // emit `MappingStart` before the already-parsed first key event. To avoid an
+        // extra intermediate state on this path, we store that key in `pending_event`.
+        //
+        // This is intentionally a single-slot buffer. Overwriting it would corrupt the
+        // emitted event stream, so we verify the invariant with `debug_assert!` in
+        // development/test builds and rely on targeted stress coverage in CI.
         debug_assert!(
             self.pending_event.is_none(),
             "pending_event slot unexpectedly occupied"

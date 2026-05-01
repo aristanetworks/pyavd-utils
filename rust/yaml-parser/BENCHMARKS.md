@@ -75,7 +75,8 @@ Notes:
 
 ## Parse Throughput
 
-Median throughput from the remote candidate report.
+Median throughput from the remote candidate report. Criterion's 95% CI
+half-width stays within ±0.83% in this section (median row: ±0.04%).
 
 | Dataset | yaml_parser | saphyr_marked | serde_yaml | yaml_parser vs saphyr | yaml_parser vs serde_yaml |
 | --- | ---: | ---: | ---: | ---: | ---: |
@@ -89,7 +90,8 @@ Median throughput from the remote candidate report.
 
 ## Parse Latency
 
-Median time per parse from the remote candidate report.
+Median time per parse from the remote candidate report. Criterion's 95% CI
+half-width stays within ±0.17% in this section (median row: ±0.06%).
 
 | Dataset | yaml_parser | saphyr_marked | yaml_parser vs saphyr |
 | --- | ---: | ---: | ---: |
@@ -99,7 +101,8 @@ Median time per parse from the remote candidate report.
 
 ## Scalar Microbenchmarks
 
-Median time per parse from the remote candidate report.
+Median time per parse from the remote candidate report. Criterion's 95% CI
+half-width stays within ±0.12% in this section (median row: ±0.06%).
 
 | Dataset | yaml_parser | saphyr_marked | yaml_parser vs saphyr |
 | --- | ---: | ---: | ---: |
@@ -111,6 +114,9 @@ Median time per parse from the remote candidate report.
 
 Both backends deserialize into the same logical target type:
 `OwnedYamlValue(yaml_parser::Value<'static>)`.
+
+Criterion's 95% CI half-width stays within ±0.09% in this section
+(median row: ±0.03%).
 
 | Dataset | yaml_parser | serde_yaml | yaml_parser vs serde_yaml |
 | --- | ---: | ---: | ---: |

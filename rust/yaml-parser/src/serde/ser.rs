@@ -21,7 +21,7 @@ use serde::ser::{
     SerializeTuple, SerializeTupleStruct, SerializeTupleVariant, Serializer,
 };
 
-use crate::ast_events::{self, AstToEventsError};
+use crate::ast_to_events::{self, AstToEventsError};
 use crate::value::{Integer, MappingPair, SequenceItem};
 use crate::{Node, Value, writer};
 
@@ -39,6 +39,10 @@ pub enum SerError {
     /// A mapping contained a value without a corresponding key.
     #[display("value without corresponding key in mapping")]
     ValueWithoutKey,
+
+    /// A mapping ended after serializing a key but before its value.
+    #[display("key without corresponding value in mapping")]
+    KeyWithoutValue,
 
     /// Generic serde error created via `serde::ser::Error::custom`.
     #[display("serde custom error: {}", _0)]
@@ -402,6 +406,9 @@ impl SerializeMap for MapSerializer {
     }
 
     fn end(self) -> Result<Self::Ok, Self::Error> {
+        if self.next_key.is_some() {
+            return Err(SerError::KeyWithoutValue);
+        }
         Ok(Value::Mapping(self.entries))
     }
 }
@@ -480,12 +487,16 @@ where
 {
     let root_value = ValueSerializer::to_value(value)?;
     let node = node_from_value(root_value);
-    let events = ast_events::node_to_events(&node)?;
+    let events = ast_to_events::node_to_events(&node)?;
     writer::write_yaml_from_events(&mut writer, &events)?;
     Ok(())
 }
 
 /// Serialize any `T: Serialize` to a YAML string.
+// TODO: Fix inconsistent behavior for various examples like
+//       yaml_parser::serde::to_string(&Vec::::new())
+//       yaml_parser::serde::to_string(&BTreeMap::<String, i32>::new())
+//       yaml_parser::serde::to_string(&EmptySeqField { items: vec![] })
 pub fn to_string<T>(value: &T) -> Result<String, SerError>
 where
     T: Serialize,
@@ -507,7 +518,7 @@ mod tests {
         span::Span,
         value::{Comment, Value},
     };
-    use serde::{Deserialize, Serialize};
+    use serde::{Deserialize, Serialize, Serializer};
 
     #[derive(Debug, Serialize, Deserialize, PartialEq)]
     struct SimpleConfig {
@@ -544,8 +555,8 @@ mod tests {
             .first()
             .expect("expected exactly one document before roundtrip");
 
-        let events =
-            ast_events::node_to_events(doc).expect("node_to_events should succeed for valid AST");
+        let events = ast_to_events::node_to_events(doc)
+            .expect("node_to_events should succeed for valid AST");
         let mut buf = Vec::new();
         writer::write_yaml_from_events(&mut buf, &events)
             .expect("writing YAML from AST-derived events should succeed");
@@ -569,6 +580,27 @@ mod tests {
             normalize_value(&doc.value),
             "AST value changed after roundtrip"
         );
+    }
+
+    struct MapWithDanglingKey;
+
+    impl Serialize for MapWithDanglingKey {
+        fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: Serializer,
+        {
+            let mut map = serializer.serialize_map(Some(1))?;
+            map.serialize_key("dangling")?;
+            map.end()
+        }
+    }
+
+    #[test]
+    fn serialize_map_end_rejects_key_without_value() {
+        let err = ValueSerializer::to_value(&MapWithDanglingKey)
+            .expect_err("serializing a map with a dangling key should fail");
+
+        assert!(matches!(err, SerError::KeyWithoutValue));
     }
 
     fn normalize_value(value: &Value<'_>) -> Value<'static> {

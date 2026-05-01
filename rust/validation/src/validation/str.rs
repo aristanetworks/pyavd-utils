@@ -477,4 +477,75 @@ mod tests {
             }]
         );
     }
+
+    // --- lookaround tests (require fancy-regex) ---
+
+    #[test]
+    fn validate_pattern_lookahead_ok() {
+        // Proves fancy-regex syntax is accepted: starts with lowercase AND contains a digit.
+        let schema = Str {
+            pattern: Some("(?=[a-z])(?=.*[0-9])[a-z0-9]+".into()),
+            ..Default::default()
+        };
+        let input: Value = "abc123".into();
+        let store = get_test_store();
+        let mut ctx = Context::new(&store, None);
+        schema.validate(&input, &mut ctx);
+        assert!(ctx.result.errors.is_empty() && ctx.result.infos.is_empty());
+    }
+
+    #[test]
+    fn validate_pattern_lookahead_err() {
+        // Same pattern — "abcdef" has no digit so the lookahead fails → NotMatchingPattern.
+        let schema = Str {
+            pattern: Some("(?=[a-z])(?=.*[0-9])[a-z0-9]+".into()),
+            ..Default::default()
+        };
+        let input: Value = "abcdef".into();
+        let store = get_test_store();
+        let mut ctx = Context::new(&store, None);
+        schema.validate(&input, &mut ctx);
+        assert!(ctx.result.infos.is_empty());
+        assert_eq!(
+            ctx.result.errors,
+            vec![Feedback {
+                path: vec![].into(),
+                span: None,
+                issue: Violation::NotMatchingPattern {
+                    pattern: "(?=[a-z])(?=.*[0-9])[a-z0-9]+".into(),
+                    found: "abcdef".into(),
+                }
+                .into()
+            }]
+        );
+    }
+
+    #[test]
+    fn validate_pattern_invalid_regex_internal_error() {
+        // An unterminated character class is rejected by fancy-regex at compile time.
+        let pattern_str = "[invalid";
+        let schema = Str {
+            pattern: Some(pattern_str.into()),
+            ..Default::default()
+        };
+        let input: Value = "foo".into();
+        let store = get_test_store();
+        let mut ctx = Context::new(&store, None);
+        let _ = schema.validate(&input, &mut ctx);
+        assert!(ctx.result.infos.is_empty());
+        assert_eq!(ctx.result.errors.len(), 1);
+        match &ctx.result.errors[0].issue {
+            ErrorIssue::InternalError { message } => {
+                assert!(
+                    message.starts_with("Schema contains an invalid regex pattern '"),
+                    "unexpected message prefix: {message}"
+                );
+                assert!(
+                    message.contains(pattern_str),
+                    "message should include the offending pattern: {message}"
+                );
+            }
+            other => panic!("expected InternalError, got {other:?}"),
+        }
+    }
 }

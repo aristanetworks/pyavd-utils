@@ -260,8 +260,18 @@ impl<'input> Lexer<'input> {
         has_tabs
     }
 
+    fn advance_until_newline(&mut self) {
+        while let Some(peek_ch) = self.peek() {
+            if Self::is_newline(peek_ch) {
+                break;
+            }
+            self.advance();
+        }
+    }
+
+    /// YAML 1.2.2 line breaks are limited to LF and CR (including CRLF).
     fn is_newline(ch: char) -> bool {
-        matches!(ch, '\n' | '\r' | '\u{0085}' | '\u{2028}' | '\u{2029}')
+        matches!(ch, '\n' | '\r')
     }
 
     fn is_flow_indicator(ch: char) -> bool {
@@ -430,12 +440,7 @@ impl<'input> Lexer<'input> {
         if self.phase_state == LexerPhase::DirectivePrologue && !self.is_at_column_zero() {
             // This is invalid trailing content after document end marker (e.g., "... invalid")
             // Consume to end of line and emit error
-            while let Some(peek_ch) = self.peek() {
-                if Self::is_newline(peek_ch) {
-                    break;
-                }
-                self.advance();
-            }
+            self.advance_until_newline();
             let span = self.current_span(start);
             self.add_error(ErrorKind::TrailingContent, span);
             // Return a plain scalar token (with error attached) so parsing can continue

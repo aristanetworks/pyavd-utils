@@ -7,7 +7,7 @@ use std::{io::Write as _, path::PathBuf, sync::OnceLock};
 
 const CRATE_DIR: &str = env!("CARGO_MANIFEST_DIR");
 const ADV_SCHEMA_URL: &str =
-    "https://github.com/aristanetworks/avd/releases/download/v6.0.0-dev3/schemas.json.gz";
+    "https://github.com/aristanetworks/avd/releases/download/v6.1.0/schemas.json.gz";
 
 static STORE_GZ_PATH: OnceLock<PathBuf> = OnceLock::new();
 

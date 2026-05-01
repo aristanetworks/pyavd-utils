@@ -3,11 +3,14 @@
 // that can be found in the LICENSE file.
 
 //! Helpers for converting the AST (`Node` / `Value`) into the internal
-//! YAML event stream used by the writer and test tooling.
+//! YAML event stream used by serde serialization and related tests.
 //!
-//! This module is intentionally independent of serde. It is the common
-//! building block for:
-//! - Serializing an existing AST back to YAML via the event-based writer.
+//! This module does not depend on `serde` directly, but it is currently
+//! compiled only with the `serde` feature because its sole in-crate consumer
+//! is the `serde::ser` implementation.
+//!
+//! Current uses:
+//! - Serializing a serde-produced AST back to YAML via the event-based writer.
 //! - Roundtrip tests that go `parse -> AST -> events -> writer -> parse`.
 
 use crate::event::{CollectionStyle, Event, Properties as EventProperties, ScalarStyle};
@@ -15,7 +18,7 @@ use crate::{Node, Value};
 
 /// Errors that can occur while converting an AST to events.
 #[derive(Debug, Clone, Copy)]
-pub enum AstToEventsError {
+pub(crate) enum AstToEventsError {
     /// Encountered a non-finite floating-point value.
     UnsupportedFloat(f64),
 }

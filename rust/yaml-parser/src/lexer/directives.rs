@@ -14,7 +14,8 @@ impl<'input> Lexer<'input> {
         if self.byte_pos == 0 {
             return true;
         }
-        // Check if previous byte was a newline
+        // YAML 1.2.2 line breaks are ASCII-only, so line-start detection can
+        // probe the previous byte directly without decoding UTF-8.
         let prev_byte_pos = self.byte_pos.saturating_sub(1);
         if let Some(ch) = self.input.as_bytes().get(prev_byte_pos) {
             *ch == b'\n' || *ch == b'\r'

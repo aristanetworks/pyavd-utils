@@ -86,6 +86,10 @@ pub enum ErrorKind {
         found: IndentLevel,
     },
 
+    /// Missing a block-sequence indicator (`-`) at sequence indentation.
+    #[display("missing '-' for sequence entry")]
+    MissingSequenceIndicator,
+
     /// Unterminated string literal
     #[display("unterminated string literal")]
     UnterminatedString,
@@ -93,6 +97,21 @@ pub enum ErrorKind {
     /// Invalid escape sequence in a string (contains the invalid character)
     #[display("invalid escape sequence '\\{_0}'")]
     InvalidEscape(char),
+
+    /// Numeric escape sequence ended before the required number of hex digits.
+    #[display("incomplete numeric escape sequence (expected {expected} hexadecimal digits)")]
+    InvalidEscapeLength {
+        /// Required number of hexadecimal digits for this escape kind.
+        expected: u8,
+    },
+
+    /// Invalid non-hex character inside a numeric escape sequence.
+    #[display("invalid hexadecimal digit in escape sequence")]
+    InvalidEscapeCharacter,
+
+    /// Numeric escape sequence encodes an invalid Unicode scalar value.
+    #[display("invalid Unicode scalar value in escape sequence")]
+    InvalidUnicodeEscape,
 
     /// Invalid number format
     #[display("invalid number format")]
@@ -185,6 +204,9 @@ impl ErrorKind {
             Self::InvalidIndentation | Self::InvalidIndentationContext { .. } => {
                 Some("YAML uses spaces for indentation; ensure consistent indentation levels")
             }
+            Self::MissingSequenceIndicator => Some(
+                "add '-' to start a sequence entry, or adjust the indentation to match the intended structure",
+            ),
             Self::TabInIndentation => {
                 Some("replace tabs with spaces; YAML requires space-based indentation")
             }
@@ -192,6 +214,15 @@ impl ErrorKind {
             Self::InvalidEscape(_) => {
                 Some("valid escape sequences: \\n, \\r, \\t, \\\\, \\\", \\', \\0, \\x##, \\u####")
             }
+            Self::InvalidEscapeLength { .. } => {
+                Some("numeric escapes must provide the required number of hexadecimal digits")
+            }
+            Self::InvalidEscapeCharacter => {
+                Some("use only hexadecimal digits (0-9, a-f, A-F) in numeric escapes")
+            }
+            Self::InvalidUnicodeEscape => Some(
+                "use a Unicode scalar value in the valid range, excluding surrogate code points",
+            ),
             Self::UndefinedAlias => {
                 Some("define the anchor with &name before referencing it with *name")
             }
@@ -290,13 +321,27 @@ mod tests {
     #[test]
     fn test_error_display_with_context() {
         // Test error variants with contextual information
-        let test_cases = [(
-            ErrorKind::InvalidIndentationContext {
-                expected: 4,
-                found: 2,
-            },
-            "invalid indentation: expected 4 spaces, found 2",
-        )];
+        let test_cases = [
+            (
+                ErrorKind::InvalidIndentationContext {
+                    expected: 4,
+                    found: 2,
+                },
+                "invalid indentation: expected 4 spaces, found 2",
+            ),
+            (
+                ErrorKind::InvalidEscapeLength { expected: 4 },
+                "incomplete numeric escape sequence (expected 4 hexadecimal digits)",
+            ),
+            (
+                ErrorKind::InvalidEscapeCharacter,
+                "invalid hexadecimal digit in escape sequence",
+            ),
+            (
+                ErrorKind::InvalidUnicodeEscape,
+                "invalid Unicode scalar value in escape sequence",
+            ),
+        ];
 
         for (kind, expected_msg) in test_cases {
             let err = ParseError::new(kind, Span::from_usize_range(0..10));
@@ -313,9 +358,13 @@ mod tests {
                 expected: 4,
                 found: 2,
             },
+            ErrorKind::MissingSequenceIndicator,
             ErrorKind::TabInIndentation,
             ErrorKind::UnterminatedString,
             ErrorKind::InvalidEscape('x'),
+            ErrorKind::InvalidEscapeLength { expected: 4 },
+            ErrorKind::InvalidEscapeCharacter,
+            ErrorKind::InvalidUnicodeEscape,
             ErrorKind::UndefinedAlias,
             ErrorKind::DuplicateAnchor,
             ErrorKind::DuplicateTag,

@@ -15,6 +15,25 @@ use super::states::{
 use super::{Emitter, PendingAstWrap};
 
 impl<'input> Emitter<'input> {
+    /// Return true when same-indent content should be handed back to an
+    /// enclosing block mapping instead of treated as sequence-local recovery.
+    fn sequence_same_indent_belongs_to_parent_mapping(&self, indent: IndentLevel) -> bool {
+        self.state_stack
+            .iter()
+            .rev()
+            .find_map(|state| match state {
+                ParseState::BlockMap {
+                    indent: parent_indent,
+                    ..
+                } => Some(*parent_indent == indent),
+                ParseState::BlockSeq { .. }
+                | ParseState::FlowSeq { .. }
+                | ParseState::FlowMap { .. } => Some(false),
+                _ => None,
+            })
+            .unwrap_or(false)
+    }
+
     #[allow(clippy::too_many_lines, reason = "Complex state machine dispatch")]
     pub(super) fn process_block_seq(
         &mut self,
@@ -258,8 +277,13 @@ impl<'input> Emitter<'input> {
                                             | TokenKind::FlowMapStart
                                     )
                                 );
-                            if recoverable_same_indent_content {
-                                self.error(ErrorKind::InvalidIndentation, self.current_span());
+                            if recoverable_same_indent_content
+                                && !self.sequence_same_indent_belongs_to_parent_mapping(indent)
+                            {
+                                self.error(
+                                    ErrorKind::MissingSequenceIndicator,
+                                    self.current_span(),
+                                );
                                 self.skip_to_line_end();
                                 self.skip_invalid_indented_recovery_lines(indent);
                                 phase = BlockSeqPhase::BeforeEntryScan;

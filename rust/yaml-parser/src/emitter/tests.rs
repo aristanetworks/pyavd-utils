@@ -273,6 +273,27 @@ mod event_generation {
     }
 
     #[test]
+    fn test_tagged_scalar_with_percent_encoded_unicode_suffix() {
+        let events = events_from("!!caf%C3%A9 42");
+
+        let has_tag = events.iter().any(|ev| {
+            matches!(
+                ev,
+                Event::Scalar { properties, .. }
+                    if properties
+                        .as_ref()
+                        .and_then(|event_props| event_props.tag.as_ref())
+                        .map(|prop| prop.value.as_ref())
+                        == Some("tag:yaml.org,2002:café")
+            )
+        });
+        assert!(
+            has_tag,
+            "Expected scalar with decoded Unicode tag suffix, got: {events:?}"
+        );
+    }
+
+    #[test]
     fn test_nested_block_structures() {
         // Test nested mapping inside sequence
         let events = events_from("- a: 1\n- b: 2");
@@ -321,6 +342,116 @@ mod event_generation {
     fn events_and_errors_from(input: &str) -> (Vec<Event<'static>>, Vec<crate::error::ParseError>) {
         let (events, errors) = crate::emit_events(input);
         (events.into_iter().map(Event::into_owned).collect(), errors)
+    }
+
+    #[test]
+    fn test_tagged_flow_mapping_implicit_key_keeps_tag_on_key_node() {
+        let input = "!!map\n!foo {a: b}: c\n";
+        let (events, errors) = events_and_errors_from(input);
+
+        assert!(
+            errors.is_empty(),
+            "expected tagged flow-map key to parse without errors: {errors:?}"
+        );
+        assert!(
+            events.iter().any(|event| {
+                matches!(
+                    event,
+                    Event::MappingStart { properties, .. }
+                        if properties
+                            .as_ref()
+                            .and_then(|event_props| event_props.tag.as_ref())
+                            .map(|tag| tag.value.as_ref())
+                            == Some("!foo")
+                )
+            }),
+            "expected tagged flow mapping key event, got: {events:?}"
+        );
+    }
+
+    #[test]
+    fn test_tagged_flow_sequence_implicit_key_keeps_tag_on_key_node() {
+        let input = "!!map\n!foo [a, b]: c\n";
+        let (events, errors) = events_and_errors_from(input);
+
+        assert!(
+            errors.is_empty(),
+            "expected tagged flow-sequence key to parse without errors: {errors:?}"
+        );
+        assert!(
+            events.iter().any(|event| {
+                matches!(
+                    event,
+                    Event::SequenceStart { properties, .. }
+                        if properties
+                            .as_ref()
+                            .and_then(|event_props| event_props.tag.as_ref())
+                            .map(|tag| tag.value.as_ref())
+                            == Some("!foo")
+                )
+            }),
+            "expected tagged flow sequence key event, got: {events:?}"
+        );
+    }
+
+    #[test]
+    fn test_tagged_double_quoted_implicit_key_keeps_tag_on_key_scalar() {
+        let input = "!!map\n!foo \"a, b\": c\n";
+        let (events, errors) = events_and_errors_from(input);
+
+        assert!(
+            errors.is_empty(),
+            "expected tagged double-quoted key to parse without errors: {errors:?}"
+        );
+        assert!(
+            events.iter().any(|event| {
+                matches!(
+                    event,
+                    Event::Scalar {
+                        style: ScalarStyle::DoubleQuoted,
+                        value,
+                        properties,
+                        ..
+                    } if value == "a, b"
+                        && properties
+                            .as_ref()
+                            .and_then(|event_props| event_props.tag.as_ref())
+                            .map(|tag| tag.value.as_ref())
+                            == Some("!foo")
+                )
+            }),
+            "expected tagged double-quoted key event, got: {events:?}"
+        );
+    }
+
+    #[test]
+    fn test_tagged_single_quoted_implicit_key_keeps_tag_on_key_scalar() {
+        let input = "!!map\n!foo 'a, b': c\n";
+        let (events, errors) = events_and_errors_from(input);
+
+        assert!(
+            errors.is_empty(),
+            "expected tagged single-quoted key to parse without errors: {errors:?}"
+        );
+        assert!(
+            events.iter().any(|event| {
+                matches!(
+                    event,
+                    Event::Scalar {
+                        style: ScalarStyle::SingleQuoted,
+                        value,
+                        properties,
+                        ..
+                    } if value == "a, b"
+                        && properties
+                            .as_ref()
+                            .and_then(|event_props| event_props.tag.as_ref())
+                            .map(|tag| tag.value.as_ref())
+                            == Some("!foo")
+                )
+            }),
+            "expected tagged single-quoted key event, got: {events:?}"
+        );
     }
 
     #[test]

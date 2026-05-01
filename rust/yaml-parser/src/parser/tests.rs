@@ -136,6 +136,14 @@ fn test_parse_null_values() {
 }
 
 #[test]
+fn test_parse_tilde_prefixed_plain_scalar_stays_string() {
+    let (docs, errors) = parse("~foo");
+    assert!(errors.is_empty());
+    assert_eq!(docs.len(), 1);
+    assert!(matches!(&docs.first().unwrap().value, Value::String(string) if string == "~foo"));
+}
+
+#[test]
 fn test_parse_boolean_values() {
     let (docs, errors) = parse("true");
     assert!(errors.is_empty());
@@ -395,6 +403,191 @@ fn test_event_parser_typed_scalars() {
             nodes[0].value
         );
     }
+}
+
+#[test]
+fn test_core_schema_plain_scalar_resolution() {
+    let test_cases: &[(&str, fn(&Value) -> bool)] = &[
+        ("0o7", |value| matches!(value, Value::Int(Integer::I64(7)))),
+        ("0x3A", |value| {
+            matches!(value, Value::Int(Integer::I64(58)))
+        }),
+        (
+            ".inf",
+            |value| matches!(value, Value::Float(float) if float.is_infinite() && float.is_sign_positive()),
+        ),
+        (
+            "-.Inf",
+            |value| matches!(value, Value::Float(float) if float.is_infinite() && float.is_sign_negative()),
+        ),
+        (
+            "+.INF",
+            |value| matches!(value, Value::Float(float) if float.is_infinite() && float.is_sign_positive()),
+        ),
+        (
+            ".nan",
+            |value| matches!(value, Value::Float(float) if float.is_nan()),
+        ),
+        ("True", |value| matches!(value, Value::Bool(true))),
+        ("FALSE", |value| matches!(value, Value::Bool(false))),
+        ("~", |value| matches!(value, Value::Null)),
+    ];
+
+    for (input, check) in test_cases {
+        let (docs, errors) = parse(input);
+        assert!(
+            errors.is_empty(),
+            "unexpected errors for {input:?}: {errors:?}"
+        );
+        assert_eq!(docs.len(), 1, "expected one document for {input:?}");
+        assert!(
+            check(&docs[0].value),
+            "unexpected value for {input:?}: {:?}",
+            docs[0].value
+        );
+    }
+}
+
+#[test]
+fn test_empty_scalar_in_value_position_resolves_as_null() {
+    let (docs, errors) = parse("key:");
+    assert!(errors.is_empty(), "unexpected errors: {errors:?}");
+    let Value::Mapping(pairs) = &docs[0].value else {
+        panic!("expected mapping");
+    };
+    assert!(matches!(pairs[0].value.value, Value::Null));
+}
+
+#[test]
+fn test_quoted_scalars_do_not_undergo_implicit_resolution() {
+    for input in ["\"0o7\"", "'.inf'"] {
+        let (docs, errors) = parse(input);
+        assert!(
+            errors.is_empty(),
+            "unexpected errors for {input:?}: {errors:?}"
+        );
+        assert!(
+            matches!(docs[0].value, Value::String(_)),
+            "expected quoted scalar to stay string for {input:?}, got {:?}",
+            docs[0].value
+        );
+    }
+}
+
+#[test]
+fn test_explicit_builtin_tags_override_resolution() {
+    let test_cases: &[(&str, fn(&Value) -> bool)] = &[
+        (
+            "!!str 42",
+            |value| matches!(value, Value::String(text) if text == "42"),
+        ),
+        ("!!int 0o52", |value| {
+            matches!(value, Value::Int(Integer::I64(42)))
+        }),
+        ("!!int 0x2A", |value| {
+            matches!(value, Value::Int(Integer::I64(42)))
+        }),
+        (
+            "!!float .inf",
+            |value| matches!(value, Value::Float(float) if float.is_infinite() && float.is_sign_positive()),
+        ),
+        ("!!bool TRUE", |value| matches!(value, Value::Bool(true))),
+    ];
+
+    for (input, check) in test_cases {
+        let (docs, errors) = parse(input);
+        assert!(
+            errors.is_empty(),
+            "unexpected errors for {input:?}: {errors:?}"
+        );
+        assert!(
+            check(&docs[0].value),
+            "unexpected value for {input:?}: {:?}",
+            docs[0].value
+        );
+    }
+}
+
+#[test]
+fn test_invalid_explicit_builtin_tags_report_error_and_recover_to_string() {
+    for input in ["!!int hello", "!!float nope", "!!bool 1"] {
+        let (docs, errors) = parse(input);
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.kind == ErrorKind::InvalidValue),
+            "expected InvalidValue error for {input:?}, got {errors:?}"
+        );
+        let expected_text = input.split_once(' ').map_or("", |(_, text)| text);
+        assert!(
+            matches!(docs[0].value, Value::String(ref text) if text.as_ref() == expected_text),
+            "expected string recovery for {input:?}, got {:?}",
+            docs[0].value
+        );
+    }
+}
+
+#[test]
+fn test_explicit_builtin_tags_accept_valid_yaml_lexemes() {
+    let cases = [
+        ("!!float 42", Value::Float(42.0)),
+        ("!!null ~", Value::Null),
+        (
+            "-0x80000000000000000000000000000000",
+            Value::Int(Integer::I128(i128::MIN)),
+        ),
+    ];
+
+    for (input, expected) in cases {
+        let (docs, errors) = parse(input);
+        assert!(
+            errors.is_empty(),
+            "unexpected errors for {input:?}: {errors:?}"
+        );
+        assert_eq!(docs[0].value, expected, "unexpected value for {input:?}");
+    }
+}
+
+#[test]
+fn test_non_specific_and_custom_tags_disable_implicit_resolution() {
+    let (non_specific_docs, non_specific_errors) = parse("! 42");
+    assert!(
+        non_specific_errors.is_empty(),
+        "unexpected errors: {non_specific_errors:?}"
+    );
+    assert!(matches!(non_specific_docs[0].value, Value::String(ref text) if text == "42"));
+    assert_eq!(
+        non_specific_docs[0].tag().map(|tag| tag.value.as_ref()),
+        Some("!")
+    );
+
+    let (custom_docs, custom_errors) = parse("!custom 42");
+    assert!(
+        custom_errors.is_empty(),
+        "unexpected errors: {custom_errors:?}"
+    );
+    assert!(matches!(custom_docs[0].value, Value::String(ref text) if text == "42"));
+    assert_eq!(
+        custom_docs[0].tag().map(|tag| tag.value.as_ref()),
+        Some("!custom")
+    );
+
+    let (explicit_str_docs, explicit_str_errors) = parse("!<tag:yaml.org,2002:str> 42");
+    assert!(
+        explicit_str_errors.is_empty(),
+        "unexpected errors: {explicit_str_errors:?}"
+    );
+    assert!(matches!(explicit_str_docs[0].value, Value::String(ref text) if text == "42"));
+
+    let (explicit_int_docs, explicit_int_errors) = parse("!<tag:yaml.org,2002:int> 0o52");
+    assert!(
+        explicit_int_errors.is_empty(),
+        "unexpected errors: {explicit_int_errors:?}"
+    );
+    assert!(matches!(
+        explicit_int_docs[0].value,
+        Value::Int(Integer::I64(42))
+    ));
 }
 
 #[test]

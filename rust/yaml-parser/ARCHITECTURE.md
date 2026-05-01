@@ -25,6 +25,20 @@ The crate exposes two main user-facing parsing styles:
 
 Both share the same lexer and emitter.
 
+## Limitations
+
+- No circular references in Anchors/Aliases
+- serde feature is experimental / incomplete
+  - open discussion on float loss:
+    I agree the important question is where to draw the line between coercion and error. Serde’s built-in f64 behavior is already mixed here: u64 can be accepted lossily, while u128 is rejected. I’d rather make the YAML deserializer policy explicit and consistent instead of inheriting that boundary accidentally from Serde internals. My preference is either:
+    - permissive numeric-to-f64 coercion, accepting the usual floating-point precision loss, or
+    - strict behavior where non-float YAML scalars are rejected for f64.
+    I don’t think a partly-lossy / partly-error policy based on integer width is the right rule unless we intentionally want that.
+    Check the yaml spec.
+- comment handling is incomplete but covers what is needed for the LSP
+- Maximum document size is 4GB. Code is prepared for a feature to tweak this (BytePosition = u32).
+- Maximum indentation level is 65,535. Code is prepared for a feature to tweak this (IndentLevel = u16)
+
 ## Pipeline
 
 The public pipeline is intentionally simple:

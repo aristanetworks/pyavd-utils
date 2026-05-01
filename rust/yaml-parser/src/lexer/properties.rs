@@ -110,20 +110,7 @@ impl<'input> Lexer<'input> {
         let tag_start = start; // Position of the '!'
         self.advance(); // consume !
 
-        // Check for !! or !<
         match self.peek() {
-            Some('!') => {
-                // Secondary tag like !!str - can borrow the whole thing from input
-                self.advance();
-                while let Some(peek_ch) = self.peek() {
-                    if peek_ch.is_whitespace() || Self::is_flow_indicator(peek_ch) {
-                        break;
-                    }
-                    self.advance();
-                }
-                // Borrow from input: includes both ! characters
-                self.borrowed_tag_token(start, tag_start)
-            }
             Some('<') => {
                 // Verbatim tag !<uri>
                 // Mark with a leading '\0' so the parser knows not to expand it.
@@ -172,7 +159,20 @@ impl<'input> Lexer<'input> {
         ch.is_alphanumeric()
             || matches!(
                 ch,
-                '-' | '_' | '.' | '~' | '%' | '/' | ':' | '@' | '&' | '=' | '+' | '$' | ',' | ';'
+                '!' | '-'
+                    | '_'
+                    | '.'
+                    | '~'
+                    | '%'
+                    | '/'
+                    | ':'
+                    | '@'
+                    | '&'
+                    | '='
+                    | '+'
+                    | '$'
+                    | ','
+                    | ';'
             )
     }
 }

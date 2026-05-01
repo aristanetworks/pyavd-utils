@@ -29,6 +29,7 @@ const EMPTY_PROPERTIES: Properties<'static> = Properties {
     anchor: None,
     tag: None,
 };
+const INDENT_CHUNK: [u8; 64] = [b' '; 64];
 
 /// Write YAML text from a sequence of events.
 ///
@@ -113,27 +114,17 @@ impl<'a, 'input, W: Write> WriterState<'a, 'input, W> {
                     }
                     self.write_node()?;
                 }
-                Event::DocumentEnd { .. } => {
-                    // End of the current document. For now we do not emit an
-                    // explicit `...` marker, but we ensure we advance past the
-                    // event and terminate the current line.
-                    // If the document had an explicit end marker in the
-                    // original stream, preserve that here so that
-                    // `DocumentEnd { explicit: true, .. }` roundtrips.
-                    if let Some(Event::DocumentEnd { explicit, .. }) = self.peek().cloned() {
-                        self.advance();
-                        if explicit {
-                            if !self.at_line_start {
-                                self.out.write_all(b"\n")?;
-                            }
-                            self.out.write_all(b"...\n")?;
-                            self.at_line_start = true;
-                        } else if !self.at_line_start {
+                Event::DocumentEnd { explicit, .. } => {
+                    self.advance();
+                    if explicit {
+                        if !self.at_line_start {
                             self.out.write_all(b"\n")?;
-                            self.at_line_start = true;
                         }
-                    } else {
-                        self.advance();
+                        self.out.write_all(b"...\n")?;
+                        self.at_line_start = true;
+                    } else if !self.at_line_start {
+                        self.out.write_all(b"\n")?;
+                        self.at_line_start = true;
                     }
                 }
                 _ => {
@@ -212,6 +203,7 @@ impl<'a, 'input, W: Write> WriterState<'a, 'input, W> {
         }
     }
 
+    // TODO: Add representation for empty map.
     #[allow(
         clippy::too_many_lines,
         reason = "block mapping writer is intentionally monolithic for now; refactoring would be non-trivial"
@@ -474,6 +466,7 @@ impl<'a, 'input, W: Write> WriterState<'a, 'input, W> {
         Ok(())
     }
 
+    // TODO: Add representation for empty sequence.
     fn write_block_sequence(&mut self, sequence_props: &Properties<'input>) -> io::Result<()> {
         self.advance(); // consume SequenceStart
         let base_indent = self.indent;
@@ -732,9 +725,15 @@ impl<'a, 'input, W: Write> WriterState<'a, 'input, W> {
         Ok(())
     }
 
+    #[allow(clippy::indexing_slicing, reason = "chunk size handled")]
     fn write_indent(&mut self) -> io::Result<()> {
-        for _ in 0..self.indent {
-            self.out.write_all(b" ")?;
+        let mut remaining = self.indent;
+        while remaining >= INDENT_CHUNK.len() {
+            self.out.write_all(&INDENT_CHUNK)?;
+            remaining -= INDENT_CHUNK.len();
+        }
+        if remaining > 0 {
+            self.out.write_all(&INDENT_CHUNK[..remaining])?;
         }
         self.at_line_start = false;
         Ok(())

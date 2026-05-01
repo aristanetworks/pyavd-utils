@@ -2,23 +2,8 @@
 package.version = "0.0.4"
 package.license = "Apache-2.0"
 
-members = [
-    "rust/avdschema",
-    "rust/validation",
-    "rust/passwords",
-    "rust/pypasswords",
-    "rust/pyvalidation",
-    "rust/test_schema_store",
-    "rust/yaml-parser",
-]
-# Exclude test_schema_store from default members so cargo-about and cargo-deny will not pick this up.
-default-members = [
-    "rust/avdschema",
-    "rust/validation",
-    "rust/passwords",
-    "rust/pypasswords",
-    "rust/pyvalidation",
-]
+members = ["rust/*"]
+exclude = ["rust/test_schema_store"]
 resolver = "2"
 
 [workspace.dependencies]
@@ -28,8 +13,7 @@ ordermap = { version = "0.5.4" }
 pyo3 = { version = "0.26.0" }
 pyo3-build-config = { version = "0.26.0" }
 pyo3-log = { version = "0.13.1" }
-regex = { version = "1.11.1" }
-reqwest = { version = "0.12.24", default-features = false }
+fancy-regex = { version = "0.17" }
 serde = { version = "1.0.217" }
 serde_json = { version = "1.0.135" }
 serde_yaml = { version = "0.9.33" }

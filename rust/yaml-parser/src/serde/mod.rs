@@ -10,7 +10,10 @@
 //!
 //! Deserialization uses the shared lexer/emitter pipeline and drives serde
 //! visitors directly from the YAML event stream instead of building an
-//! intermediate AST first.
+//! intermediate AST first. Scalar semantics come from the same shared YAML 1.2
+//! Core-schema resolver used by the AST parser, so plain untagged scalars,
+//! quoted/block scalars, and explicit built-in tags behave consistently across
+//! both entrypoints.
 //!
 //! Public contract:
 //!

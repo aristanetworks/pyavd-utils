@@ -15,6 +15,70 @@ use super::states::{
 };
 use super::{Emitter, MaybeEmptyScalarDecision, PendingAstWrap};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PercentDecodeError {
+    InvalidEscape,
+    InvalidUtf8,
+}
+
+/// Decode percent-encoded bytes into UTF-8 text.
+///
+/// YAML tag suffixes use URI percent-encoding, so multi-byte Unicode sequences
+/// must be decoded as bytes and then validated as UTF-8.
+///
+/// Returns a borrowed `Cow` when the input contains no percent escapes.
+#[allow(clippy::indexing_slicing, reason = "position tracked from input")]
+fn percent_decode(input: &str) -> Result<Cow<'_, str>, PercentDecodeError> {
+    let input_bytes = input.as_bytes();
+    let Some(first_escape) = input_bytes.iter().position(|&byte| byte == b'%') else {
+        return Ok(Cow::Borrowed(input));
+    };
+
+    let mut decoded = Vec::with_capacity(input.len());
+    decoded.extend_from_slice(&input_bytes[..first_escape]);
+    let mut idx = first_escape;
+
+    while idx < input_bytes.len() {
+        if input_bytes[idx] == b'%' {
+            let Some((&hi_digit, &lo_digit)) =
+                input_bytes.get(idx + 1).zip(input_bytes.get(idx + 2))
+            else {
+                return Err(PercentDecodeError::InvalidEscape);
+            };
+            let Some(hi) = decode_hex_digit(hi_digit) else {
+                return Err(PercentDecodeError::InvalidEscape);
+            };
+            let Some(lo) = decode_hex_digit(lo_digit) else {
+                return Err(PercentDecodeError::InvalidEscape);
+            };
+
+            decoded.push((hi << 4) | lo);
+            idx += 3;
+            continue;
+        }
+
+        let next_escape = input_bytes[idx..]
+            .iter()
+            .position(|&byte| byte == b'%')
+            .map_or(input_bytes.len(), |offset| idx + offset);
+        decoded.extend_from_slice(&input_bytes[idx..next_escape]);
+        idx = next_escape;
+    }
+
+    String::from_utf8(decoded)
+        .map(Cow::Owned)
+        .map_err(|_ignored| PercentDecodeError::InvalidUtf8)
+}
+
+fn decode_hex_digit(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
+}
+
 impl<'input> Emitter<'input> {
     pub(super) fn in_sequence_entry_context(&self) -> bool {
         self.state_stack.last().is_some_and(|state| {
@@ -972,7 +1036,7 @@ impl<'input> Emitter<'input> {
     pub(super) fn should_continue_collecting_properties(&self) -> bool {
         let mut idx = 1; // Start after the LineStart at position 0
 
-        // First, check if there are any properties on the next line
+        // First, check if there are any properties on the next line.
         let mut found_property = false;
         loop {
             match self.peek_kind_nth(idx) {
@@ -991,99 +1055,101 @@ impl<'input> Emitter<'input> {
         }
 
         if !found_property {
-            // No property on the next line - don't continue collecting
+            // No property on the next line - don't continue collecting.
             return false;
         }
 
-        // Now check what follows the properties.
-        // If it's LineStart, this line is "property-only" - continue collecting.
-        // If it's content, check if that content is an implicit key (followed by colon).
         match self.peek_kind_nth(idx) {
-            Some(TokenKind::FlowSeqStart | TokenKind::FlowMapStart) => {
-                // Flow collection - check if it's a complex key
-                // Look for matching close bracket, then colon
-                let is_key = self.is_implicit_key_at_offset(idx);
-                // If it's a key, DON'T continue (parent mapping gets first props)
-                !is_key
-            }
             Some(TokenKind::Plain) => {
-                let is_key = self.plain_at_offset_terminated_by_mapping_value_indicator(idx);
-                // If it's a key, DON'T continue
-                !is_key
+                !self.plain_at_offset_terminated_by_mapping_value_indicator(idx)
             }
-            _ => {
-                // Property-only line - continue collecting
-                // Other content (quoted string, etc.) - continue collecting
-                // These cases generally don't form implicit keys in this context
-                true
+            Some(TokenKind::Alias) => !self.with_lookahead(idx + 8, |window| {
+                let colon_idx = Self::scan_skip_inline_whitespace_from(&window, idx + 1);
+                window.kind(colon_idx) == Some(TokenKind::Colon)
+            }),
+            Some(TokenKind::StringStart | TokenKind::FlowSeqStart | TokenKind::FlowMapStart) => {
+                !self.is_implicit_key_at_offset_incremental(idx)
             }
+            _ => true,
         }
     }
 
-    /// Check if token at offset `start_idx` is an implicit mapping key.
-    pub(super) fn is_implicit_key_at_offset(&self, start_idx: usize) -> bool {
-        self.with_lookahead(start_idx + 200, |window| match window.kind(start_idx) {
-            Some(TokenKind::Plain) => window
-                .token(start_idx)
-                .and_then(|token| match token {
-                    Token::Plain(plain) => Some(plain.terminated_by_mapping_value_indicator()),
-                    _ => None,
-                })
-                .unwrap_or(false),
-            Some(TokenKind::FlowSeqStart) => {
-                let Some(end) = Self::scan_find_flow_collection_end(
-                    &window,
+    fn is_implicit_key_at_offset_incremental(&self, start_idx: usize) -> bool {
+        match self.peek_kind_nth(start_idx) {
+            Some(TokenKind::StringStart) => {
+                let mut idx = start_idx + 1;
+                while idx <= start_idx + 200 {
+                    match self.peek_kind_nth(idx) {
+                        Some(TokenKind::StringEnd) => {
+                            return self.with_lookahead(idx + 8, |window| {
+                                let colon_idx =
+                                    Self::scan_skip_inline_whitespace_from(&window, idx + 1);
+                                window.kind(colon_idx) == Some(TokenKind::Colon)
+                            });
+                        }
+                        Some(TokenKind::DocStart | TokenKind::DocEnd) | None => return false,
+                        _ => idx += 1,
+                    }
+                }
+                false
+            }
+            Some(TokenKind::FlowSeqStart) => self
+                .flow_collection_at_offset_terminated_by_mapping_value_indicator(
                     start_idx,
                     TokenKind::FlowSeqStart,
-                ) else {
-                    return false;
-                };
-                let idx = Self::scan_skip_inline_whitespace_from(&window, end + 1);
-                window.kind(idx) == Some(TokenKind::Colon)
-            }
+                ),
+            Some(TokenKind::FlowMapStart) => self
+                .flow_collection_at_offset_terminated_by_mapping_value_indicator(
+                    start_idx,
+                    TokenKind::FlowMapStart,
+                ),
             _ => false,
-        })
+        }
+    }
+
+    fn flow_collection_at_offset_terminated_by_mapping_value_indicator(
+        &self,
+        start_idx: usize,
+        start_kind: TokenKind,
+    ) -> bool {
+        let target_end = match start_kind {
+            TokenKind::FlowSeqStart => TokenKind::FlowSeqEnd,
+            TokenKind::FlowMapStart => TokenKind::FlowMapEnd,
+            _ => return false,
+        };
+
+        let mut depth = 0;
+        let mut idx = start_idx;
+        while idx <= start_idx + 200 {
+            match self.peek_kind_nth(idx) {
+                Some(TokenKind::FlowSeqStart | TokenKind::FlowMapStart) => depth += 1,
+                Some(TokenKind::FlowSeqEnd | TokenKind::FlowMapEnd) => {
+                    depth -= 1;
+                    if depth == 0 && self.peek_kind_nth(idx) == Some(target_end) {
+                        return self.with_lookahead(idx + 8, |window| {
+                            let colon_idx =
+                                Self::scan_skip_inline_whitespace_from(&window, idx + 1);
+                            window.kind(colon_idx) == Some(TokenKind::Colon)
+                        });
+                    }
+                }
+                Some(TokenKind::DocStart | TokenKind::DocEnd) | None => return false,
+                _ => {}
+            }
+            idx += 1;
+        }
+        false
     }
 
     /// Expand a tag handle to its full form.
     ///
     /// The lexer transforms tags as follows:
-    /// - `!!str` → `Tag("!str")` (secondary handle)
-    /// - `!name!suffix` → `Tag("name!suffix")` (named handle)
+    /// - `!!str` → `Tag("!!str")` (secondary handle)
+    /// - `!name!suffix` → `Tag("!name!suffix")` (named handle)
     /// - `!<uri>` → `Tag("\0uri")` (verbatim, marked with NUL)
-    /// - `!` alone → `Tag("")` (non-specific)
+    /// - `!` alone → `Tag("!")` (non-specific)
     #[allow(clippy::too_many_lines, reason = "Tag expansion with many cases")]
     pub(super) fn expand_tag(&mut self, tag_cow: Cow<'input, str>, span: Span) -> Cow<'input, str> {
-        /// Decode percent-encoded characters in a tag suffix.
-        /// E.g., `tag%21` → `tag!` (since %21 is '!')
-        /// Returns None if no decoding was needed (no '%' found).
-        fn percent_decode(input: &str) -> Option<String> {
-            if !input.contains('%') {
-                return None; // No decoding needed
-            }
-
-            let mut result = String::with_capacity(input.len());
-            let mut chars = input.chars().peekable();
-            while let Some(ch) = chars.next() {
-                if ch == '%' {
-                    // Try to read two hex digits
-                    let hex: String = chars.by_ref().take(2).collect();
-                    if hex.len() == 2
-                        && let Ok(byte) = u8::from_str_radix(&hex, 16)
-                    {
-                        result.push(char::from(byte));
-                        continue;
-                    }
-                    // Failed to decode, keep as-is
-                    result.push('%');
-                    result.push_str(&hex);
-                } else {
-                    result.push(ch);
-                }
-            }
-            Some(result)
-        }
-
         fn join_prefix_and_suffix(prefix: &str, suffix: &str) -> String {
             let mut result = String::with_capacity(prefix.len() + suffix.len());
             result.push_str(prefix);
@@ -1108,25 +1174,29 @@ impl<'input> Emitter<'input> {
             const TAG_PREFIX: &str = "tag:yaml.org,2002:";
             let prefix = self.tag_handles.get("!!").copied().unwrap_or(TAG_PREFIX);
 
-            if let Some(decoded_suffix) = percent_decode(suffix) {
-                return Cow::Owned(join_prefix_and_suffix(prefix, &decoded_suffix));
-            }
+            if let Ok(decoded_suffix) = percent_decode(suffix) {
+                if let Cow::Borrowed(org_suffix) = decoded_suffix {
+                    // When still borrowed nothing was escaped so check for well-known suffixes
+                    if prefix == TAG_PREFIX {
+                        match org_suffix {
+                            "str" => return Cow::Borrowed("tag:yaml.org,2002:str"),
+                            "seq" => return Cow::Borrowed("tag:yaml.org,2002:seq"),
+                            "map" => return Cow::Borrowed("tag:yaml.org,2002:map"),
+                            "int" => return Cow::Borrowed("tag:yaml.org,2002:int"),
+                            "float" => return Cow::Borrowed("tag:yaml.org,2002:float"),
+                            "bool" => return Cow::Borrowed("tag:yaml.org,2002:bool"),
+                            "null" => return Cow::Borrowed("tag:yaml.org,2002:null"),
+                            "timestamp" => return Cow::Borrowed("tag:yaml.org,2002:timestamp"),
+                            _ => {}
+                        }
+                    }
 
-            if prefix == TAG_PREFIX {
-                match suffix {
-                    "str" => return Cow::Borrowed("tag:yaml.org,2002:str"),
-                    "seq" => return Cow::Borrowed("tag:yaml.org,2002:seq"),
-                    "map" => return Cow::Borrowed("tag:yaml.org,2002:map"),
-                    "int" => return Cow::Borrowed("tag:yaml.org,2002:int"),
-                    "float" => return Cow::Borrowed("tag:yaml.org,2002:float"),
-                    "bool" => return Cow::Borrowed("tag:yaml.org,2002:bool"),
-                    "null" => return Cow::Borrowed("tag:yaml.org,2002:null"),
-                    "timestamp" => return Cow::Borrowed("tag:yaml.org,2002:timestamp"),
-                    _ => {}
+                    return Cow::Owned(join_prefix_and_suffix(prefix, suffix));
                 }
-            }
 
-            return Cow::Owned(join_prefix_and_suffix(prefix, suffix));
+                return Cow::Owned(join_prefix_and_suffix(prefix, decoded_suffix.as_ref()));
+            }
+            return tag_cow;
         }
 
         // Named handle: !name!suffix
@@ -1143,10 +1213,11 @@ impl<'input> Emitter<'input> {
             let suffix = &tag_str[second_bang_pos + 1..];
             // Look up handle using as_str() since HashMap keys are &str
             if let Some(prefix) = self.tag_handles.get(handle) {
-                if let Some(decoded_suffix) = percent_decode(suffix) {
-                    return Cow::Owned(join_prefix_and_suffix(prefix, &decoded_suffix));
+                if let Ok(decoded_suffix) = percent_decode(suffix) {
+                    return Cow::Owned(join_prefix_and_suffix(prefix, decoded_suffix.as_ref()));
                 }
-                return Cow::Owned(join_prefix_and_suffix(prefix, suffix));
+                self.error(ErrorKind::InvalidTag, span);
+                return tag_cow;
             }
             // Handle not declared - emit error and return unexpanded
             self.error(ErrorKind::UndefinedTagHandle, span);
@@ -1159,13 +1230,74 @@ impl<'input> Emitter<'input> {
             if prefix == "!" && !suffix.contains('%') {
                 return tag_cow;
             }
-            if let Some(decoded_suffix) = percent_decode(suffix) {
-                return Cow::Owned(join_prefix_and_suffix(prefix, &decoded_suffix));
+            if let Ok(decoded_suffix) = percent_decode(suffix) {
+                return Cow::Owned(join_prefix_and_suffix(prefix, decoded_suffix.as_ref()));
             }
-            return Cow::Owned(join_prefix_and_suffix(prefix, suffix));
+            self.error(ErrorKind::InvalidTag, span);
+            return tag_cow;
         }
 
         // Shouldn't reach here, but return as-is
         tag_cow
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::borrow::Cow;
+
+    use super::{PercentDecodeError, percent_decode};
+
+    #[test]
+    fn percent_decode_leaves_unescaped_input_borrowable() {
+        assert_eq!(percent_decode("tag-name"), Ok(Cow::Borrowed("tag-name")));
+    }
+
+    #[test]
+    fn percent_decode_handles_ascii_escape() {
+        assert_eq!(
+            percent_decode("tag%21"),
+            Ok(Cow::Owned(String::from("tag!")))
+        );
+    }
+
+    #[test]
+    fn percent_decode_handles_multibyte_utf8_escape() {
+        assert_eq!(
+            percent_decode("caf%C3%A9"),
+            Ok(Cow::Owned(String::from("café")))
+        );
+    }
+
+    #[test]
+    fn percent_decode_handles_four_byte_utf8_escape() {
+        assert_eq!(
+            percent_decode("emoji-%F0%9F%98%80"),
+            Ok(Cow::Owned(String::from("emoji-😀")))
+        );
+    }
+
+    #[test]
+    fn percent_decode_rejects_incomplete_escape() {
+        assert_eq!(
+            percent_decode("tag%"),
+            Err(PercentDecodeError::InvalidEscape)
+        );
+    }
+
+    #[test]
+    fn percent_decode_rejects_non_hex_escape() {
+        assert_eq!(
+            percent_decode("tag%ZZ"),
+            Err(PercentDecodeError::InvalidEscape)
+        );
+    }
+
+    #[test]
+    fn percent_decode_rejects_invalid_utf8_sequence() {
+        assert_eq!(
+            percent_decode("%C3%28"),
+            Err(PercentDecodeError::InvalidUtf8)
+        );
     }
 }

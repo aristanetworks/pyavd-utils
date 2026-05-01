@@ -6,7 +6,7 @@ use std::sync::LazyLock;
 
 use crate::resolve::errors::{RefSyntax, SchemaResolverError};
 use crate::{Store, any::AnySchema};
-use regex::Regex;
+use fancy_regex::Regex;
 
 use super::walker::Walker as _;
 
@@ -21,7 +21,11 @@ pub fn resolve_ref<'a>(ref_: &str, store: &'a Store) -> Result<&'a AnySchema, Sc
     let syntax_err = || RefSyntax {
         schema_ref: ref_.to_owned(),
     };
-    let captures = REF_REGEX.captures(ref_).ok_or_else(syntax_err)?;
+    // unwrap_or_default() cannot fail: the regex is compiled above and uses no lookarounds.
+    let captures = REF_REGEX
+        .captures(ref_)
+        .unwrap_or_default()
+        .ok_or_else(syntax_err)?;
     let schema_name = captures.get(1).ok_or_else(syntax_err)?.as_str();
     let schema_path = captures.get(2).ok_or_else(syntax_err)?.as_str();
 

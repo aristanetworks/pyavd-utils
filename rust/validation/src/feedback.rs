@@ -115,7 +115,7 @@ impl<'a> FromIterator<&'a str> for Path {
     }
 }
 
-/// Feedback item carried in the Context under either `coercions` or `violations`
+/// Feedback wrapper around errors, warnings or infos providing context for the issue.
 #[derive(Clone, Debug, PartialEq, Serialize, derive_more::Display)]
 #[display("Feedback for path {path:?}: {issue}.")]
 pub struct Feedback<T: Clone + Debug + PartialEq + Serialize + Display> {
@@ -153,8 +153,10 @@ pub enum WarningIssue {
 /// InfoIssue is wrapped in Feedback and added to the Context during validation.
 #[derive(Clone, Debug, PartialEq, Serialize, derive_more::From, derive_more::Display)]
 pub enum InfoIssue {
-    /// Coercion performed during coercion.
+    /// Coercion performed during validation.
     Coercion(CoercionNote),
+    /// String lowered during validation.
+    StringLowered(StringLoweredNote),
     /// Default value as specified in the schema was inserted into the data.
     #[display("Inserted default value.")]
     DefaultValueInserted(),

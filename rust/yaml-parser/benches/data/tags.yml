@@ -6,7 +6,7 @@ integers:
   decimal: !!int 42
   octal: !!int 0o52
   hex: !!int 0x2A
-  binary: !!int 0b101010
+  signed: !!int +42
 
 floats:
   simple: !!float 3.14159

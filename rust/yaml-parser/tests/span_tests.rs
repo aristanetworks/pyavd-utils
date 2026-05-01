@@ -23,7 +23,7 @@
 mod support;
 
 use support::{emit_events_ok, parse_ok};
-use yaml_parser::{Event, ScalarStyle, Value, parse};
+use yaml_parser::{Event, Position, ScalarStyle, SourceMap, Value, parse};
 
 /// Helper to extract the text covered by a span from the input.
 fn extract_span_text(input: &str, start: usize, end: usize) -> &str {
@@ -44,6 +44,25 @@ fn assert_span_offsets_and_text(
         extract_span_text(input, actual_start, actual_end),
         expected_text,
         "unexpected span text",
+    );
+}
+
+fn assert_span_positions(
+    map: &SourceMap,
+    actual_start: usize,
+    actual_end: usize,
+    expected_start: Position,
+    expected_end: Position,
+) {
+    assert_eq!(
+        map.position(actual_start),
+        expected_start,
+        "unexpected span start position"
+    );
+    assert_eq!(
+        map.position(actual_end),
+        expected_end,
+        "unexpected span end position"
     );
 }
 
@@ -246,7 +265,8 @@ fn test_nested_structure_spans() {
 
 #[test]
 fn test_mapping_pair_structural_spans() {
-    let input = "outer:\n  inner: value";
+    let input = "outer:\r\n  inner: value\r  other: more";
+    let map = SourceMap::new(input);
     let docs = parse_ok(input);
 
     let pairs = match &docs[0].value {
@@ -260,13 +280,21 @@ fn test_mapping_pair_structural_spans() {
             pairs[0].pair_span.start_usize(),
             pairs[0].pair_span.end_usize(),
         ),
-        "outer:\n  inner: value",
+        "outer:\r\n  inner: value\r  other: more",
+    );
+    assert_span_positions(
+        &map,
+        pairs[0].pair_span.start_usize(),
+        pairs[0].pair_span.end_usize(),
+        Position::new(1, 1),
+        Position::new(3, 14),
     );
 
     let inner_pairs = match &pairs[0].value.value {
         Value::Mapping(inner_pairs) => inner_pairs,
         _ => panic!("Expected nested mapping"),
     };
+    assert_eq!(inner_pairs.len(), 2);
     assert_eq!(
         extract_span_text(
             input,
@@ -290,6 +318,43 @@ fn test_mapping_pair_structural_spans() {
             inner_pairs[0].value.span.end_usize(),
         ),
         "value",
+    );
+    assert_span_positions(
+        &map,
+        inner_pairs[0].key.span.start_usize(),
+        inner_pairs[0].key.span.end_usize(),
+        Position::new(2, 3),
+        Position::new(2, 8),
+    );
+    assert_span_positions(
+        &map,
+        inner_pairs[0].value.span.start_usize(),
+        inner_pairs[0].value.span.end_usize(),
+        Position::new(2, 10),
+        Position::new(2, 15),
+    );
+
+    assert_eq!(
+        extract_span_text(
+            input,
+            inner_pairs[1].pair_span.start_usize(),
+            inner_pairs[1].pair_span.end_usize(),
+        ),
+        "other: more",
+    );
+    assert_span_positions(
+        &map,
+        inner_pairs[1].key.span.start_usize(),
+        inner_pairs[1].key.span.end_usize(),
+        Position::new(3, 3),
+        Position::new(3, 8),
+    );
+    assert_span_positions(
+        &map,
+        inner_pairs[1].value.span.start_usize(),
+        inner_pairs[1].value.span.end_usize(),
+        Position::new(3, 10),
+        Position::new(3, 14),
     );
 }
 

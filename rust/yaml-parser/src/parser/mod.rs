@@ -17,7 +17,7 @@
 //! structural detection (indentation, flow/block contexts) is handled by the
 //! `Emitter`. The `Parser` just needs to:
 //! 1. Match start/end event pairs (mapping, sequence, document)
-//! 2. Apply type inference to scalars
+//! 2. Resolve scalars using the shared YAML 1.2 Core-schema resolver
 //! 3. Track anchors for alias validation
 #![allow(
     clippy::multiple_inherent_impl,
@@ -68,13 +68,6 @@ where
     anchors: HashSet<String>,
     /// Completed anchored nodes available for alias resolution.
     anchor_nodes: HashMap<String, Node<'input>>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum NumericKind {
-    Integer,
-    Float,
-    NotNumeric,
 }
 
 #[cfg(test)]

@@ -287,9 +287,7 @@ impl<'input> Lexer<'input> {
             '_' => String::from("\u{00A0}"),
             'L' => String::from("\u{2028}"),
             'P' => String::from("\u{2029}"),
-            'x' => self.consume_hex_escape(2),
-            'u' => self.consume_hex_escape(4),
-            'U' => self.consume_hex_escape(8),
+            'x' | 'u' | 'U' => self.consume_hex_escape(start_byte_pos, ch),
             '\n' | '\r' => {
                 // Line continuation - skip whitespace on next line
                 while matches!(self.peek(), Some(' ' | '\t' | '\n' | '\r')) {
@@ -308,24 +306,55 @@ impl<'input> Lexer<'input> {
         Some(result)
     }
 
-    fn consume_hex_escape(&mut self, digits: usize) -> String {
-        let mut hex = String::new();
+    #[allow(
+        clippy::string_slice,
+        reason = "self.byte_pos is always at proper UTF-8 boundaries"
+    )]
+    fn consume_hex_escape(&mut self, start_byte_pos: usize, escape_kind: char) -> String {
+        let digits = match escape_kind {
+            'x' => 2,
+            'u' => 4,
+            _ => 8, // 'U' case
+        };
+        let mut value = 0u32;
+        let mut consumed = 0u8;
         for _ in 0..digits {
             if let Some(peek_ch) = self.peek() {
                 if peek_ch.is_ascii_hexdigit() {
-                    hex.push(peek_ch);
+                    let digit = peek_ch.to_digit(16).unwrap();
+                    value = value * 16 + digit;
+                    consumed += 1;
                     self.advance();
                 } else {
-                    break;
+                    if peek_ch == '"' || Self::is_newline(peek_ch) {
+                        // For closing quotes we will emit length error.
+                        break;
+                    }
+                    let invalid_start = self.byte_pos;
+                    let invalid_end = invalid_start + peek_ch.len_utf8();
+                    self.add_error(
+                        ErrorKind::InvalidEscapeCharacter,
+                        Span::from_usize_range(invalid_start..invalid_end),
+                    );
+                    return self.input[start_byte_pos..self.byte_pos].to_string();
                 }
+            } else {
+                break;
             }
         }
-        if let Ok(code) = u32::from_str_radix(&hex, 16)
-            && let Some(ch) = char::from_u32(code)
+        if consumed == digits
+            && let Some(ch) = char::from_u32(value)
         {
             return ch.to_string();
         }
-        format!("\\x{hex}") // Invalid escape - keep as-is
+
+        let span = Span::from_usize_range(start_byte_pos..self.byte_pos);
+        if consumed < digits {
+            self.add_error(ErrorKind::InvalidEscapeLength { expected: digits }, span);
+        } else {
+            self.add_error(ErrorKind::InvalidUnicodeEscape, span);
+        }
+        self.input[start_byte_pos..self.byte_pos].to_string()
     }
 
     /// Try to lex a quoted scalar (`'...'` or `"..."`).
