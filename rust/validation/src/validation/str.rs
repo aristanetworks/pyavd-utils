@@ -116,22 +116,32 @@ fn validate_max_length<V: ValidatableValue>(
 
 fn validate_pattern<V: ValidatableValue>(schema: &Str, value: &V, input: &str, ctx: &mut Context) {
     if let Some(pattern) = &schema.pattern {
-        let regex_pattern = pattern.get_compiled_pattern();
-        match regex_pattern.is_match(input) {
-            Ok(true) => {}
-            Ok(false) => ctx.add_error_for(
-                value,
-                Violation::NotMatchingPattern {
-                    pattern: pattern.to_string(),
-                    found: input.into(),
-                },
-            ),
+        match pattern.get_compiled_pattern() {
             Err(e) => ctx.add_error_for(
                 value,
                 ErrorIssue::InternalError {
-                    message: e.to_string(),
+                    message: format!(
+                        "Schema contains an invalid regex pattern '{}': {e}",
+                        pattern
+                    ),
                 },
             ),
+            Ok(regex_pattern) => match regex_pattern.is_match(input) {
+                Ok(true) => {}
+                Ok(false) => ctx.add_error_for(
+                    value,
+                    Violation::NotMatchingPattern {
+                        pattern: pattern.to_string(),
+                        found: input.into(),
+                    },
+                ),
+                Err(e) => ctx.add_error_for(
+                    value,
+                    ErrorIssue::InternalError {
+                        message: e.to_string(),
+                    },
+                ),
+            },
         }
     }
 }
@@ -492,5 +502,34 @@ mod tests {
                 .into()
             }]
         );
+    }
+
+    #[test]
+    fn validate_pattern_invalid_regex_internal_error() {
+        // An unterminated character class is rejected by fancy-regex at compile time.
+        let pattern_str = "[invalid";
+        let schema = Str {
+            pattern: Some(pattern_str.into()),
+            ..Default::default()
+        };
+        let input: Value = "foo".into();
+        let store = get_test_store();
+        let mut ctx = Context::new(&store, None);
+        let _ = schema.validate(&input, &mut ctx);
+        assert!(ctx.result.infos.is_empty());
+        assert_eq!(ctx.result.errors.len(), 1);
+        match &ctx.result.errors[0].issue {
+            ErrorIssue::InternalError { message } => {
+                assert!(
+                    message.starts_with("Schema contains an invalid regex pattern '"),
+                    "unexpected message prefix: {message}"
+                );
+                assert!(
+                    message.contains(pattern_str),
+                    "message should include the offending pattern: {message}"
+                );
+            }
+            other => panic!("expected InternalError, got {other:?}"),
+        }
     }
 }
