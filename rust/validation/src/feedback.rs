@@ -185,24 +185,106 @@ pub struct SourceSpan {
     pub end: usize,
 }
 
+/// 1-based line and column location within the original source input.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct LineColumn {
+    pub line: usize,
+    pub column: usize,
+}
+
+/// Parser-native location for an input diagnostic.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub enum DiagnosticLocation {
+    SourceSpan(SourceSpan),
+    LineColumn(LineColumn),
+}
+
+impl LineColumn {
+    fn to_source_span(&self, input: &str) -> SourceSpan {
+        if self.line == 0 || self.column == 0 {
+            let end = input.len();
+            return SourceSpan { start: end, end };
+        }
+
+        let mut current_line = 1;
+        let mut current_column = 1;
+
+        for (index, ch) in input.char_indices() {
+            if current_line == self.line && current_column == self.column {
+                return SourceSpan {
+                    start: index,
+                    end: index,
+                };
+            }
+
+            if ch == '\n' {
+                current_line += 1;
+                current_column = 1;
+            } else {
+                current_column += 1;
+            }
+        }
+
+        let end = input.len();
+        SourceSpan { start: end, end }
+    }
+}
+
+impl DiagnosticLocation {
+    fn to_source_span(&self, input: &str) -> SourceSpan {
+        match self {
+            Self::SourceSpan(span) => span.clone(),
+            Self::LineColumn(position) => position.to_source_span(input),
+        }
+    }
+}
+
+/// A parser-specific error that can be normalized into a [`ParseDiagnostic`].
+///
+/// This stays separate from `ValidatableValue`: parse diagnostics are emitted
+/// before we have a validated value to work with.
+pub trait ParseDiagnosticSource {
+    /// Category of diagnostic emitted by this parser.
+    fn diagnostic_kind(&self) -> ParseDiagnosticKind;
+
+    /// Human-readable parser message.
+    fn diagnostic_message(&self) -> String;
+
+    /// Optional parser-provided fix suggestion.
+    fn diagnostic_suggestion(&self) -> Option<String> {
+        None
+    }
+
+    /// Parser-native location for this diagnostic.
+    fn as_diagnostic_location(&self) -> DiagnosticLocation;
+}
+
 /// Parse diagnostic reported while decoding structured input.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct ParseDiagnostic {
     pub kind: ParseDiagnosticKind,
     pub message: String,
     pub suggestion: Option<String>,
-    pub span: SourceSpan,
+    pub location: DiagnosticLocation,
 }
 
 impl ParseDiagnostic {
-    pub fn from_json_error(value: &serde_json::Error, input: &str) -> Self {
+    pub fn from_source<S>(value: &S) -> Self
+    where
+        S: ParseDiagnosticSource + ?Sized,
+    {
         Self {
-            kind: ParseDiagnosticKind::JsonSyntax,
-            message: value.to_string(),
-            suggestion: None,
-            span: source_span_from_json_error(input, value),
+            kind: value.diagnostic_kind(),
+            message: value.diagnostic_message(),
+            suggestion: value.diagnostic_suggestion(),
+            location: value.as_diagnostic_location(),
         }
     }
+
+    pub fn to_source_span(&self, input: &str) -> SourceSpan {
+        self.location.to_source_span(input)
+    }
+
     fn capitalize_first(input: &str) -> String {
         let mut chars = input.chars();
         match chars.next() {
@@ -234,36 +316,21 @@ pub enum ParseDiagnosticKind {
     JsonSyntax,
 }
 
-fn source_span_from_json_error(input: &str, error: &serde_json::Error) -> SourceSpan {
-    let line = error.line();
-    let column = error.column();
-
-    if line == 0 || column == 0 {
-        let end = input.len();
-        return SourceSpan { start: end, end };
+impl ParseDiagnosticSource for serde_json::Error {
+    fn diagnostic_kind(&self) -> ParseDiagnosticKind {
+        ParseDiagnosticKind::JsonSyntax
     }
 
-    let mut current_line = 1;
-    let mut current_column = 1;
-
-    for (index, ch) in input.char_indices() {
-        if current_line == line && current_column == column {
-            return SourceSpan {
-                start: index,
-                end: index,
-            };
-        }
-
-        if ch == '\n' {
-            current_line += 1;
-            current_column = 1;
-        } else {
-            current_column += 1;
-        }
+    fn diagnostic_message(&self) -> String {
+        self.to_string()
     }
 
-    let end = input.len();
-    SourceSpan { start: end, end }
+    fn as_diagnostic_location(&self) -> DiagnosticLocation {
+        DiagnosticLocation::LineColumn(LineColumn {
+            line: self.line(),
+            column: self.column(),
+        })
+    }
 }
 
 /// One violation found during recursive validation.
@@ -585,5 +652,24 @@ mod tests {
             url: Some("my.url".to_string()).into(),
         };
         assert_eq!(removed, expected_removed);
+    }
+
+    #[test]
+    fn parse_diagnostic_from_json_parse_error() {
+        let input = "{\"foo\":";
+        let parse_error = serde_json::from_str::<serde_json::Value>(input).unwrap_err();
+        let diagnostic = ParseDiagnostic::from_source(&parse_error);
+
+        assert_eq!(diagnostic.kind, ParseDiagnosticKind::JsonSyntax);
+        assert_eq!(diagnostic.suggestion, None);
+        assert_eq!(
+            diagnostic.location,
+            DiagnosticLocation::LineColumn(LineColumn { line: 1, column: 7 })
+        );
+        assert_eq!(
+            diagnostic.to_source_span(input),
+            SourceSpan { start: 6, end: 6 }
+        );
+        assert!(!diagnostic.message.is_empty());
     }
 }
