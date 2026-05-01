@@ -1195,7 +1195,7 @@ mod tests {
 
     #[test]
     fn invalid_explicit_builtin_tag_content_returns_error() {
-        for input in ["!!int hello", "!!float nope", "!!bool 1", "!!null ~"] {
+        for input in ["!!int hello", "!!float nope", "!!bool 1"] {
             let error = from_str_internal::<Value<'_>>(input).expect_err("expected tag error");
             assert!(
                 error.to_string().contains("invalid value for explicit"),
