@@ -246,7 +246,9 @@ impl<'input> Emitter<'input> {
         let mut i = start_offset;
         loop {
             match window.kind(i) {
-                Some(TokenKind::Whitespace | TokenKind::WhitespaceWithTabs) => i += 1,
+                Some(
+                    TokenKind::Whitespace | TokenKind::WhitespaceWithTabs | TokenKind::Comment,
+                ) => i += 1,
                 Some(TokenKind::LineStart | TokenKind::DocStart | TokenKind::DocEnd) | None => {
                     return true;
                 }

@@ -1209,6 +1209,53 @@ foo: bar
         );
     }
 
+    /// Test that root-indented comments do not terminate an indented block
+    /// sequence nested under a mapping value.
+    #[test]
+    fn test_root_indented_comment_does_not_end_nested_sequence() {
+        let input = "\
+list:
+
+  - item1
+
+# description at column1
+
+  - item2
+";
+        let (docs, errors) = parse(input);
+
+        assert!(
+            errors.is_empty(),
+            "root-indented comment should not trigger parse errors: {errors:?}"
+        );
+        assert_eq!(docs.len(), 1, "Should produce 1 document");
+
+        let Value::Mapping(root_pairs) = &docs[0].value else {
+            panic!("expected root mapping, got docs: {docs:#?}");
+        };
+
+        let list_pair = root_pairs
+            .iter()
+            .find(|pair| matches!(&pair.key.value, Value::String(value) if value == "list"))
+            .expect("expected `list` mapping pair");
+        let Value::Sequence(items) = &list_pair.value.value else {
+            panic!("expected `list` value to be a sequence, got docs: {docs:#?}");
+        };
+
+        let scalars: Vec<_> = items
+            .iter()
+            .map(|item| match &item.node.value {
+                Value::String(value) => value.as_ref(),
+                other => panic!("expected scalar items, got {other:?} in docs: {docs:#?}"),
+            })
+            .collect();
+        assert_eq!(
+            scalars,
+            vec!["item1", "item2"],
+            "expected comment line to be ignored structurally"
+        );
+    }
+
     /// Test that explicit document markers still take precedence over sequence
     /// recovery, so content after `...` is not recovered into the same sequence.
     #[test]
