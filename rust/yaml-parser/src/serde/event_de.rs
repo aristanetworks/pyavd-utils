@@ -318,8 +318,7 @@ impl<'de> EventStream<'de> {
         properties: Option<&Properties<'de>>,
     ) -> Result<ResolvedScalar<'de>, DeError> {
         if let Some(tag) = properties.and_then(|event_props| event_props.tag.as_ref()) {
-            resolve_tagged_scalar(value, style, tag.value.as_ref())
-                .map_err(Self::scalar_resolution_error)
+            resolve_tagged_scalar(value, tag.value.as_ref()).map_err(Self::scalar_resolution_error)
         } else {
             Ok(resolve_untagged_scalar(value, style))
         }

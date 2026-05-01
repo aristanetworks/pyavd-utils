@@ -510,7 +510,7 @@ fn test_explicit_builtin_tags_override_resolution() {
 
 #[test]
 fn test_invalid_explicit_builtin_tags_report_error_and_recover_to_string() {
-    for input in ["!!int hello", "!!float nope", "!!bool 1", "!!null ~"] {
+    for input in ["!!int hello", "!!float nope", "!!bool 1"] {
         let (docs, errors) = parse(input);
         assert!(
             errors
@@ -524,6 +524,27 @@ fn test_invalid_explicit_builtin_tags_report_error_and_recover_to_string() {
             "expected string recovery for {input:?}, got {:?}",
             docs[0].value
         );
+    }
+}
+
+#[test]
+fn test_explicit_builtin_tags_accept_valid_yaml_lexemes() {
+    let cases = [
+        ("!!float 42", Value::Float(42.0)),
+        ("!!null ~", Value::Null),
+        (
+            "-0x80000000000000000000000000000000",
+            Value::Int(Integer::I128(i128::MIN)),
+        ),
+    ];
+
+    for (input, expected) in cases {
+        let (docs, errors) = parse(input);
+        assert!(
+            errors.is_empty(),
+            "unexpected errors for {input:?}: {errors:?}"
+        );
+        assert_eq!(docs[0].value, expected, "unexpected value for {input:?}");
     }
 }
 

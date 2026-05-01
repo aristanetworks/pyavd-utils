@@ -43,7 +43,7 @@ where
             .as_ref()
             .and_then(|event_props| event_props.tag.as_ref())
         {
-            match resolve_tagged_scalar(value, style, tag.value.as_ref()) {
+            match resolve_tagged_scalar(value, tag.value.as_ref()) {
                 Ok(resolved_scalar) => resolved_scalar,
                 Err(ScalarResolutionError::InvalidExplicitBuiltinTagValue {
                     original_text,

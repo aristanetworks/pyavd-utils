@@ -119,11 +119,8 @@ pub(crate) fn resolve_untagged_scalar(
 #[inline]
 pub(crate) fn resolve_tagged_scalar<'input>(
     text: Cow<'input, str>,
-    style: ScalarStyle,
     explicit_tag: &str,
 ) -> Result<ResolvedScalar<'input>, ScalarResolutionError<'input>> {
-    let _ = style;
-
     match parse_explicit_tag(explicit_tag) {
         ExplicitTag::Builtin(builtin_tag) => resolve_explicit_builtin(builtin_tag, text),
         ExplicitTag::NonSpecific | ExplicitTag::Custom => Ok(ResolvedScalar::String(text)),
@@ -154,9 +151,7 @@ fn resolve_plain_implicit(text: Cow<'_, str>) -> ResolvedScalar<'_> {
 
     match first {
         None => ResolvedScalar::Null,
-        Some(b'~') if bytes.len() == 1 => ResolvedScalar::Null,
-        Some(b'n') if input == "null" => ResolvedScalar::Null,
-        Some(b'N') if matches!(input, "Null" | "NULL") => ResolvedScalar::Null,
+        Some(b'~' | b'n' | b'N') if parse_yaml_null(input).is_some() => ResolvedScalar::Null,
         Some(b't') if input == "true" => ResolvedScalar::Bool(true),
         Some(b'T') if matches!(input, "True" | "TRUE") => ResolvedScalar::Bool(true),
         Some(b'f') if input == "false" => ResolvedScalar::Bool(false),
@@ -215,7 +210,7 @@ fn resolve_unsigned_numeric(text: Cow<'_, str>) -> Option<ResolvedScalar<'_>> {
         DecimalNumericKind::Integer => {
             Some(ResolvedScalar::Int(parse_decimal_int(text, Sign::Positive)))
         }
-        DecimalNumericKind::Float => input.parse().ok().map(ResolvedScalar::Float),
+        DecimalNumericKind::Float => parse_finite_f64(input).map(ResolvedScalar::Float),
         DecimalNumericKind::NotNumeric => None,
     }
 }
@@ -251,7 +246,7 @@ fn resolve_signed_numeric(text: Cow<'_, str>) -> Option<ResolvedScalar<'_>> {
 
     match classify_decimal_numeric(input) {
         DecimalNumericKind::Integer => Some(ResolvedScalar::Int(parse_decimal_int(text, sign))),
-        DecimalNumericKind::Float => input.parse().ok().map(ResolvedScalar::Float),
+        DecimalNumericKind::Float => parse_finite_f64(input).map(ResolvedScalar::Float),
         DecimalNumericKind::NotNumeric => None,
     }
 }
@@ -268,7 +263,7 @@ fn resolve_dotted_numeric(text: Cow<'_, str>) -> Option<ResolvedScalar<'_>> {
     let input = text.as_ref();
     let bytes = input.as_bytes();
     match bytes.get(1).copied()? {
-        b'0'..=b'9' => input.parse().ok().map(ResolvedScalar::Float),
+        b'0'..=b'9' => parse_finite_f64(input).map(ResolvedScalar::Float),
         b'i' | b'I' | b'n' | b'N' => parse_special_yaml_float(input).map(ResolvedScalar::Float),
         _ => None,
     }
@@ -281,7 +276,7 @@ fn resolve_explicit_builtin(
     match tag {
         BuiltinScalarTag::Str => Ok(ResolvedScalar::String(text)),
         BuiltinScalarTag::Null => {
-            if parse_explicit_null(text.as_ref()).is_some() {
+            if parse_yaml_null(text.as_ref()).is_some() {
                 Ok(ResolvedScalar::Null)
             } else {
                 Err(ScalarResolutionError::InvalidExplicitBuiltinTagValue {
@@ -311,7 +306,7 @@ fn resolve_explicit_builtin(
             }
         }
         BuiltinScalarTag::Float => {
-            if let Some(value) = parse_yaml_float(text.as_ref()) {
+            if let Some(value) = parse_explicit_float(text.clone()) {
                 Ok(ResolvedScalar::Float(value))
             } else {
                 Err(ScalarResolutionError::InvalidExplicitBuiltinTagValue {
@@ -324,8 +319,8 @@ fn resolve_explicit_builtin(
 }
 
 #[inline]
-fn parse_explicit_null(input: &str) -> Option<()> {
-    matches!(input, "" | "null").then_some(())
+fn parse_yaml_null(input: &str) -> Option<()> {
+    matches!(input, "" | "~" | "null" | "Null" | "NULL").then_some(())
 }
 
 #[inline]
@@ -337,13 +332,31 @@ pub(crate) fn parse_yaml_bool(input: &str) -> Option<bool> {
     }
 }
 
-/// Full YAML float parser used for explicit tag validation.
-fn parse_yaml_float(input: &str) -> Option<f64> {
+/// Full YAML float parser used for explicit `!!float` validation.
+///
+/// YAML permits explicit `!!float` tags on integer lexical forms, so this
+/// accepts both float spellings and integer spellings that can be coerced to
+/// finite `f64`.
+fn parse_explicit_float(text: Cow<'_, str>) -> Option<f64> {
+    let input = text.as_ref();
+
     match parse_special_yaml_float(input) {
+        // Explicit YAML special float spellings such as `.inf` and `.nan`.
         Some(value) => Some(value),
-        None if classify_decimal_numeric(input) == DecimalNumericKind::Float => input.parse().ok(),
-        None => None,
+        None => match classify_decimal_numeric(input) {
+            // Decimal float and decimal integer spellings that fit as finite `f64`.
+            DecimalNumericKind::Float | DecimalNumericKind::Integer => parse_finite_f64(input),
+            // Non-decimal integer spellings such as `0x2A` and `0o52`.
+            DecimalNumericKind::NotNumeric => {
+                parse_yaml_int(text).and_then(|integer| integer_to_f64(&integer))
+            }
+        },
     }
+}
+
+#[inline]
+fn parse_finite_f64(input: &str) -> Option<f64> {
+    input.parse::<f64>().ok().filter(|value| value.is_finite())
 }
 
 /// Full YAML int parser used for explicit tag validation.
@@ -412,6 +425,11 @@ fn parse_decimal_int(input: Cow<'_, str>, sign: Sign) -> Integer<'_> {
 }
 
 fn parse_prefixed_int(sign: Sign, digits: &str, radix: u32) -> Option<Integer<'static>> {
+    const I64_MAX_MAGNITUDE: u128 = (1_u128 << 63) - 1;
+    const I64_MIN_MAGNITUDE: u128 = 1_u128 << 63;
+    const I128_MAX_MAGNITUDE: u128 = (1_u128 << 127) - 1;
+    const I128_MIN_MAGNITUDE: u128 = 1_u128 << 127;
+
     if digits.is_empty() || !digits.chars().all(|ch| ch.is_digit(radix)) {
         return None;
     }
@@ -429,11 +447,23 @@ fn parse_prefixed_int(sign: Sign, digits: &str, radix: u32) -> Option<Integer<'s
             }
         }
         Sign::Negative => {
-            if let Ok(value) = i64::from_str_radix(digits, radix) {
-                return Some(Integer::I64(-value));
-            }
-            if let Ok(value) = i128::from_str_radix(digits, radix) {
-                return Some(Integer::I128(-value));
+            if let Ok(magnitude) = u128::from_str_radix(digits, radix) {
+                if magnitude <= I64_MAX_MAGNITUDE
+                    && let Ok(value) = i64::try_from(magnitude)
+                {
+                    return Some(Integer::I64(-value));
+                }
+                if magnitude == I64_MIN_MAGNITUDE {
+                    return Some(Integer::I64(i64::MIN));
+                }
+                if magnitude <= I128_MAX_MAGNITUDE
+                    && let Ok(value) = i128::try_from(magnitude)
+                {
+                    return Some(Integer::I128(-value));
+                }
+                if magnitude == I128_MIN_MAGNITUDE {
+                    return Some(Integer::I128(i128::MIN));
+                }
             }
         }
     }
@@ -450,6 +480,13 @@ fn parse_prefixed_int(sign: Sign, digits: &str, radix: u32) -> Option<Integer<'s
     };
 
     Some(Integer::BigIntStr(Cow::Owned(normalized)))
+}
+
+/// Coerce integer to f64 accepting precision loss.
+#[allow(clippy::cast_precision_loss, reason = "Accepted precision loss")]
+fn integer_to_f64(value: &Integer<'_>) -> Option<f64> {
+    let decimal = value.to_decimal_string();
+    parse_finite_f64(decimal.as_ref())
 }
 
 fn classify_decimal_numeric(input: &str) -> DecimalNumericKind {
@@ -626,16 +663,64 @@ mod tests {
 
     #[test]
     fn explicit_builtin_tag_mismatch_returns_original_text_in_error() {
-        let resolution = resolve_tagged_scalar(
-            Cow::Borrowed("hello"),
-            ScalarStyle::Plain,
-            "tag:yaml.org,2002:int",
-        );
+        let resolution = resolve_tagged_scalar(Cow::Borrowed("hello"), "tag:yaml.org,2002:int");
         assert_eq!(
             resolution,
             Err(ScalarResolutionError::InvalidExplicitBuiltinTagValue {
                 tag: BuiltinScalarTag::Int,
                 original_text: Cow::Borrowed("hello"),
+            })
+        );
+    }
+
+    #[test]
+    fn explicit_null_accepts_core_null_spellings() {
+        for input in ["", "~", "null", "Null", "NULL"] {
+            assert_eq!(
+                resolve_tagged_scalar(Cow::Borrowed(input), "!!null"),
+                Ok(ResolvedScalar::Null),
+                "expected explicit null tag to accept {input:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn explicit_float_accepts_integer_lexemes() {
+        for input in ["42", "0o52", "0x2A"] {
+            assert_eq!(
+                resolve_tagged_scalar(Cow::Borrowed(input), "!!float"),
+                Ok(ResolvedScalar::Float(42.0)),
+                "expected explicit float tag to accept {input:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn negative_prefixed_int_min_i128_resolves_to_concrete_i128() {
+        assert_eq!(
+            resolve_untagged_scalar(
+                Cow::Borrowed("-0x80000000000000000000000000000000"),
+                ScalarStyle::Plain
+            ),
+            ResolvedScalar::Int(Integer::I128(i128::MIN))
+        );
+    }
+
+    #[test]
+    fn overflowing_decimal_float_is_not_accepted_implicitly() {
+        assert!(matches!(
+            resolve_untagged_scalar(Cow::Borrowed("1e400"), ScalarStyle::Plain),
+            ResolvedScalar::String(text) if text == "1e400"
+        ));
+    }
+
+    #[test]
+    fn overflowing_decimal_float_is_not_accepted_for_explicit_float() {
+        assert_eq!(
+            resolve_tagged_scalar(Cow::Borrowed("1e400"), "!!float"),
+            Err(ScalarResolutionError::InvalidExplicitBuiltinTagValue {
+                tag: BuiltinScalarTag::Float,
+                original_text: Cow::Borrowed("1e400"),
             })
         );
     }
