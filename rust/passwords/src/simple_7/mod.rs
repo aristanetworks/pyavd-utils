@@ -18,6 +18,8 @@ pub enum Simple7Error {
     InvalidSaltValue(u8),
     #[display("Encrypted data too short (minimum 2 characters required for salt)")]
     DataTooShort,
+    #[display("Password must not be empty")]
+    EmptyPassword,
 }
 impl std::error::Error for Simple7Error {}
 
