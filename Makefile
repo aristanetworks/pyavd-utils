@@ -67,6 +67,10 @@ install-rust: ## Provides the standard command to install the Rust toolchain usi
 	@echo "for the 'cargo' command to be immediately available in your current terminal session."
 	@echo "======================================================================"
 
+.PHONY: rust-yaml-test-suite
+rust-yaml-test-suite: ## Download the pinned YAML test suite used by rust/yaml-parser tests
+	python scripts/fetch_yaml_test_suite.py
+
 ################
 # Bump version #
 ################
