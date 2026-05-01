@@ -61,8 +61,11 @@ pub trait SchemaDataValue<'a>: Sized + Copy {
 
 pub trait SchemaDataMapping<'a>: Copy {
     type Value: SchemaDataValue<'a> + 'a;
+    type Keys: Iterator<Item = &'a String>;
 
     fn get(&self, key: &str) -> Option<Self::Value>;
+
+    fn keys(&self) -> Self::Keys;
 }
 
 pub trait SchemaDataSequence<'a> {
@@ -91,9 +94,14 @@ impl<'a> SchemaDataValue<'a> for &'a Value {
 
 impl<'a> SchemaDataMapping<'a> for &'a Map<String, Value> {
     type Value = &'a Value;
+    type Keys = serde_json::map::Keys<'a>;
 
     fn get(&self, key: &str) -> Option<Self::Value> {
         Map::get(self, key)
+    }
+
+    fn keys(&self) -> Self::Keys {
+        Map::keys(self)
     }
 }
 
