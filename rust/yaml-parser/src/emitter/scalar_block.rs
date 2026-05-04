@@ -4,13 +4,18 @@
 
 use std::borrow::Cow;
 
+use super::Emitter;
+use super::LineType;
+use super::states::EmitterProperties;
+use super::states::ParseState;
 use crate::error::ErrorKind;
-use crate::event::{Event, ScalarStyle};
-use crate::lexer::{Token, TokenKind};
-use crate::span::{BytePosition, IndentLevel, Span};
-
-use super::states::{EmitterProperties, ParseState};
-use super::{Emitter, LineType};
+use crate::event::Event;
+use crate::event::ScalarStyle;
+use crate::lexer::Token;
+use crate::lexer::TokenKind;
+use crate::span::BytePosition;
+use crate::span::IndentLevel;
+use crate::span::Span;
 
 impl<'input> Emitter<'input> {
     pub(super) fn parse_block_scalar(

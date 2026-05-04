@@ -20,6 +20,8 @@ env:
   PY_COLORS: 1
   # rust
   CARGO_TERM_COLOR: always
+  CARGO_DENY_VERSION: "0.19.4"
+  CARGO_LLVM_COV_VERSION: "0.8.5"
 
 jobs:
   # -------------------------------------------- #
@@ -78,18 +80,23 @@ jobs:
           - macos-latest
     steps:
       - uses: actions/checkout@v6
-        # This is needed for arm machines since they don't ship with 2024 edition.
-      - name: Upgrade rust and cargo
-        run: rustup update stable
-        # This is needed because we have pyo3 tests and our minimum python version is 3.10.
-        # On some test containers (looking at you windows-latest) the included Python is 3.9.
+      - name: Install Rust toolchain from rust-toolchain.toml
+        run: rustup show
+      # This is needed because we have pyo3 tests and our minimum python version is 3.10.
+      # On some test containers (looking at you windows-latest) the included Python is 3.9.
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
       - name: Install YAML test suite fixture
         run: python scripts/fetch_yaml_test_suite.py
-      - name: Check code formatting with cargo fmt
-        run: cargo fmt --verbose
+      - name: Check code formatting with cargo fmt (nightly)
+        run: >-
+          RUSTUP_TOOLCHAIN=nightly cargo fmt
+          --verbose
+          --check
+          --all
+          --
+          --config unstable_features=true,group_imports=StdExternalCrate,imports_granularity=Item
         if: |
           matrix.os == 'ubuntu-latest'
       - name: Check code style with clippy
@@ -100,8 +107,7 @@ jobs:
         run: cargo test --all-targets --all-features
       - name: Generate coverage report with cargo llvm-cov
         run: |
-          rustup component add llvm-tools-preview --toolchain stable-x86_64-unknown-linux-gnu
-          cargo install cargo-llvm-cov
+          cargo install cargo-llvm-cov --version ${{ env.CARGO_LLVM_COV_VERSION }} --locked
           cargo llvm-cov --all-targets --all-features --lcov --output-path lcov.info
         if: |
           matrix.os == 'ubuntu-latest'
@@ -116,7 +122,7 @@ jobs:
         run: cargo build --all-targets --all-features
       - name: Check Rust dependencies with cargo deny
         run: |
-          cargo install cargo-deny
+          cargo install cargo-deny --version ${{ env.CARGO_DENY_VERSION }} --locked
           cargo deny check
         if: |-
           matrix.os == 'ubuntu-latest'

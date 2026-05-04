@@ -4,13 +4,13 @@
 
 use std::borrow::Cow;
 
+use super::Parser;
 use crate::ast_event::AstEvent;
 use crate::error::ErrorKind;
 use crate::event::Property as EventProperty;
 use crate::span::Span;
-use crate::value::{Node, Properties as NodeProperties};
-
-use super::Parser;
+use crate::value::Node;
+use crate::value::Properties as NodeProperties;
 
 impl<'input, I> Parser<'input, I>
 where

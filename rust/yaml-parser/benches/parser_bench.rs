@@ -33,9 +33,12 @@
 use std::hint::black_box;
 use std::time::Duration;
 
-use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use criterion::BenchmarkId;
+use criterion::Criterion;
+use criterion::Throughput;
+use criterion::criterion_group;
+use criterion::criterion_main;
 use saphyr::LoadableYamlNode as _;
-
 #[cfg(feature = "serde")]
 use serde::Deserialize;
 

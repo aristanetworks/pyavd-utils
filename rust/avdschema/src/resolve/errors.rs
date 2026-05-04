@@ -2,9 +2,8 @@
 // Use of this source code is governed by the Apache License 2.0
 // that can be found in the LICENSE file.
 
-use crate::store::SchemaStoreError;
-
 use super::walker::SchemaWalkError;
+use crate::store::SchemaStoreError;
 
 // Errors in this file are returned by SchemaResolve.
 // Other utilities using SchemaResolve may also return these wrapped in their own Enums.

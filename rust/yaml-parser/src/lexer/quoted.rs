@@ -4,9 +4,13 @@
 
 use std::borrow::Cow;
 
-use super::{Lexer, QuoteStyle, RichToken, Token};
+use super::Lexer;
+use super::QuoteStyle;
+use super::RichToken;
+use super::Token;
 use crate::error::ErrorKind;
-use crate::span::{Span, Spanned};
+use crate::span::Span;
+use crate::span::Spanned;
 
 impl<'input> Lexer<'input> {
     /// Check if the current position has a forbidden document marker (`---` or `...`)

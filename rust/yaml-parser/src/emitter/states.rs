@@ -4,12 +4,12 @@
 
 use std::borrow::Cow;
 
-use crate::{
-    Span,
-    event::{Properties as EventProperties, Property as EventProperty},
-    lexer::{BlockScalarHeader, QuoteStyle},
-    span::IndentLevel,
-};
+use crate::Span;
+use crate::event::Properties as EventProperties;
+use crate::event::Property as EventProperty;
+use crate::lexer::BlockScalarHeader;
+use crate::lexer::QuoteStyle;
+use crate::span::IndentLevel;
 
 /// Sparse emitter-side property carrier.
 ///

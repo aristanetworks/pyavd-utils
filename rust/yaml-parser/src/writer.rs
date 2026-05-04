@@ -21,9 +21,12 @@
 //! - formatting is chosen by the writer and is not intended to be a
 //!   presentation-perfect reproduction of the original source.
 
-use std::io::{self, Write};
+use std::io::Write;
 
-use crate::event::{CollectionStyle, Event, Properties, ScalarStyle};
+use crate::event::CollectionStyle;
+use crate::event::Event;
+use crate::event::Properties;
+use crate::event::ScalarStyle;
 
 const EMPTY_PROPERTIES: Properties<'static> = Properties {
     anchor: None,
@@ -35,7 +38,7 @@ const INDENT_CHUNK: [u8; 64] = [b' '; 64];
 ///
 /// This function consumes an in-memory event slice and emits a single YAML
 /// stream using a simple, mostly block-style presentation.
-pub fn write_yaml_from_events<W>(mut writer: W, events: &[Event<'_>]) -> io::Result<()>
+pub fn write_yaml_from_events<W>(mut writer: W, events: &[Event<'_>]) -> std::io::Result<()>
 where
     W: Write,
 {
@@ -73,9 +76,9 @@ impl<'a, 'input, W: Write> WriterState<'a, 'input, W> {
         }
     }
 
-    fn tick(&mut self, context: &str) -> io::Result<()> {
+    fn tick(&mut self, context: &str) -> std::io::Result<()> {
         if self.guard == 0 {
-            return Err(io::Error::other(format!(
+            return Err(std::io::Error::other(format!(
                 "yaml writer made no progress (guard exhausted) in {context} at pos {} with event {:?}",
                 self.pos,
                 self.peek(),
@@ -85,7 +88,7 @@ impl<'a, 'input, W: Write> WriterState<'a, 'input, W> {
         Ok(())
     }
 
-    fn write_stream(&mut self) -> io::Result<()> {
+    fn write_stream(&mut self) -> std::io::Result<()> {
         while let Some(event) = self.peek().cloned() {
             self.tick("write_stream")?;
             match event {
@@ -139,7 +142,7 @@ impl<'a, 'input, W: Write> WriterState<'a, 'input, W> {
         Ok(())
     }
 
-    fn write_node(&mut self) -> io::Result<()> {
+    fn write_node(&mut self) -> std::io::Result<()> {
         let Some(next_event) = self.peek().cloned() else {
             return Ok(());
         };
@@ -183,7 +186,7 @@ impl<'a, 'input, W: Write> WriterState<'a, 'input, W> {
         &mut self,
         style: CollectionStyle,
         properties: Option<&Properties<'input>>,
-    ) -> io::Result<()> {
+    ) -> std::io::Result<()> {
         let mapping_props = Self::properties_or_empty(properties);
         match style {
             CollectionStyle::Block => self.write_block_mapping(mapping_props),
@@ -195,7 +198,7 @@ impl<'a, 'input, W: Write> WriterState<'a, 'input, W> {
         &mut self,
         style: CollectionStyle,
         properties: Option<&Properties<'input>>,
-    ) -> io::Result<()> {
+    ) -> std::io::Result<()> {
         let sequence_props = Self::properties_or_empty(properties);
         match style {
             CollectionStyle::Block => self.write_block_sequence(sequence_props),
@@ -208,7 +211,7 @@ impl<'a, 'input, W: Write> WriterState<'a, 'input, W> {
         clippy::too_many_lines,
         reason = "block mapping writer is intentionally monolithic for now; refactoring would be non-trivial"
     )]
-    fn write_block_mapping(&mut self, mapping_props: &Properties<'input>) -> io::Result<()> {
+    fn write_block_mapping(&mut self, mapping_props: &Properties<'input>) -> std::io::Result<()> {
         // Simple block-style mapping with scalar keys and scalar/collection values.
         self.advance(); // consume MappingStart
         let base_indent = self.indent;
@@ -467,7 +470,7 @@ impl<'a, 'input, W: Write> WriterState<'a, 'input, W> {
     }
 
     // TODO: Add representation for empty sequence.
-    fn write_block_sequence(&mut self, sequence_props: &Properties<'input>) -> io::Result<()> {
+    fn write_block_sequence(&mut self, sequence_props: &Properties<'input>) -> std::io::Result<()> {
         self.advance(); // consume SequenceStart
         let base_indent = self.indent;
         if !sequence_props.is_empty() {
@@ -527,7 +530,7 @@ impl<'a, 'input, W: Write> WriterState<'a, 'input, W> {
         Ok(())
     }
 
-    fn write_flow_sequence(&mut self, sequence_props: &Properties<'input>) -> io::Result<()> {
+    fn write_flow_sequence(&mut self, sequence_props: &Properties<'input>) -> std::io::Result<()> {
         self.advance(); // consume SequenceStart
         if self.at_line_start {
             self.write_indent()?;
@@ -562,7 +565,7 @@ impl<'a, 'input, W: Write> WriterState<'a, 'input, W> {
         Ok(())
     }
 
-    fn write_flow_mapping(&mut self, mapping_props: &Properties<'input>) -> io::Result<()> {
+    fn write_flow_mapping(&mut self, mapping_props: &Properties<'input>) -> std::io::Result<()> {
         self.advance(); // consume MappingStart
         if self.at_line_start {
             self.write_indent()?;
@@ -621,7 +624,7 @@ impl<'a, 'input, W: Write> WriterState<'a, 'input, W> {
         style: ScalarStyle,
         properties: Option<&Properties<'input>>,
         suffix: Option<char>,
-    ) -> io::Result<()> {
+    ) -> std::io::Result<()> {
         let scalar_props = Self::properties_or_empty(properties);
         if let Some(Event::Scalar { value, .. }) = self.peek().cloned() {
             self.advance();
@@ -713,7 +716,7 @@ impl<'a, 'input, W: Write> WriterState<'a, 'input, W> {
         Ok(())
     }
 
-    fn write_alias(&mut self) -> io::Result<()> {
+    fn write_alias(&mut self) -> std::io::Result<()> {
         if let Some(Event::Alias { name, .. }) = self.peek().cloned() {
             self.advance();
             let mut buf = String::new();
@@ -726,7 +729,7 @@ impl<'a, 'input, W: Write> WriterState<'a, 'input, W> {
     }
 
     #[allow(clippy::indexing_slicing, reason = "chunk size handled")]
-    fn write_indent(&mut self) -> io::Result<()> {
+    fn write_indent(&mut self) -> std::io::Result<()> {
         let mut remaining = self.indent;
         while remaining >= INDENT_CHUNK.len() {
             self.out.write_all(&INDENT_CHUNK)?;
@@ -739,7 +742,7 @@ impl<'a, 'input, W: Write> WriterState<'a, 'input, W> {
         Ok(())
     }
 
-    fn write_properties(&mut self, properties: &Properties<'input>) -> io::Result<()> {
+    fn write_properties(&mut self, properties: &Properties<'input>) -> std::io::Result<()> {
         if let Some(anchor) = &properties.anchor {
             self.out.write_all(b"&")?;
             self.out.write_all(anchor.value.as_ref().as_bytes())?;

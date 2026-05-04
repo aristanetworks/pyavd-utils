@@ -34,14 +34,14 @@
 mod support;
 
 #[cfg(feature = "serde")]
-use saphyr::{LoadableYamlNode as _, Yaml};
-
-use support::parse_ok;
-use yaml_parser::{Integer, Value};
-
+use saphyr::LoadableYamlNode as _;
+#[cfg(feature = "serde")]
+use saphyr::Yaml;
 #[cfg(feature = "serde")]
 use serde::Deserialize;
-
+use support::parse_ok;
+use yaml_parser::Integer;
+use yaml_parser::Value;
 #[cfg(feature = "serde")]
 use yaml_parser::serde::DeError;
 

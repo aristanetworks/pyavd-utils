@@ -4,13 +4,16 @@
 
 use avdschema::Store;
 
-use crate::{
-    feedback::{
-        CoercionNote, ErrorIssue, Feedback, InfoIssue, Path, StringLoweredNote, Value, Violation,
-        WarningIssue,
-    },
-    validatable::ValidatableValue,
-};
+use crate::feedback::CoercionNote;
+use crate::feedback::ErrorIssue;
+use crate::feedback::Feedback;
+use crate::feedback::InfoIssue;
+use crate::feedback::Path;
+use crate::feedback::StringLoweredNote;
+use crate::feedback::Value;
+use crate::feedback::Violation;
+use crate::feedback::WarningIssue;
+use crate::validatable::ValidatableValue;
 
 /// The Context object is passed along during coercion and validation.
 /// All coercions and violations will be registered in the context with the path carried in the context.

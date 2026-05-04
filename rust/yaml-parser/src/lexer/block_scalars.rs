@@ -2,9 +2,13 @@
 // Use of this source code is governed by the Apache License 2.0
 // that can be found in the LICENSE file.
 
-use super::{BlockScalarHeader, Chomping, Lexer, Token};
+use super::BlockScalarHeader;
+use super::Chomping;
+use super::Lexer;
+use super::Token;
 use crate::error::ErrorKind;
-use crate::span::{Span, Spanned};
+use crate::span::Span;
+use crate::span::Spanned;
 
 impl<'input> Lexer<'input> {
     /// Try to lex a block scalar header (`|` or `>`).

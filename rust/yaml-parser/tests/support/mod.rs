@@ -12,7 +12,10 @@
 // These helpers enforce the invariant that "positive" tests (those that
 // expect successful parsing) must not ignore parser/emitter errors.
 
-use yaml_parser::{Event, Stream, emit_events, parse};
+use yaml_parser::Event;
+use yaml_parser::Stream;
+use yaml_parser::emit_events;
+use yaml_parser::parse;
 
 /// Parse input as YAML and assert that the parser reports no errors.
 ///

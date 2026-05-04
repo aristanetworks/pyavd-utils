@@ -2,15 +2,16 @@
 // Use of this source code is governed by the Apache License 2.0
 // that can be found in the LICENSE file.
 
-use crate::{any::Shortcuts, base::Deprecation};
-
-use super::{
-    any::AnySchema,
-    base::{Base, documentation_options::DocumentationOptions},
-};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
+use serde::Serialize;
 use serde_json::Value;
 use serde_with::skip_serializing_none;
+
+use super::any::AnySchema;
+use super::base::Base;
+use super::base::documentation_options::DocumentationOptions;
+use crate::any::Shortcuts;
+use crate::base::Deprecation;
 
 /// AVD Schema for boolean data.
 #[skip_serializing_none]
@@ -48,9 +49,9 @@ impl<'x> TryFrom<&'x AnySchema> for &'x Bool {
 
 #[cfg(test)]
 mod tests {
-    use crate::{any::AnySchema, str::Str};
-
     use super::Bool;
+    use crate::any::AnySchema;
+    use crate::str::Str;
 
     #[test]
     fn try_from_anyschema_ok() {

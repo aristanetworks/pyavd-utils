@@ -2,9 +2,9 @@
 // Use of this source code is governed by the Apache License 2.0
 // that can be found in the LICENSE file.
 
-use super::passwords;
-
 use pyo3::types::PyAnyMethods as _;
+
+use super::passwords;
 
 // Initializing python only once. Otherwise things may crash when running in multiple threads.
 static INIT_PY: std::sync::Once = std::sync::Once::new();

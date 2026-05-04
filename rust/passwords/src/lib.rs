@@ -9,7 +9,11 @@
 mod sha512;
 
 #[cfg(feature = "sha512")]
-pub use crate::sha512::{InvalidSaltError, Sha512CryptError, sha512_crypt};
+pub use crate::sha512::InvalidSaltError;
+#[cfg(feature = "sha512")]
+pub use crate::sha512::Sha512CryptError;
+#[cfg(feature = "sha512")]
+pub use crate::sha512::sha512_crypt;
 
 // Feature cbc
 
@@ -17,7 +21,13 @@ pub use crate::sha512::{InvalidSaltError, Sha512CryptError, sha512_crypt};
 mod cbc;
 
 #[cfg(feature = "cbc")]
-pub use crate::cbc::{CbcError, cbc_check_password, cbc_decrypt, cbc_encrypt};
+pub use crate::cbc::CbcError;
+#[cfg(feature = "cbc")]
+pub use crate::cbc::cbc_check_password;
+#[cfg(feature = "cbc")]
+pub use crate::cbc::cbc_decrypt;
+#[cfg(feature = "cbc")]
+pub use crate::cbc::cbc_encrypt;
 
 // Feature simple-7
 
@@ -25,4 +35,8 @@ pub use crate::cbc::{CbcError, cbc_check_password, cbc_decrypt, cbc_encrypt};
 mod simple_7;
 
 #[cfg(feature = "simple-7")]
-pub use crate::simple_7::{Simple7Error, simple_7_decrypt, simple_7_encrypt};
+pub use crate::simple_7::Simple7Error;
+#[cfg(feature = "simple-7")]
+pub use crate::simple_7::simple_7_decrypt;
+#[cfg(feature = "simple-7")]
+pub use crate::simple_7::simple_7_encrypt;

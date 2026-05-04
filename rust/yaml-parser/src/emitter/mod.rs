@@ -34,17 +34,30 @@ mod value;
 use std::borrow::Cow;
 use std::collections::HashSet;
 
-use crate::ast_event::AstEvent;
-use crate::error::{ErrorKind, ParseError};
-use crate::event::{Comment, Event, Property, ScalarStyle};
-use crate::lexer::{Token, TokenKind};
-use crate::span::{BytePosition, IndentLevel, Span, usize_to_indent};
-
 use cursor::TokenCursor;
-use states::{
-    BlockMapPhase, BlockSeqPhase, DocState, EmitterProperties, FlowMapPhase, FlowSeqPhase,
-    ParseState, ValueContext, ValueKind,
-};
+use states::BlockMapPhase;
+use states::BlockSeqPhase;
+use states::DocState;
+use states::EmitterProperties;
+use states::FlowMapPhase;
+use states::FlowSeqPhase;
+use states::ParseState;
+use states::ValueContext;
+use states::ValueKind;
+
+use crate::ast_event::AstEvent;
+use crate::error::ErrorKind;
+use crate::error::ParseError;
+use crate::event::Comment;
+use crate::event::Event;
+use crate::event::Property;
+use crate::event::ScalarStyle;
+use crate::lexer::Token;
+use crate::lexer::TokenKind;
+use crate::span::BytePosition;
+use crate::span::IndentLevel;
+use crate::span::Span;
+use crate::span::usize_to_indent;
 
 /// Result of deciding what to do with collected properties at a dedented
 /// indent: either emit an empty scalar now, or keep the properties attached to

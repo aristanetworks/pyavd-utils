@@ -2,7 +2,8 @@
 // Use of this source code is governed by the Apache License 2.0
 // that can be found in the LICENSE file.
 
-use sha_crypt::{Sha512Params, sha512_crypt_b64};
+use sha_crypt::Sha512Params;
+use sha_crypt::sha512_crypt_b64;
 
 #[derive(Debug, derive_more::Display, derive_more::From)]
 pub enum Sha512CryptError {

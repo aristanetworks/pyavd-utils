@@ -2,11 +2,13 @@
 // Use of this source code is governed by the Apache License 2.0
 // that can be found in the LICENSE file.
 
+use super::Emitter;
+use super::PendingAstWrap;
 use crate::ast_event::AstEvent;
-use crate::event::{Comment, Event};
-use crate::lexer::{Token, TokenKind};
-
-use super::{Emitter, PendingAstWrap};
+use crate::event::Comment;
+use crate::event::Event;
+use crate::lexer::Token;
+use crate::lexer::TokenKind;
 
 impl<'input> Emitter<'input> {
     pub(super) fn set_pending_ast_wrap(&mut self, wrap: PendingAstWrap) {

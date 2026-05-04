@@ -2,7 +2,9 @@
 // Use of this source code is governed by the Apache License 2.0
 // that can be found in the LICENSE file.
 
-use super::{LexMode, Lexer, Token};
+use super::LexMode;
+use super::Lexer;
+use super::Token;
 use crate::span::Spanned;
 
 impl<'input> Lexer<'input> {

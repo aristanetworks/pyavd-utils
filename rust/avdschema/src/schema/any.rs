@@ -5,19 +5,23 @@
 #[cfg(feature = "dump_load_files")]
 use std::path::PathBuf;
 
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
+use serde::Serialize;
 use serde_json::Value;
 
-use crate::{
-    base::Deprecation,
-    delegate_anyschema_method,
-    utils::{dump::Dump, load::Load},
-};
-
+use super::boolean::Bool;
+use super::dict::Dict;
+use super::int::Int;
+use super::list::List;
+use super::str::Str;
+use crate::base::Deprecation;
+use crate::delegate_anyschema_method;
+use crate::utils::dump::Dump;
+use crate::utils::load::Load;
 #[cfg(feature = "dump_load_files")]
-use crate::utils::load::{LoadError, LoadFromFragments};
-
-use super::{boolean::Bool, dict::Dict, int::Int, list::List, str::Str};
+use crate::utils::load::LoadError;
+#[cfg(feature = "dump_load_files")]
+use crate::utils::load::LoadFromFragments;
 
 /// Enum covering all AVD Schema types.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, derive_more::From)]

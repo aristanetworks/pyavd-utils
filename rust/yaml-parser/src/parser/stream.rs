@@ -2,13 +2,13 @@
 // Use of this source code is governed by the Apache License 2.0
 // that can be found in the LICENSE file.
 
+use super::Parser;
 use crate::ast_event::AstEvent;
-use crate::error::{ErrorKind, ParseError};
+use crate::error::ErrorKind;
+use crate::error::ParseError;
 use crate::event::Event;
 use crate::span::Span;
 use crate::value::Node;
-
-use super::Parser;
 
 impl<'input, I> Parser<'input, I>
 where

@@ -20,7 +20,8 @@
 use std::borrow::Cow;
 
 use crate::event::ScalarStyle;
-use crate::value::{Integer, Value};
+use crate::value::Integer;
+use crate::value::Value;
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum ResolvedScalar<'input> {
@@ -634,10 +635,11 @@ fn split_decimal(value: u32) -> Option<(u8, u32)> {
 mod tests {
     use std::borrow::Cow;
 
-    use super::{
-        BuiltinScalarTag, ResolvedScalar, ScalarResolutionError, resolve_tagged_scalar,
-        resolve_untagged_scalar,
-    };
+    use super::BuiltinScalarTag;
+    use super::ResolvedScalar;
+    use super::ScalarResolutionError;
+    use super::resolve_tagged_scalar;
+    use super::resolve_untagged_scalar;
     use crate::event::ScalarStyle;
     use crate::value::Integer;
 

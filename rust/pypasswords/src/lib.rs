@@ -9,11 +9,10 @@ use pyo3::pymodule;
 #[pyo3(name = "passwords")]
 mod passwords {
 
-    use pyo3::{
-        PyResult,
-        exceptions::{PyRuntimeError, PyValueError},
-        pyfunction,
-    };
+    use pyo3::PyResult;
+    use pyo3::exceptions::PyRuntimeError;
+    use pyo3::exceptions::PyValueError;
+    use pyo3::pyfunction;
 
     #[cfg(feature = "sha512")]
     #[pyfunction]

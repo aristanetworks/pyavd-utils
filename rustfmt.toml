@@ -1,0 +1,4 @@
+# Note there is a pre-commit hook running nightly with certain config overrides.
+
+# Use the latest formatting logic available on Stable
+style_edition = "2024"

@@ -2,7 +2,8 @@
 // Use of this source code is governed by the Apache License 2.0
 // that can be found in the LICENSE file.
 
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
+use serde::Serialize;
 use serde_with::skip_serializing_none;
 
 // Valid values allowed by schema. Used for Int and Str schemas.

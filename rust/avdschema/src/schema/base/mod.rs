@@ -7,7 +7,8 @@ pub mod documentation_options;
 pub mod valid_values;
 
 use ordermap::OrderMap;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
+use serde::Serialize;
 use serde_json::Value;
 use serde_with::skip_serializing_none;
 

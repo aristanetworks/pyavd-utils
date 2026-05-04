@@ -4,16 +4,26 @@
 
 use std::borrow::Cow;
 
+use super::Emitter;
+use super::MaybeEmptyScalarDecision;
+use super::PendingAstWrap;
+use super::states::BlockMapPhase;
+use super::states::BlockSeqPhase;
+use super::states::EmitterProperties;
+use super::states::FlowMapPhase;
+use super::states::FlowSeqPhase;
+use super::states::ParseState;
+use super::states::ValueContext;
+use super::states::ValueKind;
 use crate::error::ErrorKind;
-use crate::event::{Event, Properties, ScalarStyle};
-use crate::lexer::{Token, TokenKind};
-use crate::span::{IndentLevel, Span, usize_to_indent};
-
-use super::states::{
-    BlockMapPhase, BlockSeqPhase, EmitterProperties, FlowMapPhase, FlowSeqPhase, ParseState,
-    ValueContext, ValueKind,
-};
-use super::{Emitter, MaybeEmptyScalarDecision, PendingAstWrap};
+use crate::event::Event;
+use crate::event::Properties;
+use crate::event::ScalarStyle;
+use crate::lexer::Token;
+use crate::lexer::TokenKind;
+use crate::span::IndentLevel;
+use crate::span::Span;
+use crate::span::usize_to_indent;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PercentDecodeError {
@@ -1246,7 +1256,8 @@ impl<'input> Emitter<'input> {
 mod tests {
     use std::borrow::Cow;
 
-    use super::{PercentDecodeError, percent_decode};
+    use super::PercentDecodeError;
+    use super::percent_decode;
 
     #[test]
     fn percent_decode_leaves_unescaped_input_borrowable() {

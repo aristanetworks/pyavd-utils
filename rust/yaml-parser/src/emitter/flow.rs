@@ -4,16 +4,22 @@
 
 use std::borrow::Cow;
 
-use crate::error::ErrorKind;
-use crate::event::{Event, ScalarStyle};
-use crate::lexer::{Token, TokenKind};
-use crate::span::{IndentLevel, Span};
-
+use super::Emitter;
+use super::PendingAstWrap;
 use super::cursor::LookaheadWindow;
-use super::states::{
-    EmitterProperties, FlowMapPhase, FlowSeqPhase, ParseState, ValueContext, ValueKind,
-};
-use super::{Emitter, PendingAstWrap};
+use super::states::EmitterProperties;
+use super::states::FlowMapPhase;
+use super::states::FlowSeqPhase;
+use super::states::ParseState;
+use super::states::ValueContext;
+use super::states::ValueKind;
+use crate::error::ErrorKind;
+use crate::event::Event;
+use crate::event::ScalarStyle;
+use crate::lexer::Token;
+use crate::lexer::TokenKind;
+use crate::span::IndentLevel;
+use crate::span::Span;
 
 impl<'input> Emitter<'input> {
     pub(super) fn is_flow_seq_complex_key(&self) -> bool {
