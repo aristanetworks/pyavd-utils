@@ -2,12 +2,17 @@
 // Use of this source code is governed by the Apache License 2.0
 // that can be found in the LICENSE file.
 
-use serde::de::DeserializeOwned;
-use std::io::BufReader;
-
 #[cfg(feature = "dump_load_files")]
-use std::{ffi::OsStr, fs::File, io, path::Path};
+use std::ffi::OsStr;
+#[cfg(feature = "dump_load_files")]
+use std::fs::File;
+#[cfg(feature = "dump_load_files")]
+use std::io;
+use std::io::BufReader;
+#[cfg(feature = "dump_load_files")]
+use std::path::Path;
 
+use serde::de::DeserializeOwned;
 #[cfg(feature = "dump_load_files")]
 use walkdir::WalkDir;
 
@@ -127,7 +132,9 @@ mod tests {
     use super::Load;
     use crate::Store;
     use crate::any::AnySchema;
-    use crate::utils::test_utils::{get_test_dict_schema, get_test_store, get_tmp_file};
+    use crate::utils::test_utils::get_test_dict_schema;
+    use crate::utils::test_utils::get_test_store;
+    use crate::utils::test_utils::get_tmp_file;
 
     #[test]
     fn load_yaml() {

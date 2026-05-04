@@ -2,11 +2,13 @@
 // Use of this source code is governed by the Apache License 2.0
 // that can be found in the LICENSE file.
 
-use crate::lexer::{Token, TokenKind};
-use crate::span::{BytePosition, IndentLevel, Span};
-
 use super::Emitter;
 use super::cursor::LookaheadWindow;
+use crate::lexer::Token;
+use crate::lexer::TokenKind;
+use crate::span::BytePosition;
+use crate::span::IndentLevel;
+use crate::span::Span;
 
 impl<'input> Emitter<'input> {
     pub(super) fn mapping_key_insertion_span(&self) -> Span {

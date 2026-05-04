@@ -5,21 +5,20 @@
 use std::sync::OnceLock;
 
 use ordermap::OrderMap;
-use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value};
+use serde::Deserialize;
+use serde::Serialize;
+use serde_json::Map;
+use serde_json::Value;
 use serde_with::skip_serializing_none;
 
-use crate::{
-    SchemaDataValue,
-    any::Shortcuts,
-    base::Deprecation,
-    utils::schema_data::{SchemaDataMapping, SchemaDataSequence},
-};
-
-use super::{
-    any::AnySchema,
-    base::{Base, documentation_options::DocumentationOptionsDict},
-};
+use super::any::AnySchema;
+use super::base::Base;
+use super::base::documentation_options::DocumentationOptionsDict;
+use crate::SchemaDataValue;
+use crate::any::Shortcuts;
+use crate::base::Deprecation;
+use crate::utils::schema_data::SchemaDataMapping;
+use crate::utils::schema_data::SchemaDataSequence;
 
 pub type DefaultDynamicKeys = OrderMap<String, Vec<String>>;
 type CachedDefaultDynamicKeys = Option<Box<DefaultDynamicKeys>>;
@@ -208,11 +207,15 @@ pub struct DynamicKeyInfo<'a> {
 #[cfg(test)]
 mod tests {
     use ordermap::OrderMap;
-    use serde_json::{Value, json};
+    use serde_json::Value;
+    use serde_json::json;
 
-    use crate::{any::AnySchema, boolean::Bool, utils::test_utils::get_test_dict_schema};
-
-    use super::{DefaultDynamicKeys, Dict, DynamicKeyInfo};
+    use super::DefaultDynamicKeys;
+    use super::Dict;
+    use super::DynamicKeyInfo;
+    use crate::any::AnySchema;
+    use crate::boolean::Bool;
+    use crate::utils::test_utils::get_test_dict_schema;
 
     #[test]
     fn try_from_anyschema_ok() {

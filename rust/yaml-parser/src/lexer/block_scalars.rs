@@ -4,9 +4,14 @@
 
 use std::borrow::Cow;
 
-use super::{BlockScalarHeader, BlockScalarToken, Chomping, Lexer, Token};
+use super::BlockScalarHeader;
+use super::BlockScalarToken;
+use super::Chomping;
+use super::Lexer;
+use super::Token;
 use crate::error::ErrorKind;
-use crate::span::{Span, Spanned};
+use crate::span::Span;
+use crate::span::Spanned;
 
 #[derive(Clone, Copy, PartialEq)]
 enum BlockLineType {

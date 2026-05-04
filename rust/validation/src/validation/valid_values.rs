@@ -4,9 +4,9 @@
 
 use avdschema::base::valid_values::ValidValues;
 
+use crate::context::Context;
 use crate::feedback::Violation;
-
-use crate::{context::Context, validatable::ValidatableValue};
+use crate::validatable::ValidatableValue;
 
 pub(crate) trait ValidateValidValues<T> {
     /// Validate that the value is one of the valid values.

@@ -2,15 +2,17 @@
 // Use of this source code is governed by the Apache License 2.0
 // that can be found in the LICENSE file.
 
-use avdschema::{any::AnySchema, resolve_ref, str::Str};
+use avdschema::any::AnySchema;
+use avdschema::resolve_ref;
+use avdschema::str::Str;
 
-use crate::{
-    context::Context,
-    feedback::{ErrorIssue, Type, Violation},
-    validatable::ValidatableValue,
-};
-
-use super::{Validation, valid_values::ValidateValidValues as _};
+use super::Validation;
+use super::valid_values::ValidateValidValues as _;
+use crate::context::Context;
+use crate::feedback::ErrorIssue;
+use crate::feedback::Type;
+use crate::feedback::Violation;
+use crate::validatable::ValidatableValue;
 
 impl Validation for Str {
     fn validate<V: ValidatableValue>(&self, value: &V, ctx: &mut Context) -> Option<V::Coerced> {
@@ -152,11 +154,11 @@ mod tests {
     use serde_json::Value;
 
     use super::*;
-    use crate::{
-        Configuration,
-        feedback::{CoercionNote, Feedback, StringLoweredNote},
-        validation::test_utils::get_test_store,
-    };
+    use crate::Configuration;
+    use crate::feedback::CoercionNote;
+    use crate::feedback::Feedback;
+    use crate::feedback::StringLoweredNote;
+    use crate::validation::test_utils::get_test_store;
 
     #[test]
     fn validate_type_ok() {

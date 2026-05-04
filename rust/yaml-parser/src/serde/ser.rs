@@ -14,23 +14,33 @@
 //! `SerError` variants rather than being fully supported.
 
 use std::fmt;
-use std::io::{self, Write};
+use std::io::Write;
 
-use serde::ser::{
-    self, Serialize, SerializeMap, SerializeSeq, SerializeStruct, SerializeStructVariant,
-    SerializeTuple, SerializeTupleStruct, SerializeTupleVariant, Serializer,
-};
+use serde::ser::Serialize;
+use serde::ser::SerializeMap;
+use serde::ser::SerializeSeq;
+use serde::ser::SerializeStruct;
+use serde::ser::SerializeStructVariant;
+use serde::ser::SerializeTuple;
+use serde::ser::SerializeTupleStruct;
+use serde::ser::SerializeTupleVariant;
+use serde::ser::Serializer;
 
-use crate::ast_to_events::{self, AstToEventsError};
-use crate::value::{Integer, MappingPair, SequenceItem};
-use crate::{Node, Value, writer};
+use crate::Node;
+use crate::Value;
+use crate::ast_to_events;
+use crate::ast_to_events::AstToEventsError;
+use crate::value::Integer;
+use crate::value::MappingPair;
+use crate::value::SequenceItem;
+use crate::writer;
 
 /// Error type for serde-based *serialization* using yaml-parser.
 #[derive(Debug, derive_more::Display)]
 pub enum SerError {
     /// I/O error while writing YAML output.
     #[display("I/O error while writing YAML: {}", _0)]
-    Io(io::Error),
+    Io(std::io::Error),
 
     /// Non-finite floating-point value (`NaN` or `±inf`) is not yet supported.
     #[display("unsupported floating-point value {}", _0)]
@@ -51,14 +61,14 @@ pub enum SerError {
 
 impl std::error::Error for SerError {}
 
-impl ser::Error for SerError {
+impl serde::ser::Error for SerError {
     fn custom<T: fmt::Display>(msg: T) -> Self {
         Self::Custom(msg.to_string())
     }
 }
 
-impl From<io::Error> for SerError {
-    fn from(err: io::Error) -> Self {
+impl From<std::io::Error> for SerError {
+    fn from(err: std::io::Error) -> Self {
         Self::Io(err)
     }
 }
@@ -504,7 +514,7 @@ where
     let mut buf = Vec::new();
     to_writer(&mut buf, value)?;
     String::from_utf8(buf)
-        .map_err(|err| SerError::Io(io::Error::new(io::ErrorKind::InvalidData, err)))
+        .map_err(|err| SerError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, err)))
 }
 #[cfg(test)]
 mod tests {
@@ -512,13 +522,17 @@ mod tests {
         clippy::expect_used,
         reason = "tests use expect with explicit messages for clearer diagnostics"
     )]
+    use serde::Deserialize;
+    use serde::Serialize;
+    use serde::Serializer;
+
     use super::*;
-    use crate::{
-        MappingPair, Node, SequenceItem,
-        span::Span,
-        value::{Comment, Value},
-    };
-    use serde::{Deserialize, Serialize, Serializer};
+    use crate::MappingPair;
+    use crate::Node;
+    use crate::SequenceItem;
+    use crate::span::Span;
+    use crate::value::Comment;
+    use crate::value::Value;
 
     #[derive(Debug, Serialize, Deserialize, PartialEq)]
     struct SimpleConfig {

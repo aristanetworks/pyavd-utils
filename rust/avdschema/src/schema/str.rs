@@ -5,19 +5,18 @@
 use std::sync::OnceLock;
 
 use fancy_regex::Regex;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
+use serde::Serialize;
 use serde_json::Value;
 use serde_with::skip_serializing_none;
 
-use crate::{any::Shortcuts, base::Deprecation};
-
-use super::{
-    any::AnySchema,
-    base::{
-        Base, convert_types::ConvertTypes, documentation_options::DocumentationOptions,
-        valid_values::ValidValues,
-    },
-};
+use super::any::AnySchema;
+use super::base::Base;
+use super::base::convert_types::ConvertTypes;
+use super::base::documentation_options::DocumentationOptions;
+use super::base::valid_values::ValidValues;
+use crate::any::Shortcuts;
+use crate::base::Deprecation;
 
 /// Enum for string formats allowed by the Str schema.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -120,9 +119,9 @@ impl From<&str> for Pattern {
 
 #[cfg(test)]
 mod tests {
-    use crate::{any::AnySchema, boolean::Bool};
-
     use super::Str;
+    use crate::any::AnySchema;
+    use crate::boolean::Bool;
 
     #[test]
     fn try_from_anyschema_ok() {

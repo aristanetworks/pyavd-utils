@@ -4,15 +4,21 @@
 
 use std::borrow::Cow;
 
+use super::Emitter;
+use super::PendingAstWrap;
+use super::states::BlockMapPhase;
+use super::states::BlockSeqPhase;
+use super::states::EmitterProperties;
+use super::states::ParseState;
+use super::states::ValueContext;
+use super::states::ValueKind;
 use crate::error::ErrorKind;
-use crate::event::{Event, ScalarStyle};
-use crate::lexer::{Token, TokenKind};
-use crate::span::{IndentLevel, Span};
-
-use super::states::{
-    BlockMapPhase, BlockSeqPhase, EmitterProperties, ParseState, ValueContext, ValueKind,
-};
-use super::{Emitter, PendingAstWrap};
+use crate::event::Event;
+use crate::event::ScalarStyle;
+use crate::lexer::Token;
+use crate::lexer::TokenKind;
+use crate::span::IndentLevel;
+use crate::span::Span;
 
 impl<'input> Emitter<'input> {
     /// Return true when same-indent content should be handed back to an

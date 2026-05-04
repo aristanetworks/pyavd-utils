@@ -6,10 +6,13 @@ pub mod errors;
 pub mod resolve_ref;
 mod walker;
 
-use crate::{any::AnySchema, inherit::Inherit, store::Store};
-
-use errors::{SchemaResolverError, SchemaType};
+use errors::SchemaResolverError;
+use errors::SchemaType;
 use resolve_ref::resolve_ref;
+
+use crate::any::AnySchema;
+use crate::inherit::Inherit;
+use crate::store::Store;
 
 /// Inplace resolve all $ref in the provided AnySchema.
 /// All $ref are are looked up in the provided Store.
@@ -117,10 +120,11 @@ fn is_same_schema(a: &AnySchema, b: &AnySchema) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use crate::utils::test_utils::{get_test_dict_schema_with_refs, get_test_store};
-    use crate::{dict::Dict, str::Str};
-
     use super::Resolve;
+    use crate::dict::Dict;
+    use crate::str::Str;
+    use crate::utils::test_utils::get_test_dict_schema_with_refs;
+    use crate::utils::test_utils::get_test_store;
 
     #[test]
     fn resolve_ok() {

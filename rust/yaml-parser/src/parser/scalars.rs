@@ -4,16 +4,17 @@
 
 use std::borrow::Cow;
 
+use super::Parser;
 use crate::ast_event::AstEvent;
 use crate::error::ErrorKind;
 use crate::event::ScalarStyle;
-use crate::scalar_resolver::{
-    ResolvedScalar, ScalarResolutionError, resolve_tagged_scalar, resolve_untagged_scalar,
-};
+use crate::scalar_resolver::ResolvedScalar;
+use crate::scalar_resolver::ScalarResolutionError;
+use crate::scalar_resolver::resolve_tagged_scalar;
+use crate::scalar_resolver::resolve_untagged_scalar;
 use crate::span::Span;
-use crate::value::{Node, Properties as NodeProperties};
-
-use super::Parser;
+use crate::value::Node;
+use crate::value::Properties as NodeProperties;
 
 impl<'input, I> Parser<'input, I>
 where

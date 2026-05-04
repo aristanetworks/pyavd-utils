@@ -22,8 +22,14 @@
 
 mod support;
 
-use support::{emit_events_ok, parse_ok};
-use yaml_parser::{Event, Position, ScalarStyle, SourceMap, Value, parse};
+use support::emit_events_ok;
+use support::parse_ok;
+use yaml_parser::Event;
+use yaml_parser::Position;
+use yaml_parser::ScalarStyle;
+use yaml_parser::SourceMap;
+use yaml_parser::Value;
+use yaml_parser::parse;
 
 /// Helper to extract the text covered by a span from the input.
 fn extract_span_text(input: &str, start: usize, end: usize) -> &str {

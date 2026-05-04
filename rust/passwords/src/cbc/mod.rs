@@ -2,9 +2,12 @@
 // Use of this source code is governed by the Apache License 2.0
 // that can be found in the LICENSE file.
 
-use base64::{Engine as _, engine::general_purpose::STANDARD as B64};
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD as B64;
+use cbc::cipher::BlockDecryptMut;
+use cbc::cipher::BlockEncryptMut;
+use cbc::cipher::KeyIvInit;
 use cbc::cipher::block_padding::NoPadding;
-use cbc::cipher::{BlockDecryptMut, BlockEncryptMut, KeyIvInit};
 use cipher as _;
 use des::TdesEde3;
 

@@ -2,20 +2,22 @@
 // Use of this source code is governed by the Apache License 2.0
 // that can be found in the LICENSE file.
 
-use avdschema::{
-    any::{AnySchema, Shortcuts as _},
-    dict::Dict,
-    resolve_ref,
-};
+use avdschema::any::AnySchema;
+use avdschema::any::Shortcuts as _;
+use avdschema::dict::Dict;
+use avdschema::resolve_ref;
 use ordermap::OrderMap;
 
-use crate::{
-    context::Context,
-    feedback::{Deprecated, IgnoredEosConfigKey, Removed, Type, Violation},
-    validatable::{ValidatableMapping, ValidatableMappingPair, ValidatableValue},
-};
-
 use super::Validation;
+use crate::context::Context;
+use crate::feedback::Deprecated;
+use crate::feedback::IgnoredEosConfigKey;
+use crate::feedback::Removed;
+use crate::feedback::Type;
+use crate::feedback::Violation;
+use crate::validatable::ValidatableMapping;
+use crate::validatable::ValidatableMappingPair;
+use crate::validatable::ValidatableValue;
 
 // This must be kept up to date when adding role keys in eos_config schema.
 // TODO: Eventually this will go away as we stop warning.
@@ -279,8 +281,11 @@ mod tests {
     use serde::Deserialize as _;
 
     use super::*;
-    use crate::context::{Configuration, Context};
-    use crate::feedback::{CoercionNote, Feedback, WarningIssue};
+    use crate::context::Configuration;
+    use crate::context::Context;
+    use crate::feedback::CoercionNote;
+    use crate::feedback::Feedback;
+    use crate::feedback::WarningIssue;
     use crate::validation::test_utils::get_test_store;
 
     #[test]

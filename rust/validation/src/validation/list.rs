@@ -4,11 +4,16 @@
 
 use std::collections::HashMap;
 
-use avdschema::{any::AnySchema, list::List, resolve_ref};
+use avdschema::any::AnySchema;
+use avdschema::list::List;
+use avdschema::resolve_ref;
 
-use crate::feedback::{Type, Violation};
-use crate::validatable::{ValidatableSequence, ValidatableValue};
-use crate::{context::Context, validation::Validation};
+use crate::context::Context;
+use crate::feedback::Type;
+use crate::feedback::Violation;
+use crate::validatable::ValidatableSequence;
+use crate::validatable::ValidatableValue;
+use crate::validation::Validation;
 
 impl Validation for List {
     fn validate<V: ValidatableValue>(&self, value: &V, ctx: &mut Context) -> Option<V::Coerced> {
@@ -217,16 +222,17 @@ fn value_to_string<V: ValidatableValue>(value: &V) -> String {
 
 #[cfg(test)]
 mod tests {
-    use avdschema::{any::AnySchema, dict::Dict, str::Str};
+    use avdschema::any::AnySchema;
+    use avdschema::dict::Dict;
+    use avdschema::str::Str;
     use ordermap::OrderMap;
     use serde_json::Value;
 
     use super::*;
-    use crate::{
-        Configuration,
-        feedback::{CoercionNote, Feedback},
-        validation::test_utils::get_test_store,
-    };
+    use crate::Configuration;
+    use crate::feedback::CoercionNote;
+    use crate::feedback::Feedback;
+    use crate::validation::test_utils::get_test_store;
 
     #[test]
     fn validate_type_ok() {

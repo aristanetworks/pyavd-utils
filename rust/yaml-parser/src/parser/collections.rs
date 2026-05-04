@@ -2,12 +2,15 @@
 // Use of this source code is governed by the Apache License 2.0
 // that can be found in the LICENSE file.
 
+use super::Parser;
 use crate::ast_event::AstEvent;
 use crate::event::Event;
 use crate::span::Span;
-use crate::value::{MappingPair, Node, Properties as NodeProperties, SequenceItem, Value};
-
-use super::Parser;
+use crate::value::MappingPair;
+use crate::value::Node;
+use crate::value::Properties as NodeProperties;
+use crate::value::SequenceItem;
+use crate::value::Value;
 
 impl<'input, I> Parser<'input, I>
 where

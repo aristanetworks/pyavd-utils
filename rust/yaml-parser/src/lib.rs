@@ -186,14 +186,29 @@ pub mod writer;
 pub mod serde;
 
 // Public API: high-level parsing, AST, spans, and errors.
-pub use error::{ErrorKind, ParseError};
-pub use event::{CollectionStyle, Event, ScalarStyle};
-pub use span::{
-    BytePosition, IndentLevel, Position, SourceMap, Span, Spanned, pos_to_usize, usize_to_indent,
-    usize_to_pos,
-};
+pub use error::ErrorKind;
+pub use error::ParseError;
+pub use event::CollectionStyle;
+pub use event::Event;
+pub use event::ScalarStyle;
+pub use span::BytePosition;
+pub use span::IndentLevel;
+pub use span::Position;
+pub use span::SourceMap;
+pub use span::Span;
+pub use span::Spanned;
+pub use span::pos_to_usize;
+pub use span::usize_to_indent;
+pub use span::usize_to_pos;
 pub use stream::Stream;
-pub use value::{Comment, Integer, MappingPair, Node, Properties, Property, SequenceItem, Value};
+pub use value::Comment;
+pub use value::Integer;
+pub use value::MappingPair;
+pub use value::Node;
+pub use value::Properties;
+pub use value::Property;
+pub use value::SequenceItem;
+pub use value::Value;
 
 /// Parse YAML input and return the parsed documents and any errors encountered.
 ///

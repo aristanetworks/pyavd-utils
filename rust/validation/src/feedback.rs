@@ -2,10 +2,9 @@
 // Use of this source code is governed by the Apache License 2.0
 // that can be found in the LICENSE file.
 
-use std::{
-    collections::HashMap,
-    fmt::{Debug, Display},
-};
+use std::collections::HashMap;
+use std::fmt::Debug;
+use std::fmt::Display;
 
 use serde::Serialize;
 

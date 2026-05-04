@@ -2,8 +2,11 @@
 // Use of this source code is governed by the Apache License 2.0
 // that can be found in the LICENSE file.
 
-use criterion::{Criterion, criterion_group, criterion_main};
-use pyvalidation::validation::{get_validated_data, init_store_from_file};
+use criterion::Criterion;
+use criterion::criterion_group;
+use criterion::criterion_main;
+use pyvalidation::validation::get_validated_data;
+use pyvalidation::validation::init_store_from_file;
 use test_schema_store::get_store_gz_path;
 
 const TEST_DATA: &str = "{'fabric_name': 'foo', 'type': 123}";

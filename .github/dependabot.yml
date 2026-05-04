@@ -26,3 +26,19 @@ updates:
       day: "monday"
     commit-message:
       prefix: "CI: "
+  # Maintain dependencies for Rust crates
+  - package-ecosystem: "cargo"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    commit-message:
+      prefix: "Bump(rust): "
+  # Maintain the pinned Rust toolchain
+  - package-ecosystem: "rust-toolchain"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    commit-message:
+      prefix: "Bump(rust): "

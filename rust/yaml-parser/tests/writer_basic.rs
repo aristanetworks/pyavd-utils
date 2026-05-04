@@ -21,7 +21,13 @@
     reason = "panic is expected in test assertions for mismatched value kinds"
 )]
 
-use yaml_parser::{Node, Properties, Property, Value, emit_events, parse, writer};
+use yaml_parser::Node;
+use yaml_parser::Properties;
+use yaml_parser::Property;
+use yaml_parser::Value;
+use yaml_parser::emit_events;
+use yaml_parser::parse;
+use yaml_parser::writer;
 
 fn assert_node_eq_ignoring_spans<'input>(expected: &Node<'input>, actual: &Node<'input>) {
     assert_properties_eq_ignoring_spans(

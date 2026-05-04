@@ -13,18 +13,23 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
 
-use serde::de::{
-    self, Deserialize, DeserializeOwned, DeserializeSeed, MapAccess, SeqAccess, Visitor,
-};
+use serde::de::Deserialize;
+use serde::de::DeserializeOwned;
+use serde::de::DeserializeSeed;
+use serde::de::MapAccess;
+use serde::de::SeqAccess;
+use serde::de::Visitor;
 use serde::forward_to_deserialize_any;
 
-use crate::emitter::Emitter;
-use crate::event::{Event, Properties, ScalarStyle};
-use crate::scalar_resolver::{
-    ResolvedScalar, ScalarResolutionError, resolve_tagged_scalar, resolve_untagged_scalar,
-};
-
 use super::DeError;
+use crate::emitter::Emitter;
+use crate::event::Event;
+use crate::event::Properties;
+use crate::event::ScalarStyle;
+use crate::scalar_resolver::ResolvedScalar;
+use crate::scalar_resolver::ScalarResolutionError;
+use crate::scalar_resolver::resolve_tagged_scalar;
+use crate::scalar_resolver::resolve_untagged_scalar;
 
 /// Internal helper: streaming view over the event iterator from `Emitter`.
 pub(crate) struct EventStream<'de> {
@@ -452,7 +457,7 @@ impl<'de> MapAccess<'de> for MapAccessImpl<'_, 'de> {
     }
 }
 
-impl<'de> de::Deserializer<'de> for &mut EventStream<'de> {
+impl<'de> serde::de::Deserializer<'de> for &mut EventStream<'de> {
     type Error = DeError;
 
     fn deserialize_any<V>(self, visitor: V) -> Result<V::Value, DeError>
@@ -1040,10 +1045,11 @@ where
     reason = "Approved for test assertions in this module"
 )]
 mod tests {
-    use super::from_str_internal;
     use serde::Deserialize;
 
-    use crate::value::{Integer, Value};
+    use super::from_str_internal;
+    use crate::value::Integer;
+    use crate::value::Value;
 
     #[test]
     fn deserializes_simple_scalars() {

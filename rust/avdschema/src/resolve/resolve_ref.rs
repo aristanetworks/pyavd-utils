@@ -4,11 +4,13 @@
 
 use std::sync::LazyLock;
 
-use crate::resolve::errors::{RefSyntax, SchemaResolverError};
-use crate::{Store, any::AnySchema};
 use fancy_regex::Regex;
 
 use super::walker::Walker as _;
+use crate::Store;
+use crate::any::AnySchema;
+use crate::resolve::errors::RefSyntax;
+use crate::resolve::errors::SchemaResolverError;
 
 /// Regex matching $ref syntax according the AVD metaschema.
 static REF_REGEX: LazyLock<Regex> =
@@ -36,13 +38,11 @@ pub fn resolve_ref<'a>(ref_: &str, store: &'a Store) -> Result<&'a AnySchema, Sc
 
 #[cfg(test)]
 mod tests {
+    use super::resolve_ref;
     use crate::resolve::errors::SchemaResolverError;
     use crate::store::SchemaStoreError;
     use crate::str::Str;
-
     use crate::utils::test_utils::get_test_store;
-
-    use super::resolve_ref;
 
     #[test]
     // Testing with eos_cli_config_gen ref

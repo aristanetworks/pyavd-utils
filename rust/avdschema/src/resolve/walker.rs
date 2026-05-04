@@ -6,7 +6,9 @@ use std::iter::Peekable;
 
 use ordermap::OrderMap;
 
-use crate::{any::AnySchema, dict::Dict, list::List};
+use crate::any::AnySchema;
+use crate::dict::Dict;
+use crate::list::List;
 
 pub(crate) trait Walker {
     /// Walk a schema according to the given path.

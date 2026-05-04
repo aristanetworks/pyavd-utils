@@ -4,9 +4,15 @@
 
 use std::borrow::Cow;
 
-use super::{LexMode, Lexer, PlainScalarMeta, PlainScalarToken, Token, is_anchor_char};
+use super::LexMode;
+use super::Lexer;
+use super::PlainScalarMeta;
+use super::PlainScalarToken;
+use super::Token;
+use super::is_anchor_char;
 use crate::error::ErrorKind;
-use crate::span::{Span, Spanned};
+use crate::span::Span;
+use crate::span::Spanned;
 
 impl<'input> Lexer<'input> {
     fn plain_continuation_start_from(&self, mut pos: usize) -> bool {

@@ -29,10 +29,10 @@ fn test_emit_e76z() {
 }
 
 mod event_generation {
-    use crate::{
-        error::ErrorKind,
-        event::{CollectionStyle, Event, ScalarStyle},
-    };
+    use crate::error::ErrorKind;
+    use crate::event::CollectionStyle;
+    use crate::event::Event;
+    use crate::event::ScalarStyle;
 
     /// Helper to get events from YAML input using the emitter
     fn events_from(input: &str) -> Vec<Event<'static>> {
