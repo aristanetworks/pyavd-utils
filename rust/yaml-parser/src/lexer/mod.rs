@@ -38,17 +38,22 @@ mod trivia;
 mod tests;
 
 // Re-export main types
-pub(crate) use rich_token::RichToken;
-pub(crate) use rich_token::TokenKind;
-pub(crate) use token::{
-    BlockScalarHeader, Chomping, PlainScalarMeta, PlainScalarToken, QuoteStyle, Token,
-};
-
 use std::borrow::Cow;
 use std::collections::VecDeque;
 
-use crate::error::{ErrorKind, ParseError};
-use crate::span::{Span, Spanned};
+pub(crate) use rich_token::RichToken;
+pub(crate) use rich_token::TokenKind;
+pub(crate) use token::BlockScalarHeader;
+pub(crate) use token::Chomping;
+pub(crate) use token::PlainScalarMeta;
+pub(crate) use token::PlainScalarToken;
+pub(crate) use token::QuoteStyle;
+pub(crate) use token::Token;
+
+use crate::error::ErrorKind;
+use crate::error::ParseError;
+use crate::span::Span;
+use crate::span::Spanned;
 
 /// Check if a character is valid in an anchor/alias name.
 /// Per YAML 1.2 spec, ns-anchor-char is any non-whitespace char

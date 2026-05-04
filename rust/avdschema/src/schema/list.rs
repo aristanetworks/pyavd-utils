@@ -2,13 +2,16 @@
 // Use of this source code is governed by the Apache License 2.0
 // that can be found in the LICENSE file.
 
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
+use serde::Serialize;
 use serde_json::Value;
 use serde_with::skip_serializing_none;
 
-use crate::{any::Shortcuts, base::Deprecation, schema::base::Base};
-
-use super::{any::AnySchema, base::documentation_options::DocumentationOptions};
+use super::any::AnySchema;
+use super::base::documentation_options::DocumentationOptions;
+use crate::any::Shortcuts;
+use crate::base::Deprecation;
+use crate::schema::base::Base;
 
 /// AVD Schema for list data.
 #[skip_serializing_none]
@@ -62,9 +65,9 @@ impl<'x> TryFrom<&'x AnySchema> for &'x List {
 
 #[cfg(test)]
 mod tests {
-    use crate::{any::AnySchema, dict::Dict};
-
     use super::List;
+    use crate::any::AnySchema;
+    use crate::dict::Dict;
 
     #[test]
     fn try_from_anyschema_ok() {

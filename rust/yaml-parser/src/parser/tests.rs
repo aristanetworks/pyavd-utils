@@ -17,11 +17,13 @@
 
 use std::borrow::Cow;
 
-use crate::Stream;
-use crate::error::{ErrorKind, ParseError};
-use crate::value::{Integer, Node, Value};
-
 use super::Parser;
+use crate::Stream;
+use crate::error::ErrorKind;
+use crate::error::ParseError;
+use crate::value::Integer;
+use crate::value::Node;
+use crate::value::Value;
 
 /// Use the standard parse function for tests.
 fn parse(input: &str) -> (Stream<'static>, Vec<ParseError>) {

@@ -3,7 +3,8 @@
 // that can be found in the LICENSE file.
 
 use ordermap::OrderMap;
-use serde_json::{Map, Value};
+use serde_json::Map;
+use serde_json::Value;
 
 pub trait SchemaDataValue<'a>: Sized + Copy {
     type Mapping: SchemaDataMapping<'a, Value = Self> + Copy;

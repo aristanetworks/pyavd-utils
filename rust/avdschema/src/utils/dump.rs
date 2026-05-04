@@ -2,15 +2,16 @@
 // Use of this source code is governed by the Apache License 2.0
 // that can be found in the LICENSE file.
 
-use serde::Serialize;
-
 #[cfg(feature = "dump_load_files")]
-use std::{
-    ffi::OsStr,
-    fs::File,
-    io::{self, BufWriter},
-    path::PathBuf,
-};
+use std::ffi::OsStr;
+#[cfg(feature = "dump_load_files")]
+use std::fs::File;
+#[cfg(feature = "dump_load_files")]
+use std::io::BufWriter;
+#[cfg(feature = "dump_load_files")]
+use std::path::PathBuf;
+
+use serde::Serialize;
 
 pub trait Dump
 where
@@ -37,7 +38,7 @@ where
     }
     #[cfg(feature = "dump_load_files")]
     fn to_stdout(&self) -> Result<(), DumpError> {
-        let writer = io::stdout();
+        let writer = std::io::stdout();
         Ok(serde_json::to_writer(writer, self)?)
     }
     #[cfg(feature = "dump_load_files")]
@@ -83,7 +84,9 @@ pub enum DumpError {
 #[cfg(all(test, feature = "dump_load_files"))]
 pub(crate) mod tests {
     use super::Dump;
-    use crate::utils::test_utils::{get_test_dict_schema, get_test_store, get_tmp_file};
+    use crate::utils::test_utils::get_test_dict_schema;
+    use crate::utils::test_utils::get_test_store;
+    use crate::utils::test_utils::get_tmp_file;
 
     #[test]
     pub(crate) fn dump_yaml() {

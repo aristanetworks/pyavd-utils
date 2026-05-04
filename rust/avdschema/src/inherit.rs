@@ -2,15 +2,24 @@
 // Use of this source code is governed by the Apache License 2.0
 // that can be found in the LICENSE file.
 
-use crate::base::DataValue;
-use crate::base::{
-    Base, Deprecation, convert_types::ConvertTypes, documentation_options::DocumentationOptions,
-    documentation_options::DocumentationOptionsDict, valid_values::ValidValues,
-};
-use crate::str::{Format, Pattern};
-use crate::{any::AnySchema, boolean::Bool, dict::Dict, int::Int, list::List, str::Str};
 use ordermap::OrderMap;
 use serde_json::Value;
+
+use crate::any::AnySchema;
+use crate::base::Base;
+use crate::base::DataValue;
+use crate::base::Deprecation;
+use crate::base::convert_types::ConvertTypes;
+use crate::base::documentation_options::DocumentationOptions;
+use crate::base::documentation_options::DocumentationOptionsDict;
+use crate::base::valid_values::ValidValues;
+use crate::boolean::Bool;
+use crate::dict::Dict;
+use crate::int::Int;
+use crate::list::List;
+use crate::str::Format;
+use crate::str::Pattern;
+use crate::str::Str;
 
 trait InheritableWithClone {}
 impl InheritableWithClone for String {}
@@ -194,14 +203,18 @@ impl Inherit for AnySchema {
 
 #[cfg(test)]
 mod tests {
-    use crate::{any::AnySchema, boolean::Bool, dict::Dict, int::Int, list::List, str::Str};
-
-    use crate::utils::test_utils::{
-        get_test_bool_schema, get_test_dict_schema, get_test_int_schema, get_test_list_schema,
-        get_test_str_schema,
-    };
-
     use super::Inherit;
+    use crate::any::AnySchema;
+    use crate::boolean::Bool;
+    use crate::dict::Dict;
+    use crate::int::Int;
+    use crate::list::List;
+    use crate::str::Str;
+    use crate::utils::test_utils::get_test_bool_schema;
+    use crate::utils::test_utils::get_test_dict_schema;
+    use crate::utils::test_utils::get_test_int_schema;
+    use crate::utils::test_utils::get_test_list_schema;
+    use crate::utils::test_utils::get_test_str_schema;
 
     #[test]
     fn inherit_bool() {

@@ -4,7 +4,12 @@
 
 use std::borrow::Cow;
 
-use super::{LexMode, Lexer, PlainScalarMeta, PlainScalarToken, Token, is_anchor_char};
+use super::LexMode;
+use super::Lexer;
+use super::PlainScalarMeta;
+use super::PlainScalarToken;
+use super::Token;
+use super::is_anchor_char;
 use crate::span::Spanned;
 
 impl<'input> Lexer<'input> {

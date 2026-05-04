@@ -2,19 +2,18 @@
 // Use of this source code is governed by the Apache License 2.0
 // that can be found in the LICENSE file.
 
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
+use serde::Serialize;
 use serde_json::Value;
 use serde_with::skip_serializing_none;
 
-use crate::{any::Shortcuts, base::Deprecation, schema::base::Base};
-
-use super::{
-    any::AnySchema,
-    base::{
-        convert_types::ConvertTypes, documentation_options::DocumentationOptions,
-        valid_values::ValidValues,
-    },
-};
+use super::any::AnySchema;
+use super::base::convert_types::ConvertTypes;
+use super::base::documentation_options::DocumentationOptions;
+use super::base::valid_values::ValidValues;
+use crate::any::Shortcuts;
+use crate::base::Deprecation;
+use crate::schema::base::Base;
 
 /// AVD Schema for integer data.
 #[skip_serializing_none]
@@ -59,9 +58,9 @@ impl<'x> TryFrom<&'x AnySchema> for &'x Int {
 
 #[cfg(test)]
 mod tests {
-    use crate::{any::AnySchema, str::Str};
-
     use super::Int;
+    use crate::any::AnySchema;
+    use crate::str::Str;
 
     #[test]
     fn try_from_anyschema_ok() {

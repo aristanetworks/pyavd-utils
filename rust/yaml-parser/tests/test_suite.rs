@@ -28,7 +28,8 @@
 )]
 
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+use std::path::PathBuf;
 
 use yaml_parser::parse;
 
@@ -995,7 +996,8 @@ fn run_single_test_via_events(test: &TestCase) -> Result<(), String> {
 
 /// Roundtrip a test case through the event-based writer and compare normalized events.
 fn run_single_test_roundtrip_via_writer(test: &TestCase) -> Result<(), String> {
-    use yaml_parser::{emit_events, writer};
+    use yaml_parser::emit_events;
+    use yaml_parser::writer;
 
     if test.expects_error {
         // For now, skip tests that are expected to error; there may not be a

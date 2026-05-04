@@ -13,8 +13,12 @@
 //! - Serializing a serde-produced AST back to YAML via the event-based writer.
 //! - Roundtrip tests that go `parse -> AST -> events -> writer -> parse`.
 
-use crate::event::{CollectionStyle, Event, Properties as EventProperties, ScalarStyle};
-use crate::{Node, Value};
+use crate::Node;
+use crate::Value;
+use crate::event::CollectionStyle;
+use crate::event::Event;
+use crate::event::Properties as EventProperties;
+use crate::event::ScalarStyle;
 
 /// Errors that can occur while converting an AST to events.
 #[derive(Debug, Clone, Copy)]

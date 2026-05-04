@@ -4,7 +4,8 @@
 
 use serde_json::json;
 
-use super::{ValidatableSequence, ValidatableValue};
+use super::ValidatableSequence;
+use super::ValidatableValue;
 
 #[test]
 fn test_serde_json_null() {

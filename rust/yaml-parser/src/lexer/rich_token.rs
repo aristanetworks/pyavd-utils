@@ -4,9 +4,8 @@
 
 //! Token wrappers and cheap token-kind inspection helpers for the lexer.
 
-use crate::span::Span;
-
 use super::token::Token;
+use crate::span::Span;
 
 /// Token discriminant for cheap pattern matching without cloning.
 ///

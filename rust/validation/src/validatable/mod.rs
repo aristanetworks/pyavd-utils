@@ -20,7 +20,8 @@ use std::borrow::Cow;
 
 use avdschema::SchemaDataMapping;
 
-use crate::feedback::{SourceSpan, Type};
+use crate::feedback::SourceSpan;
+use crate::feedback::Type;
 
 /// A value that can be validated against a schema.
 ///

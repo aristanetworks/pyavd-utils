@@ -4,8 +4,10 @@
 
 //! Error types for YAML parsing.
 
-use crate::span::{IndentLevel, Span};
 use derive_more::Display;
+
+use crate::span::IndentLevel;
+use crate::span::Span;
 
 /// An error encountered during YAML parsing.
 ///
