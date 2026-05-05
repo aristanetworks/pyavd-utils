@@ -91,7 +91,7 @@ impl StoreValidateInput for Store {
             Err(parse_error) => {
                 return Ok(InputValidationResult {
                     input_diagnostics: vec![InputDiagnostic::ParseDiagnostic(
-                        ParseDiagnostic::from_json_error(&parse_error, json),
+                        ParseDiagnostic::from_source(&parse_error),
                     )],
                     document: Default::default(),
                 });
@@ -149,8 +149,8 @@ mod tests {
             result.input_diagnostics.as_slice(),
             [InputDiagnostic::ParseDiagnostic(parse_diagnostic)]
                 if parse_diagnostic.kind == ParseDiagnosticKind::JsonSyntax
-                    && parse_diagnostic.span.start <= input.len()
-                    && parse_diagnostic.span.end <= input.len()
+                    && parse_diagnostic.to_source_span(input).start <= input.len()
+                    && parse_diagnostic.to_source_span(input).end <= input.len()
         ));
     }
 
