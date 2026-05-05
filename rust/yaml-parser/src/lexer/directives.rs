@@ -11,17 +11,7 @@ use crate::span::Spanned;
 impl<'input> Lexer<'input> {
     /// Check if we're at column 0 (start of input or right after a newline).
     pub(super) fn is_at_column_zero(&self) -> bool {
-        if self.byte_pos == 0 {
-            return true;
-        }
-        // YAML 1.2.2 line breaks are ASCII-only, so line-start detection can
-        // probe the previous byte directly without decoding UTF-8.
-        let prev_byte_pos = self.byte_pos.saturating_sub(1);
-        if let Some(ch) = self.input.as_bytes().get(prev_byte_pos) {
-            *ch == b'\n' || *ch == b'\r'
-        } else {
-            false
-        }
+        self.byte_pos == self.current_line.start
     }
 
     /// Try to lex a document marker (`---` or `...`) at column 0.

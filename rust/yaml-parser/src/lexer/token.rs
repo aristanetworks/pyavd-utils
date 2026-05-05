@@ -35,6 +35,30 @@ pub(crate) struct BlockScalarHeader {
     pub chomping: Chomping,
 }
 
+/// Fully parsed block scalar payload.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct BlockScalarToken<'input> {
+    value: Cow<'input, str>,
+}
+
+impl<'input> BlockScalarToken<'input> {
+    #[must_use]
+    pub(crate) fn new(value: Cow<'input, str>) -> Self {
+        Self { value }
+    }
+
+    #[must_use]
+    pub(crate) fn into_value(self) -> Cow<'input, str> {
+        self.value
+    }
+}
+
+impl std::fmt::Display for BlockScalarToken<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.value.fmt(f)
+    }
+}
+
 impl std::fmt::Display for BlockScalarHeader {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if let Some(indent) = self.indent {
@@ -182,12 +206,12 @@ pub(crate) enum Token<'input> {
     /// Content segment inside a quoted string (escapes already processed)
     #[display("string content '{_0}'")]
     StringContent(Cow<'input, str>),
-    /// A literal block scalar (`|`) - header info only, content parsed separately
+    /// A fully parsed literal block scalar (`|`)
     #[display("'|{_0}'")]
-    LiteralBlockHeader(BlockScalarHeader),
-    /// A folded block scalar (`>`) - header info only, content parsed separately
+    LiteralBlockScalar(BlockScalarToken<'input>),
+    /// A fully parsed folded block scalar (`>`)
     #[display("'>{_0}'")]
-    FoldedBlockHeader(BlockScalarHeader),
+    FoldedBlockScalar(BlockScalarToken<'input>),
 
     // Anchors and aliases
     /// Anchor definition (`&name`) - always a slice of input

@@ -806,6 +806,191 @@ fn test_block_scalar_chomping() {
 }
 
 #[test]
+fn test_folded_block_scalar_quotes_are_content() {
+    let docs = parse_ok("mykey: >-\n  'something' in 'quotes'.\n");
+    let doc = docs.first().expect("expected exactly one document");
+
+    let pairs = match &doc.value {
+        Value::Mapping(pairs) => Some(pairs),
+        _ => None,
+    }
+    .expect("expected mapping");
+
+    let value_node = &pairs.first().expect("expected mapping pair").value;
+    let string_value = match &value_node.value {
+        Value::String(string_value) => Some(string_value.as_ref()),
+        _ => None,
+    }
+    .expect("expected string value");
+
+    assert_eq!(string_value, "'something' in 'quotes'.");
+}
+
+#[test]
+fn test_block_scalar_indicator_tokens_are_content() {
+    let input = concat!(
+        "mykey: |-\n",
+        "  'single quote without close\n",
+        "  \"double quote without close\n",
+        "  !tag &anchor *alias [flow] {map}\n",
+        "  - item ? key : value # comment\n",
+    );
+    let docs = parse_ok(input);
+    let doc = docs.first().expect("expected exactly one document");
+
+    let pairs = match &doc.value {
+        Value::Mapping(pairs) => Some(pairs),
+        _ => None,
+    }
+    .expect("expected mapping");
+
+    let value_node = &pairs.first().expect("expected mapping pair").value;
+    let string_value = match &value_node.value {
+        Value::String(string_value) => Some(string_value.as_ref()),
+        _ => None,
+    }
+    .expect("expected string value");
+
+    assert_eq!(
+        string_value,
+        concat!(
+            "'single quote without close\n",
+            "\"double quote without close\n",
+            "!tag &anchor *alias [flow] {map}\n",
+            "- item ? key : value # comment",
+        ),
+    );
+}
+
+#[test]
+fn test_block_scalar_header_comment_attaches_to_mapping_value() {
+    let docs = parse_ok("mykey: | # header\n  value\n");
+    let doc = docs.first().expect("expected exactly one document");
+
+    let pairs = match &doc.value {
+        Value::Mapping(pairs) => Some(pairs),
+        _ => None,
+    }
+    .expect("expected mapping");
+
+    assert_eq!(
+        pairs[0]
+            .value
+            .trailing_comment()
+            .map(|comment| comment.text.as_ref()),
+        Some(" header"),
+    );
+}
+
+#[test]
+fn test_block_scalar_header_comment_attaches_to_sequence_item() {
+    let docs = parse_ok("- > # header\n  value\n");
+    let doc = docs.first().expect("expected exactly one document");
+
+    let items = match &doc.value {
+        Value::Sequence(items) => Some(items),
+        _ => None,
+    }
+    .expect("expected sequence");
+
+    assert_eq!(
+        items[0]
+            .as_node()
+            .trailing_comment()
+            .map(|comment| comment.text.as_ref()),
+        Some(" header"),
+    );
+}
+
+#[test]
+fn test_unicode_block_scalar_content_and_header_comment() {
+    let docs = parse_ok("mý🔑: >- # héader ☃\n  café 'quote'\n  emoji 😀\n");
+    let doc = docs.first().expect("expected exactly one document");
+
+    let pairs = match &doc.value {
+        Value::Mapping(pairs) => Some(pairs),
+        _ => None,
+    }
+    .expect("expected mapping");
+
+    let key = match &pairs[0].key().value {
+        Value::String(value) => Some(value.as_ref()),
+        _ => None,
+    }
+    .expect("expected string key");
+    assert_eq!(key, "mý🔑");
+
+    let value = match &pairs[0].value.value {
+        Value::String(value) => Some(value.as_ref()),
+        _ => None,
+    }
+    .expect("expected string value");
+    assert_eq!(value, "café 'quote' emoji 😀");
+
+    assert_eq!(
+        pairs[0]
+            .value
+            .trailing_comment()
+            .map(|comment| comment.text.as_ref()),
+        Some(" héader ☃"),
+    );
+}
+
+#[test]
+fn test_unicode_block_scalar_explicit_indent_after_unicode_key() {
+    let docs = parse_ok("øø: |1\n value λ\n");
+    let doc = docs.first().expect("expected exactly one document");
+
+    let pairs = match &doc.value {
+        Value::Mapping(pairs) => Some(pairs),
+        _ => None,
+    }
+    .expect("expected mapping");
+
+    let value = match &pairs[0].value.value {
+        Value::String(value) => Some(value.as_ref()),
+        _ => None,
+    }
+    .expect("expected string value");
+
+    assert_eq!(value, "value λ\n");
+}
+
+#[test]
+fn test_zero_indented_unicode_block_scalar_document_marker_terminates() {
+    let docs = parse_ok("--- |-\nΔelta\n# not a comment\nemoji 😀\n...\n");
+    let doc = docs.first().expect("expected exactly one document");
+
+    let value = match &doc.value {
+        Value::String(value) => Some(value.as_ref()),
+        _ => None,
+    }
+    .expect("expected string document");
+
+    assert_eq!(value, "Δelta\n# not a comment\nemoji 😀");
+}
+
+#[test]
+fn test_unicode_block_scalar_crlf_normalizes_line_breaks() {
+    let docs = parse_ok("key: |+\r\n  å\r\n  ß\r\n");
+    let doc = docs.first().expect("expected exactly one document");
+
+    let pairs = match &doc.value {
+        Value::Mapping(pairs) => Some(pairs),
+        _ => None,
+    }
+    .expect("expected mapping");
+
+    let value = match &pairs[0].value.value {
+        Value::String(value) => Some(value.as_ref()),
+        _ => None,
+    }
+    .expect("expected string value");
+
+    assert_eq!(value, "å\nß\n");
+}
+
+#[test]
 fn test_multiple_documents() {
     let input = "---\ndoc1\n---\ndoc2\n---\ndoc3";
     let docs = parse_ok(input);

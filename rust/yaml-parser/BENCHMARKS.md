@@ -6,10 +6,10 @@
 
 # Benchmark Report
 
-**Date:** 2026-04-12
+**Date:** 2026-05-05
 **Parser Version:** 0.0.4
-**Source of truth for this snapshot:** `tmp/remote-bench/runs/20260412T143412Z-candidate-only/candidate_report.md`
-**Run type:** remote candidate-only workspace run over `parse_throughput`, `parse_latency`, `scalar_types`, and `serde_deserialize_throughput`
+**Source of truth for this snapshot:** `tmp/remote-bench/runs/20260505T044404Z/candidate_report.md`
+**Run type:** remote workspace-vs-`HEAD` comparison over `parse_throughput`, `parse_latency`, `scalar_types`, and `serde_deserialize_throughput`
 
 ## How To Run
 
@@ -61,72 +61,75 @@ Notes:
 
 ## Current Takeaways
 
-- Relative to `saphyr_marked`, `yaml_parser` is ahead on 4/7 parse-throughput
-  datasets: `large_mapping`, `nested_mapping`, `flow_collections`, and
-  `anchors_aliases`.
+- Relative to `saphyr_marked`, `yaml_parser` is ahead on 5/7 parse-throughput
+  datasets: `large_mapping`, `nested_mapping`, `block_scalars`,
+  `flow_collections`, and `anchors_aliases`.
 - Relative to `saphyr_marked`, `yaml_parser` is still behind on
-  `large_sequence`, `block_scalars`, and slightly behind on `tags`.
+  `large_sequence` and `tags`.
 - Relative to `saphyr_marked`, `yaml_parser` is ahead on `medium` and `large`
   parse latency, but still behind on `small`.
 - Relative to `serde_yaml`, `yaml_parser` remains ahead on all 7/7
   serde-deserialize throughput datasets.
-- The scalar microbenchmarks are still all behind `saphyr_marked`, with the
-  largest gap in `block_scalars`.
+- The block-scalar rewrite is the main movement in this snapshot:
+  `yaml_parser` now leads `saphyr_marked` on both the block-scalar throughput
+  dataset and the block-scalar scalar microbenchmark.
+- The plain and double-quoted scalar microbenchmarks are still behind
+  `saphyr_marked`.
 
 ## Parse Throughput
 
 Median throughput from the remote candidate report. Criterion's 95% CI
-half-width stays within ±0.83% in this section (median row: ±0.04%).
+half-width stays within ±0.23% in this section (median row: ±0.05%).
 
 | Dataset | yaml_parser | saphyr_marked | serde_yaml | yaml_parser vs saphyr | yaml_parser vs serde_yaml |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| `large_mapping` | 18.245 MiB/s | 15.938 MiB/s | 12.624 MiB/s | 114.5% | 144.5% |
-| `nested_mapping` | 15.932 MiB/s | 12.856 MiB/s | 10.613 MiB/s | 123.9% | 150.1% |
-| `large_sequence` | 19.006 MiB/s | 19.983 MiB/s | 14.860 MiB/s | 95.1% | 127.9% |
-| `block_scalars` | 41.507 MiB/s | 51.897 MiB/s | 33.986 MiB/s | 80.0% | 122.1% |
-| `flow_collections` | 13.701 MiB/s | 12.664 MiB/s | 10.449 MiB/s | 108.2% | 131.1% |
-| `anchors_aliases` | 13.397 MiB/s | 11.100 MiB/s | 9.886 MiB/s | 120.7% | 135.5% |
-| `tags` | 16.169 MiB/s | 16.396 MiB/s | 12.845 MiB/s | 98.6% | 125.9% |
+| `large_mapping` | 18.094 MiB/s | 16.350 MiB/s | 12.481 MiB/s | 110.7% | 145.0% |
+| `nested_mapping` | 15.583 MiB/s | 13.077 MiB/s | 10.519 MiB/s | 119.2% | 148.1% |
+| `large_sequence` | 18.425 MiB/s | 20.700 MiB/s | 14.675 MiB/s | 89.0% | 125.6% |
+| `block_scalars` | 61.474 MiB/s | 51.450 MiB/s | 34.150 MiB/s | 119.5% | 180.0% |
+| `flow_collections` | 13.410 MiB/s | 13.193 MiB/s | 10.300 MiB/s | 101.6% | 130.2% |
+| `anchors_aliases` | 13.307 MiB/s | 11.298 MiB/s | 9.763 MiB/s | 117.8% | 136.3% |
+| `tags` | 15.932 MiB/s | 16.524 MiB/s | 12.613 MiB/s | 96.4% | 126.3% |
 
 ## Parse Latency
 
 Median time per parse from the remote candidate report. Criterion's 95% CI
-half-width stays within ±0.17% in this section (median row: ±0.06%).
+half-width stays within ±0.11% in this section (median row: ±0.04%).
 
 | Dataset | yaml_parser | saphyr_marked | yaml_parser vs saphyr |
 | --- | ---: | ---: | ---: |
-| `small` | 2.097 us | 1.987 us | 105.5% |
-| `medium` | 72.695 us | 91.034 us | 79.9% |
-| `large` | 207.021 us | 219.182 us | 94.5% |
+| `small` | 2.123 us | 1.994 us | 106.5% |
+| `medium` | 74.403 us | 89.054 us | 83.5% |
+| `large` | 195.259 us | 216.086 us | 90.4% |
 
 ## Scalar Microbenchmarks
 
 Median time per parse from the remote candidate report. Criterion's 95% CI
-half-width stays within ±0.12% in this section (median row: ±0.06%).
+half-width stays within ±0.20% in this section (median row: ±0.06%).
 
 | Dataset | yaml_parser | saphyr_marked | yaml_parser vs saphyr |
 | --- | ---: | ---: | ---: |
-| `plain` | 4.194 us | 4.107 us | 102.1% |
-| `double_quoted` | 4.933 us | 4.241 us | 116.3% |
-| `block_scalars` | 36.171 us | 28.752 us | 125.8% |
+| `plain` | 4.244 us | 4.058 us | 104.6% |
+| `double_quoted` | 5.091 us | 4.208 us | 121.0% |
+| `block_scalars` | 23.987 us | 28.895 us | 83.0% |
 
 ## Serde Deserialize Throughput
 
 Both backends deserialize into the same logical target type:
 `OwnedYamlValue(yaml_parser::Value<'static>)`.
 
-Criterion's 95% CI half-width stays within ±0.09% in this section
-(median row: ±0.03%).
+Criterion's 95% CI half-width stays within ±1.08% in this section
+(median row: ±0.04%).
 
 | Dataset | yaml_parser | serde_yaml | yaml_parser vs serde_yaml |
 | --- | ---: | ---: | ---: |
-| `large_mapping` | 17.656 MiB/s | 12.701 MiB/s | 139.0% |
-| `nested_mapping` | 16.180 MiB/s | 11.316 MiB/s | 143.0% |
-| `large_sequence` | 19.336 MiB/s | 14.427 MiB/s | 134.0% |
-| `block_scalars` | 41.381 MiB/s | 35.021 MiB/s | 118.2% |
-| `flow_collections` | 13.773 MiB/s | 10.786 MiB/s | 127.7% |
-| `anchors_aliases` | 12.625 MiB/s | 10.572 MiB/s | 119.4% |
-| `tags` | 17.933 MiB/s | 13.091 MiB/s | 137.0% |
+| `large_mapping` | 17.114 MiB/s | 12.607 MiB/s | 135.7% |
+| `nested_mapping` | 15.566 MiB/s | 11.059 MiB/s | 140.8% |
+| `large_sequence` | 18.247 MiB/s | 14.231 MiB/s | 128.2% |
+| `block_scalars` | 61.153 MiB/s | 34.621 MiB/s | 176.6% |
+| `flow_collections` | 13.305 MiB/s | 10.843 MiB/s | 122.7% |
+| `anchors_aliases` | 12.131 MiB/s | 10.351 MiB/s | 117.2% |
+| `tags` | 17.375 MiB/s | 12.763 MiB/s | 136.1% |
 
 ## Benchmark Matrix Notes
 

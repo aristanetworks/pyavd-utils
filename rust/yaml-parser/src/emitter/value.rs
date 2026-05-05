@@ -80,6 +80,34 @@ fn decode_hex_digit(byte: u8) -> Option<u8> {
 }
 
 impl<'input> Emitter<'input> {
+    pub(super) fn parse_block_scalar(
+        &mut self,
+        properties: EmitterProperties<'input>,
+    ) -> Event<'input> {
+        let Some((value, span, style)) = self
+            .peek_with(|tok, span| match tok {
+                Token::LiteralBlockScalar(scalar) => {
+                    Some((scalar.clone().into_value(), span, ScalarStyle::Literal))
+                }
+                Token::FoldedBlockScalar(scalar) => {
+                    Some((scalar.clone().into_value(), span, ScalarStyle::Folded))
+                }
+                _ => None,
+            })
+            .flatten()
+        else {
+            return self.emit_null();
+        };
+
+        let _ = self.take_current();
+        Event::Scalar {
+            style,
+            value,
+            properties: properties.into_event_box(),
+            span,
+        }
+    }
+
     pub(super) fn in_sequence_entry_context(&self) -> bool {
         self.state_stack.last().is_some_and(|state| {
             matches!(
@@ -932,8 +960,8 @@ impl<'input> Emitter<'input> {
                 None
             }
 
-            Some(TokenKind::LiteralBlockHeader | TokenKind::FoldedBlockHeader) => {
-                Some(self.parse_block_scalar(min_indent, properties))
+            Some(TokenKind::LiteralBlockScalar | TokenKind::FoldedBlockScalar) => {
+                Some(self.parse_block_scalar(properties))
             }
 
             Some(TokenKind::Plain) => {

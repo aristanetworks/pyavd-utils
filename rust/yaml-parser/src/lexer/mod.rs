@@ -41,7 +41,8 @@ mod tests;
 pub(crate) use rich_token::RichToken;
 pub(crate) use rich_token::TokenKind;
 pub(crate) use token::{
-    BlockScalarHeader, Chomping, PlainScalarMeta, PlainScalarToken, QuoteStyle, Token,
+    BlockScalarHeader, BlockScalarToken, Chomping, PlainScalarMeta, PlainScalarToken, QuoteStyle,
+    Token,
 };
 
 use std::borrow::Cow;
@@ -91,6 +92,22 @@ enum LexerPhase {
     InDocument,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct CurrentLine {
+    /// Byte offset immediately after the current line break, before indentation.
+    start: usize,
+    /// Count of leading spaces on the current physical line.
+    indent: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct PendingValueIndentContext {
+    /// Parent indentation used as the base for explicit block-scalar indent indicators.
+    base_indent: usize,
+    /// Smallest content indentation accepted when block scalar indentation is auto-detected.
+    min_auto_indent: usize,
+}
+
 /// YAML lexer state.
 ///
 /// The lifetime `'input` refers to the input string being tokenized.
@@ -119,6 +136,17 @@ pub(crate) struct Lexer<'input> {
     /// Whether we're currently inside a quoted string (between `StringStart` and `StringEnd`).
     /// Kept so the lexer can preserve quoted-string tokenization rules.
     in_quoted_string: bool,
+    /// Current physical line position.
+    ///
+    /// This keeps hot column/indent lookups O(1) for directive/document-marker
+    /// column checks and for block-scalar header indentation.
+    current_line: CurrentLine,
+    /// Value indentation context for a compact mapping inside a sequence item
+    /// on the current line, e.g. `- key: |`.
+    current_line_compact_value_indent: Option<PendingValueIndentContext>,
+    /// Value indentation context established by the latest structural token
+    /// (`:`, `-`, or `---`) and consumed by a following block scalar token.
+    pending_value_indent: Option<PendingValueIndentContext>,
     /// Current phase of the iterator state machine
     phase: IteratorPhase,
     /// Collected errors during lexing
@@ -145,6 +173,12 @@ impl<'input> Lexer<'input> {
             prev_was_separator: true, // At start, we're at "line start"
             pending_tokens: VecDeque::new(),
             in_quoted_string: false,
+            current_line: CurrentLine {
+                start: 0,
+                indent: 0,
+            },
+            current_line_compact_value_indent: None,
+            pending_value_indent: None,
             phase: IteratorPhase::Initial,
             errors: Vec::new(),
             phase_state: LexerPhase::DirectivePrologue, // Start in directive prologue
@@ -281,7 +315,9 @@ impl<'input> Lexer<'input> {
     /// Process a token after it's been produced: update lexer state.
     ///
     /// This handles flow depth tracking, quoted string context, and JSON-like detection.
-    fn process_token(&mut self, token: &Token<'input>) {
+    fn process_token(&mut self, token: &Token<'input>, span: Span) {
+        self.update_position_and_value_indent(token, span);
+
         // Track flow depth
         match token {
             Token::FlowMapStart | Token::FlowSeqStart => {
@@ -373,6 +409,56 @@ impl<'input> Lexer<'input> {
                     self.has_directive_in_prologue = false;
                     self.first_directive_span = None;
                 }
+            }
+        }
+    }
+
+    fn update_position_and_value_indent(&mut self, token: &Token<'input>, span: Span) {
+        match token {
+            Token::LineStart(indent_level) => {
+                let indent = usize::from(*indent_level);
+                self.current_line = CurrentLine {
+                    start: span.end_usize().saturating_sub(indent),
+                    indent,
+                };
+                self.current_line_compact_value_indent = None;
+            }
+            Token::DocStart => {
+                self.pending_value_indent = Some(PendingValueIndentContext {
+                    base_indent: 0,
+                    min_auto_indent: 0,
+                });
+            }
+            Token::BlockSeqIndicator => {
+                self.pending_value_indent = Some(PendingValueIndentContext {
+                    base_indent: self.current_line.indent,
+                    min_auto_indent: self.current_line.indent.saturating_add(1),
+                });
+
+                let compact_base_indent = self.current_line.indent.saturating_add(2);
+                self.current_line_compact_value_indent = Some(PendingValueIndentContext {
+                    base_indent: compact_base_indent,
+                    min_auto_indent: compact_base_indent,
+                });
+            }
+            Token::Colon => {
+                self.pending_value_indent = Some(self.current_line_compact_value_indent.unwrap_or(
+                    PendingValueIndentContext {
+                        base_indent: self.current_line.indent,
+                        min_auto_indent: self.current_line.indent.saturating_add(1),
+                    },
+                ));
+            }
+            Token::Whitespace
+            | Token::WhitespaceWithTabs
+            | Token::Comment(_)
+            | Token::Anchor(_)
+            | Token::Tag(_)
+            | Token::YamlDirective(_)
+            | Token::TagDirective(..)
+            | Token::ReservedDirective(_) => {}
+            _ => {
+                self.pending_value_indent = None;
             }
         }
     }
@@ -487,14 +573,14 @@ impl<'input> Iterator for Lexer<'input> {
                     // Check pending tokens first (DEDENT, string parts)
                     if let Some(pending) = self.pending_tokens.pop_front() {
                         // Process state for pending tokens too (e.g., StringEnd sets prev_was_json_like)
-                        self.process_token(&pending.token);
+                        self.process_token(&pending.token, pending.span);
                         return Some(pending);
                     }
 
                     // Try to produce a new token
                     if let Some(rich_token) = self.produce_next_token() {
                         // Update state based on token
-                        self.process_token(&rich_token.token);
+                        self.process_token(&rich_token.token, rich_token.span);
 
                         return Some(rich_token);
                     }
