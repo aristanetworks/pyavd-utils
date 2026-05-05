@@ -121,6 +121,12 @@ jobs:
         if: |-
           matrix.os == 'ubuntu-latest'
 
+  codecov:
+    name: Upload coverage to CodeCov
+    needs: [python_coverage, cargo_build_and_test]
+    if: github.repository == 'aristanetworks/pyavd-utils'
+    uses: ./.github/workflows/codecov.yml
+
   # --------------------------------------------------------------------- #
   # Build and test cross platform pyavd-utils wheels and upload artifacts
   # --------------------------------------------------------------------- #

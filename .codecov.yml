@@ -1,0 +1,37 @@
+---
+coverage:
+  status:
+    project:
+      default:
+        target: auto
+        threshold: 0.5%
+        paths:
+          - "pyavd_utils/"
+          - "rust/"
+    patch:
+      default:
+        target: 80%
+        threshold: 0%
+
+comment:
+  layout: "reach,diff,components,files"
+  behavior: default
+  require_changes: true
+
+component_management:
+  individual_components:
+    - component_id: python
+      name: Python
+      paths:
+        - "pyavd_utils/"
+    - component_id: rust
+      name: Rust
+      paths:
+        - "rust/"
+
+ignore:
+  - "tests/**/*"
+  - "docs/**/*"
+  - "rust/**/tests/**/*"
+  - "rust/**/benches/**/*"
+  - "rust/**/examples/**/*"

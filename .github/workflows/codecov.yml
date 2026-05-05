@@ -1,0 +1,38 @@
+---
+name: Publish coverage to CodeCov
+"on":
+  workflow_call:
+
+jobs:
+  codecov:
+    name: Upload to CodeCov.
+    if: github.repository == 'aristanetworks/pyavd-utils'
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v6
+
+      - name: Download coverage from pytest
+        continue-on-error: true
+        uses: actions/download-artifact@v8
+        with:
+          name: pytest-coverage
+          path: .
+
+      - name: Download coverage report from rust tests
+        continue-on-error: true
+        uses: actions/download-artifact@v8
+        with:
+          name: rust-llvm-cov
+          path: .
+
+      - name: Upload results to Codecov
+        uses: codecov/codecov-action@57e3a136b779b570ffcdbf80b3bdc90e7fab3de2
+        with:
+          use_oidc: true
+          files: coverage.xml,lcov.info
+          disable_search: true
+          fail_ci_if_error: true
