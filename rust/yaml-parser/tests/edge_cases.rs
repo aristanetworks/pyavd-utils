@@ -889,6 +889,125 @@ fn test_mixed_flow_and_block() {
 }
 
 #[test]
+fn test_empty_mapping_value_before_sibling_sequence_item_stays_null() {
+    let input = "\
+catalog:
+  items:
+    - id: first
+      field_a: value-a
+      field_b: value-b
+      optional_field:
+    - id: second
+      field_a: value-c
+      count: 30
+";
+    let docs = parse_ok(input);
+    assert_eq!(docs.len(), 1);
+
+    let root_pairs = match &docs[0].value {
+        Value::Mapping(pairs) => pairs,
+        other => panic!("expected root mapping, got {other:?}"),
+    };
+    let catalog = root_pairs
+        .iter()
+        .find(|pair| pair.key.value == Value::String("catalog".into()))
+        .expect("expected catalog key");
+    let catalog_pairs = match &catalog.value.value {
+        Value::Mapping(pairs) => pairs,
+        other => panic!("expected catalog mapping, got {other:?}"),
+    };
+    let items = catalog_pairs
+        .iter()
+        .find(|pair| pair.key.value == Value::String("items".into()))
+        .expect("expected items key");
+    let item_nodes = match &items.value.value {
+        Value::Sequence(item_nodes) => item_nodes,
+        other => panic!("expected items sequence, got {other:?}"),
+    };
+
+    assert_eq!(
+        item_nodes.len(),
+        2,
+        "the second entry must remain a sibling item"
+    );
+
+    let first_item_pairs = match &item_nodes[0].node.value {
+        Value::Mapping(pairs) => pairs,
+        other => panic!("expected first item mapping, got {other:?}"),
+    };
+    let optional_field = first_item_pairs
+        .iter()
+        .find(|pair| pair.key.value == Value::String("optional_field".into()))
+        .expect("expected optional_field key");
+    assert_eq!(optional_field.value.value, Value::Null);
+
+    let second_item_pairs = match &item_nodes.get(1).expect("expected second item").node.value {
+        Value::Mapping(pairs) => pairs,
+        other => panic!("expected second item mapping, got {other:?}"),
+    };
+    assert!(
+        second_item_pairs
+            .iter()
+            .any(|pair| pair.key.value == Value::String("count".into())
+                && pair.value.value == Value::Int(Integer::I64(30))),
+        "expected second item to contain count: 30"
+    );
+}
+
+#[test]
+fn test_empty_mapping_value_before_sibling_mapping_key_stays_null() {
+    let input = "\
+root:
+  nested:
+    optional_field:
+  sibling_field: value
+";
+    let docs = parse_ok(input);
+    assert_eq!(docs.len(), 1);
+
+    let root_pairs = match &docs.first().expect("expected exactly one document").value {
+        Value::Mapping(pairs) => pairs,
+        other => panic!("expected root document mapping, got {other:?}"),
+    };
+    let root = root_pairs
+        .iter()
+        .find(|pair| pair.key.value == Value::String("root".into()))
+        .expect("expected root key");
+    let root_value_pairs = match &root.value.value {
+        Value::Mapping(pairs) => pairs,
+        other => panic!("expected root value mapping, got {other:?}"),
+    };
+
+    assert_eq!(
+        root_value_pairs.len(),
+        2,
+        "the sibling mapping key must remain outside nested.optional_field"
+    );
+
+    let nested = root_value_pairs
+        .iter()
+        .find(|pair| pair.key.value == Value::String("nested".into()))
+        .expect("expected nested key");
+    let nested_pairs = match &nested.value.value {
+        Value::Mapping(pairs) => pairs,
+        other => panic!("expected nested mapping, got {other:?}"),
+    };
+    let optional_field = nested_pairs
+        .iter()
+        .find(|pair| pair.key.value == Value::String("optional_field".into()))
+        .expect("expected optional_field key");
+    assert_eq!(optional_field.value.value, Value::Null);
+
+    assert!(
+        root_value_pairs.iter().any(
+            |pair| pair.key.value == Value::String("sibling_field".into())
+                && pair.value.value == Value::String("value".into())
+        ),
+        "expected sibling_field: value to remain under root"
+    );
+}
+
+#[test]
 fn test_complex_keys() {
     // Simple complex key (quoted string as key)
     let input = "\"complex key\": value";

@@ -130,8 +130,9 @@ impl<'input> Emitter<'input> {
         // Check if we're in a sequence entry context.
         let in_sequence_entry = self.in_sequence_entry_context();
 
-        // Check if the dedented line is too far outside the current context.
-        let too_dedented = next_indent < min_indent.saturating_sub(1);
+        // Only the owning key's indent may bridge an empty value to a block
+        // collection. More-dedented indicators belong to an ancestor context.
+        let bridge_indent = min_indent.saturating_sub(1);
 
         // Check if properties were collected at an invalid (dedented) indent.
         // Properties are invalid if:
@@ -149,7 +150,7 @@ impl<'input> Emitter<'input> {
         // Look ahead past the `LineStart` token to see what follows.
         // Only bridge if the next content token is a block collection indicator (- or ?).
         let can_bridge = !in_sequence_entry
-            && !too_dedented
+            && next_indent == bridge_indent
             && !properties_at_invalid_indent
             && matches!(
                 self.peek_kind_nth(1),
@@ -243,6 +244,7 @@ impl<'input> Emitter<'input> {
         let in_sequence_entry = self.in_sequence_entry_context();
 
         let at_block_indicator = !in_sequence_entry
+            && self.current_indent == min_indent.saturating_sub(1)
             && matches!(
                 self.peek_kind(),
                 Some(TokenKind::BlockSeqIndicator | TokenKind::MappingKey | TokenKind::Colon)
