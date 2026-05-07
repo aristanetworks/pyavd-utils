@@ -10,6 +10,7 @@ import pytest
 from pyavd_utils.passwords import (
     PyAVDUtilsPasswordError,
     PyAVDUtilsSimple7DataTooShortError,
+    PyAVDUtilsSimple7EmptyPasswordError,
     PyAVDUtilsSimple7Error,
     PyAVDUtilsSimple7InvalidHexEncodingError,
     PyAVDUtilsSimple7InvalidSaltFormatError,
@@ -23,6 +24,7 @@ def test_simple_7_error_hierarchy() -> None:
     """Test that Type-7 errors inherit from the passwords base error."""
     assert issubclass(PyAVDUtilsSimple7Error, PyAVDUtilsPasswordError)
     assert issubclass(PyAVDUtilsSimple7InvalidSaltValueError, PyAVDUtilsSimple7Error)
+    assert issubclass(PyAVDUtilsSimple7EmptyPasswordError, PyAVDUtilsSimple7Error)
 
 
 SIMPLE_7_ENCRYPT_TEST_DATA = [
@@ -67,6 +69,13 @@ SIMPLE_7_ENCRYPT_TEST_DATA = [
         "",
         pytest.raises(PyAVDUtilsSimple7InvalidSaltValueError, match="Salt must be in the range 0-15, got 99"),
         id="Invalid salt value (99)",
+    ),
+    pytest.param(
+        "",
+        5,
+        "",
+        pytest.raises(PyAVDUtilsSimple7EmptyPasswordError, match="Password must not be empty"),
+        id="Empty password",
     ),
 ]
 

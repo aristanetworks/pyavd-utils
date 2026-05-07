@@ -138,6 +138,11 @@ mod passwords {
                 PyAVDUtilsSimple7Error,
                 "Type-7 encrypted data is too short."
             ),
+            (
+                PyAVDUtilsSimple7EmptyPasswordError,
+                PyAVDUtilsSimple7Error,
+                "Type-7 password is empty."
+            ),
         ]
     );
 
@@ -203,6 +208,9 @@ mod passwords {
                 }
                 passwords::Simple7Error::DataTooShort => {
                     PyAVDUtilsSimple7DataTooShortError::new_err(message)
+                }
+                passwords::Simple7Error::EmptyPassword => {
+                    PyAVDUtilsSimple7EmptyPasswordError::new_err(message)
                 }
             }
         }

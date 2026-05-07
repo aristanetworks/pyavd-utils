@@ -57,7 +57,9 @@ fn simple_7_encrypt_empty_password_err() {
             .call_method1("simple_7_encrypt", ("", Some(5u8)))
             .unwrap_err();
 
-        assert!(err.is_instance_of::<pyo3::exceptions::PyValueError>(py));
+        assert!(err.is_instance_of::<passwords::PyAVDUtilsSimple7EmptyPasswordError>(py));
+        assert!(err.is_instance_of::<passwords::PyAVDUtilsSimple7Error>(py));
+        assert!(err.is_instance_of::<passwords::PyAVDUtilsPasswordError>(py));
         assert_eq!(err.value(py).to_string(), "Password must not be empty");
     });
 }
