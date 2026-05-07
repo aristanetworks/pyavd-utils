@@ -20,7 +20,6 @@ env:
   PY_COLORS: 1
   # rust
   CARGO_TERM_COLOR: always
-  CARGO_DENY_VERSION: "0.19.4"
   CARGO_LLVM_COV_VERSION: "0.8.5"
 
 jobs:
@@ -89,18 +88,32 @@ jobs:
           python-version: "3.12"
       - name: Install YAML test suite fixture
         run: python scripts/fetch_yaml_test_suite.py
-      - name: Check code formatting with cargo fmt (nightly)
-        run: >-
-          RUSTUP_TOOLCHAIN=nightly cargo fmt
-          --verbose
-          --check
-          --all
-          --
-          --config unstable_features=true,group_imports=StdExternalCrate,imports_granularity=Item
+      - name: Install nightly rustfmt
+        run: rustup toolchain install nightly --profile minimal --component rustfmt
         if: |
           matrix.os == 'ubuntu-latest'
-      - name: Check code style with clippy
-        run: cargo clippy --all-targets --all-features
+      - name: Run cargo fmt pre-commit hook
+        uses: pre-commit/action@v3.0.1
+        with:
+          extra_args: cargo-fmt --all-files
+        if: |
+          matrix.os == 'ubuntu-latest'
+      - name: Run cargo check pre-commit hook
+        uses: pre-commit/action@v3.0.1
+        with:
+          extra_args: cargo-check --all-files
+        if: |
+          matrix.os == 'ubuntu-latest'
+      - name: Run clippy pre-commit hook
+        uses: pre-commit/action@v3.0.1
+        with:
+          extra_args: clippy --all-files
+        if: |
+          matrix.os == 'ubuntu-latest'
+      - name: Run cargo deny pre-commit hook
+        uses: pre-commit/action@v3.0.1
+        with:
+          extra_args: cargo-deny --all-files
         if: |
           matrix.os == 'ubuntu-latest'
       - name: Run all tests
@@ -120,12 +133,6 @@ jobs:
           matrix.os == 'ubuntu-latest'
       - name: Test building to all targets
         run: cargo build --all-targets --all-features
-      - name: Check Rust dependencies with cargo deny
-        run: |
-          cargo install cargo-deny --version ${{ env.CARGO_DENY_VERSION }} --locked
-          cargo deny check
-        if: |-
-          matrix.os == 'ubuntu-latest'
 
   codecov:
     name: Upload coverage to CodeCov
