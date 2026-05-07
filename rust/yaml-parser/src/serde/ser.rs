@@ -508,10 +508,6 @@ where
 }
 #[cfg(test)]
 mod tests {
-    #![allow(
-        clippy::expect_used,
-        reason = "tests use expect with explicit messages for clearer diagnostics"
-    )]
     use super::*;
     use crate::{
         MappingPair, Node, SequenceItem,

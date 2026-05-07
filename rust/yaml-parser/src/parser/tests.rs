@@ -1,10 +1,8 @@
-#![allow(clippy::indexing_slicing, reason = "panics are acceptable in tests")]
-#![allow(clippy::panic, reason = "panic is acceptable in tests")]
-#![allow(
 // Copyright (c) 2026 Arista Networks, Inc.
 // Use of this source code is governed by the Apache License 2.0
 // that can be found in the LICENSE file.
 
+#![allow(
     clippy::min_ident_chars,
     reason = "single-char closure params are fine in tests"
 )]
@@ -298,7 +296,6 @@ fn parse_via_events(input: &str) -> Vec<Node<'static>> {
 
 /// Test that parsing through collected events matches the public AST path.
 #[test]
-#[allow(clippy::print_stderr, reason = "Debug output on failure")]
 fn test_event_parser_matches_public_parse_pipeline() {
     let test_cases = [
         "hello",
@@ -520,7 +517,7 @@ fn test_invalid_explicit_builtin_tags_report_error_and_recover_to_string() {
         );
         let expected_text = input.split_once(' ').map_or("", |(_, text)| text);
         assert!(
-            matches!(docs[0].value, Value::String(ref text) if text.as_ref() == expected_text),
+            matches!(&docs[0].value, Value::String(text) if text == expected_text),
             "expected string recovery for {input:?}, got {:?}",
             docs[0].value
         );
@@ -555,7 +552,7 @@ fn test_non_specific_and_custom_tags_disable_implicit_resolution() {
         non_specific_errors.is_empty(),
         "unexpected errors: {non_specific_errors:?}"
     );
-    assert!(matches!(non_specific_docs[0].value, Value::String(ref text) if text == "42"));
+    assert!(matches!(&non_specific_docs[0].value, Value::String(text) if text == "42"));
     assert_eq!(
         non_specific_docs[0].tag().map(|tag| tag.value.as_ref()),
         Some("!")
@@ -566,7 +563,7 @@ fn test_non_specific_and_custom_tags_disable_implicit_resolution() {
         custom_errors.is_empty(),
         "unexpected errors: {custom_errors:?}"
     );
-    assert!(matches!(custom_docs[0].value, Value::String(ref text) if text == "42"));
+    assert!(matches!(&custom_docs[0].value, Value::String(text) if text == "42"));
     assert_eq!(
         custom_docs[0].tag().map(|tag| tag.value.as_ref()),
         Some("!custom")
@@ -577,7 +574,7 @@ fn test_non_specific_and_custom_tags_disable_implicit_resolution() {
         explicit_str_errors.is_empty(),
         "unexpected errors: {explicit_str_errors:?}"
     );
-    assert!(matches!(explicit_str_docs[0].value, Value::String(ref text) if text == "42"));
+    assert!(matches!(&explicit_str_docs[0].value, Value::String(text) if text == "42"));
 
     let (explicit_int_docs, explicit_int_errors) = parse("!<tag:yaml.org,2002:int> 0o52");
     assert!(

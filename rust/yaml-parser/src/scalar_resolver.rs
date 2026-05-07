@@ -156,8 +156,8 @@ fn resolve_plain_implicit(text: Cow<'_, str>) -> ResolvedScalar<'_> {
         Some(b'T') if matches!(input, "True" | "TRUE") => ResolvedScalar::Bool(true),
         Some(b'f') if input == "false" => ResolvedScalar::Bool(false),
         Some(b'F') if matches!(input, "False" | "FALSE") => ResolvedScalar::Bool(false),
-        Some(b'+' | b'-' | b'.' | b'0'..=b'9') => {
-            match resolve_plain_numeric(text.clone(), first.unwrap()) {
+        Some(first) if matches!(*first, b'+' | b'-' | b'.' | b'0'..=b'9') => {
+            match resolve_plain_numeric(text.clone(), first) {
                 Some(resolved_scalar) => resolved_scalar,
                 None => ResolvedScalar::String(text),
             }

@@ -93,11 +93,19 @@ fn bench_saphyr_marked_parse(bench: &mut criterion::Bencher<'_>, input: &str) {
     });
 }
 
+#[expect(
+    clippy::unwrap_used,
+    reason = "benchmark corpora must remain valid serde_yaml input; panic preserves that precondition"
+)]
 fn bench_serde_yaml_value_parse(bench: &mut criterion::Bencher<'_>, input: &str) {
     bench.iter(|| {
         let value: serde_yaml::Value = serde_yaml::from_str(black_box(input)).unwrap();
         black_box(value);
     });
+}
+
+fn input_throughput(input: &str) -> Throughput {
+    Throughput::Bytes(u64::try_from(input.len()).unwrap_or(u64::MAX))
 }
 
 /// Benchmark parsing throughput for different document types.
@@ -115,7 +123,7 @@ fn bench_parse_throughput(criterion: &mut Criterion) {
     let mut group = criterion.benchmark_group("parse_throughput");
 
     for (name, input) in test_cases {
-        group.throughput(Throughput::Bytes(u64::try_from(input.len()).unwrap()));
+        group.throughput(input_throughput(input));
 
         // Benchmark yaml-parser (always includes spans)
         group.bench_with_input(
@@ -223,6 +231,10 @@ key3: "tab\there"
 /// Benchmark serde-based deserialization throughput for different document
 /// types when the `serde` feature is enabled.
 #[cfg(feature = "serde")]
+#[expect(
+    clippy::unwrap_used,
+    reason = "benchmark corpora must deserialize successfully; panic preserves that precondition"
+)]
 fn bench_serde_deserialize_throughput(criterion: &mut Criterion) {
     let test_cases: &[(&str, &str)] = &[
         ("large_mapping", LARGE_MAPPING),
@@ -240,7 +252,7 @@ fn bench_serde_deserialize_throughput(criterion: &mut Criterion) {
         // We expect both libraries to successfully deserialize all benchmark
         // corpora. If either panics here, that's a behavioural regression we
         // want to see rather than silently skipping the dataset.
-        group.throughput(Throughput::Bytes(u64::try_from(input.len()).unwrap()));
+        group.throughput(input_throughput(input));
 
         // Benchmark yaml-parser's serde-based deserialization into our own
         // generic `OwnedYamlValue` tree. This uses the crate's only serde
