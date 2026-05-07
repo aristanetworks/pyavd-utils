@@ -806,6 +806,64 @@ fn test_block_scalar_chomping() {
 }
 
 #[test]
+fn test_block_scalar_empty_lines_with_chomping() {
+    let cases = [
+        (
+            "strip with one empty line",
+            "key: |-\n\n  top\n\n  bottom\n\nnext: value\n",
+            "\ntop\n\nbottom",
+        ),
+        (
+            "clip with one empty line",
+            "key: |\n\n  top\n\n  bottom\n\nnext: value\n",
+            "\ntop\n\nbottom\n",
+        ),
+        (
+            "keep with one empty line",
+            "key: |+\n\n  top\n\n  bottom\n\nnext: value\n",
+            "\ntop\n\nbottom\n\n",
+        ),
+        (
+            "strip with two empty lines",
+            "key: |-\n\n\n  top\n\n\n  bottom\n\n\nnext: value\n",
+            "\n\ntop\n\n\nbottom",
+        ),
+        (
+            "clip with two empty lines",
+            "key: |\n\n\n  top\n\n\n  bottom\n\n\nnext: value\n",
+            "\n\ntop\n\n\nbottom\n",
+        ),
+        (
+            "keep with two empty lines",
+            "key: |+\n\n\n  top\n\n\n  bottom\n\n\nnext: value\n",
+            "\n\ntop\n\n\nbottom\n\n\n",
+        ),
+    ];
+
+    for (name, input, expected) in cases {
+        let docs = parse_ok(input);
+        let doc = docs.first().expect("expected exactly one document");
+
+        let pairs = match &doc.value {
+            Value::Mapping(pairs) => Some(pairs),
+            _ => None,
+        }
+        .expect("expected mapping");
+
+        assert_eq!(pairs.len(), 2, "{name}");
+        let string_value = match &pairs[0].value.value {
+            Value::String(string_value) => Some(string_value.as_ref()),
+            _ => None,
+        }
+        .expect("expected string value");
+
+        assert_eq!(string_value, expected, "{name}");
+        assert!(matches!(&pairs[1].key.value, Value::String(value) if value == "next"));
+        assert!(matches!(&pairs[1].value.value, Value::String(value) if value == "value"));
+    }
+}
+
+#[test]
 fn test_folded_block_scalar_quotes_are_content() {
     let docs = parse_ok("mykey: >-\n  'something' in 'quotes'.\n");
     let doc = docs.first().expect("expected exactly one document");
@@ -883,6 +941,31 @@ fn test_block_scalar_header_comment_attaches_to_mapping_value() {
 }
 
 #[test]
+fn test_block_scalar_header_comment_keeps_following_sibling() {
+    let docs = parse_ok("key: | # header\n  value\nnext: sibling\n");
+    let doc = docs.first().expect("expected exactly one document");
+
+    let pairs = match &doc.value {
+        Value::Mapping(pairs) => Some(pairs),
+        _ => None,
+    }
+    .expect("expected mapping");
+
+    assert_eq!(pairs.len(), 2);
+    assert_eq!(
+        pairs[0]
+            .value
+            .trailing_comment()
+            .map(|comment| comment.text.as_ref()),
+        Some(" header"),
+    );
+    assert!(matches!(&pairs[0].key.value, Value::String(value) if value == "key"));
+    assert!(matches!(&pairs[0].value.value, Value::String(value) if value == "value\n"));
+    assert!(matches!(&pairs[1].key.value, Value::String(value) if value == "next"));
+    assert!(matches!(&pairs[1].value.value, Value::String(value) if value == "sibling"));
+}
+
+#[test]
 fn test_block_scalar_header_comment_attaches_to_sequence_item() {
     let docs = parse_ok("- > # header\n  value\n");
     let doc = docs.first().expect("expected exactly one document");
@@ -954,6 +1037,69 @@ fn test_unicode_block_scalar_explicit_indent_after_unicode_key() {
     .expect("expected string value");
 
     assert_eq!(value, "value λ\n");
+}
+
+#[test]
+fn test_tab_after_block_scalar_indent_is_content() {
+    let docs = parse_ok("key: |\t  \n  \tfoo\nnext: value\n");
+    let doc = docs.first().expect("expected exactly one document");
+
+    let pairs = match &doc.value {
+        Value::Mapping(pairs) => Some(pairs),
+        _ => None,
+    }
+    .expect("expected mapping");
+
+    assert_eq!(pairs.len(), 2);
+    assert!(matches!(&pairs[0].key.value, Value::String(value) if value == "key"));
+    assert!(matches!(&pairs[0].value.value, Value::String(value) if value == "\tfoo\n"));
+    assert!(matches!(&pairs[1].key.value, Value::String(value) if value == "next"));
+    assert!(matches!(&pairs[1].value.value, Value::String(value) if value == "value"));
+}
+
+#[test]
+fn test_indented_document_marker_looking_block_scalar_content() {
+    let docs = parse_ok("key: |-\n  ...\nnext: value\n");
+    let doc = docs.first().expect("expected exactly one document");
+
+    let pairs = match &doc.value {
+        Value::Mapping(pairs) => Some(pairs),
+        _ => None,
+    }
+    .expect("expected mapping");
+
+    assert_eq!(pairs.len(), 2);
+    assert!(matches!(&pairs[0].key.value, Value::String(value) if value == "key"));
+    assert!(matches!(&pairs[0].value.value, Value::String(value) if value == "..."));
+    assert!(matches!(&pairs[1].key.value, Value::String(value) if value == "next"));
+    assert!(matches!(&pairs[1].value.value, Value::String(value) if value == "value"));
+}
+
+#[test]
+fn test_explicit_block_scalar_indent_in_nested_mapping() {
+    let docs = parse_ok("outer:\n  key: |1\n   value\n  next: sibling\n");
+    let doc = docs.first().expect("expected exactly one document");
+
+    let outer_pairs = match &doc.value {
+        Value::Mapping(pairs) => Some(pairs),
+        _ => None,
+    }
+    .expect("expected outer mapping");
+
+    assert_eq!(outer_pairs.len(), 1);
+    assert!(matches!(&outer_pairs[0].key.value, Value::String(value) if value == "outer"));
+
+    let inner_pairs = match &outer_pairs[0].value.value {
+        Value::Mapping(pairs) => Some(pairs),
+        _ => None,
+    }
+    .expect("expected nested mapping");
+
+    assert_eq!(inner_pairs.len(), 2);
+    assert!(matches!(&inner_pairs[0].key.value, Value::String(value) if value == "key"));
+    assert!(matches!(&inner_pairs[0].value.value, Value::String(value) if value == "value\n"));
+    assert!(matches!(&inner_pairs[1].key.value, Value::String(value) if value == "next"));
+    assert!(matches!(&inner_pairs[1].value.value, Value::String(value) if value == "sibling"));
 }
 
 #[test]
