@@ -95,7 +95,7 @@ jobs:
       - name: Run cargo fmt pre-commit hook
         uses: pre-commit/action@v3.0.1
         with:
-          extra_args: cargo-fmt --all-files
+          extra_args: fmt --all-files
         if: |
           matrix.os == 'ubuntu-latest'
       - name: Run cargo check pre-commit hook

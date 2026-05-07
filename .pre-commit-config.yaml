@@ -3,7 +3,7 @@
 # See https://pre-commit.com/hooks.html for more hooks
 ci:
   autoupdate_commit_msg: "CI: pre-commit autoupdate"
-  skip: [pyright, cargo-fmt, cargo-check, clippy, cargo-deny]
+  skip: [pyright, fmt, cargo-check, clippy, cargo-deny]
 
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
@@ -60,9 +60,10 @@ repos:
           - --comment-style
           - "//"
 
-  - repo: local
+  - repo: https://github.com/doublify/pre-commit-rust
+    rev: v1.0
     hooks:
-      - id: cargo-fmt
+      - id: fmt
         name: Lint Rust files using fmt (nightly)
         entry: env RUSTUP_TOOLCHAIN=nightly cargo fmt
         args:
@@ -70,13 +71,8 @@ repos:
           - --
           - --config
           - unstable_features=true,group_imports=StdExternalCrate,imports_granularity=Item
-        language: system
         files: ^rust/
         pass_filenames: false
-
-  - repo: https://github.com/doublify/pre-commit-rust
-    rev: v1.0
-    hooks:
       - id: cargo-check
         name: Lint Rust files using cargo check
         files: ^rust/
