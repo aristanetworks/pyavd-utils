@@ -904,7 +904,7 @@ catalog:
     let docs = parse_ok(input);
     assert_eq!(docs.len(), 1);
 
-    let root_pairs = match &docs.first().expect("expected exactly one document").value {
+    let root_pairs = match &docs[0].value {
         Value::Mapping(pairs) => pairs,
         other => panic!("expected root mapping, got {other:?}"),
     };
@@ -921,7 +921,7 @@ catalog:
         .find(|pair| pair.key.value == Value::String("items".into()))
         .expect("expected items key");
     let item_nodes = match &items.value.value {
-        Value::Sequence(items) => items,
+        Value::Sequence(item_nodes) => item_nodes,
         other => panic!("expected items sequence, got {other:?}"),
     };
 
@@ -931,7 +931,7 @@ catalog:
         "the second entry must remain a sibling item"
     );
 
-    let first_item_pairs = match &item_nodes.first().expect("expected first item").node.value {
+    let first_item_pairs = match &item_nodes[0].node.value {
         Value::Mapping(pairs) => pairs,
         other => panic!("expected first item mapping, got {other:?}"),
     };
