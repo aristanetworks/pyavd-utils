@@ -86,7 +86,7 @@ impl<'input> Lexer<'input> {
             // Colon ends plain scalar if followed by whitespace (or EOF)
             if peek_ch == ':' {
                 let next = self.peek_n(1);
-                if next.is_none() || next.is_some_and(char::is_whitespace) {
+                if next.is_none_or(char::is_whitespace) {
                     break;
                 }
             }

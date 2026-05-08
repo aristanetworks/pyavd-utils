@@ -746,7 +746,7 @@ fn analyze_error_kinds() {
     }
 
     let mut sorted: Vec<_> = error_kinds.iter().collect();
-    sorted.sort_by(|kind_a, kind_b| kind_b.1.len().cmp(&kind_a.1.len()));
+    sorted.sort_by_key(|kind_b| std::cmp::Reverse(kind_b.1.len()));
 
     eprintln!("=== Error Kind Distribution ===");
     for (kind, test_ids) in &sorted {
@@ -768,7 +768,7 @@ fn analyze_error_kinds() {
             *test_counts.entry(test_id).or_insert(0) += 1;
         }
         let mut sorted_tests: Vec<_> = test_counts.into_iter().collect();
-        sorted_tests.sort_by(|test_a, test_b| test_b.1.cmp(&test_a.1));
+        sorted_tests.sort_by_key(|test_b| std::cmp::Reverse(test_b.1));
         for (test_id, count) in sorted_tests.iter().take(30) {
             eprintln!("  {test_id}: {count} errors");
         }
