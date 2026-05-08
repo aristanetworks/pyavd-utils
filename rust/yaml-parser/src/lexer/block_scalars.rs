@@ -160,6 +160,9 @@ impl<'input> Lexer<'input> {
         let mut scalar_has_any_part = false;
         let mut end_pos = self.byte_pos;
         let indent_context = self.pending_value_indent.unwrap_or_else(|| {
+            // A scalar used as a pending value inherits the indentation context
+            // from the key/sequence marker; standalone scalars fall back to
+            // their own header line.
             if header_column == header_line_indent {
                 super::PendingValueIndentContext {
                     base_indent: header_line_indent,
@@ -178,12 +181,16 @@ impl<'input> Lexer<'input> {
                 .saturating_add(usize::from(indent))
         });
         let min_auto_indent = if header_column == header_line_indent {
+            // Top-level block scalars may start at the header indent; nested
+            // pending values must stay under their parent context.
             header_line_indent.min(indent_context.min_auto_indent)
         } else {
             indent_context.min_auto_indent
         };
         let mut leading_empty_lines: Vec<(usize, Span)> = Vec::new();
 
+        // A valid block scalar header must end before content begins. If it
+        // does not, treat this as an empty scalar and let chomping normalize it.
         if !self.consume_line_break_at_current() {
             Self::apply_chomping_in_place(&mut value, header, true);
             return (value, Span::from_usize_range(token_start..self.byte_pos));
@@ -192,6 +199,8 @@ impl<'input> Lexer<'input> {
         while let Some((line_start_span, indent, line_start, line_end, next_line_pos)) =
             self.peek_next_block_scalar_line()
         {
+            // Document markers at column zero terminate the scalar and must be
+            // lexed by the outer token stream.
             if self.is_document_marker_at(line_start, indent) {
                 self.pending_tokens.push_back(super::RichToken::new(
                     Token::LineStart(crate::span::usize_to_indent(indent)),
@@ -207,8 +216,13 @@ impl<'input> Lexer<'input> {
                 .bytes()
                 .take_while(|byte| matches!(byte, b' ' | b'\t'))
                 .any(|byte| byte == b'\t');
+            // Before auto-indent is known, the first non-empty line must be
+            // indented far enough to belong to this scalar. Otherwise it is a
+            // sibling line and scalar scanning stops before consuming it.
             if content_indent.is_none() && has_content && indent < min_auto_indent {
                 if has_tab_in_prefix {
+                    // Tabs cannot satisfy indentation, but report them before
+                    // returning control to the outer lexer.
                     self.add_error(ErrorKind::InvalidIndentation, line_start_span);
                 }
                 self.pending_tokens.push_back(super::RichToken::new(
@@ -218,6 +232,8 @@ impl<'input> Lexer<'input> {
                 self.byte_pos = line_start;
                 break;
             }
+            // Once the content indent is fixed, any non-empty line with a
+            // smaller indent belongs to the parent structure.
             if let Some(ci) = content_indent
                 && has_content
                 && indent < ci
@@ -230,10 +246,15 @@ impl<'input> Lexer<'input> {
                 break;
             }
 
+            // Empty lines before the first content line are kept as scalar
+            // content, but their indentation can only be validated after the
+            // auto-detected content indent is known.
             if content_indent.is_none() && !has_content {
                 leading_empty_lines.push((indent, line_start_span));
             }
 
+            // The first non-empty content line establishes auto-indent and
+            // lets us diagnose leading empty lines that were over-indented.
             if content_indent.is_none() && has_content {
                 content_indent = Some(indent);
                 for (empty_indent, empty_span) in &leading_empty_lines {
@@ -246,9 +267,13 @@ impl<'input> Lexer<'input> {
             let ci = content_indent.unwrap_or(indent);
             let extra_indent = indent.saturating_sub(ci);
             let has_non_whitespace = line_text.bytes().any(|byte| !matches!(byte, b' ' | b'\t'));
+            // A tab in the visible prefix is content only after the content
+            // indent; before that it is an invalid indentation character.
             if has_tab_in_prefix && indent < content_indent.unwrap_or(min_auto_indent) {
                 self.add_error(ErrorKind::InvalidIndentation, line_start_span);
             }
+            // Folding depends on whether a physical line is empty, more
+            // indented than the scalar body, or a normal content line.
             let line_type = if !has_content && extra_indent == 0 {
                 BlockLineType::Empty
             } else if !has_non_whitespace || extra_indent > 0 || has_tab_in_prefix {
@@ -267,6 +292,8 @@ impl<'input> Lexer<'input> {
             );
 
             had_any_line = true;
+            // Spans should end at the last meaningful scalar byte; pure empty
+            // lines still advance the lexer but may be excluded after chomping.
             if has_content || extra_indent > 0 {
                 scalar_has_any_part = true;
                 end_pos = line_end;
@@ -277,11 +304,15 @@ impl<'input> Lexer<'input> {
             self.byte_pos = next_line_pos;
         }
 
+        // Folded scalars synthesize a final line break for a non-empty final
+        // line; chomping then decides whether to keep, clip, or strip it.
         if !is_literal && had_any_line && append_state.prev_type != BlockLineType::Empty {
             value.push('\n');
         }
 
         Self::apply_chomping_in_place(&mut value, header, !scalar_has_any_part);
+        // Empty/all-chomped scalars span through what was consumed, while
+        // scalars with content report the last content byte before chomping.
         let span_end = if scalar_has_any_part {
             end_pos
         } else {
