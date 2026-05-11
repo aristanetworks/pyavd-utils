@@ -211,7 +211,7 @@ if [[ "$clean_target" == "1" ]]; then
 else
     rm -rf "$target_dir/criterion"
 fi
-CARGO_TARGET_DIR="$target_dir" cargo bench --bench parser_bench --features serde -- "$bench_filter" | tee "$output_file"
+CARGO_TARGET_DIR="$target_dir" cargo bench --locked --bench parser_bench --features serde -- "$bench_filter" | tee "$output_file"
 rm -rf "$result_criterion_dir"
 mkdir -p "$result_criterion_dir"
 rsync -a --delete "$target_dir/criterion/" "$result_criterion_dir/"

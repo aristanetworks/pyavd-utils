@@ -14,6 +14,7 @@ repos:
       - id: end-of-file-fixer
         name: Ensures that a file is either empty, or ends with one newline.
         exclude_types: [svg, json]
+        exclude: ^pyavd_utils/THIRD_PARTY_LICENSES.txt$
       - id: check-added-large-files
         name: Prevents giant files from being committed.
       - id: check-merge-conflict
@@ -75,10 +76,11 @@ repos:
         pass_filenames: false
       - id: cargo-check
         name: Lint Rust files using cargo check
+        args: ["--locked"]
         files: ^rust/
       - id: clippy
         name: Lint Rust files using clippy
-        args: ["--all-targets", "--all-features"]
+        args: ["--locked", "--all-targets", "--all-features"]
         files: ^rust/
 
   - repo: https://github.com/EmbarkStudios/cargo-deny
@@ -86,7 +88,18 @@ repos:
     hooks:
       # Check licenses of Rust dependencies
       - id: cargo-deny
+        args: ["--locked", "--all-features", "check"]
         files: ^rust/
+
+  - repo: local
+    hooks:
+      - id: cargo-about-generate
+        name: Generate third-party Rust licenses
+        entry: cargo-about generate --locked --fail -o pyavd_utils/THIRD_PARTY_LICENSES.txt about-text.hbs
+        language: rust
+        additional_dependencies: ["cli:cargo-about:0.8.4"]
+        files: (^|/)Cargo\.(toml|lock)$|^about\.toml$|^about-text\.hbs$
+        pass_filenames: false
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
     # Ruff version.
@@ -124,6 +137,7 @@ repos:
         entry: codespell
         language: python
         types: [text]
+        exclude: ^(pyavd_utils/THIRD_PARTY_LICENSES.txt|Cargo.lock)$
         args:
           - '--ignore-words=.github/ignore-codespell-words'  # Ignore words listed in this file
 
