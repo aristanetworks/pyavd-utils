@@ -267,11 +267,6 @@ impl<'input> Lexer<'input> {
             let ci = content_indent.unwrap_or(indent);
             let extra_indent = indent.saturating_sub(ci);
             let has_non_whitespace = line_text.bytes().any(|byte| !matches!(byte, b' ' | b'\t'));
-            // A tab in the visible prefix is content only after the content
-            // indent; before that it is an invalid indentation character.
-            if has_tab_in_prefix && indent < content_indent.unwrap_or(min_auto_indent) {
-                self.add_error(ErrorKind::InvalidIndentation, line_start_span);
-            }
             // Folding depends on whether a physical line is empty, more
             // indented than the scalar body, or a normal content line.
             let line_type = if !has_content && extra_indent == 0 {
