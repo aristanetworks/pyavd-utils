@@ -18,6 +18,8 @@ pub enum Simple7Error {
     InvalidSaltValue(u8),
     #[display("Encrypted data too short (minimum 2 characters required for salt)")]
     DataTooShort,
+    #[display("Password must not be empty")]
+    EmptyPassword,
 }
 impl std::error::Error for Simple7Error {}
 
@@ -48,8 +50,11 @@ pub fn simple_7_decrypt(data: &str) -> Result<String, Simple7Error> {
 /// Encrypt (obfuscate) a password with insecure type-7.
 ///
 /// If `salt` is `None`, a random salt in the range 0-15 will be used.
-/// Returns an error if the provided salt is not in the range 0-15.
+/// Returns an error if the provided salt is not in the range 0-15, or if `data` is empty.
 pub fn simple_7_encrypt(data: &str, salt: Option<u8>) -> Result<String, Simple7Error> {
+    if data.is_empty() {
+        return Err(Simple7Error::EmptyPassword);
+    }
     let salt = match salt {
         Some(s) if s > 15 => return Err(Simple7Error::InvalidSaltValue(s)),
         Some(s) => s,
@@ -137,6 +142,12 @@ mod tests {
                 salt
             );
         }
+    }
+
+    #[test]
+    fn test_simple_7_encrypt_empty_password() {
+        let result = simple_7_encrypt("", Some(5));
+        assert!(matches!(result.unwrap_err(), Simple7Error::EmptyPassword));
     }
 
     #[test]

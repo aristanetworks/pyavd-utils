@@ -50,6 +50,18 @@ fn simple_7_encrypt_with_random_salt() {
 }
 
 #[test]
+fn simple_7_encrypt_empty_password_err() {
+    with_passwords_module(|py, module| {
+        let err = module
+            .call_method1("simple_7_encrypt", ("", Some(5u8)))
+            .unwrap_err();
+
+        assert!(err.is_instance_of::<pyo3::exceptions::PyValueError>(py));
+        assert_eq!(err.value(py).to_string(), "Password must not be empty");
+    });
+}
+
+#[test]
 fn simple_7_encrypt_invalid_salt_err() {
     with_passwords_module(|py, module| {
         let password = "test_password";
