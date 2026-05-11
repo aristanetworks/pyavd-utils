@@ -75,7 +75,7 @@ repos:
         files: ^rust/
 
   - repo: https://github.com/EmbarkStudios/cargo-deny
-    rev: 0.19.4
+    rev: 0.19.6
     hooks:
       # Check licenses of Rust dependencies
       - id: cargo-deny
