@@ -109,6 +109,12 @@ jobs:
           extra_args: clippy --all-files
         if: |
           matrix.os == 'ubuntu-latest'
+      - name: Run cargo about pre-commit hook
+        uses: pre-commit/action@v3.0.1
+        with:
+          extra_args: cargo-about-generate --all-files
+        if: |
+          matrix.os == 'ubuntu-latest'
       - name: Run cargo deny pre-commit hook
         uses: pre-commit/action@v3.0.1
         with:
