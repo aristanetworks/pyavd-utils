@@ -22,3 +22,10 @@ targets = [
 ]
 ignore-build-dependencies = true
 ignore-dev-dependencies = true
+
+[miniz_oxide.clarify]
+license = "MIT"
+
+[[miniz_oxide.clarify.files]]
+path = "LICENSE-MIT.md"
+checksum = "799e9ca9d179295ef372f25d3769cdda7d25bb2668add6a6a1e22d1e4c678b8d"
