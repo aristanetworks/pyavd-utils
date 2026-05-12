@@ -6,13 +6,13 @@ use avdschema::Store;
 use log::debug;
 use serde_json::Value;
 
-use crate::{
-    context::{Configuration, Context, ValidationResult},
-    feedback::{InputDiagnostic, ParseDiagnostic},
-    validatable::ValidatableValue,
-};
-
 use super::Validation;
+use crate::context::Configuration;
+use crate::context::Context;
+use crate::context::ValidationResult;
+use crate::feedback::InputDiagnostic;
+use crate::feedback::ParseDiagnostic;
+use crate::validatable::ValidatableValue;
 
 #[derive(Debug, Default)]
 /// Result of validation for a single parsed value or YAML document.
@@ -120,8 +120,8 @@ pub enum StoreValidateError {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    use crate::{feedback::ParseDiagnosticKind, validation::test_utils::get_test_store};
+    use crate::feedback::ParseDiagnosticKind;
+    use crate::validation::test_utils::get_test_store;
 
     #[test]
     fn validate_json_invalid_schema() {

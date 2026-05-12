@@ -1,19 +1,18 @@
 // Copyright (c) 2025-2026 Arista Networks, Inc.
 // Use of this source code is governed by the Apache License 2.0
 // that can be found in the LICENSE file.
-use serde::{Deserialize, Serialize};
-
 use std::collections::HashMap;
 #[cfg(feature = "dump_load_files")]
 use std::path::PathBuf;
 
-use crate::{
-    resolve::errors::SchemaResolverError,
-    resolve_schema,
-    schema::any::AnySchema,
-    utils::{dump::Dump, load::Load},
-};
+use serde::Deserialize;
+use serde::Serialize;
 
+use crate::resolve::errors::SchemaResolverError;
+use crate::resolve_schema;
+use crate::schema::any::AnySchema;
+use crate::utils::dump::Dump;
+use crate::utils::load::Load;
 #[cfg(feature = "dump_load_files")]
 use crate::utils::load::LoadError;
 
@@ -82,11 +81,15 @@ pub enum SchemaStoreError {
 mod tests {
 
     #[cfg(feature = "dump_load_files")]
-    use {
-        super::Load,
-        crate::utils::test_utils::{get_avd_store, get_tmp_file},
-        crate::{Dump as _, Store},
-    };
+    use super::Load;
+    #[cfg(feature = "dump_load_files")]
+    use crate::Dump as _;
+    #[cfg(feature = "dump_load_files")]
+    use crate::Store;
+    #[cfg(feature = "dump_load_files")]
+    use crate::utils::test_utils::get_avd_store;
+    #[cfg(feature = "dump_load_files")]
+    use crate::utils::test_utils::get_tmp_file;
 
     #[test]
     #[cfg(feature = "dump_load_files")]

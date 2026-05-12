@@ -20,9 +20,12 @@
 //! `'static` lifetime when you need to store values beyond the input's lifetime.
 
 use std::borrow::Cow;
-use std::ops::{Deref, DerefMut};
+use std::ops::Deref;
+use std::ops::DerefMut;
 
-pub use crate::event::{Comment, Properties, Property};
+pub use crate::event::Comment;
+pub use crate::event::Properties;
+pub use crate::event::Property;
 use crate::span::Span;
 
 /// Integer value representation used by `Value::Int`.
@@ -71,11 +74,24 @@ impl Integer<'_> {
 
 #[cfg(feature = "serde")]
 mod serde_impls {
-    use super::{Integer, MappingPair, Node, SequenceItem, Value};
-    use crate::span::Span;
-    use serde::de::{self, Deserialize, Deserializer, MapAccess, SeqAccess, Visitor};
-    use serde::ser::{Serialize, SerializeMap as _, SerializeSeq as _, Serializer};
     use std::fmt;
+
+    use serde::de::Deserialize;
+    use serde::de::Deserializer;
+    use serde::de::MapAccess;
+    use serde::de::SeqAccess;
+    use serde::de::Visitor;
+    use serde::ser::Serialize;
+    use serde::ser::SerializeMap as _;
+    use serde::ser::SerializeSeq as _;
+    use serde::ser::Serializer;
+
+    use super::Integer;
+    use super::MappingPair;
+    use super::Node;
+    use super::SequenceItem;
+    use super::Value;
+    use crate::span::Span;
 
     impl Serialize for Value<'_> {
         fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
@@ -124,14 +140,14 @@ mod serde_impls {
 
         fn visit_unit<E>(self) -> Result<Self::Value, E>
         where
-            E: de::Error,
+            E: serde::de::Error,
         {
             Ok(Value::Null)
         }
 
         fn visit_none<E>(self) -> Result<Self::Value, E>
         where
-            E: de::Error,
+            E: serde::de::Error,
         {
             Ok(Value::Null)
         }
@@ -145,56 +161,56 @@ mod serde_impls {
 
         fn visit_bool<E>(self, v: bool) -> Result<Self::Value, E>
         where
-            E: de::Error,
+            E: serde::de::Error,
         {
             Ok(Value::Bool(v))
         }
 
         fn visit_i64<E>(self, v: i64) -> Result<Self::Value, E>
         where
-            E: de::Error,
+            E: serde::de::Error,
         {
             Ok(Value::Int(Integer::I64(v)))
         }
 
         fn visit_i128<E>(self, v: i128) -> Result<Self::Value, E>
         where
-            E: de::Error,
+            E: serde::de::Error,
         {
             Ok(Value::Int(Integer::I128(v)))
         }
 
         fn visit_u64<E>(self, v: u64) -> Result<Self::Value, E>
         where
-            E: de::Error,
+            E: serde::de::Error,
         {
             Ok(Value::Int(Integer::U64(v)))
         }
 
         fn visit_u128<E>(self, v: u128) -> Result<Self::Value, E>
         where
-            E: de::Error,
+            E: serde::de::Error,
         {
             Ok(Value::Int(Integer::U128(v)))
         }
 
         fn visit_f64<E>(self, v: f64) -> Result<Self::Value, E>
         where
-            E: de::Error,
+            E: serde::de::Error,
         {
             Ok(Value::Float(v))
         }
 
         fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
         where
-            E: de::Error,
+            E: serde::de::Error,
         {
             Ok(Value::String(std::borrow::Cow::Owned(v.to_owned())))
         }
 
         fn visit_borrowed_str<E>(self, v: &'de str) -> Result<Self::Value, E>
         where
-            E: de::Error,
+            E: serde::de::Error,
         {
             // Zero-copy: borrow from input instead of allocating
             Ok(Value::String(std::borrow::Cow::Borrowed(v)))
@@ -202,7 +218,7 @@ mod serde_impls {
 
         fn visit_string<E>(self, v: String) -> Result<Self::Value, E>
         where
-            E: de::Error,
+            E: serde::de::Error,
         {
             Ok(Value::String(std::borrow::Cow::Owned(v)))
         }
@@ -249,9 +265,9 @@ mod serde_impls {
 
         fn visit_enum<A>(self, data: A) -> Result<Self::Value, A::Error>
         where
-            A: de::EnumAccess<'de>,
+            A: serde::de::EnumAccess<'de>,
         {
-            use de::VariantAccess as _;
+            use serde::de::VariantAccess as _;
 
             // Represent enums as a single-entry mapping from variant name to
             // the associated value (or null for unit variants). This matches

@@ -2,7 +2,9 @@
 // Use of this source code is governed by the Apache License 2.0
 // that can be found in the LICENSE file.
 
-use crate::{Comment, Event, span::BytePosition};
+use crate::Comment;
+use crate::Event;
+use crate::span::BytePosition;
 
 /// AST-oriented event stream that carries structural spans for collection entries.
 #[derive(Debug, Clone, PartialEq)]

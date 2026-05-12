@@ -11,11 +11,10 @@ pub(crate) mod store;
 pub(crate) mod str;
 pub(crate) mod valid_values;
 
-use crate::{
-    context::Context,
-    feedback::{Type, Violation},
-    validatable::ValidatableValue,
-};
+use crate::context::Context;
+use crate::feedback::Type;
+use crate::feedback::Violation;
+use crate::validatable::ValidatableValue;
 
 /// Trait for validating values against a schema.
 ///

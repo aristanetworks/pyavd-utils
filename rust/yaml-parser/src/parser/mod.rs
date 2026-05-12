@@ -30,11 +30,13 @@ mod nodes;
 mod scalars;
 mod stream;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
+use std::collections::HashSet;
 
 use crate::ast_event::AstEvent;
 use crate::error::ParseError;
-use crate::value::{Comment, Node};
+use crate::value::Comment;
+use crate::value::Node;
 
 struct ParsedNode<'input> {
     node: Node<'input>,

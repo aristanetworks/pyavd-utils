@@ -3,7 +3,9 @@
 // that can be found in the LICENSE file.
 #![deny(unused_crate_dependencies)]
 
-use std::{io::Write as _, path::PathBuf, sync::OnceLock};
+use std::io::Write as _;
+use std::path::PathBuf;
+use std::sync::OnceLock;
 
 const CRATE_DIR: &str = env!("CARGO_MANIFEST_DIR");
 const ADV_SCHEMA_URL: &str =

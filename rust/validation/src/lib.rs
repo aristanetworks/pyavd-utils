@@ -8,8 +8,11 @@ pub mod feedback;
 mod validatable;
 mod validation;
 
-pub use self::context::{Configuration, Context, ValidationResult};
+pub use self::context::Configuration;
+pub use self::context::Context;
+pub use self::context::ValidationResult;
 pub use self::validation::Validation;
-pub use self::validation::store::{
-    InputValidationResult, StoreValidate, StoreValidateInput, ValidationOutput,
-};
+pub use self::validation::store::InputValidationResult;
+pub use self::validation::store::StoreValidate;
+pub use self::validation::store::StoreValidateInput;
+pub use self::validation::store::ValidationOutput;

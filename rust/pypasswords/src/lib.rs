@@ -9,11 +9,10 @@ use pyo3::pymodule;
 #[pyo3(name = "passwords")]
 mod passwords {
 
-    use pyo3::{
-        PyResult,
-        exceptions::{PyRuntimeError, PyValueError},
-        pyfunction,
-    };
+    use pyo3::PyResult;
+    use pyo3::exceptions::PyRuntimeError;
+    use pyo3::exceptions::PyValueError;
+    use pyo3::pyfunction;
 
     #[cfg(feature = "sha512")]
     #[pyfunction]
@@ -73,9 +72,8 @@ mod passwords {
     /// Raises ValueError if the password is empty or the salt is out of range.
     pub fn simple_7_encrypt(data: String, salt: Option<u8>) -> PyResult<String> {
         passwords::simple_7_encrypt(&data, salt).map_err(|err| match err {
-            passwords::Simple7Error::InvalidSaltValue(_) | passwords::Simple7Error::EmptyPassword => {
-                PyValueError::new_err(err.to_string())
-            }
+            passwords::Simple7Error::InvalidSaltValue(_)
+            | passwords::Simple7Error::EmptyPassword => PyValueError::new_err(err.to_string()),
             _ => PyRuntimeError::new_err(err.to_string()),
         })
     }

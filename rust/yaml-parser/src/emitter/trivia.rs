@@ -2,11 +2,13 @@
 // Use of this source code is governed by the Apache License 2.0
 // that can be found in the LICENSE file.
 
-use crate::error::ErrorKind;
-use crate::lexer::{Token, TokenKind};
-use crate::span::{IndentLevel, Span, usize_to_indent};
-
 use super::Emitter;
+use crate::error::ErrorKind;
+use crate::lexer::Token;
+use crate::lexer::TokenKind;
+use crate::span::IndentLevel;
+use crate::span::Span;
+use crate::span::usize_to_indent;
 
 impl Emitter<'_> {
     pub(super) fn skip_ws(&mut self) -> IndentLevel {

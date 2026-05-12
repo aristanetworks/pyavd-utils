@@ -2,15 +2,19 @@
 // Use of this source code is governed by the Apache License 2.0
 // that can be found in the LICENSE file.
 
-use crate::{Store, any::AnySchema};
+// Using a tmp path in the crate allows us to inspect the generated artifacts.
+// The files in the path are exempted from git.
+#[cfg(feature = "dump_load_files")]
+use std::path::PathBuf;
+#[cfg(feature = "dump_load_files")]
+use std::sync::OnceLock;
 
 use serde::Deserialize as _;
 use serde_json::json;
 use test_schema_store as _;
-// Using a tmp path in the crate allows us to inspect the generated artifacts.
-// The files in the path are exempted from git.
-#[cfg(feature = "dump_load_files")]
-use std::{path::PathBuf, sync::OnceLock};
+
+use crate::Store;
+use crate::any::AnySchema;
 #[cfg(feature = "dump_load_files")]
 const TMP_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tmp");
 

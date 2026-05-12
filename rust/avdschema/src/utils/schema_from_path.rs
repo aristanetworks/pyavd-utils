@@ -4,10 +4,14 @@
 
 use ordermap::OrderMap;
 
+use crate::SchemaDataValue;
+use crate::Store;
+use crate::any::AnySchema;
+use crate::dict::Dict;
 use crate::dict::DynamicKeyInfo;
-use crate::resolve::{errors::SchemaResolverError, resolve_ref::resolve_ref};
+use crate::resolve::errors::SchemaResolverError;
+use crate::resolve::resolve_ref::resolve_ref;
 use crate::store::SchemaStoreError;
-use crate::{SchemaDataValue, Store, any::AnySchema, dict::Dict};
 
 // Keys that are accepted by the schema from either keys or dynamic keys.
 #[derive(Debug, PartialEq)]
@@ -132,11 +136,14 @@ pub fn get_schema_from_path<'store, 'value>(
 
 #[cfg(test)]
 mod tests {
-    use crate::{int::Int, list::List, str::Str, utils::test_utils::get_test_store};
-
-    use super::*;
     use ordermap::OrderMap;
     use serde_json::json;
+
+    use super::*;
+    use crate::int::Int;
+    use crate::list::List;
+    use crate::str::Str;
+    use crate::utils::test_utils::get_test_store;
 
     #[test]
     fn schema_keys_try_from_schema_with_value_ok() {

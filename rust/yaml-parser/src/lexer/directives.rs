@@ -4,7 +4,10 @@
 
 use std::borrow::Cow;
 
-use super::{LexMode, Lexer, LexerPhase, Token};
+use super::LexMode;
+use super::Lexer;
+use super::LexerPhase;
+use super::Token;
 use crate::error::ErrorKind;
 use crate::span::Spanned;
 

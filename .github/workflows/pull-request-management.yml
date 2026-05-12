@@ -78,31 +78,55 @@ jobs:
           - macos-latest
     steps:
       - uses: actions/checkout@v6
-        # This is needed for arm machines since they don't ship with 2024 edition.
-      - name: Upgrade rust and cargo
-        run: rustup update stable
-        # This is needed because we have pyo3 tests and our minimum python version is 3.10.
-        # On some test containers (looking at you windows-latest) the included Python is 3.9.
+      - name: Install Rust toolchain from rust-toolchain.toml
+        run: rustup show
+      # This is needed because we have pyo3 tests and our minimum python version is 3.10.
+      # On some test containers (looking at you windows-latest) the included Python is 3.9.
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
       - name: Install YAML test suite fixture
         run: python scripts/fetch_yaml_test_suite.py
-      - name: Check code formatting with cargo fmt
-        run: cargo fmt --verbose
+      - name: Install nightly rustfmt
+        run: rustup toolchain install nightly --profile minimal --component rustfmt
         if: |
           matrix.os == 'ubuntu-latest'
-      - name: Check code style with clippy
-        run: cargo clippy --all-targets --all-features
+      - name: Run cargo fmt pre-commit hook
+        uses: pre-commit/action@v3.0.1
+        with:
+          extra_args: fmt --all-files
+        if: |
+          matrix.os == 'ubuntu-latest'
+      - name: Run cargo check pre-commit hook
+        uses: pre-commit/action@v3.0.1
+        with:
+          extra_args: cargo-check --all-files
+        if: |
+          matrix.os == 'ubuntu-latest'
+      - name: Run clippy pre-commit hook
+        uses: pre-commit/action@v3.0.1
+        with:
+          extra_args: clippy --all-files
+        if: |
+          matrix.os == 'ubuntu-latest'
+      - name: Run cargo about pre-commit hook
+        uses: pre-commit/action@v3.0.1
+        with:
+          extra_args: cargo-about-generate --all-files
+        if: |
+          matrix.os == 'ubuntu-latest'
+      - name: Run cargo deny pre-commit hook
+        uses: pre-commit/action@v3.0.1
+        with:
+          extra_args: cargo-deny --all-files
         if: |
           matrix.os == 'ubuntu-latest'
       - name: Run all tests
-        run: cargo test --all-targets --all-features
+        run: cargo test --locked --all-targets --all-features
       - name: Generate coverage report with cargo llvm-cov
         run: |
-          rustup component add llvm-tools-preview --toolchain stable-x86_64-unknown-linux-gnu
-          cargo install cargo-llvm-cov
-          cargo llvm-cov --all-targets --all-features --lcov --output-path lcov.info
+          cargo install cargo-llvm-cov --locked
+          cargo llvm-cov --locked --all-targets --all-features --lcov --output-path lcov.info
         if: |
           matrix.os == 'ubuntu-latest'
       - name: Upload coverage report
@@ -113,13 +137,7 @@ jobs:
         if: |
           matrix.os == 'ubuntu-latest'
       - name: Test building to all targets
-        run: cargo build --all-targets --all-features
-      - name: Check Rust dependencies with cargo deny
-        run: |
-          cargo install cargo-deny
-          cargo deny check
-        if: |-
-          matrix.os == 'ubuntu-latest'
+        run: cargo build --locked --all-targets --all-features
 
   codecov:
     name: Upload coverage to CodeCov

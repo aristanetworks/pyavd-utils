@@ -2,11 +2,14 @@
 // Use of this source code is governed by the Apache License 2.0
 // that can be found in the LICENSE file.
 
-use avdschema::{any::AnySchema, boolean::Bool, resolve_ref};
-
-use crate::{context::Context, feedback::Type, validatable::ValidatableValue};
+use avdschema::any::AnySchema;
+use avdschema::boolean::Bool;
+use avdschema::resolve_ref;
 
 use super::Validation;
+use crate::context::Context;
+use crate::feedback::Type;
+use crate::validatable::ValidatableValue;
 
 impl Validation for Bool {
     fn validate<V: ValidatableValue>(&self, value: &V, ctx: &mut Context) -> Option<V::Coerced> {
@@ -46,10 +49,10 @@ mod tests {
     use serde_json::Value;
 
     use super::*;
-    use crate::{
-        feedback::{Feedback, Type, Violation},
-        validation::test_utils::get_test_store,
-    };
+    use crate::feedback::Feedback;
+    use crate::feedback::Type;
+    use crate::feedback::Violation;
+    use crate::validation::test_utils::get_test_store;
 
     #[test]
     fn validate_type_ok() {

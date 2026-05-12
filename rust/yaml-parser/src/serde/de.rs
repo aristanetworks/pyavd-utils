@@ -5,7 +5,7 @@
 use std::fmt;
 use std::io::Read;
 
-use serde::de::{self, DeserializeOwned};
+use serde::de::DeserializeOwned;
 
 use crate::ParseError;
 
@@ -47,7 +47,7 @@ pub enum DeError {
 
 impl std::error::Error for DeError {}
 
-impl de::Error for DeError {
+impl serde::de::Error for DeError {
     fn custom<T: fmt::Display>(msg: T) -> Self {
         Self::Custom(msg.to_string())
     }

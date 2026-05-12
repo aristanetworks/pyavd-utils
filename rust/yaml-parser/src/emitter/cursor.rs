@@ -20,10 +20,14 @@
 //! frequently needs to peek while holding other references to self (e.g.,
 //! `self.error(..., self.current_span())`).
 
-use std::cell::{Cell, RefCell};
+use std::cell::Cell;
+use std::cell::RefCell;
 
 use crate::error::ParseError;
-use crate::lexer::{Lexer, RichToken, Token, TokenKind};
+use crate::lexer::Lexer;
+use crate::lexer::RichToken;
+use crate::lexer::Token;
+use crate::lexer::TokenKind;
 use crate::span::Span;
 
 /// Borrowed lookahead window over buffered tokens.
