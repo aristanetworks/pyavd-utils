@@ -7,7 +7,7 @@ use std::borrow::Cow;
 use crate::{
     Span,
     event::{Properties as EventProperties, Property as EventProperty},
-    lexer::{BlockScalarHeader, QuoteStyle},
+    lexer::QuoteStyle,
     span::IndentLevel,
 };
 
@@ -312,15 +312,6 @@ pub(super) enum ParseState<'input> {
         pending_newlines: usize,
         needs_trim: bool,
     },
-    /// Parse block scalar content after the header has been consumed.
-    BlockScalar {
-        properties: EmitterProperties<'input>,
-        header: BlockScalarHeader,
-        start_span: Span,
-        min_indent: IndentLevel,
-        is_literal: bool,
-    },
-
     /// Handle a flow collection start (`[` or `{`) as a value, including
     /// potential complex-key behaviour in block context.
     FlowCollectionValue {

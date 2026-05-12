@@ -22,7 +22,6 @@ mod cursor;
 mod diagnostics;
 mod document;
 mod flow;
-mod scalar_block;
 mod scalar_plain;
 mod scalar_quoted;
 mod states;
@@ -59,17 +58,6 @@ enum MaybeEmptyScalarDecision<'input> {
     /// Emit an empty scalar event using the given properties, and stop
     /// parsing the current value.
     EmitEmptyScalar { event: Event<'input> },
-}
-
-/// Line classification used when folding block scalars.
-#[derive(Clone, Copy, PartialEq, Debug)]
-enum LineType {
-    /// Regular content line
-    Normal,
-    /// No content on this line
-    Empty,
-    /// Line with extra indentation (preserve)
-    MoreIndent,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -549,17 +537,6 @@ impl<'input> Emitter<'input> {
                         end_span,
                         pending_newlines,
                         needs_trim,
-                    ));
-                }
-                ParseState::BlockScalar {
-                    properties,
-                    header,
-                    start_span,
-                    min_indent,
-                    is_literal,
-                } => {
-                    return Some(self.process_block_scalar_state(
-                        properties, header, start_span, min_indent, is_literal,
                     ));
                 }
                 ParseState::AdditionalPropertiesCollect {

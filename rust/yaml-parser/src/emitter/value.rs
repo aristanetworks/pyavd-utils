@@ -80,6 +80,34 @@ fn decode_hex_digit(byte: u8) -> Option<u8> {
 }
 
 impl<'input> Emitter<'input> {
+    pub(super) fn parse_block_scalar(
+        &mut self,
+        properties: EmitterProperties<'input>,
+    ) -> Event<'input> {
+        let Some((value, span, style)) = self
+            .peek_with(|tok, span| match tok {
+                Token::LiteralBlockScalar(scalar) => {
+                    Some((scalar.clone().into_value(), span, ScalarStyle::Literal))
+                }
+                Token::FoldedBlockScalar(scalar) => {
+                    Some((scalar.clone().into_value(), span, ScalarStyle::Folded))
+                }
+                _ => None,
+            })
+            .flatten()
+        else {
+            return self.emit_null();
+        };
+
+        let _ = self.take_current();
+        Event::Scalar {
+            style,
+            value,
+            properties: properties.into_event_box(),
+            span,
+        }
+    }
+
     pub(super) fn in_sequence_entry_context(&self) -> bool {
         self.state_stack.last().is_some_and(|state| {
             matches!(
@@ -130,8 +158,9 @@ impl<'input> Emitter<'input> {
         // Check if we're in a sequence entry context.
         let in_sequence_entry = self.in_sequence_entry_context();
 
-        // Check if the dedented line is too far outside the current context.
-        let too_dedented = next_indent < min_indent.saturating_sub(1);
+        // Only the owning key's indent may bridge an empty value to a block
+        // collection. More-dedented indicators belong to an ancestor context.
+        let bridge_indent = min_indent.saturating_sub(1);
 
         // Check if properties were collected at an invalid (dedented) indent.
         // Properties are invalid if:
@@ -149,7 +178,7 @@ impl<'input> Emitter<'input> {
         // Look ahead past the `LineStart` token to see what follows.
         // Only bridge if the next content token is a block collection indicator (- or ?).
         let can_bridge = !in_sequence_entry
-            && !too_dedented
+            && next_indent == bridge_indent
             && !properties_at_invalid_indent
             && matches!(
                 self.peek_kind_nth(1),
@@ -243,6 +272,7 @@ impl<'input> Emitter<'input> {
         let in_sequence_entry = self.in_sequence_entry_context();
 
         let at_block_indicator = !in_sequence_entry
+            && self.current_indent == min_indent.saturating_sub(1)
             && matches!(
                 self.peek_kind(),
                 Some(TokenKind::BlockSeqIndicator | TokenKind::MappingKey | TokenKind::Colon)
@@ -932,8 +962,8 @@ impl<'input> Emitter<'input> {
                 None
             }
 
-            Some(TokenKind::LiteralBlockHeader | TokenKind::FoldedBlockHeader) => {
-                Some(self.parse_block_scalar(min_indent, properties))
+            Some(TokenKind::LiteralBlockScalar | TokenKind::FoldedBlockScalar) => {
+                Some(self.parse_block_scalar(properties))
             }
 
             Some(TokenKind::Plain) => {

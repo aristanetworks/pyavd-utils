@@ -70,9 +70,12 @@ mod passwords {
     /// Encrypt (obfuscate) a password with insecure type-7.
     ///
     /// If salt is None, a random salt in the range 0-15 will be used.
+    /// Raises ValueError if the password is empty or the salt is out of range.
     pub fn simple_7_encrypt(data: String, salt: Option<u8>) -> PyResult<String> {
         passwords::simple_7_encrypt(&data, salt).map_err(|err| match err {
-            passwords::Simple7Error::InvalidSaltValue(_) => PyValueError::new_err(err.to_string()),
+            passwords::Simple7Error::InvalidSaltValue(_) | passwords::Simple7Error::EmptyPassword => {
+                PyValueError::new_err(err.to_string())
+            }
             _ => PyRuntimeError::new_err(err.to_string()),
         })
     }
@@ -80,6 +83,8 @@ mod passwords {
     #[cfg(feature = "simple-7")]
     #[pyfunction]
     /// Decrypt (deobfuscate) a password from insecure type-7.
+    ///
+    /// Raises ValueError if the password is empty or decryption fails.
     pub fn simple_7_decrypt(data: String) -> PyResult<String> {
         passwords::simple_7_decrypt(&data).map_err(|err| match err {
             passwords::Simple7Error::InvalidUtf8(_) => PyRuntimeError::new_err(err.to_string()),
