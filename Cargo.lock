@@ -1397,19 +1397,10 @@ dependencies = [
  "memoffset",
  "once_cell",
  "portable-atomic",
- "pyo3-build-config 0.27.2",
+ "pyo3-build-config",
  "pyo3-ffi",
  "pyo3-macros",
  "unindent",
-]
-
-[[package]]
-name = "pyo3-build-config"
-version = "0.26.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4fc6ddaf24947d12a9aa31ac65431fb1b851b8f4365426e182901eabfb87df5f"
-dependencies = [
- "target-lexicon",
 ]
 
 [[package]]
@@ -1428,7 +1419,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1c85c9cbfaddf651b1221594209aed57e9e5cff63c4d11d1feead529b872a089"
 dependencies = [
  "libc",
- "pyo3-build-config 0.27.2",
+ "pyo3-build-config",
 ]
 
 [[package]]
@@ -1462,7 +1453,7 @@ checksum = "03b51720d314836e53327f5871d4c0cfb4fb37cc2c4a11cc71907a86342c40f9"
 dependencies = [
  "heck",
  "proc-macro2",
- "pyo3-build-config 0.27.2",
+ "pyo3-build-config",
  "quote",
  "syn",
 ]
@@ -1473,7 +1464,7 @@ version = "0.0.5-dev1"
 dependencies = [
  "passwords",
  "pyo3",
- "pyo3-build-config 0.26.0",
+ "pyo3-build-config",
 ]
 
 [[package]]
@@ -1484,7 +1475,7 @@ dependencies = [
  "criterion 0.7.0",
  "log",
  "pyo3",
- "pyo3-build-config 0.26.0",
+ "pyo3-build-config",
  "pyo3-log",
  "serde_json",
  "test_schema_store",
