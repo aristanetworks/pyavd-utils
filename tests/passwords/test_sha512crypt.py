@@ -8,20 +8,17 @@ from contextlib import nullcontext as does_not_raise
 import pytest
 
 from pyavd_utils.passwords import (
-    PyAVDUtilsPasswordError,
-    Sha512CryptError,
+    PasswordError,
     Sha512CryptInvalidSaltCharacterError,
     Sha512CryptInvalidSaltEmptyError,
-    Sha512CryptInvalidSaltError,
     sha512_crypt,
 )
 
 
 def test_sha512_crypt_error_hierarchy() -> None:
     """Test that SHA512 crypt errors inherit from the passwords base error."""
-    assert issubclass(Sha512CryptError, PyAVDUtilsPasswordError)
-    assert issubclass(Sha512CryptInvalidSaltError, Sha512CryptError)
-    assert issubclass(Sha512CryptInvalidSaltEmptyError, Sha512CryptInvalidSaltError)
+    assert issubclass(Sha512CryptInvalidSaltEmptyError, PasswordError)
+    assert issubclass(Sha512CryptInvalidSaltCharacterError, PasswordError)
 
 
 SHA512_CRYPT_TEST_DATA = [

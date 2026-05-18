@@ -8,10 +8,9 @@ from contextlib import nullcontext as does_not_raise
 import pytest
 
 from pyavd_utils.passwords import (
-    PyAVDUtilsPasswordError,
+    PasswordError,
     Simple7DataTooShortError,
     Simple7EmptyPasswordError,
-    Simple7Error,
     Simple7InvalidHexEncodingError,
     Simple7InvalidSaltFormatError,
     Simple7InvalidSaltValueError,
@@ -22,9 +21,9 @@ from pyavd_utils.passwords import (
 
 def test_simple_7_error_hierarchy() -> None:
     """Test that Type-7 errors inherit from the passwords base error."""
-    assert issubclass(Simple7Error, PyAVDUtilsPasswordError)
-    assert issubclass(Simple7InvalidSaltValueError, Simple7Error)
-    assert issubclass(Simple7EmptyPasswordError, Simple7Error)
+    assert issubclass(Simple7InvalidSaltValueError, PasswordError)
+    assert issubclass(Simple7EmptyPasswordError, PasswordError)
+    assert issubclass(Simple7DataTooShortError, PasswordError)
 
 
 SIMPLE_7_ENCRYPT_TEST_DATA = [

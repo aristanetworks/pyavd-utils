@@ -47,8 +47,7 @@ fn sha512_crypt_empty_salt_err() {
             "Invalid Salt: Salt cannot be empty."
         );
         assert!(err.is_instance_of::<passwords::Sha512CryptInvalidSaltEmptyError>(py));
-        assert!(err.is_instance_of::<passwords::Sha512CryptInvalidSaltError>(py));
-        assert!(err.is_instance_of::<passwords::PyAVDUtilsPasswordError>(py));
+        assert!(err.is_instance_of::<passwords::PasswordError>(py));
     });
 }
 
@@ -82,7 +81,7 @@ fn sha512_crypt_library_error_maps_to_specific_pyerr() {
             .to_python_error();
 
         assert!(err.is_instance_of::<passwords::Sha512CryptLibraryError>(py));
-        assert!(err.is_instance_of::<passwords::Sha512CryptError>(py));
+        assert!(err.is_instance_of::<passwords::PasswordError>(py));
         assert!(
             err.value(py)
                 .to_string()

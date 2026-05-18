@@ -19,122 +19,104 @@ static STORE: OnceLock<Store> = OnceLock::new();
 
 create_exception!(
     validation,
-    PyAVDUtilsValidationError,
+    ValidationError,
     PyException,
     "Base exception for pyavd_utils.validation."
 );
 create_exception!(
     validation,
     ValidationStoreNotInitializedError,
-    PyAVDUtilsValidationError,
+    ValidationError,
     "Schema store was not initialized."
 );
 create_exception!(
     validation,
     ValidationStoreAlreadyInitializedError,
-    PyAVDUtilsValidationError,
+    ValidationError,
     "Schema store was already initialized."
 );
 create_exception!(
     validation,
-    ValidationStoreLoadError,
-    PyAVDUtilsValidationError,
-    "Base exception for schema store load errors."
-);
-create_exception!(
-    validation,
     ValidationStoreLoadJsonError,
-    ValidationStoreLoadError,
+    ValidationError,
     "Schema store JSON load error."
 );
 create_exception!(
     validation,
     ValidationStoreLoadYamlError,
-    ValidationStoreLoadError,
+    ValidationError,
     "Schema store YAML load error."
 );
 create_exception!(
     validation,
     ValidationStoreLoadIoError,
-    ValidationStoreLoadError,
+    ValidationError,
     "Schema store I/O load error."
 );
 create_exception!(
     validation,
     ValidationStoreInvalidExtensionError,
-    ValidationStoreLoadError,
+    ValidationError,
     "Schema store input file has an invalid extension."
 );
 create_exception!(
     validation,
     ValidationStoreNoFilesFoundError,
-    ValidationStoreLoadError,
+    ValidationError,
     "Schema store input directory has no matching files."
 );
 create_exception!(
     validation,
-    ValidationSchemaResolveError,
-    PyAVDUtilsValidationError,
-    "Base exception for schema resolution errors."
-);
-create_exception!(
-    validation,
     ValidationSchemaTypeError,
-    ValidationSchemaResolveError,
+    ValidationError,
     "Schema reference resolved to an invalid schema type."
 );
 create_exception!(
     validation,
     ValidationRefSyntaxError,
-    ValidationSchemaResolveError,
+    ValidationError,
     "Schema reference has invalid syntax."
 );
 create_exception!(
     validation,
     ValidationSchemaPathError,
-    ValidationSchemaResolveError,
+    ValidationError,
     "Schema reference path was not found."
 );
 create_exception!(
     validation,
-    ValidationSchemaStoreError,
-    PyAVDUtilsValidationError,
-    "Base exception for schema store errors."
-);
-create_exception!(
-    validation,
     ValidationInvalidSchemaNameError,
-    ValidationSchemaStoreError,
+    ValidationError,
     "Schema name was not found in the schema store."
 );
 create_exception!(
     validation,
     ValidationSchemaWalkError,
-    ValidationSchemaResolveError,
+    ValidationError,
     "Schema reference walk failed."
 );
 create_exception!(
     validation,
     ValidationInvalidJsonDataError,
-    PyAVDUtilsValidationError,
+    ValidationError,
     "Input data is not valid JSON."
 );
 create_exception!(
     validation,
     ValidationInvalidAdhocSchemaJsonError,
-    PyAVDUtilsValidationError,
+    ValidationError,
     "Ad hoc schema is not valid JSON."
 );
 create_exception!(
     validation,
     ValidationInvalidCoercedDataJsonError,
-    PyAVDUtilsValidationError,
+    ValidationError,
     "Coerced validation output could not be serialized as JSON."
 );
 create_exception!(
     validation,
     ValidationInternalError,
-    PyAVDUtilsValidationError,
+    ValidationError,
     "Internal validation error."
 );
 
@@ -158,9 +140,9 @@ pub mod validation {
     use validation::Validation as _;
     use validation::feedback::InputDiagnostic;
 
-    #[pymodule_export]
-    pub use super::PyAVDUtilsValidationError;
     use super::STORE;
+    #[pymodule_export]
+    pub use super::ValidationError;
     #[pymodule_export]
     pub use super::ValidationInternalError;
     #[pymodule_export]
@@ -176,10 +158,6 @@ pub mod validation {
     #[pymodule_export]
     pub use super::ValidationSchemaPathError;
     #[pymodule_export]
-    pub use super::ValidationSchemaResolveError;
-    #[pymodule_export]
-    pub use super::ValidationSchemaStoreError;
-    #[pymodule_export]
     pub use super::ValidationSchemaTypeError;
     #[pymodule_export]
     pub use super::ValidationSchemaWalkError;
@@ -187,8 +165,6 @@ pub mod validation {
     pub use super::ValidationStoreAlreadyInitializedError;
     #[pymodule_export]
     pub use super::ValidationStoreInvalidExtensionError;
-    #[pymodule_export]
-    pub use super::ValidationStoreLoadError;
     #[pymodule_export]
     pub use super::ValidationStoreLoadIoError;
     #[pymodule_export]
@@ -531,6 +507,7 @@ mod tests {
 
     use super::STORE;
     use super::validation;
+    use crate::validation::ToPythonError as _;
     use crate::validation::ValidationResult;
     use crate::validation::first_input_diagnostic_as_pyerr;
 
@@ -641,7 +618,7 @@ mod tests {
                 "Error occurred during validation: boom"
             );
             assert!(err.is_instance_of::<validation::ValidationInternalError>(py));
-            assert!(err.is_instance_of::<validation::PyAVDUtilsValidationError>(py));
+            assert!(err.is_instance_of::<validation::ValidationError>(py));
         });
     }
 
@@ -667,7 +644,7 @@ mod tests {
                 "Invalid JSON in data: expected value at line 1 column 1"
             );
             assert!(err.is_instance_of::<validation::ValidationInvalidJsonDataError>(py));
-            assert!(err.is_instance_of::<validation::PyAVDUtilsValidationError>(py));
+            assert!(err.is_instance_of::<validation::ValidationError>(py));
         });
     }
 

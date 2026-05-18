@@ -15,8 +15,7 @@ fn cbc_decrypt_invalid_base64_err() {
         let err = module.call_method1("cbc_decrypt", args).unwrap_err();
 
         assert!(err.is_instance_of::<passwords::CBCInvalidBase64Error>(py));
-        assert!(err.is_instance_of::<passwords::CBCError>(py));
-        assert!(err.is_instance_of::<passwords::PyAVDUtilsPasswordError>(py));
+        assert!(err.is_instance_of::<passwords::PasswordError>(py));
         assert_eq!(err.value(py).to_string(), "Invalid Base64 encoding");
     });
 }

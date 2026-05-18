@@ -9,11 +9,10 @@ import pytest
 
 from pyavd_utils.passwords import (
     CBCDecryptionFailedError,
-    CBCError,
     CBCInvalidBase64Error,
     CBCInvalidSignatureError,
     CBCInvalidUtf8Error,
-    PyAVDUtilsPasswordError,
+    PasswordError,
     cbc_decrypt,
     cbc_encrypt,
     cbc_verify,
@@ -22,8 +21,8 @@ from pyavd_utils.passwords import (
 
 def test_cbc_error_hierarchy() -> None:
     """Test that CBC errors inherit from the passwords base error."""
-    assert issubclass(CBCError, PyAVDUtilsPasswordError)
-    assert issubclass(CBCInvalidBase64Error, CBCError)
+    assert issubclass(CBCInvalidBase64Error, PasswordError)
+    assert issubclass(CBCDecryptionFailedError, PasswordError)
 
 
 CBC_ENCRYPT_TEST_DATA = [

@@ -1471,7 +1471,7 @@ dependencies = [
 name = "pypasswords"
 version = "0.0.5-dev1"
 dependencies = [
- "getrandom 0.3.4",
+ "getrandom 0.4.2",
  "passwords",
  "pyo3",
  "pyo3-build-config 0.26.0",

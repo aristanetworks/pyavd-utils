@@ -9,128 +9,104 @@ use pyo3::pymodule;
 
 create_exception!(
     passwords,
-    PyAVDUtilsPasswordError,
+    PasswordError,
     PyException,
     "Base exception for pyavd_utils.passwords."
 );
 create_exception!(
     passwords,
-    Sha512CryptError,
-    PyAVDUtilsPasswordError,
-    "Base exception for SHA512 crypt errors."
-);
-create_exception!(
-    passwords,
-    Sha512CryptInvalidSaltError,
-    Sha512CryptError,
-    "Invalid SHA512 crypt salt."
-);
-create_exception!(
-    passwords,
     Sha512CryptInvalidSaltEmptyError,
-    Sha512CryptInvalidSaltError,
+    PasswordError,
     "SHA512 crypt salt is empty."
 );
 create_exception!(
     passwords,
     Sha512CryptInvalidSaltCharacterError,
-    Sha512CryptInvalidSaltError,
+    PasswordError,
     "SHA512 crypt salt contains an invalid character."
 );
 create_exception!(
     passwords,
     Sha512CryptLibraryError,
-    Sha512CryptError,
+    PasswordError,
     "SHA512 crypt library error."
 );
 create_exception!(
     passwords,
-    CBCError,
-    PyAVDUtilsPasswordError,
-    "Base exception for CBC password errors."
-);
-create_exception!(
-    passwords,
     CBCInvalidBase64Error,
-    CBCError,
+    PasswordError,
     "CBC encrypted data is not valid Base64."
 );
 create_exception!(
     passwords,
     CBCDecryptionFailedError,
-    CBCError,
+    PasswordError,
     "CBC decryption failed."
 );
 create_exception!(
     passwords,
     CBCInvalidSignatureError,
-    CBCError,
+    PasswordError,
     "CBC decrypted data has an invalid Arista signature."
 );
 create_exception!(
     passwords,
     CBCInvalidUtf8Error,
-    CBCError,
+    PasswordError,
     "CBC decrypted data is not valid UTF-8."
 );
 create_exception!(
     passwords,
     CBCEncryptionFailedError,
-    CBCError,
+    PasswordError,
     "CBC encryption failed."
 );
 create_exception!(
     passwords,
     CBCInvalidBase64Utf8Error,
-    CBCError,
+    PasswordError,
     "CBC Base64 output is not valid UTF-8."
 );
 create_exception!(
     passwords,
-    Simple7Error,
-    PyAVDUtilsPasswordError,
-    "Base exception for Type-7 password errors."
-);
-create_exception!(
-    passwords,
     Simple7InvalidSaltFormatError,
-    Simple7Error,
+    PasswordError,
     "Type-7 encrypted data has an invalid salt format."
 );
 create_exception!(
     passwords,
     Simple7InvalidHexEncodingError,
-    Simple7Error,
+    PasswordError,
     "Type-7 encrypted data has invalid hex encoding."
 );
 create_exception!(
     passwords,
     Simple7RandomSourceUnavailableError,
-    Simple7Error,
+    PasswordError,
     "Type-7 random salt source is unavailable."
 );
 create_exception!(
     passwords,
     Simple7InvalidUtf8Error,
-    Simple7Error,
+    PasswordError,
     "Type-7 decrypted data is not valid UTF-8."
 );
 create_exception!(
     passwords,
     Simple7InvalidSaltValueError,
-    Simple7Error,
+    PasswordError,
     "Type-7 salt value is outside the supported range."
 );
 create_exception!(
     passwords,
     Simple7DataTooShortError,
-    Simple7Error,
+    PasswordError,
     "Type-7 encrypted data is too short."
 );
 create_exception!(
     passwords,
     Simple7EmptyPasswordError,
-    Simple7Error,
+    PasswordError,
     "Type-7 password is empty."
 );
 
@@ -146,8 +122,6 @@ mod passwords {
     #[pymodule_export]
     pub use super::CBCEncryptionFailedError;
     #[pymodule_export]
-    pub use super::CBCError;
-    #[pymodule_export]
     pub use super::CBCInvalidBase64Error;
     #[pymodule_export]
     pub use super::CBCInvalidBase64Utf8Error;
@@ -156,23 +130,17 @@ mod passwords {
     #[pymodule_export]
     pub use super::CBCInvalidUtf8Error;
     #[pymodule_export]
-    pub use super::PyAVDUtilsPasswordError;
-    #[pymodule_export]
-    pub use super::Sha512CryptError;
+    pub use super::PasswordError;
     #[pymodule_export]
     pub use super::Sha512CryptInvalidSaltCharacterError;
     #[pymodule_export]
     pub use super::Sha512CryptInvalidSaltEmptyError;
-    #[pymodule_export]
-    pub use super::Sha512CryptInvalidSaltError;
     #[pymodule_export]
     pub use super::Sha512CryptLibraryError;
     #[pymodule_export]
     pub use super::Simple7DataTooShortError;
     #[pymodule_export]
     pub use super::Simple7EmptyPasswordError;
-    #[pymodule_export]
-    pub use super::Simple7Error;
     #[pymodule_export]
     pub use super::Simple7InvalidHexEncodingError;
     #[pymodule_export]

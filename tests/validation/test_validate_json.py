@@ -4,19 +4,17 @@
 import pytest
 
 from pyavd_utils.validation import (
-    PyAVDUtilsValidationError,
+    ValidationError,
     ValidationInvalidJsonDataError,
     ValidationInvalidSchemaNameError,
-    ValidationSchemaStoreError,
     validate_json,
 )
 
 
 def test_validation_error_hierarchy() -> None:
     """Test that validation errors inherit from the validation base error."""
-    assert issubclass(ValidationSchemaStoreError, PyAVDUtilsValidationError)
-    assert issubclass(ValidationInvalidSchemaNameError, ValidationSchemaStoreError)
-    assert issubclass(ValidationInvalidJsonDataError, PyAVDUtilsValidationError)
+    assert issubclass(ValidationInvalidSchemaNameError, ValidationError)
+    assert issubclass(ValidationInvalidJsonDataError, ValidationError)
 
 
 @pytest.mark.usefixtures("init_store")

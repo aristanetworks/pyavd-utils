@@ -58,8 +58,7 @@ fn simple_7_encrypt_empty_password_err() {
             .unwrap_err();
 
         assert!(err.is_instance_of::<passwords::Simple7EmptyPasswordError>(py));
-        assert!(err.is_instance_of::<passwords::Simple7Error>(py));
-        assert!(err.is_instance_of::<passwords::PyAVDUtilsPasswordError>(py));
+        assert!(err.is_instance_of::<passwords::PasswordError>(py));
         assert_eq!(err.value(py).to_string(), "Password must not be empty");
     });
 }
@@ -75,8 +74,7 @@ fn simple_7_encrypt_invalid_salt_err() {
             .unwrap_err();
 
         assert!(err.is_instance_of::<passwords::Simple7InvalidSaltValueError>(py));
-        assert!(err.is_instance_of::<passwords::Simple7Error>(py));
-        assert!(err.is_instance_of::<passwords::PyAVDUtilsPasswordError>(py));
+        assert!(err.is_instance_of::<passwords::PasswordError>(py));
         assert_eq!(
             err.value(py).to_string(),
             "Salt must be in the range 0-15, got 16"
