@@ -262,6 +262,34 @@ mod tests {
     }
 
     #[test]
+    fn validate_yaml_ok_with_coerced_data() {
+        let input = "key3: 123\n";
+        let store = get_test_store();
+        let configuration = Configuration {
+            return_coerced_data: true,
+            return_coercion_infos: true,
+            ..Default::default()
+        };
+        let result = store
+            .validate_yaml(input, "avd_design", Some(&configuration))
+            .unwrap();
+
+        assert!(result.input_diagnostics.is_empty());
+        assert_eq!(result.documents.len(), 1);
+        assert!(result.documents[0].result.errors.is_empty());
+        assert_eq!(
+            result.documents[0]
+                .coerced
+                .as_ref()
+                .and_then(|node| node.get("key3")),
+            Some(&Node::new(
+                yaml_parser::Value::String("123".to_owned().into()),
+                yaml_parser::Span::new(6..9)
+            ))
+        );
+    }
+
+    #[test]
     fn validate_json_invalid_schema() {
         let input = "{}";
         let store = get_test_store();
@@ -273,6 +301,27 @@ mod tests {
             ))
                 if schema == "invalid_schema"
         ));
+    }
+
+    #[test]
+    fn validate_json_ok_with_coerced_data() {
+        let input = r#"{"key3":123}"#;
+        let store = get_test_store();
+        let configuration = Configuration {
+            return_coerced_data: true,
+            return_coercion_infos: true,
+            ..Default::default()
+        };
+        let result = store
+            .validate_json(input, "avd_design", Some(&configuration))
+            .unwrap();
+
+        assert!(result.input_diagnostics.is_empty());
+        assert!(result.document.result.errors.is_empty());
+        assert_eq!(
+            result.document.coerced,
+            Some(serde_json::json!({ "key3": "123" }))
+        );
     }
 
     #[test]
@@ -304,6 +353,23 @@ mod tests {
             ))
                 if schema == "invalid_schema"
         ));
+    }
+
+    #[test]
+    fn validate_value_ok_with_coerced_data() {
+        let input = serde_json::json!({ "key3": 123 });
+        let store = get_test_store();
+        let configuration = Configuration {
+            return_coerced_data: true,
+            return_coercion_infos: true,
+            ..Default::default()
+        };
+        let result = store
+            .validate_value(&input, "avd_design", Some(&configuration))
+            .unwrap();
+
+        assert!(result.result.errors.is_empty());
+        assert_eq!(result.coerced, Some(serde_json::json!({ "key3": "123" })));
     }
 
     #[test]

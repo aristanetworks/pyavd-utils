@@ -393,12 +393,53 @@ mod tests {
         Node::new(Value::Int(Integer::I64(i)), make_span())
     }
 
+    fn bool_node(value: bool) -> Node<'static> {
+        Node::new(Value::Bool(value), make_span())
+    }
+
+    fn float_node(value: f64) -> Node<'static> {
+        Node::new(Value::Float(value), make_span())
+    }
+
     #[test]
     fn test_yaml_null() {
         let node = Node::new(Value::Null, make_span());
         assert!(node.is_null());
         assert!(node.as_str().is_none());
         assert!(node.as_mapping().is_none());
+    }
+
+    #[test]
+    fn test_yaml_scalar_type_checks() {
+        let null = Node::new(Value::Null, make_span());
+        let string = string_node("hello");
+        let int = int_node(42);
+        let bool = bool_node(true);
+        let float = float_node(42.0);
+        let sequence = Node::new(Value::Sequence(Vec::new()), make_span());
+        let mapping = Node::new(Value::Mapping(Vec::new()), make_span());
+
+        assert!(string.is_str());
+        assert!(int.is_int());
+        assert!(bool.is_bool());
+        assert!(float.is_float());
+        assert!(!null.is_str());
+        assert!(!string.is_int());
+        assert!(!int.is_bool());
+        assert!(!bool.is_float());
+
+        assert_eq!(null.value_type(), crate::feedback::Type::Null);
+        assert_eq!(string.value_type(), crate::feedback::Type::Str);
+        assert_eq!(int.value_type(), crate::feedback::Type::Int);
+        assert_eq!(bool.value_type(), crate::feedback::Type::Bool);
+        assert_eq!(float.value_type(), crate::feedback::Type::Float);
+        assert_eq!(sequence.value_type(), crate::feedback::Type::List);
+        assert_eq!(mapping.value_type(), crate::feedback::Type::Dict);
+
+        assert!(string.as_bool().is_none());
+        assert!(null.as_i64().is_none());
+        assert!(string.as_sequence().is_none());
+        assert!(string.get("missing").is_none());
     }
 
     #[test]
@@ -418,10 +459,35 @@ mod tests {
     }
 
     #[test]
+    fn test_yaml_integer_variants_coerce_to_strings() {
+        let values = [
+            (Integer::U64(u64::MAX), u64::MAX.to_string()),
+            (Integer::I128(i128::MIN), i128::MIN.to_string()),
+            (Integer::U128(u128::MAX), u128::MAX.to_string()),
+            (
+                Integer::BigIntStr(Cow::Borrowed("340282366920938463463374607431768211456")),
+                "340282366920938463463374607431768211456".to_string(),
+            ),
+        ];
+
+        for (integer, expected) in values {
+            let node = Node::new(Value::Int(integer), make_span());
+            assert_eq!(node.as_str().as_deref(), Some(expected.as_str()));
+        }
+    }
+
+    #[test]
     fn test_yaml_float_to_str_coercion() {
         let node = Node::new(Value::Float(1.5), make_span());
         // Float coerces to string
         assert_eq!(node.as_str().as_deref(), Some("1.5"));
+    }
+
+    #[test]
+    fn test_yaml_float_to_int_coercion() {
+        assert_eq!(float_node(42.0).as_i64(), Some(42));
+        assert_eq!(float_node(42.5).as_i64(), None);
+        assert_eq!(float_node(f64::INFINITY).as_i64(), None);
     }
 
     #[test]
@@ -436,6 +502,8 @@ mod tests {
         let node_false = Node::new(Value::Bool(false), make_span());
         assert_eq!(node_true.as_bool(), Some(true));
         assert_eq!(node_false.as_bool(), Some(false));
+        assert_eq!(node_true.as_i64(), Some(1));
+        assert_eq!(node_false.as_i64(), Some(0));
         // Bool coerces to string (Title case to match Python behavior)
         assert_eq!(node_true.as_str().as_deref(), Some("True"));
         assert_eq!(node_false.as_str().as_deref(), Some("False"));
@@ -491,6 +559,7 @@ mod tests {
 
         let seq = node.as_sequence().expect("should be a sequence");
         assert_eq!(seq.len(), 3);
+        assert_eq!(ValidatableSequence::len(&seq), 3);
         assert!(!seq.is_empty());
 
         let items: Vec<i64> = ValidatableSequence::iter(&seq)
@@ -525,6 +594,62 @@ mod tests {
     }
 
     #[test]
+    fn test_yaml_mapping_skips_non_coercible_keys() {
+        let node = Node::new(
+            Value::Mapping(vec![
+                MappingPair::new(
+                    make_span(),
+                    Node::new(Value::Null, make_span()),
+                    string_node("null"),
+                ),
+                MappingPair::new(
+                    make_span(),
+                    Node::new(Value::Sequence(Vec::new()), make_span()),
+                    string_node("sequence"),
+                ),
+                MappingPair::new(
+                    make_span(),
+                    Node::new(Value::Mapping(Vec::new()), make_span()),
+                    string_node("mapping"),
+                ),
+                MappingPair::new(make_span(), float_node(1.5), string_node("float")),
+                MappingPair::new(make_span(), bool_node(false), string_node("bool")),
+                MappingPair::new(make_span(), string_node("kept"), string_node("string")),
+            ]),
+            make_span(),
+        );
+
+        let mapping = node.as_mapping().expect("should be a mapping");
+        assert_eq!(mapping.len(), 3);
+        assert_eq!(
+            mapping
+                .get("1.5")
+                .and_then(ValidatableValue::as_str)
+                .as_deref(),
+            Some("float")
+        );
+        assert_eq!(
+            mapping
+                .get("false")
+                .and_then(ValidatableValue::as_str)
+                .as_deref(),
+            Some("bool")
+        );
+        assert_eq!(
+            mapping
+                .get("kept")
+                .and_then(ValidatableValue::as_str)
+                .as_deref(),
+            Some("string")
+        );
+
+        let keys: Vec<String> = ValidatableMapping::iter(&mapping)
+            .map(|pair| pair.key().into_owned())
+            .collect();
+        assert_eq!(keys, vec!["1.5", "false", "kept"]);
+    }
+
+    #[test]
     fn test_yaml_int_key_coercion() {
         // YAML allows non-string keys like: `123: value`
         // These should be coerced to string keys
@@ -556,6 +681,95 @@ mod tests {
             .collect();
         assert!(keys.contains(&"123".to_string()));
         assert!(keys.contains(&"true".to_string()));
+    }
+
+    #[test]
+    fn test_yaml_coercion_builders_preserve_span() {
+        let original = Node::new(Value::Null, yaml_parser::Span::new(10..20));
+        let item = Node::new(
+            Value::String(Cow::Borrowed("item")),
+            yaml_parser::Span::new(12..16),
+        );
+
+        let coerced_null = original.coerce_null();
+        let coerced_bool = original.coerce_bool(true);
+        let coerced_int = original.coerce_int(42);
+        let coerced_str = original.coerce_str("value".to_owned());
+        let coerced_sequence = original.coerce_sequence(vec![item]);
+
+        assert_eq!(coerced_null.span, original.span);
+        assert_eq!(coerced_bool.span, original.span);
+        assert_eq!(coerced_int.span, original.span);
+        assert_eq!(coerced_str.span, original.span);
+        assert_eq!(coerced_sequence.span, original.span);
+        assert!(matches!(coerced_null.value, Value::Null));
+        assert!(matches!(coerced_bool.value, Value::Bool(true)));
+        assert!(matches!(coerced_int.value, Value::Int(Integer::I64(42))));
+        assert!(matches!(coerced_str.value, Value::String(value) if value == "value"));
+        assert!(matches!(coerced_sequence.value, Value::Sequence(items) if items.len() == 1));
+    }
+
+    #[test]
+    fn test_yaml_clone_to_coerced_owns_borrowed_data() {
+        let node = Node::new(Value::String(Cow::Borrowed("borrowed")), make_span());
+        let coerced = node.clone_to_coerced();
+
+        assert!(matches!(coerced.value, Value::String(Cow::Owned(value)) if value == "borrowed"));
+    }
+
+    #[test]
+    fn test_yaml_feedback_value_conversion() {
+        let node = Node::new(
+            Value::Mapping(vec![
+                MappingPair::new(
+                    make_span(),
+                    string_node("items"),
+                    Node::new(
+                        Value::Sequence(vec![
+                            SequenceItem::new(make_span(), Node::new(Value::Null, make_span())),
+                            SequenceItem::new(make_span(), bool_node(true)),
+                            SequenceItem::new(make_span(), int_node(42)),
+                            SequenceItem::new(
+                                make_span(),
+                                Node::new(Value::Int(Integer::U64(u64::MAX)), make_span()),
+                            ),
+                            SequenceItem::new(make_span(), float_node(1.5)),
+                            SequenceItem::new(make_span(), string_node("text")),
+                        ]),
+                        make_span(),
+                    ),
+                ),
+                MappingPair::new(make_span(), int_node(7), string_node("skipped")),
+                MappingPair::new(
+                    make_span(),
+                    Node::new(Value::Sequence(Vec::new()), make_span()),
+                    string_node("complex key"),
+                ),
+            ]),
+            make_span(),
+        );
+
+        let mut expected = std::collections::HashMap::new();
+        expected.insert(
+            "items".to_owned(),
+            crate::feedback::Value::List(vec![
+                crate::feedback::Value::Null(),
+                crate::feedback::Value::Bool(true),
+                crate::feedback::Value::Int(42),
+                crate::feedback::Value::Str(u64::MAX.to_string()),
+                crate::feedback::Value::Float(1.5),
+                crate::feedback::Value::Str("text".to_owned()),
+            ]),
+        );
+        expected.insert(
+            "7".to_owned(),
+            crate::feedback::Value::Str("skipped".to_owned()),
+        );
+
+        assert_eq!(
+            node.to_feedback_value(),
+            crate::feedback::Value::Dict(expected)
+        );
     }
 
     #[test]
