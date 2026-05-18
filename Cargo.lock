@@ -82,7 +82,7 @@ checksum = "c08606f8c3cbf4ce6ec8e28fb0014a2c086708fe954eaa885384a6165172e7e8"
 
 [[package]]
 name = "avdschema"
-version = "0.0.5-dev1"
+version = "0.0.5"
 dependencies = [
  "derive_more",
  "fancy-regex",
@@ -1282,7 +1282,7 @@ dependencies = [
 
 [[package]]
 name = "passwords"
-version = "0.0.5-dev1"
+version = "0.0.5"
 dependencies = [
  "base64 0.21.7",
  "cbc",
@@ -1460,7 +1460,7 @@ dependencies = [
 
 [[package]]
 name = "pypasswords"
-version = "0.0.5-dev1"
+version = "0.0.5"
 dependencies = [
  "passwords",
  "pyo3",
@@ -1469,7 +1469,7 @@ dependencies = [
 
 [[package]]
 name = "pyvalidation"
-version = "0.0.5-dev1"
+version = "0.0.5"
 dependencies = [
  "avdschema",
  "criterion 0.7.0",
@@ -2172,7 +2172,7 @@ checksum = "b6c140620e7ffbb22c2dee59cafe6084a59b5ffc27a8859a5f0d494b5d52b6be"
 
 [[package]]
 name = "validation"
-version = "0.0.5-dev1"
+version = "0.0.5"
 dependencies = [
  "avdschema",
  "derive_more",
@@ -2618,7 +2618,7 @@ dependencies = [
 
 [[package]]
 name = "yaml-parser"
-version = "0.0.5-dev1"
+version = "0.0.5"
 dependencies = [
  "avdschema",
  "criterion 0.8.2",
