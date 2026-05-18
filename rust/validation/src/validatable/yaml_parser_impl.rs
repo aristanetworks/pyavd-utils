@@ -125,6 +125,7 @@ impl<'input> ValidatableValue for Node<'input> {
 
     // === Coercion builders ===
     // These preserve the span from the original node.
+    // Properties and trailing_comment are ignored since they are not used later and are expensive to clone.
 
     fn coerce_null(&self) -> Self::Coerced {
         Node::new(Value::Null, self.span)
@@ -155,16 +156,32 @@ impl<'input> ValidatableValue for Node<'input> {
     }
 
     fn coerce_mapping(&self, items: Vec<(String, Self::Coerced)>) -> Self::Coerced {
-        // Convert string keys to Node keys
-        let pairs: Vec<MappingPair<'static>> = items
-            .into_iter()
-            .map(|(key, value)| {
-                let key_span = yaml_parser::Span::at(value.span.start);
-                let pair_span = yaml_parser::Span::new(key_span.start..value.span.end);
-                let key_node = Node::new(Value::String(Cow::Owned(key)), key_span);
-                MappingPair::new(pair_span, key_node, value)
-            })
-            .collect();
+        let pairs: Vec<MappingPair<'static>> = match &self.value {
+            Value::Mapping(original_pairs) => {
+                let mut original_pairs = original_pairs
+                    .iter()
+                    .filter(|pair| is_coercible_key(&pair.key));
+                items
+                    .into_iter()
+                    .map(|(key, value)| {
+                        let (key_span, pair_span) = original_pairs
+                            .next()
+                            .map(|pair| (pair.key.span, pair.pair_span))
+                            .unwrap_or_else(|| fallback_mapping_spans(value.span));
+                        let key_node = Node::new(Value::String(Cow::Owned(key)), key_span);
+                        MappingPair::new(pair_span, key_node, value)
+                    })
+                    .collect()
+            }
+            _ => items
+                .into_iter()
+                .map(|(key, value)| {
+                    let (key_span, pair_span) = fallback_mapping_spans(value.span);
+                    let key_node = Node::new(Value::String(Cow::Owned(key)), key_span);
+                    MappingPair::new(pair_span, key_node, value)
+                })
+                .collect(),
+        };
         Node::new(Value::Mapping(pairs), self.span)
     }
 
@@ -232,6 +249,19 @@ fn coerce_key_to_string<'a>(node: &'a Node<'_>) -> Option<Cow<'a, str>> {
         Value::Bool(b) => Some(Cow::Borrowed(if *b { "true" } else { "false" })),
         Value::Null | Value::Sequence(_) | Value::Mapping(_) => None,
     }
+}
+
+fn is_coercible_key(node: &Node<'_>) -> bool {
+    matches!(
+        node.value,
+        Value::String(_) | Value::Int(_) | Value::Float(_) | Value::Bool(_)
+    )
+}
+
+fn fallback_mapping_spans(value_span: yaml_parser::Span) -> (yaml_parser::Span, yaml_parser::Span) {
+    let key_span = yaml_parser::Span::new(value_span.start..value_span.start);
+    let pair_span = yaml_parser::Span::new(key_span.start..value_span.end);
+    (key_span, pair_span)
 }
 
 fn integral_float_to_i64(float: f64) -> Option<i64> {
@@ -796,8 +826,25 @@ mod tests {
     }
 
     #[test]
-    fn test_yaml_coerce_mapping_uses_distinct_key_and_value_spans() {
-        let original = Node::new(Value::Null, yaml_parser::Span::new(10..20));
+    fn test_yaml_coerce_mapping_copies_original_key_and_pair_spans() {
+        let original = Node::new(
+            Value::Mapping(vec![
+                MappingPair::new(
+                    yaml_parser::Span::new(1..5),
+                    Node::new(Value::Null, yaml_parser::Span::new(1..1)),
+                    string_node("skipped"),
+                ),
+                MappingPair::new(
+                    yaml_parser::Span::new(10..30),
+                    Node::new(
+                        Value::String(Cow::Borrowed("foo")),
+                        yaml_parser::Span::new(10..13),
+                    ),
+                    Node::new(Value::Null, yaml_parser::Span::new(15..20)),
+                ),
+            ]),
+            yaml_parser::Span::new(0..31),
+        );
         let coerced = original.coerce_mapping(vec![(
             "foo".to_owned(),
             Node::new(
@@ -811,8 +858,8 @@ mod tests {
         };
         let pair = pairs.first().expect("coerce_mapping should emit one pair");
 
-        assert_eq!(pair.key.span, yaml_parser::Span::new(14..14));
+        assert_eq!(pair.key.span, yaml_parser::Span::new(10..13));
         assert_eq!(pair.value.span, yaml_parser::Span::new(14..20));
-        assert_eq!(pair.pair_span, yaml_parser::Span::new(14..20));
+        assert_eq!(pair.pair_span, yaml_parser::Span::new(10..30));
     }
 }
