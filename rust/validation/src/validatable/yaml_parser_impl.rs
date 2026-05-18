@@ -29,6 +29,7 @@ impl<'input> ValidatableValue for Node<'input> {
     where
         Self: 'a;
     type Coerced = Node<'static>;
+    type CoercedMappingItem = MappingPair<'static>;
 
     fn is_null(&self) -> bool {
         matches!(self.value, Value::Null)
@@ -98,7 +99,7 @@ impl<'input> ValidatableValue for Node<'input> {
         match &self.value {
             Value::Mapping(pairs) => {
                 for pair in pairs {
-                    if let Some(key_str) = coerce_key_to_string(&pair.key)
+                    if let Some(key_str) = schema_key_to_string(&pair.key)
                         && key_str == key
                     {
                         return Some(&pair.value);
@@ -155,34 +156,8 @@ impl<'input> ValidatableValue for Node<'input> {
         )
     }
 
-    fn coerce_mapping(&self, items: Vec<(String, Self::Coerced)>) -> Self::Coerced {
-        let pairs: Vec<MappingPair<'static>> = match &self.value {
-            Value::Mapping(original_pairs) => {
-                let mut original_pairs = original_pairs
-                    .iter()
-                    .filter(|pair| is_coercible_key(&pair.key));
-                items
-                    .into_iter()
-                    .map(|(key, value)| {
-                        let (key_span, pair_span) = original_pairs
-                            .next()
-                            .map(|pair| (pair.key.span, pair.pair_span))
-                            .unwrap_or_else(|| fallback_mapping_spans(value.span));
-                        let key_node = Node::new(Value::String(Cow::Owned(key)), key_span);
-                        MappingPair::new(pair_span, key_node, value)
-                    })
-                    .collect()
-            }
-            _ => items
-                .into_iter()
-                .map(|(key, value)| {
-                    let (key_span, pair_span) = fallback_mapping_spans(value.span);
-                    let key_node = Node::new(Value::String(Cow::Owned(key)), key_span);
-                    MappingPair::new(pair_span, key_node, value)
-                })
-                .collect(),
-        };
-        Node::new(Value::Mapping(pairs), self.span)
+    fn coerce_mapping(&self, items: Vec<Self::CoercedMappingItem>) -> Self::Coerced {
+        Node::new(Value::Mapping(items), self.span)
     }
 
     fn clone_to_coerced(&self) -> Self::Coerced {
@@ -231,37 +206,32 @@ impl<'input> ValidatableValue for Node<'input> {
 
 /// A wrapper around yaml_parser's mapping representation.
 ///
-/// Note: YAML mappings can have non-string keys, but for validation purposes
-/// we coerce scalar keys (int, bool, float) to strings. Only complex keys
-/// (mappings, sequences) are skipped.
+/// Note: YAML mappings can have non-string keys, but only string keys
+/// participate in schema lookups.
 pub struct NodeMapping<'a, 'input> {
     pairs: &'a [MappingPair<'input>],
 }
 
-/// Try to coerce a YAML node to a string key.
-/// Returns None for complex types (mappings, sequences, null).
-fn coerce_key_to_string<'a>(node: &'a Node<'_>) -> Option<Cow<'a, str>> {
+/// Return the schema lookup key for YAML mappings.
+///
+/// AVD schemas only define string keys, so non-string YAML keys do not match
+/// schema keys even if they have a scalar textual representation.
+fn schema_key_to_string<'a>(node: &'a Node<'_>) -> Option<Cow<'a, str>> {
     match &node.value {
         Value::String(s) => Some(Cow::Borrowed(s.as_ref())),
-        Value::Int(i) => Some(i.to_decimal_string()),
-        Value::Float(f) => Some(Cow::Owned(f.to_string())),
-        // Mapping keys are looked up using YAML's lowercase bool spelling.
-        Value::Bool(b) => Some(Cow::Borrowed(if *b { "true" } else { "false" })),
-        Value::Null | Value::Sequence(_) | Value::Mapping(_) => None,
+        _ => None,
     }
 }
 
-fn is_coercible_key(node: &Node<'_>) -> bool {
-    matches!(
-        node.value,
-        Value::String(_) | Value::Int(_) | Value::Float(_) | Value::Bool(_)
-    )
-}
-
-fn fallback_mapping_spans(value_span: yaml_parser::Span) -> (yaml_parser::Span, yaml_parser::Span) {
-    let key_span = yaml_parser::Span::new(value_span.start..value_span.start);
-    let pair_span = yaml_parser::Span::new(key_span.start..value_span.end);
-    (key_span, pair_span)
+fn display_key_to_string<'a>(node: &'a Node<'_>) -> Cow<'a, str> {
+    match &node.value {
+        Value::String(s) => Cow::Borrowed(s.as_ref()),
+        Value::Int(i) => i.to_decimal_string(),
+        Value::Float(f) => Cow::Owned(f.to_string()),
+        Value::Bool(b) => Cow::Borrowed(if *b { "true" } else { "false" }),
+        Value::Null => Cow::Borrowed("null"),
+        Value::Sequence(_) | Value::Mapping(_) => Cow::Borrowed("<complex key>"),
+    }
 }
 
 fn integral_float_to_i64(float: f64) -> Option<i64> {
@@ -286,11 +256,10 @@ impl<'a, 'input: 'a> ValidatableMapping<'a> for NodeMapping<'a, 'input> {
     type Iter = NodeMappingIter<'a, 'input>;
 
     fn get(&self, key: &str) -> Option<&Self::Value> {
-        // This is intentionally a linear scan: YAML mappings preserve order,
-        // may contain duplicate keys, and may use non-string scalar keys that
-        // are coerced at lookup time.
+        // This is intentionally a linear scan: YAML mappings preserve order
+        // and may contain duplicate keys.
         for pair in self.pairs {
-            if let Some(k_str) = coerce_key_to_string(&pair.key)
+            if let Some(k_str) = schema_key_to_string(&pair.key)
                 && k_str == key
             {
                 return Some(&pair.value);
@@ -314,15 +283,11 @@ impl<'a, 'input: 'a> ValidatableMapping<'a> for NodeMapping<'a, 'input> {
     }
 
     fn len(&self) -> usize {
-        // Count entries with coercible keys
-        self.pairs
-            .iter()
-            .filter(|pair| coerce_key_to_string(&pair.key).is_some())
-            .count()
+        self.pairs.len()
     }
 }
 
-/// Iterator over yaml_parser mapping entries with coercible keys.
+/// Iterator over yaml_parser mapping entries.
 pub struct NodeMappingIter<'a, 'input> {
     inner: std::slice::Iter<'a, MappingPair<'input>>,
 }
@@ -331,32 +296,62 @@ impl<'a, 'input: 'a> Iterator for NodeMappingIter<'a, 'input> {
     type Item = NodeMappingPair<'a, 'input>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        loop {
-            let pair = self.inner.next()?;
-            if let Some(key_str) = coerce_key_to_string(&pair.key) {
-                return Some(NodeMappingPair { key_str, pair });
-            }
-            // Skip non-coercible keys (mappings, sequences, null)
-        }
+        let pair = self.inner.next()?;
+        Some(NodeMappingPair { pair })
     }
 }
 
+/// Validation view over a YAML mapping pair.
+///
+/// Keeps access to the original key node so validation can distinguish schema
+/// lookup keys from display keys and preserve non-string keys in coerced output.
 pub struct NodeMappingPair<'a, 'input> {
-    key_str: Cow<'a, str>,
     pair: &'a MappingPair<'input>,
 }
 
 impl<'a, 'input: 'a> ValidatableMappingPair<'a> for NodeMappingPair<'a, 'input> {
     type Value = Node<'input>;
 
-    fn key(&self) -> Cow<'a, str> {
-        self.key_str.clone()
+    /// Return only string YAML keys for schema lookup.
+    ///
+    /// Non-string YAML keys are valid YAML, but they do not match AVD schema
+    /// keys and are handled as allowed/unknown keys by dict validation.
+    fn schema_key(&self) -> Option<Cow<'a, str>> {
+        schema_key_to_string(&self.pair.key)
     }
 
+    /// Return a path-friendly representation for diagnostics.
+    ///
+    /// This is deliberately broader than `schema_key` so numeric, boolean,
+    /// null, and complex YAML keys can still produce a useful validation path.
+    fn display_key(&self) -> Cow<'a, str> {
+        display_key_to_string(&self.pair.key)
+    }
+
+    /// Return the YAML value associated with this pair.
     fn value(&self) -> &'a Self::Value {
         &self.pair.value
     }
 
+    /// Build the YAML mapping pair for coerced output.
+    ///
+    /// String keys are rebuilt cheaply with the original key span; non-string
+    /// keys are cloned to keep their YAML value type, and the original pair
+    /// span is reused.
+    fn coerced_item(
+        &self,
+        value: <Self::Value as ValidatableValue>::Coerced,
+    ) -> <Self::Value as ValidatableValue>::CoercedMappingItem {
+        let key = match &self.pair.key.value {
+            Value::String(s) => {
+                Node::new(Value::String(Cow::Owned(s.to_string())), self.pair.key.span)
+            }
+            _ => self.pair.key.clone().into_owned(),
+        };
+        MappingPair::new(self.pair.pair_span, key, value)
+    }
+
+    /// Return the span for the original YAML key node.
     fn key_span(&self) -> Option<crate::feedback::SourceSpan> {
         Some(crate::feedback::SourceSpan {
             start: self.pair.key.span.start_usize(),
@@ -570,7 +565,7 @@ mod tests {
 
         // Test iteration
         let keys: Vec<String> = ValidatableMapping::iter(&mapping)
-            .map(|pair| pair.key().into_owned())
+            .map(|pair| pair.display_key().into_owned())
             .collect();
         assert!(keys.contains(&"name".to_string()));
         assert!(keys.contains(&"age".to_string()));
@@ -624,7 +619,7 @@ mod tests {
     }
 
     #[test]
-    fn test_yaml_mapping_skips_non_coercible_keys() {
+    fn test_yaml_mapping_only_matches_string_keys() {
         let node = Node::new(
             Value::Mapping(vec![
                 MappingPair::new(
@@ -650,21 +645,9 @@ mod tests {
         );
 
         let mapping = node.as_mapping().expect("should be a mapping");
-        assert_eq!(mapping.len(), 3);
-        assert_eq!(
-            mapping
-                .get("1.5")
-                .and_then(ValidatableValue::as_str)
-                .as_deref(),
-            Some("float")
-        );
-        assert_eq!(
-            mapping
-                .get("false")
-                .and_then(ValidatableValue::as_str)
-                .as_deref(),
-            Some("bool")
-        );
+        assert_eq!(mapping.len(), 6);
+        assert!(mapping.get("1.5").is_none());
+        assert!(mapping.get("false").is_none());
         assert_eq!(
             mapping
                 .get("kept")
@@ -674,15 +657,24 @@ mod tests {
         );
 
         let keys: Vec<String> = ValidatableMapping::iter(&mapping)
-            .map(|pair| pair.key().into_owned())
+            .map(|pair| pair.display_key().into_owned())
             .collect();
-        assert_eq!(keys, vec!["1.5", "false", "kept"]);
+        assert_eq!(
+            keys,
+            vec![
+                "null",
+                "<complex key>",
+                "<complex key>",
+                "1.5",
+                "false",
+                "kept"
+            ]
+        );
     }
 
     #[test]
-    fn test_yaml_int_key_coercion() {
+    fn test_yaml_non_string_keys_do_not_match_schema_keys() {
         // YAML allows non-string keys like: `123: value`
-        // These should be coerced to string keys
         let node = Node::new(
             Value::Mapping(vec![
                 MappingPair::new(make_span(), int_node(123), string_node("int_key_value")),
@@ -697,20 +689,14 @@ mod tests {
 
         let mapping = node.as_mapping().expect("should be a mapping");
 
-        // Int key 123 should be coerced to "123"
-        let value = mapping.get("123").expect("should find int key as string");
-        assert_eq!(value.as_str().as_deref(), Some("int_key_value"));
+        assert!(mapping.get("123").is_none());
+        assert!(mapping.get("true").is_none());
 
-        // Bool key true should be coerced to "true"
-        let value = mapping.get("true").expect("should find bool key as string");
-        assert_eq!(value.as_str().as_deref(), Some("bool_key_value"));
-
-        // Iteration should also coerce keys
+        // Iteration still exposes display keys for paths and diagnostics.
         let keys: Vec<String> = ValidatableMapping::iter(&mapping)
-            .map(|pair| pair.key().into_owned())
+            .map(|pair| pair.display_key().into_owned())
             .collect();
-        assert!(keys.contains(&"123".to_string()));
-        assert!(keys.contains(&"true".to_string()));
+        assert_eq!(keys, vec!["123", "true"]);
     }
 
     #[test]
@@ -803,7 +789,7 @@ mod tests {
     }
 
     #[test]
-    fn test_yaml_get_coerces_scalar_keys() {
+    fn test_yaml_get_only_matches_string_keys() {
         let node = Node::new(
             Value::Mapping(vec![
                 MappingPair::new(make_span(), int_node(123), string_node("int_key_value")),
@@ -816,13 +802,8 @@ mod tests {
             make_span(),
         );
 
-        let int_value = node.get("123").expect("should find int key through get()");
-        assert_eq!(int_value.as_str().as_deref(), Some("int_key_value"));
-
-        let bool_value = node
-            .get("true")
-            .expect("should find bool key through get()");
-        assert_eq!(bool_value.as_str().as_deref(), Some("bool_key_value"));
+        assert!(node.get("123").is_none());
+        assert!(node.get("true").is_none());
     }
 
     #[test]
@@ -845,8 +826,12 @@ mod tests {
             ]),
             yaml_parser::Span::new(0..31),
         );
-        let coerced = original.coerce_mapping(vec![(
-            "foo".to_owned(),
+        let coerced = original.coerce_mapping(vec![MappingPair::new(
+            yaml_parser::Span::new(10..30),
+            Node::new(
+                Value::String(Cow::Owned("foo".to_owned())),
+                yaml_parser::Span::new(10..13),
+            ),
             Node::new(
                 Value::String(Cow::Owned("bar".to_owned())),
                 yaml_parser::Span::new(14..20),

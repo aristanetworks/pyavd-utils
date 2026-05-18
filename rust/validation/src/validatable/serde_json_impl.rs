@@ -20,6 +20,7 @@ impl ValidatableValue for Value {
     type Mapping<'a> = &'a Map<String, Value>;
     type Sequence<'a> = &'a Vec<Value>;
     type Coerced = Value;
+    type CoercedMappingItem = (String, Value);
 
     fn is_null(&self) -> bool {
         self.is_null()
@@ -103,7 +104,7 @@ impl ValidatableValue for Value {
         Value::Array(items)
     }
 
-    fn coerce_mapping(&self, items: Vec<(String, Self::Coerced)>) -> Self::Coerced {
+    fn coerce_mapping(&self, items: Vec<Self::CoercedMappingItem>) -> Self::Coerced {
         Value::Object(items.into_iter().collect())
     }
 
@@ -174,6 +175,10 @@ impl<'a> Iterator for MapIter<'a> {
 
 impl ExactSizeIterator for MapIter<'_> {}
 
+/// Validation view over a JSON object entry.
+///
+/// JSON object keys are always strings, so the schema, display, and coerced
+/// key representations are all the same string key.
 pub struct MapPair<'a> {
     key: &'a String,
     value: &'a Value,
@@ -182,12 +187,27 @@ pub struct MapPair<'a> {
 impl<'a> ValidatableMappingPair<'a> for MapPair<'a> {
     type Value = Value;
 
-    fn key(&self) -> Cow<'a, str> {
+    /// JSON keys are always valid schema lookup keys.
+    fn schema_key(&self) -> Option<Cow<'a, str>> {
+        Some(Cow::Borrowed(self.key.as_str()))
+    }
+
+    /// Use the JSON key directly for paths and diagnostics.
+    fn display_key(&self) -> Cow<'a, str> {
         Cow::Borrowed(self.key.as_str())
     }
 
+    /// Return the JSON value associated with this object entry.
     fn value(&self) -> &'a Self::Value {
         self.value
+    }
+
+    /// Build the JSON object entry for coerced output.
+    fn coerced_item(
+        &self,
+        value: <Self::Value as ValidatableValue>::Coerced,
+    ) -> <Self::Value as ValidatableValue>::CoercedMappingItem {
+        (self.key.to_owned(), value)
     }
 }
 
