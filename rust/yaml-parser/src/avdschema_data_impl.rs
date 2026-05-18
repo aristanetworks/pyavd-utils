@@ -19,7 +19,7 @@ pub struct YamlSequence<'a, 'input>(&'a [SequenceItem<'input>]);
 
 impl<'a, 'input> YamlMapping<'a, 'input> {
     /// Create a schema-data mapping view from a YAML mapping pair slice.
-    pub const fn new(pairs: &'a [MappingPair<'input>]) -> Self {
+    pub fn new(pairs: &'a [MappingPair<'input>]) -> Self {
         Self(pairs)
     }
 }
