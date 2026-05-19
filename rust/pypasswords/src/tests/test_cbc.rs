@@ -16,7 +16,7 @@ fn cbc_decrypt_invalid_base64_err() {
 
         assert!(err.is_instance_of::<passwords::CBCInvalidBase64Error>(py));
         assert!(err.is_instance_of::<passwords::PasswordError>(py));
-        assert_eq!(err.value(py).to_string(), "Invalid Base64 encoding");
+        assert_eq!(err.value(py).to_string(), "Invalid Base64 encoding.");
     });
 }
 
@@ -33,7 +33,7 @@ fn cbc_decrypt_failed_err() {
         assert!(err.is_instance_of::<passwords::CBCDecryptionFailedError>(py));
         assert_eq!(
             err.value(py).to_string(),
-            "Decryption failed (check password)"
+            "Decryption failed (check password)."
         );
     });
 }
@@ -48,7 +48,7 @@ fn cbc_decrypt_invalid_signature_err() {
         assert!(err.is_instance_of::<passwords::CBCInvalidSignatureError>(py));
         assert_eq!(
             err.value(py).to_string(),
-            "Invalid Arista signature in decrypted data"
+            "Invalid Arista signature in decrypted data."
         );
     });
 }
@@ -90,14 +90,14 @@ fn cbc_internal_errors_map_to_specific_pyerrs() {
         assert!(err.is_instance_of::<passwords::CBCInvalidUtf8Error>(py));
         assert_eq!(
             err.value(py).to_string(),
-            "Decrypted data is not valid UTF-8"
+            "Decrypted data is not valid UTF-8."
         );
 
         let err = ::passwords::CbcError::EncryptionFailed.to_python_error();
         assert!(err.is_instance_of::<passwords::CBCEncryptionFailedError>(py));
         assert_eq!(
             err.value(py).to_string(),
-            "Encryption failed: internal block alignment error"
+            "Encryption failed: internal block alignment error."
         );
     });
 }

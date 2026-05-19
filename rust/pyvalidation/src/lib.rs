@@ -182,21 +182,24 @@ pub mod validation {
 
     impl ToPythonError for avdschema::LoadError {
         fn to_python_error(self) -> pyo3::PyErr {
-            let message = format!("Error while loading the Schema Store from file: {self}");
             match self {
-                avdschema::LoadError::JsonError(_) => {
-                    ValidationStoreLoadJsonError::new_err(message)
-                }
-                avdschema::LoadError::YamlError(_) => {
-                    ValidationStoreLoadYamlError::new_err(message)
-                }
-                avdschema::LoadError::IoError(_) => ValidationStoreLoadIoError::new_err(message),
+                avdschema::LoadError::JsonError(err) => ValidationStoreLoadJsonError::new_err(
+                    format!("Error while loading the Schema Store from file: {err}."),
+                ),
+                avdschema::LoadError::YamlError(err) => ValidationStoreLoadYamlError::new_err(
+                    format!("Error while loading the Schema Store from file: {err}."),
+                ),
+                avdschema::LoadError::IoError(err) => ValidationStoreLoadIoError::new_err(format!(
+                    "Error while loading the Schema Store from file: {err}."
+                )),
                 avdschema::LoadError::InvalidExtension {} => {
-                    ValidationStoreInvalidExtensionError::new_err(message)
+                    ValidationStoreInvalidExtensionError::new_err(
+                        "Error while loading the Schema Store from file: Invalid extension for input file.",
+                    )
                 }
-                avdschema::LoadError::NoFilesFound {} => {
-                    ValidationStoreNoFilesFoundError::new_err(message)
-                }
+                avdschema::LoadError::NoFilesFound {} => ValidationStoreNoFilesFoundError::new_err(
+                    "Error while loading the Schema Store from file: No files found.",
+                ),
             }
         }
     }
@@ -242,7 +245,7 @@ pub mod validation {
     }
 
     fn invalid_json_in_data_err(message: impl std::fmt::Display) -> pyo3::PyErr {
-        ValidationInvalidJsonDataError::new_err(format!("Invalid JSON in data: {message}"))
+        ValidationInvalidJsonDataError::new_err(format!("Invalid JSON in data: {message}."))
     }
 
     pub(crate) fn first_input_diagnostic_as_pyerr(
@@ -350,7 +353,7 @@ pub mod validation {
                     }
                     validation::feedback::ErrorIssue::InternalError { message } => {
                         return Err(ValidationInternalError::new_err(format!(
-                            "Error occurred during validation: {message}"
+                            "Error occurred during validation: {message}."
                         )));
                     }
                 }
@@ -479,7 +482,7 @@ pub mod validation {
         // Parse schema JSON
         let schema: AnySchema = serde_json::from_str(schema_as_json).map_err(|err| {
             ValidationInvalidAdhocSchemaJsonError::new_err(format!(
-                "Invalid JSON in adhoc schema: {err}"
+                "Invalid JSON in adhoc schema: {err}."
             ))
         })?;
         // Parse data JSON
@@ -615,7 +618,7 @@ mod tests {
         pyo3::Python::attach(|py| {
             assert_eq!(
                 err.value(py).to_string(),
-                "Error occurred during validation: boom"
+                "Error occurred during validation: boom."
             );
             assert!(err.is_instance_of::<validation::ValidationInternalError>(py));
             assert!(err.is_instance_of::<validation::ValidationError>(py));
@@ -641,7 +644,7 @@ mod tests {
         pyo3::Python::attach(|py| {
             assert_eq!(
                 err.value(py).to_string(),
-                "Invalid JSON in data: expected value at line 1 column 1"
+                "Invalid JSON in data: expected value at line 1 column 1."
             );
             assert!(err.is_instance_of::<validation::ValidationInvalidJsonDataError>(py));
             assert!(err.is_instance_of::<validation::ValidationError>(py));
@@ -846,7 +849,7 @@ mod tests {
             };
             assert_eq!(
                 err.value(py).to_string(),
-                "Invalid JSON in data: expected value at line 1 column 1"
+                "Invalid JSON in data: expected value at line 1 column 1."
             );
             assert!(err.is_instance_of::<validation::ValidationInvalidJsonDataError>(py));
         });
@@ -913,7 +916,7 @@ mod tests {
             };
             assert_eq!(
                 err.value(py).to_string(),
-                "Invalid JSON in data: expected value at line 1 column 1"
+                "Invalid JSON in data: expected value at line 1 column 1."
             );
             assert!(err.is_instance_of::<validation::ValidationInvalidJsonDataError>(py));
         });
@@ -940,7 +943,7 @@ mod tests {
             };
             assert_eq!(
                 err.value(py).to_string(),
-                "Invalid JSON in adhoc schema: missing field `type` at line 1 column 14"
+                "Invalid JSON in adhoc schema: missing field `type` at line 1 column 14."
             );
             assert!(err.is_instance_of::<validation::ValidationInvalidAdhocSchemaJsonError>(py));
         });

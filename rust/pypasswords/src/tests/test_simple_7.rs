@@ -59,7 +59,7 @@ fn simple_7_encrypt_empty_password_err() {
 
         assert!(err.is_instance_of::<passwords::Simple7EmptyPasswordError>(py));
         assert!(err.is_instance_of::<passwords::PasswordError>(py));
-        assert_eq!(err.value(py).to_string(), "Password must not be empty");
+        assert_eq!(err.value(py).to_string(), "Password must not be empty.");
     });
 }
 
@@ -77,7 +77,7 @@ fn simple_7_encrypt_invalid_salt_err() {
         assert!(err.is_instance_of::<passwords::PasswordError>(py));
         assert_eq!(
             err.value(py).to_string(),
-            "Salt must be in the range 0-15, got 16"
+            "Salt must be in the range 0-15, got 16."
         );
     });
 }
@@ -90,7 +90,7 @@ fn simple_7_decrypt_data_too_short_err() {
         assert!(err.is_instance_of::<passwords::Simple7DataTooShortError>(py));
         assert_eq!(
             err.value(py).to_string(),
-            "Encrypted data too short (minimum 2 characters required for salt)"
+            "Encrypted data too short (minimum 2 characters required for salt)."
         );
     });
 }
@@ -129,7 +129,7 @@ fn simple_7_decrypt_salt_out_of_range_err() {
         assert!(err.is_instance_of::<passwords::Simple7InvalidSaltValueError>(py));
         assert_eq!(
             err.value(py).to_string(),
-            "Salt must be in the range 0-15, got 16"
+            "Salt must be in the range 0-15, got 16."
         );
     });
 }

@@ -68,7 +68,7 @@ fn sha512_crypt_invalid_character_in_salt_err() {
 
         assert_eq!(
             err.value(py).to_string(),
-            "Invalid Salt: Salt contains an invalid character: '🐍'"
+            "Invalid Salt: Salt contains an invalid character: '🐍'."
         );
         assert!(err.is_instance_of::<passwords::Sha512CryptInvalidSaltCharacterError>(py));
     });
