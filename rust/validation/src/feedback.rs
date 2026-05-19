@@ -382,6 +382,13 @@ pub enum Violation {
     /// The dictionary key is not allowed by the schema.
     #[display("Invalid key.")]
     UnexpectedKey(),
+    /// The integer value is outside the supported range.
+    #[display(
+        "The integer value '{found}' is outside the supported range '{min}' to '{max}'.",
+        min = i64::MIN,
+        max = i64::MAX
+    )]
+    IntegerOutOfRange { found: String },
     /// The value is above the maximum allowed.
     #[display("The value '{found}' is above the maximum allowed '{maximum}'.")]
     ValueAboveMaximum { maximum: i64, found: i64 },

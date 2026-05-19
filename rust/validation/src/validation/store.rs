@@ -5,6 +5,8 @@
 use avdschema::Store;
 use log::debug;
 use serde_json::Value;
+use yaml_parser::Node;
+use yaml_parser::parse;
 
 use super::Validation;
 use crate::context::Configuration;
@@ -31,6 +33,13 @@ pub struct InputValidationResult<T> {
     pub document: ValidationOutput<T>,
 }
 
+#[derive(Debug)]
+/// Result of validating a YAML input source that may contain multiple documents.
+pub struct YamlValidationResult<T> {
+    pub input_diagnostics: Vec<InputDiagnostic>,
+    pub documents: Vec<ValidationOutput<T>>,
+}
+
 /// Validate already-parsed values against a schema.
 pub trait StoreValidate<V>
 where
@@ -45,7 +54,7 @@ where
     ) -> Result<ValidationOutput<V::Coerced>, StoreValidateError>;
 }
 
-/// Parse JSON input and validate the resulting value against a schema.
+/// Parse JSON or YAML input and validate the resulting value against a schema.
 pub trait StoreValidateInput {
     fn validate_json(
         &self,
@@ -53,6 +62,13 @@ pub trait StoreValidateInput {
         schema_name: &str,
         configuration: Option<&Configuration>,
     ) -> Result<InputValidationResult<Value>, StoreValidateError>;
+
+    fn validate_yaml(
+        &self,
+        yaml: &str,
+        schema_name: &str,
+        configuration: Option<&Configuration>,
+    ) -> Result<YamlValidationResult<Node<'static>>, StoreValidateError>;
 }
 
 impl<V> StoreValidate<V> for Store
@@ -110,6 +126,41 @@ impl StoreValidateInput for Store {
             document,
         })
     }
+
+    fn validate_yaml(
+        &self,
+        yaml: &str,
+        schema_name: &str,
+        configuration: Option<&Configuration>,
+    ) -> Result<YamlValidationResult<Node<'static>>, StoreValidateError> {
+        debug!("Validating YAML");
+        let _ = self.get(schema_name)?;
+        let (yaml_docs, parse_errors) = parse(yaml);
+        debug!("Deserialization of YAML done");
+
+        let input_diagnostics = parse_errors
+            .into_iter()
+            .map(|parse_error| {
+                InputDiagnostic::ParseDiagnostic(ParseDiagnostic::from_source(&parse_error))
+            })
+            .collect();
+
+        let mut documents = Vec::with_capacity(yaml_docs.len());
+        for document in &yaml_docs {
+            documents.push(<Store as StoreValidate<Node<'static>>>::validate_value(
+                self,
+                document,
+                schema_name,
+                configuration,
+            )?);
+        }
+
+        debug!("Validating YAML done");
+        Ok(YamlValidationResult {
+            input_diagnostics,
+            documents,
+        })
+    }
 }
 
 #[derive(Debug, derive_more::Display, derive_more::From)]
@@ -120,8 +171,156 @@ pub enum StoreValidateError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::feedback::Feedback;
     use crate::feedback::ParseDiagnosticKind;
+    use crate::feedback::SourceSpan;
+    use crate::feedback::Type;
+    use crate::feedback::Violation;
     use crate::validation::test_utils::get_test_store;
+
+    #[test]
+    fn validate_yaml_err() {
+        let input = "key3:\n  some_key: some_value\n";
+        let store = get_test_store();
+        let result = store.validate_yaml(input, "avd_design", None);
+        assert!(result.is_ok());
+        let output = result.unwrap();
+        assert!(output.input_diagnostics.is_empty());
+        assert_eq!(output.documents.len(), 1);
+        assert!(output.documents[0].result.infos.is_empty());
+        assert_eq!(
+            output.documents[0].result.errors,
+            vec![Feedback {
+                path: vec!["key3".into()].into(),
+                span: Some(SourceSpan { start: 8, end: 28 }),
+                issue: Violation::InvalidType {
+                    expected: Type::Str,
+                    found: Type::Dict
+                }
+                .into()
+            },]
+        )
+    }
+
+    #[test]
+    fn validate_yaml_invalid_schema() {
+        let input = "";
+        let store = get_test_store();
+        let result = store.validate_yaml(input, "invalid_schema", None);
+        assert!(matches!(
+            result,
+            Err(StoreValidateError::SchemaStore(
+                avdschema::SchemaStoreError::InvalidSchemaName(schema)
+            ))
+                if schema == "invalid_schema"
+        ));
+    }
+
+    #[test]
+    fn validate_yaml_parse_error_is_returned_as_feedback() {
+        let input = "[\n---\nfoo: bar\n";
+        let store = get_test_store();
+        let result = store.validate_yaml(input, "avd_design", None);
+        assert!(result.is_ok());
+        let output = result.unwrap();
+
+        assert!(output.input_diagnostics.iter().any(|diagnostic| {
+            matches!(
+                diagnostic,
+                InputDiagnostic::ParseDiagnostic(parse_diagnostic)
+                    if parse_diagnostic.kind == ParseDiagnosticKind::YamlSyntax
+                        && parse_diagnostic
+                            .to_source_span(input)
+                            .end
+                            >= parse_diagnostic.to_source_span(input).start
+            )
+        }));
+        assert!(!output.documents.is_empty());
+    }
+
+    #[test]
+    fn validate_yaml_parse_error_without_document_is_returned_as_feedback() {
+        let input = "*undefined_alias";
+        let store = get_test_store();
+        let result = store.validate_yaml(input, "avd_design", None);
+        assert!(result.is_ok());
+        let output = result.unwrap();
+
+        assert!(output.input_diagnostics.iter().any(|diagnostic| {
+            matches!(
+                diagnostic,
+                InputDiagnostic::ParseDiagnostic(parse_diagnostic)
+                    if parse_diagnostic.kind == ParseDiagnosticKind::YamlSyntax
+                        && parse_diagnostic
+                            .to_source_span(input)
+                            .end
+                            >= parse_diagnostic.to_source_span(input).start
+            )
+        }));
+        assert!(output.documents.is_empty());
+    }
+
+    #[test]
+    fn validate_yaml_multiple_documents() {
+        let input = "foo: bar\n---\nkey3:\n  some_key: some_value\n";
+        let store = get_test_store();
+        let result = store.validate_yaml(input, "avd_design", None);
+        assert!(result.is_ok());
+        let output = result.unwrap();
+        assert_eq!(output.documents.len(), 2);
+        assert!(output.documents[0].result.errors.is_empty());
+        assert_eq!(
+            output.documents[1].result.errors,
+            vec![Feedback {
+                path: vec!["key3".into()].into(),
+                span: Some(SourceSpan { start: 21, end: 41 }),
+                issue: Violation::InvalidType {
+                    expected: Type::Str,
+                    found: Type::Dict
+                }
+                .into()
+            },]
+        );
+    }
+
+    #[test]
+    fn validate_yaml_ok_with_coerced_data() {
+        let input = "key3: 123\n---\nkey3: 456\n";
+        let store = get_test_store();
+        let configuration = Configuration {
+            return_coerced_data: true,
+            return_coercion_infos: true,
+            ..Default::default()
+        };
+        let result = store
+            .validate_yaml(input, "avd_design", Some(&configuration))
+            .unwrap();
+
+        assert!(result.input_diagnostics.is_empty());
+        assert_eq!(result.documents.len(), 2);
+        assert!(result.documents[0].result.errors.is_empty());
+        assert_eq!(
+            result.documents[0]
+                .coerced
+                .as_ref()
+                .and_then(|node| node.get("key3")),
+            Some(&Node::new(
+                yaml_parser::Value::String("123".to_owned().into()),
+                yaml_parser::Span::new(6..9)
+            ))
+        );
+        assert!(result.documents[1].result.errors.is_empty());
+        assert_eq!(
+            result.documents[1]
+                .coerced
+                .as_ref()
+                .and_then(|node| node.get("key3")),
+            Some(&Node::new(
+                yaml_parser::Value::String("456".to_owned().into()),
+                yaml_parser::Span::new(20..23)
+            ))
+        );
+    }
 
     #[test]
     fn validate_json_invalid_schema() {
@@ -135,6 +334,27 @@ mod tests {
             ))
                 if schema == "invalid_schema"
         ));
+    }
+
+    #[test]
+    fn validate_json_ok_with_coerced_data() {
+        let input = r#"{"key3":123}"#;
+        let store = get_test_store();
+        let configuration = Configuration {
+            return_coerced_data: true,
+            return_coercion_infos: true,
+            ..Default::default()
+        };
+        let result = store
+            .validate_json(input, "avd_design", Some(&configuration))
+            .unwrap();
+
+        assert!(result.input_diagnostics.is_empty());
+        assert!(result.document.result.errors.is_empty());
+        assert_eq!(
+            result.document.coerced,
+            Some(serde_json::json!({ "key3": "123" }))
+        );
     }
 
     #[test]
@@ -166,5 +386,33 @@ mod tests {
             ))
                 if schema == "invalid_schema"
         ));
+    }
+
+    #[test]
+    fn validate_value_ok_with_coerced_data() {
+        let input = serde_json::json!({ "key3": 123 });
+        let store = get_test_store();
+        let configuration = Configuration {
+            return_coerced_data: true,
+            return_coercion_infos: true,
+            ..Default::default()
+        };
+        let result = store
+            .validate_value(&input, "avd_design", Some(&configuration))
+            .unwrap();
+
+        assert!(result.result.errors.is_empty());
+        assert_eq!(result.coerced, Some(serde_json::json!({ "key3": "123" })));
+    }
+
+    #[test]
+    fn yaml_feedback_span_is_populated() {
+        let input = "key3:\n  some_key: some_value\n";
+        let store = get_test_store();
+        let result = store.validate_yaml(input, "avd_design", None).unwrap();
+        let Some(feedback) = result.documents[0].result.errors.first() else {
+            panic!("expected validation feedback")
+        };
+        assert!(feedback.span.is_some());
     }
 }

@@ -16,3 +16,4 @@ pub use self::validation::store::InputValidationResult;
 pub use self::validation::store::StoreValidate;
 pub use self::validation::store::StoreValidateInput;
 pub use self::validation::store::ValidationOutput;
+pub use self::validation::store::YamlValidationResult;
