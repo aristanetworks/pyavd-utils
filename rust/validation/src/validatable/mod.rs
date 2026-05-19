@@ -25,15 +25,18 @@ use crate::feedback::Type;
 
 // Attempt lossless conversion to i64.
 pub(crate) fn integral_float_to_i64(float: f64) -> Option<i64> {
-    if float.is_finite()
-        && float.fract() == 0.0
-        && float >= i64::MIN as f64
-        && float <= i64::MAX as f64
-    {
-        Some(float as i64)
-    } else {
-        None
+    if !float.is_finite() || float.fract() != 0.0 {
+        return None;
     }
+
+    let value = float as i64;
+    // Positive out-of-range floats saturate to i64::MAX, and `i64::MAX as f64`
+    // rounds up to 2^63, so the round-trip check below would not reject them.
+    if value == i64::MAX && float.is_sign_positive() {
+        return None;
+    }
+
+    (value as f64 == float).then_some(value)
 }
 
 /// A value that can be validated against a schema.

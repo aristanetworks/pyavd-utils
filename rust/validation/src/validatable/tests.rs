@@ -6,6 +6,14 @@ use serde_json::json;
 
 use super::ValidatableSequence;
 use super::ValidatableValue;
+use super::integral_float_to_i64;
+
+#[test]
+fn test_integral_float_to_i64_rejects_imprecise_upper_bound() {
+    assert_eq!(integral_float_to_i64(42.0), Some(42));
+    assert_eq!(integral_float_to_i64(i64::MIN as f64), Some(i64::MIN));
+    assert_eq!(integral_float_to_i64(9_223_372_036_854_775_808.0), None);
+}
 
 #[test]
 fn test_serde_json_null() {
