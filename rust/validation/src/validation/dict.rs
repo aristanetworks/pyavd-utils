@@ -930,9 +930,14 @@ mod tests {
         .unwrap();
         let input = serde_json::json!({"foo": 123});
         let store = get_test_store();
-        let mut ctx = Context::new(&store, None);
-        let _ = schema.validate(&input, &mut ctx);
+        let configuration = Configuration {
+            return_coerced_data: true,
+            ..Default::default()
+        };
+        let mut ctx = Context::new(&store, Some(&configuration));
+        let coerced = schema.validate(&input, &mut ctx);
         assert!(ctx.result.infos.is_empty());
+        assert_eq!(coerced, Some(input));
         assert_eq!(
             ctx.result.errors,
             vec![Feedback {
@@ -1447,5 +1452,82 @@ mod tests {
         assert!(ctx.result.warnings.is_empty());
         // Should have no errors either
         assert!(ctx.result.errors.is_empty());
+    }
+
+    #[test]
+    fn validate_no_schema_keys_preserves_input_when_coercing() {
+        let schema = Dict::default();
+        let input = serde_json::json!({
+            "foo": 123,
+            "nested": {
+                "bar": true
+            }
+        });
+
+        let store = get_test_store();
+        let configuration = Configuration {
+            return_coerced_data: true,
+            ..Default::default()
+        };
+        let mut ctx = Context::new(&store, Some(&configuration));
+
+        let coerced = schema.validate(&input, &mut ctx);
+
+        assert!(ctx.result.errors.is_empty());
+        assert_eq!(coerced, Some(input));
+    }
+
+    #[test]
+    fn validate_dynamic_key_deprecated_ok() {
+        let schema: Dict = Dict::deserialize(serde_json::json!({
+            "keys": {
+                "my_dynamic_keys": {
+                    "type": "list",
+                    "items": {
+                        "type": "dict",
+                        "keys": {
+                            "key": {
+                                "type": "str"
+                            }
+                        }
+                    }
+                }
+            },
+            "dynamic_keys": {
+                "my_dynamic_keys.key": {
+                    "type": "int",
+                    "deprecation": {
+                        "warning": true,
+                        "remove_in_version": "1.2.3"
+                    }
+                }
+            },
+            "allow_other_keys": true
+        }))
+        .unwrap();
+
+        let input = serde_json::json!({
+            "my_dynamic_keys": [{"key": "dynkey1"}],
+            "dynkey1": 5
+        });
+
+        let store = get_test_store();
+        let mut ctx = Context::new(&store, None);
+        let _ = schema.validate(&input, &mut ctx);
+
+        assert!(ctx.result.errors.is_empty());
+        assert_eq!(
+            ctx.result.warnings,
+            vec![Feedback {
+                path: vec!["dynkey1".into()].into(),
+                span: None,
+                issue: WarningIssue::Deprecated(Deprecated {
+                    path: vec!["dynkey1".into()].into(),
+                    replacement: None.into(),
+                    version: Some("1.2.3".into()).into(),
+                    url: None.into(),
+                })
+            }]
+        );
     }
 }

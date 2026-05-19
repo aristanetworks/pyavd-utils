@@ -122,6 +122,7 @@ impl<'input> ValidatableValue for Node<'input> {
     // === Coercion builders ===
     // These preserve the span from the original node.
     // Properties and trailing_comment are ignored since they are not used later and are expensive to clone.
+    // TODO: Consider a simpler Coerced type where we don't carry unused metadata.
 
     fn coerce_null(&self) -> Self::Coerced {
         Node::new(Value::Null, self.span)
@@ -229,17 +230,6 @@ fn scalar_key_to_string<'a>(node: &'a Node<'_>) -> Option<Cow<'a, str>> {
     }
 }
 
-fn display_key_to_string<'a>(node: &'a Node<'_>) -> Cow<'a, str> {
-    match &node.value {
-        Value::String(s) => Cow::Borrowed(s.as_ref()),
-        Value::Int(i) => i.to_decimal_string(),
-        Value::Float(f) => Cow::Owned(f.to_string()),
-        Value::Bool(b) => Cow::Borrowed(if *b { "true" } else { "false" }),
-        Value::Null => Cow::Borrowed("null"),
-        Value::Sequence(_) | Value::Mapping(_) => Cow::Borrowed("<complex key>"),
-    }
-}
-
 impl<'a, 'input: 'a> ValidatableMapping<'a> for NodeMapping<'a, 'input> {
     type Value = Node<'input>;
     type SchemaDataMapping<'s>
@@ -319,7 +309,14 @@ impl<'a, 'input: 'a> ValidatableMappingPair<'a> for NodeMappingPair<'a, 'input> 
     /// This is deliberately broader than `schema_key` so numeric, boolean,
     /// null, and complex YAML keys can still produce a useful validation path.
     fn display_key(&self) -> Cow<'a, str> {
-        display_key_to_string(&self.pair.key)
+        match &self.pair.key.value {
+            Value::String(s) => Cow::Borrowed(s.as_ref()),
+            Value::Int(i) => i.to_decimal_string(),
+            Value::Float(f) => Cow::Owned(f.to_string()),
+            Value::Bool(b) => Cow::Borrowed(if *b { "true" } else { "false" }),
+            Value::Null => Cow::Borrowed("null"),
+            Value::Sequence(_) | Value::Mapping(_) => Cow::Borrowed("<complex key>"),
+        }
     }
 
     /// Return the YAML value associated with this pair.
@@ -329,20 +326,14 @@ impl<'a, 'input: 'a> ValidatableMappingPair<'a> for NodeMappingPair<'a, 'input> 
 
     /// Build the YAML mapping pair for coerced output.
     ///
-    /// String keys are rebuilt cheaply with the original key span; non-string
-    /// keys are cloned to keep their YAML value type, and the original pair
-    /// span is reused.
+    /// Cheap-cloning everything as most strings are Cow<Borrow> and only replacing value.
     fn coerced_item(
         &self,
         value: <Self::Value as ValidatableValue>::Coerced,
     ) -> <Self::Value as ValidatableValue>::CoercedMappingItem {
-        let key = match &self.pair.key.value {
-            Value::String(s) => {
-                Node::new(Value::String(Cow::Owned(s.to_string())), self.pair.key.span)
-            }
-            _ => self.pair.key.clone().into_owned(),
-        };
-        MappingPair::new(self.pair.pair_span, key, value)
+        let mut pair = self.pair.clone();
+        pair.value = value;
+        pair.into_owned()
     }
 
     /// Return the span for the original YAML key node.
