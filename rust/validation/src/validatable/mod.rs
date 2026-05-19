@@ -23,6 +23,19 @@ use avdschema::SchemaDataMapping;
 use crate::feedback::SourceSpan;
 use crate::feedback::Type;
 
+// Attempt lossless conversion to i64.
+pub(crate) fn integral_float_to_i64(float: f64) -> Option<i64> {
+    if float.is_finite()
+        && float.fract() == 0.0
+        && float >= i64::MIN as f64
+        && float <= i64::MAX as f64
+    {
+        Some(float as i64)
+    } else {
+        None
+    }
+}
+
 /// A value that can be validated against a schema.
 ///
 /// This trait abstracts over the common operations needed during validation,

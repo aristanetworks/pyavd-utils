@@ -239,6 +239,28 @@ mod tests {
     }
 
     #[test]
+    fn validate_yaml_parse_error_without_document_is_returned_as_feedback() {
+        let input = "*undefined_alias";
+        let store = get_test_store();
+        let result = store.validate_yaml(input, "avd_design", None);
+        assert!(result.is_ok());
+        let output = result.unwrap();
+
+        assert!(output.input_diagnostics.iter().any(|diagnostic| {
+            matches!(
+                diagnostic,
+                InputDiagnostic::ParseDiagnostic(parse_diagnostic)
+                    if parse_diagnostic.kind == ParseDiagnosticKind::YamlSyntax
+                        && parse_diagnostic
+                            .to_source_span(input)
+                            .end
+                            >= parse_diagnostic.to_source_span(input).start
+            )
+        }));
+        assert!(output.documents.is_empty());
+    }
+
+    #[test]
     fn validate_yaml_multiple_documents() {
         let input = "foo: bar\n---\nkey3:\n  some_key: some_value\n";
         let store = get_test_store();
@@ -263,7 +285,7 @@ mod tests {
 
     #[test]
     fn validate_yaml_ok_with_coerced_data() {
-        let input = "key3: 123\n";
+        let input = "key3: 123\n---\nkey3: 456\n";
         let store = get_test_store();
         let configuration = Configuration {
             return_coerced_data: true,
@@ -275,7 +297,7 @@ mod tests {
             .unwrap();
 
         assert!(result.input_diagnostics.is_empty());
-        assert_eq!(result.documents.len(), 1);
+        assert_eq!(result.documents.len(), 2);
         assert!(result.documents[0].result.errors.is_empty());
         assert_eq!(
             result.documents[0]
@@ -285,6 +307,17 @@ mod tests {
             Some(&Node::new(
                 yaml_parser::Value::String("123".to_owned().into()),
                 yaml_parser::Span::new(6..9)
+            ))
+        );
+        assert!(result.documents[1].result.errors.is_empty());
+        assert_eq!(
+            result.documents[1]
+                .coerced
+                .as_ref()
+                .and_then(|node| node.get("key3")),
+            Some(&Node::new(
+                yaml_parser::Value::String("456".to_owned().into()),
+                yaml_parser::Span::new(20..23)
             ))
         );
     }

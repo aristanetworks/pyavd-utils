@@ -16,6 +16,7 @@ use super::ValidatableMapping;
 use super::ValidatableMappingPair;
 use super::ValidatableSequence;
 use super::ValidatableValue;
+use super::integral_float_to_i64;
 
 // === ValidatableValue for yaml_parser::Node ===
 
@@ -50,13 +51,7 @@ impl<'input> ValidatableValue for Node<'input> {
     fn as_str(&self) -> Option<Cow<'_, str>> {
         match &self.value {
             Value::String(cow) => Some(Cow::Borrowed(cow.as_ref())),
-            Value::Int(i) => match i {
-                Integer::I64(i) => Some(Cow::Owned(i.to_string())),
-                Integer::U64(u) => Some(Cow::Owned(u.to_string())),
-                Integer::I128(i) => Some(Cow::Owned(i.to_string())),
-                Integer::U128(u) => Some(Cow::Owned(u.to_string())),
-                Integer::BigIntStr(s) => Some(s.clone()),
-            },
+            Value::Int(i) => Some(i.to_decimal_string()),
             Value::Float(f) => Some(Cow::Owned(f.to_string())),
             // Using Title case to match Python behavior
             Value::Bool(b) => Some(Cow::Borrowed(if *b { "True" } else { "False" })),
@@ -66,7 +61,7 @@ impl<'input> ValidatableValue for Node<'input> {
 
     fn as_i64(&self) -> Option<i64> {
         match &self.value {
-            Value::Int(Integer::I64(i)) => Some(*i),
+            Value::Int(integer) => integer.as_i64(),
             Value::Float(float) => integral_float_to_i64(*float),
             Value::String(s) => s.parse().ok(),
             Value::Bool(b) => Some(if *b { 1 } else { 0 }),
@@ -169,8 +164,10 @@ impl<'input> ValidatableValue for Node<'input> {
         match &self.value {
             Value::Null => FV::Null(),
             Value::Bool(b) => FV::Bool(*b),
-            Value::Int(Integer::I64(i)) => FV::Int(*i),
-            Value::Int(_) => FV::Str(self.as_str().unwrap().into_owned()),
+            Value::Int(i) => i
+                .as_i64()
+                .map(FV::Int)
+                .unwrap_or_else(|| FV::Str(i.to_string())),
             Value::Float(f) => FV::Float(*f),
             Value::String(s) => FV::Str(s.to_string()),
             Value::Sequence(seq) => FV::List(
@@ -231,18 +228,6 @@ fn display_key_to_string<'a>(node: &'a Node<'_>) -> Cow<'a, str> {
         Value::Bool(b) => Cow::Borrowed(if *b { "true" } else { "false" }),
         Value::Null => Cow::Borrowed("null"),
         Value::Sequence(_) | Value::Mapping(_) => Cow::Borrowed("<complex key>"),
-    }
-}
-
-fn integral_float_to_i64(float: f64) -> Option<i64> {
-    if float.is_finite()
-        && float.fract() == 0.0
-        && float >= i64::MIN as f64
-        && float <= i64::MAX as f64
-    {
-        Some(float as i64)
-    } else {
-        None
     }
 }
 

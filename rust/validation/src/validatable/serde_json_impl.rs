@@ -7,12 +7,14 @@
 use std::borrow::Cow;
 
 use serde_json::Map;
+use serde_json::Number;
 use serde_json::Value;
 
 use super::ValidatableMapping;
 use super::ValidatableMappingPair;
 use super::ValidatableSequence;
 use super::ValidatableValue;
+use super::integral_float_to_i64;
 
 // === ValidatableValue for serde_json::Value ===
 
@@ -50,12 +52,7 @@ impl ValidatableValue for Value {
 
     fn as_i64(&self) -> Option<i64> {
         match self {
-            Value::Number(n) => n.as_i64().or_else(|| {
-                n.as_f64()
-                    .filter(|float| float.is_finite() && float.fract() == 0.0)
-                    .filter(|float| *float >= i64::MIN as f64 && *float <= i64::MAX as f64)
-                    .map(|float| float as i64)
-            }),
+            Value::Number(n) => number_as_i64(n),
             Value::String(s) => s.parse().ok(),
             Value::Bool(b) => Some(if *b { 1 } else { 0 }),
             _ => None,
@@ -119,6 +116,22 @@ impl ValidatableValue for Value {
 
     fn is_float(&self) -> bool {
         matches!(self, Value::Number(n) if n.is_f64())
+    }
+}
+
+// Attempt lossless conversion to i64.
+fn number_as_i64(number: &Number) -> Option<i64> {
+    if let Some(value) = number.as_i64() {
+        return Some(value);
+    }
+    if let Some(value) = number.as_u64() {
+        return value.try_into().ok();
+    }
+    // Checking first since as_f64 will coerce.
+    if number.is_f64() {
+        integral_float_to_i64(number.as_f64()?)
+    } else {
+        None
     }
 }
 
