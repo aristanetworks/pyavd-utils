@@ -178,8 +178,7 @@ impl<'input> ValidatableValue for Node<'input> {
             Value::Mapping(map) => FV::Dict(
                 map.iter()
                     .filter_map(|pair| {
-                        pair.key
-                            .as_str()
+                        scalar_key_to_string(&pair.key)
                             .map(|key| (key.to_string(), pair.value.to_feedback_value()))
                     })
                     .collect(),
@@ -216,6 +215,16 @@ pub struct NodeMapping<'a, 'input> {
 fn schema_key_to_string<'a>(node: &'a Node<'_>) -> Option<Cow<'a, str>> {
     match &node.value {
         Value::String(s) => Some(Cow::Borrowed(s.as_ref())),
+        _ => None,
+    }
+}
+
+fn scalar_key_to_string<'a>(node: &'a Node<'_>) -> Option<Cow<'a, str>> {
+    match &node.value {
+        Value::String(s) => Some(Cow::Borrowed(s.as_ref())),
+        Value::Int(i) => Some(i.to_decimal_string()),
+        Value::Float(f) => Some(Cow::Owned(f.to_string())),
+        Value::Bool(b) => Some(Cow::Borrowed(if *b { "true" } else { "false" })),
         _ => None,
     }
 }
@@ -741,6 +750,7 @@ mod tests {
                     ),
                 ),
                 MappingPair::new(make_span(), int_node(7), string_node("skipped")),
+                MappingPair::new(make_span(), bool_node(true), string_node("bool key")),
                 MappingPair::new(
                     make_span(),
                     Node::new(Value::Sequence(Vec::new()), make_span()),
@@ -765,6 +775,10 @@ mod tests {
         expected.insert(
             "7".to_owned(),
             crate::feedback::Value::Str("skipped".to_owned()),
+        );
+        expected.insert(
+            "true".to_owned(),
+            crate::feedback::Value::Str("bool key".to_owned()),
         );
 
         assert_eq!(
