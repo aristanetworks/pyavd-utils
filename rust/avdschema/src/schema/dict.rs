@@ -87,7 +87,7 @@ impl<'a> Dict {
         self.dynamic_keys.as_ref().map(|dynamic_keys| {
             let mut resolved_dynamic_keys: OrderMap<String, DynamicKeyInfo<'a>> = dynamic_keys
                 .iter()
-                .skip_while(|(_, dynamic_key_schema)| dynamic_key_schema.is_removed())
+                .filter(|(_, dynamic_key_schema)| !dynamic_key_schema.is_removed())
                 .flat_map(|(dynamic_key_path, dynamic_key_schema)| {
                     self.get_dynamic_key_values(dynamic_key_path, dict)
                         .into_iter()
@@ -148,7 +148,7 @@ impl<'a> Dict {
         self.dynamic_keys.as_ref().map(|dynamic_keys| {
             dynamic_keys
                 .iter()
-                .skip_while(|(_, dynamic_key_schema)| dynamic_key_schema.is_removed())
+                .filter(|(_, dynamic_key_schema)| !dynamic_key_schema.is_removed())
                 .flat_map(|(dynamic_key_path, _)| {
                     dynamic_key_path
                         .split('.')
@@ -260,9 +260,26 @@ mod tests {
     use super::DynamicKeyInfo;
     use super::DynamicKeyOverrides;
     use crate::any::AnySchema;
+    use crate::base::Base;
+    use crate::base::Deprecation;
     use crate::boolean::Bool;
     use crate::int::Int;
+    use crate::list::List;
     use crate::utils::test_utils::get_test_dict_schema;
+
+    fn removed_bool_schema() -> AnySchema {
+        Bool {
+            base: Base {
+                deprecation: Some(Deprecation {
+                    removed: Some(true),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+        .into()
+    }
 
     #[test]
     fn try_from_anyschema_ok() {
@@ -495,6 +512,102 @@ mod tests {
                 }
             )]))
         );
+    }
+
+    #[test]
+    fn get_dynamic_keys_excludes_removed_entries_after_kept_entries() {
+        let kept_dynamic_key_schema: AnySchema = Bool::default().into();
+        let later_dynamic_key_schema: AnySchema = Int::default().into();
+        let dict_schema = Dict {
+            dynamic_keys: Some(OrderMap::from_iter([
+                ("kept_list".to_string(), kept_dynamic_key_schema.clone()),
+                ("removed_list".to_string(), removed_bool_schema()),
+                ("later_list".to_string(), later_dynamic_key_schema.clone()),
+            ])),
+            ..Default::default()
+        };
+        let value: Value = json!({
+            "kept_list": ["kept"],
+            "removed_list": ["removed"],
+            "later_list": ["later"],
+        });
+
+        let result = dict_schema.get_dynamic_keys(value.as_object().unwrap(), None);
+
+        assert_eq!(
+            result,
+            Some(OrderMap::from_iter([
+                (
+                    "kept".to_string(),
+                    DynamicKeyInfo {
+                        dynamic_key_path: "kept_list".to_string(),
+                        schema: &kept_dynamic_key_schema,
+                    }
+                ),
+                (
+                    "later".to_string(),
+                    DynamicKeyInfo {
+                        dynamic_key_path: "later_list".to_string(),
+                        schema: &later_dynamic_key_schema,
+                    }
+                ),
+            ]))
+        );
+    }
+
+    #[test]
+    fn default_dynamic_keys_excludes_removed_entries_after_kept_entries() {
+        let dict_schema = Dict {
+            keys: Some(OrderMap::from_iter([
+                (
+                    "kept_list".to_string(),
+                    List {
+                        base: Base {
+                            default: Some(vec![json!("kept")]),
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    }
+                    .into(),
+                ),
+                (
+                    "removed_list".to_string(),
+                    List {
+                        base: Base {
+                            default: Some(vec![json!("removed")]),
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    }
+                    .into(),
+                ),
+                (
+                    "later_list".to_string(),
+                    List {
+                        base: Base {
+                            default: Some(vec![json!("later")]),
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    }
+                    .into(),
+                ),
+            ])),
+            dynamic_keys: Some(OrderMap::from_iter([
+                ("kept_list".to_string(), Bool::default().into()),
+                ("removed_list".to_string(), removed_bool_schema()),
+                ("later_list".to_string(), Int::default().into()),
+            ])),
+            ..Default::default()
+        };
+        let expected_result: DefaultDynamicKeys = OrderMap::from_iter([
+            ("kept_list".to_string(), vec!["kept".to_string()]),
+            ("later_list".to_string(), vec!["later".to_string()]),
+        ]);
+
+        let result = dict_schema.default_dynamic_keys();
+
+        assert_eq!(result, Some(&expected_result));
     }
 
     #[test]
