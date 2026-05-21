@@ -78,13 +78,16 @@ impl SchemaKeys {
                 .unwrap_or_default(),
         };
 
-        schema_keys.keys.extend(
-            dict_schema
-                .get_dynamic_keys(dict, dynamic_key_overrides)
-                .unwrap_or_default()
-                .into_iter()
-                .map(|(key, dynamic_key_info)| (key.clone(), SchemaKey::from(&dynamic_key_info))),
-        );
+        for (key, dynamic_key_info) in dict_schema
+            .get_dynamic_keys(dict, dynamic_key_overrides)
+            .unwrap_or_default()
+        {
+            if !schema_keys.keys.contains_key(&key) {
+                schema_keys
+                    .keys
+                    .insert(key, SchemaKey::from(&dynamic_key_info));
+            }
+        }
         Ok(schema_keys)
     }
 }
@@ -310,6 +313,41 @@ mod tests {
         let expected_schema: AnySchema = serde_json::from_value(json!({
             "type": "int",
             "max": 10,
+        }))
+        .unwrap();
+        assert_eq!(schema, &expected_schema);
+    }
+
+    #[test]
+    fn schema_keys_static_key_beats_dynamic_key_collision() {
+        let value = json!(
+            {"dynamic": [ {"key": "key2"}]});
+        let store = get_test_store();
+        let schema = store.get("eos_config").unwrap();
+        let schema_keys = SchemaKeys::try_from_schema_with_value(schema, &value, None).unwrap();
+
+        assert_eq!(schema_keys.keys.get("key2"), Some(&SchemaKey::StaticKey));
+    }
+
+    #[test]
+    fn get_schema_from_path_static_key_beats_dynamic_key_override_collision() {
+        let value = json!({});
+        let overrides = DynamicKeyOverrides::from_iter([("key2".into(), "dynamic.key".into())]);
+        let store = get_test_store();
+        let result = get_schema_from_path(
+            "eos_config",
+            &store,
+            &["key2".into()],
+            &value,
+            Some(&overrides),
+        );
+        assert!(result.is_ok());
+        let opt = result.unwrap();
+        assert!(opt.is_some());
+        let schema = opt.unwrap();
+        let expected_schema: AnySchema = serde_json::from_value(json!({
+            "type": "str",
+            "description": "this is from key2",
         }))
         .unwrap();
         assert_eq!(schema, &expected_schema);

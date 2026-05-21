@@ -606,6 +606,39 @@ mod tests {
     }
 
     #[test]
+    fn validate_static_key_beats_dynamic_key_override_collision() {
+        let schema = Dict {
+            keys: Some(OrderMap::from_iter([(
+                "dynkey1".into(),
+                Str::default().into(),
+            )])),
+            dynamic_keys: Some(OrderMap::from_iter([(
+                "my_dynamic_keys.key".into(),
+                Int {
+                    max: Some(10),
+                    ..Default::default()
+                }
+                .into(),
+            )])),
+            allow_other_keys: Some(true),
+            ..Default::default()
+        };
+        let input = serde_json::json!({ "dynkey1": "static schema value" });
+        let store = get_test_store();
+        let configuration = Configuration {
+            dynamic_key_overrides: Some(Arc::new(DynamicKeyOverrides::from_iter([(
+                "dynkey1".into(),
+                "my_dynamic_keys.key".into(),
+            )]))),
+            ..Default::default()
+        };
+        let mut ctx = Context::new(&store, Some(&configuration));
+        let _ = schema.validate(&input, &mut ctx);
+        assert!(ctx.result.errors.is_empty());
+        assert!(ctx.result.infos.is_empty());
+    }
+
+    #[test]
     fn validate_dynamic_keys_from_defaults_ok() {
         let schema = Dict {
             keys: Some(OrderMap::from_iter([(
