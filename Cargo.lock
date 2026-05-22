@@ -1465,7 +1465,7 @@ dependencies = [
  "getrandom 0.4.2",
  "passwords",
  "pyo3",
- "pyo3-build-config 0.26.0",
+ "pyo3-build-config",
  "sha-crypt",
 ]
 
