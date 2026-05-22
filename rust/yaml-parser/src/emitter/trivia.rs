@@ -53,8 +53,7 @@ impl Emitter<'_> {
         loop {
             match self.peek_kind() {
                 Some(TokenKind::LineStart) => {
-                    let (token, span) = self.take_current().unwrap();
-                    let Token::LineStart(indent) = token else {
+                    let Some((Token::LineStart(indent), span)) = self.take_current() else {
                         debug_assert!(false, "expected LineStart token");
                         break;
                     };

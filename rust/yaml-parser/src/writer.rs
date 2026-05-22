@@ -148,19 +148,13 @@ impl<'a, 'input, W: Write> WriterState<'a, 'input, W> {
         };
         match next_event {
             Event::MappingStart {
-                style,
-                ref properties,
-                ..
+                style, properties, ..
             } => self.write_mapping(style, properties.as_deref()),
             Event::SequenceStart {
-                style,
-                ref properties,
-                ..
+                style, properties, ..
             } => self.write_sequence(style, properties.as_deref()),
             Event::Scalar {
-                style,
-                ref properties,
-                ..
+                style, properties, ..
             } => {
                 // For all scalar nodes, delegate to the generic scalar writer.
                 // The scalar writer is responsible for choosing an appropriate
@@ -435,7 +429,7 @@ impl<'a, 'input, W: Write> WriterState<'a, 'input, W> {
                         Some(Event::Scalar {
                             style: scalar_style,
                             properties: scalar_props,
-                            ref value,
+                            value,
                             ..
                         }) => {
                             // Simple scalar value rendered inline after `key:`.

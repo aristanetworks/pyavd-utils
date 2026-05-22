@@ -86,7 +86,7 @@ fn test_explicit_null_variants() {
 
     for input in inputs {
         let docs = parse_ok(input);
-        assert_eq!(docs.len(), 1, "Input {input:?} should produce 1 document",);
+        assert_eq!(docs.len(), 1, "Input {input:?} should produce 1 document");
         let doc = docs.first().expect("expected exactly one document");
         assert!(
             matches!(doc.value, Value::Null),
@@ -128,17 +128,17 @@ fn test_bool_variants() {
 #[test]
 fn test_integer_edge_cases() {
     let test_cases = vec![
-        ("0", 0i64),
-        ("-0", 0i64),
-        ("42", 42i64),
-        ("-42", -42i64),
+        ("0", 0_i64),
+        ("-0", 0_i64),
+        ("42", 42_i64),
+        ("-42", -42_i64),
         ("9223372036854775807", i64::MAX),  // Max i64
         ("-9223372036854775808", i64::MIN), // Min i64
     ];
 
     for (input, expected) in test_cases {
         let docs = parse_ok(input);
-        assert_eq!(docs.len(), 1, "Input {input:?} should produce 1 document",);
+        assert_eq!(docs.len(), 1, "Input {input:?} should produce 1 document");
         let doc = docs.first().expect("expected exactly one document");
         assert!(
             matches!(doc.value, Value::Int(Integer::I64(val)) if val == expected),
@@ -156,8 +156,8 @@ fn test_very_large_integer_as_bigintstr() {
     let doc = docs.first().expect("expected exactly one document");
     assert!(
         matches!(
-            doc.value,
-            Value::Int(Integer::BigIntStr(ref text)) if text.as_ref() == input
+            &doc.value,
+            Value::Int(Integer::BigIntStr(text)) if text.as_ref() == input
         ),
         "expected BigIntStr for very large integer, got {:?}",
         doc.value,
@@ -572,17 +572,17 @@ fn serde_to_string_preserves_string_scalars_that_look_typed() {
 #[test]
 fn test_float_edge_cases() {
     let test_cases = vec![
-        ("0.0", 0.0f64),
-        ("-0.0", -0.0f64),
-        ("1.5", 1.5f64),
-        ("-1.5", -1.5f64),
-        ("1e10", 1e10f64),
-        ("1.5e-10", 1.5e-10f64),
+        ("0.0", 0.0_f64),
+        ("-0.0", -0.0_f64),
+        ("1.5", 1.5_f64),
+        ("-1.5", -1.5_f64),
+        ("1e10", 1e10_f64),
+        ("1.5e-10", 1.5e-10_f64),
     ];
 
     for (input, expected) in test_cases {
         let docs = parse_ok(input);
-        assert_eq!(docs.len(), 1, "Input {input:?} should produce 1 document",);
+        assert_eq!(docs.len(), 1, "Input {input:?} should produce 1 document");
         let doc = docs.first().expect("expected exactly one document");
         assert!(
             matches!(doc.value, Value::Float(val) if val.to_bits() == expected.to_bits()),
@@ -695,7 +695,7 @@ fn test_unicode_scalars() {
 
     for (input, expected_value) in test_cases {
         let docs = parse_ok(input);
-        assert_eq!(docs.len(), 1, "Input {input:?} should produce 1 document",);
+        assert_eq!(docs.len(), 1, "Input {input:?} should produce 1 document");
         let doc = docs.first().expect("expected exactly one document");
 
         let pairs = match &doc.value {
@@ -734,7 +734,7 @@ fn test_escape_sequences() {
 
     for (input, expected) in test_cases {
         let docs = parse_ok(input);
-        assert_eq!(docs.len(), 1, "Input {input:?} should produce 1 document",);
+        assert_eq!(docs.len(), 1, "Input {input:?} should produce 1 document");
         let doc = docs.first().expect("expected exactly one document");
 
         let string_value = match &doc.value {
