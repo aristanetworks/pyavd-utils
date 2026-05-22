@@ -23,6 +23,22 @@ use avdschema::SchemaDataMapping;
 use crate::feedback::SourceSpan;
 use crate::feedback::Type;
 
+// Attempt lossless conversion to i64.
+pub(crate) fn integral_float_to_i64(float: f64) -> Option<i64> {
+    if !float.is_finite() || float.fract() != 0.0 {
+        return None;
+    }
+
+    let value = float as i64;
+    // Positive out-of-range floats saturate to i64::MAX, and `i64::MAX as f64`
+    // rounds up to 2^63, so the round-trip check below would not reject them.
+    if value == i64::MAX && float.is_sign_positive() {
+        return None;
+    }
+
+    (value as f64 == float).then_some(value)
+}
+
 /// A value that can be validated against a schema.
 ///
 /// This trait abstracts over the common operations needed during validation,
@@ -42,6 +58,12 @@ pub trait ValidatableValue: Sized {
     ///
     /// For `serde_json::Value`, this is `Value` (same type).
     type Coerced;
+
+    /// The output entry type used when rebuilding a coerced mapping.
+    ///
+    /// JSON can use a simple `(String, Value)` pair, while YAML uses its
+    /// native mapping-pair type so key and pair spans can be preserved.
+    type CoercedMappingItem;
 
     // === Strict type checking (no coercion) ===
 
@@ -194,7 +216,7 @@ pub trait ValidatableValue: Sized {
     fn coerce_sequence(&self, items: Vec<Self::Coerced>) -> Self::Coerced;
 
     /// Create a coerced mapping from coerced key-value pairs.
-    fn coerce_mapping(&self, items: Vec<(String, Self::Coerced)>) -> Self::Coerced;
+    fn coerce_mapping(&self, items: Vec<Self::CoercedMappingItem>) -> Self::Coerced;
 
     /// Clone the value as-is without type coercion.
     /// Used when there's no schema to guide coercion.
@@ -249,13 +271,38 @@ pub trait ValidatableMappingPair<'a> {
     /// The type of values in this mapping pair.
     type Value: ValidatableValue + 'a;
 
-    /// Get the key as a string.
-    fn key(&self) -> Cow<'a, str>;
+    /// Get the key used for schema lookups.
+    ///
+    /// This returns `None` for keys that must not participate in schema
+    /// matching. For example, YAML supports non-string mapping keys, but AVD
+    /// schemas define string keys only, so those YAML keys return `None`.
+    fn schema_key(&self) -> Option<Cow<'a, str>>;
+
+    /// Get a display representation of the key for paths and diagnostics.
+    ///
+    /// This must return a stable, human-readable key string even when
+    /// [`schema_key`](Self::schema_key) returns `None`, so validation can still
+    /// report a useful path for unexpected or ignored keys.
+    fn display_key(&self) -> Cow<'a, str>;
 
     /// Get the mapped value.
     fn value(&self) -> &'a Self::Value;
 
+    /// Build a coerced mapping entry from this pair's original key and a
+    /// coerced value.
+    ///
+    /// This preserves backend-specific key shape for returned coerced data:
+    /// JSON keeps string keys, while YAML can preserve original non-string
+    /// keys and mapping-pair spans.
+    fn coerced_item(
+        &self,
+        value: <Self::Value as ValidatableValue>::Coerced,
+    ) -> <Self::Value as ValidatableValue>::CoercedMappingItem;
+
     /// Get the source span of the key, if available.
+    ///
+    /// Used for diagnostics that should point at the key token itself, such as
+    /// unexpected-key and deprecation feedback.
     fn key_span(&self) -> Option<SourceSpan> {
         None
     }
@@ -285,6 +332,7 @@ pub trait ValidatableSequence<'a> {
 // === Implementations ===
 
 mod serde_json_impl;
+mod yaml_parser_impl;
 
 #[cfg(test)]
 mod tests;

@@ -313,6 +313,29 @@ impl Display for ParseDiagnostic {
 pub enum ParseDiagnosticKind {
     #[display("JSON syntax error")]
     JsonSyntax,
+    #[display("YAML syntax error")]
+    YamlSyntax,
+}
+
+impl ParseDiagnosticSource for yaml_parser::ParseError {
+    fn diagnostic_kind(&self) -> ParseDiagnosticKind {
+        ParseDiagnosticKind::YamlSyntax
+    }
+
+    fn diagnostic_message(&self) -> String {
+        self.to_string()
+    }
+
+    fn diagnostic_suggestion(&self) -> Option<String> {
+        self.suggestion().map(str::to_string)
+    }
+
+    fn as_diagnostic_location(&self) -> DiagnosticLocation {
+        DiagnosticLocation::SourceSpan(SourceSpan {
+            start: self.span.start_usize(),
+            end: self.span.end_usize(),
+        })
+    }
 }
 
 impl ParseDiagnosticSource for serde_json::Error {
@@ -359,6 +382,13 @@ pub enum Violation {
     /// The dictionary key is not allowed by the schema.
     #[display("Invalid key.")]
     UnexpectedKey(),
+    /// The integer value is outside the supported range.
+    #[display(
+        "The integer value '{found}' is outside the supported range '{min}' to '{max}'.",
+        min = i64::MIN,
+        max = i64::MAX
+    )]
+    IntegerOutOfRange { found: String },
     /// The value is above the maximum allowed.
     #[display("The value '{found}' is above the maximum allowed '{maximum}'.")]
     ValueAboveMaximum { maximum: i64, found: i64 },
@@ -651,6 +681,25 @@ mod tests {
             url: Some("my.url".to_string()).into(),
         };
         assert_eq!(removed, expected_removed);
+    }
+
+    #[test]
+    fn parse_diagnostic_from_yaml_parse_error() {
+        let parse_error = yaml_parser::ParseError::new(
+            yaml_parser::ErrorKind::MissingColon,
+            yaml_parser::Span::from_usize_range(3..6),
+        );
+        let diagnostic = ParseDiagnostic::from_source(&parse_error);
+        assert_eq!(diagnostic.kind, ParseDiagnosticKind::YamlSyntax);
+        assert_eq!(diagnostic.message, "missing colon after mapping key");
+        assert_eq!(
+            diagnostic.suggestion,
+            Some("add a colon after the mapping key".to_string())
+        );
+        assert_eq!(
+            diagnostic.location,
+            DiagnosticLocation::SourceSpan(SourceSpan { start: 3, end: 6 })
+        );
     }
 
     #[test]

@@ -20,6 +20,7 @@
 //! `'static` lifetime when you need to store values beyond the input's lifetime.
 
 use std::borrow::Cow;
+use std::fmt;
 use std::ops::Deref;
 use std::ops::DerefMut;
 
@@ -69,6 +70,24 @@ impl Integer<'_> {
             Integer::U128(value) => Cow::Owned(value.to_string()),
             Integer::BigIntStr(text) => Cow::Borrowed(text.as_ref()),
         }
+    }
+
+    /// Return this integer as an `i64` if it is in range.
+    #[must_use]
+    pub fn as_i64(&self) -> Option<i64> {
+        match self {
+            Integer::I64(value) => Some(*value),
+            Integer::U64(value) => (*value).try_into().ok(),
+            Integer::I128(value) => (*value).try_into().ok(),
+            Integer::U128(value) => (*value).try_into().ok(),
+            Integer::BigIntStr(text) => text.parse().ok(),
+        }
+    }
+}
+
+impl fmt::Display for Integer<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.to_decimal_string().as_ref())
     }
 }
 
@@ -674,6 +693,7 @@ impl Value<'_> {
     }
 }
 
+#[allow(clippy::as_conversions, reason = "Allowed in tests")]
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -692,6 +712,39 @@ mod tests {
 
         assert!(Value::<'_>::Sequence(vec![]).is_collection());
         assert!(Value::<'_>::Mapping(vec![]).is_collection());
+    }
+
+    #[test]
+    fn integer_as_i64_returns_value_when_in_range() {
+        assert_eq!(Integer::I64(-1).as_i64(), Some(-1));
+        assert_eq!(Integer::U64(1).as_i64(), Some(1));
+        assert_eq!(Integer::I128(i128::from(i64::MIN)).as_i64(), Some(i64::MIN));
+        assert_eq!(Integer::U128(i64::MAX as u128).as_i64(), Some(i64::MAX));
+        assert_eq!(Integer::BigIntStr(Cow::Borrowed("42")).as_i64(), Some(42));
+    }
+
+    #[test]
+    fn integer_as_i64_returns_none_when_out_of_range() {
+        assert_eq!(Integer::U64(i64::MAX as u64 + 1).as_i64(), None);
+        assert_eq!(Integer::I128(i128::from(i64::MIN) - 1).as_i64(), None);
+        assert_eq!(Integer::U128(i64::MAX as u128 + 1).as_i64(), None);
+        assert_eq!(
+            Integer::BigIntStr(Cow::Borrowed("9223372036854775808")).as_i64(),
+            None
+        );
+    }
+
+    #[test]
+    fn integer_display_returns_decimal_string() {
+        assert_eq!(Integer::I64(-1).to_string(), "-1");
+        assert_eq!(Integer::U64(1).to_string(), "1");
+        assert_eq!(Integer::I128(i128::MIN).to_string(), i128::MIN.to_string());
+        assert_eq!(Integer::U128(u128::MAX).to_string(), u128::MAX.to_string());
+        assert_eq!(
+            Integer::BigIntStr(Cow::Borrowed("340282366920938463463374607431768211456"))
+                .to_string(),
+            "340282366920938463463374607431768211456"
+        );
     }
 
     #[test]
