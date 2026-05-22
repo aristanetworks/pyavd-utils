@@ -1,6 +1,10 @@
 // Copyright (c) 2025-2026 Arista Networks, Inc.
 // Use of this source code is governed by the Apache License 2.0
 // that can be found in the LICENSE file.
+#![allow(
+    clippy::min_ident_chars,
+    reason = "Criterion benchmark closures conventionally use short c and b parameters"
+)]
 
 use criterion::Criterion;
 use criterion::criterion_group;
@@ -16,7 +20,7 @@ pub fn benchmark_init_store_from_file(c: &mut Criterion) {
     let mut group = c.benchmark_group("sample-size-10");
     group.sample_size(10); // Lowering the sample size from the default 1000 since tests in this group are expected to take longer.
     group.bench_function("init_store_from_fragments", |b| {
-        b.iter(|| init_store_from_file(schema_file.to_owned()))
+        b.iter(|| init_store_from_file(schema_file.to_owned()));
     });
     group.finish();
 }
@@ -24,7 +28,7 @@ pub fn benchmark_init_store_from_file(c: &mut Criterion) {
 pub fn benchmark_get_validated_data(c: &mut Criterion) {
     c.bench_function("get_validated_data", |b| {
         pyo3::Python::initialize();
-        pyo3::Python::attach(|py| b.iter(|| get_validated_data(py, TEST_DATA, "avd_design", None)))
+        pyo3::Python::attach(|py| b.iter(|| get_validated_data(py, TEST_DATA, "avd_design", None)));
     });
 }
 

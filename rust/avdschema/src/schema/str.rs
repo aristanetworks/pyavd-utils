@@ -113,7 +113,7 @@ impl PartialEq for Pattern {
 }
 impl From<&str> for Pattern {
     fn from(value: &str) -> Self {
-        Self::new(value.to_string())
+        Self::new(value.to_owned())
     }
 }
 

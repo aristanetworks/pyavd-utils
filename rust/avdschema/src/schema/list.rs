@@ -25,11 +25,11 @@ pub struct List {
     /// Name of a primary key in a list of dictionaries.
     /// The configured key is implicitly required and must have unique values between the list elements
     pub primary_key: Option<String>,
-    /// List of keys or dot-notation path keys that must be unique in addition to primary_key.
+    /// List of keys or dot-notation path keys that must be unique in addition to `primary_key`.
     pub unique_keys: Option<Vec<String>>,
-    /// Set to True to allow duplicate primary_key values for a list of dicts.
+    /// Set to True to allow duplicate `primary_key` values for a list of dicts.
     /// Useful when primary key is only used for triggering documentation.
-    /// NOTE! Should only be used in avd_design inputs since we cannot merge on primary key if there are duplicate entries.
+    /// NOTE! Should only be used in `avd_design` inputs since we cannot merge on primary key if there are duplicate entries.
     pub allow_duplicate_primary_key: Option<bool>,
     #[serde(flatten)]
     pub base: Base<Vec<Value>>,

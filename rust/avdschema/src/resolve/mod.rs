@@ -2,8 +2,8 @@
 // Use of this source code is governed by the Apache License 2.0
 // that can be found in the LICENSE file.
 
-pub mod errors;
-pub mod resolve_ref;
+pub(crate) mod errors;
+pub(crate) mod resolve_ref;
 mod walker;
 
 use errors::SchemaResolverError;
@@ -14,7 +14,7 @@ use crate::any::AnySchema;
 use crate::inherit::Inherit;
 use crate::store::Store;
 
-/// Inplace resolve all $ref in the provided AnySchema.
+/// Inplace resolve all $ref in the provided `AnySchema`.
 /// All $ref are are looked up in the provided Store.
 pub fn resolve_schema<'a>(
     schema: &'a mut AnySchema,
@@ -63,7 +63,7 @@ impl Resolve for AnySchema {
             }
         }
         // Skip resolving references to a full schema. These will be handled during validation.
-        if self.ref_().is_some_and(|ref_| ref_.ends_with("#")) {
+        if self.ref_().is_some_and(|ref_| ref_.ends_with('#')) {
             return Ok(());
         }
 
@@ -88,11 +88,11 @@ impl Resolve for AnySchema {
     }
     fn ref_(&self) -> Option<String> {
         match self {
-            Self::Bool(schema) => schema.base.schema_ref.to_owned(),
-            Self::Dict(schema) => schema.base.schema_ref.to_owned(),
-            Self::Int(schema) => schema.base.schema_ref.to_owned(),
-            Self::List(schema) => schema.base.schema_ref.to_owned(),
-            Self::Str(schema) => schema.base.schema_ref.to_owned(),
+            Self::Bool(schema) => schema.base.schema_ref.clone(),
+            Self::Dict(schema) => schema.base.schema_ref.clone(),
+            Self::Int(schema) => schema.base.schema_ref.clone(),
+            Self::List(schema) => schema.base.schema_ref.clone(),
+            Self::Str(schema) => schema.base.schema_ref.clone(),
         }
     }
     fn unset_ref(&mut self) {
@@ -120,7 +120,7 @@ fn is_same_schema(a: &AnySchema, b: &AnySchema) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::Resolve;
+    use super::Resolve as _;
     use crate::dict::Dict;
     use crate::str::Str;
     use crate::utils::test_utils::get_test_dict_schema_with_refs;

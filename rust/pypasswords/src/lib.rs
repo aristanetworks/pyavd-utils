@@ -17,7 +17,7 @@ mod passwords {
     #[cfg(feature = "sha512")]
     #[pyfunction]
     /// Computes the SHA512 crypt value for the password given the salt
-    pub fn sha512_crypt(password: String, salt: String) -> PyResult<String> {
+    pub(crate) fn sha512_crypt(password: String, salt: String) -> PyResult<String> {
         passwords::sha512_crypt(&password, &salt).map_err(|err| {
             // Mapping our crates error to Python errors.
             match err {
@@ -33,18 +33,18 @@ mod passwords {
 
     #[cfg(feature = "cbc")]
     #[pyfunction]
-    /// Encrypt the data with CBC TripleDES
-    pub fn cbc_encrypt(password: String, data: String) -> PyResult<String> {
+    /// Encrypt the data with CBC `TripleDES`
+    pub(crate) fn cbc_encrypt(password: String, data: String) -> PyResult<String> {
         let result_bytes = passwords::cbc_encrypt(password.as_bytes(), data.as_bytes())
             .map_err(|err| PyRuntimeError::new_err(err.to_string()))?;
         String::from_utf8(result_bytes)
-            .map_err(|_| PyRuntimeError::new_err("Base64 output contained invalid UTF-8"))
+            .map_err(|_err| PyRuntimeError::new_err("Base64 output contained invalid UTF-8"))
     }
 
     #[cfg(feature = "cbc")]
     #[pyfunction]
-    /// Decrypt the encrypted_data with CBC TripleDES
-    pub fn cbc_decrypt(password: String, encrypted_data: String) -> PyResult<String> {
+    /// Decrypt the `encrypted_data` with CBC `TripleDES`
+    pub(crate) fn cbc_decrypt(password: String, encrypted_data: String) -> PyResult<String> {
         let decrypted_bytes =
             passwords::cbc_decrypt(password.as_bytes(), encrypted_data.as_bytes()).map_err(
                 |err| match err {
@@ -54,13 +54,13 @@ mod passwords {
             )?;
 
         String::from_utf8(decrypted_bytes)
-            .map_err(|_| PyValueError::new_err(passwords::CbcError::InvalidUtf8.to_string()))
+            .map_err(|_err| PyValueError::new_err(passwords::CbcError::InvalidUtf8.to_string()))
     }
 
     #[cfg(feature = "cbc")]
     #[pyfunction]
     /// Verify if the encrypted data matches the given password
-    pub fn cbc_verify(password: String, encrypted_data: String) -> bool {
+    pub(crate) fn cbc_verify(password: String, encrypted_data: String) -> bool {
         passwords::cbc_check_password(password.as_bytes(), encrypted_data.as_bytes())
     }
 
@@ -69,8 +69,8 @@ mod passwords {
     /// Encrypt (obfuscate) a password with insecure type-7.
     ///
     /// If salt is None, a random salt in the range 0-15 will be used.
-    /// Raises ValueError if the password is empty or the salt is out of range.
-    pub fn simple_7_encrypt(data: String, salt: Option<u8>) -> PyResult<String> {
+    /// Raises `ValueError` if the password is empty or the salt is out of range.
+    pub(crate) fn simple_7_encrypt(data: String, salt: Option<u8>) -> PyResult<String> {
         passwords::simple_7_encrypt(&data, salt).map_err(|err| match err {
             passwords::Simple7Error::InvalidSaltValue(_)
             | passwords::Simple7Error::EmptyPassword => PyValueError::new_err(err.to_string()),
@@ -82,8 +82,8 @@ mod passwords {
     #[pyfunction]
     /// Decrypt (deobfuscate) a password from insecure type-7.
     ///
-    /// Raises ValueError if the password is empty or decryption fails.
-    pub fn simple_7_decrypt(data: String) -> PyResult<String> {
+    /// Raises `ValueError` if the password is empty or decryption fails.
+    pub(crate) fn simple_7_decrypt(data: String) -> PyResult<String> {
         passwords::simple_7_decrypt(&data).map_err(|err| match err {
             passwords::Simple7Error::InvalidUtf8(_) => PyRuntimeError::new_err(err.to_string()),
             _ => PyValueError::new_err(err.to_string()),

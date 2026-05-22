@@ -13,7 +13,7 @@ fn setup() {
     INIT_PY.call_once(|| {
         pyo3::append_to_inittab!(passwords);
         pyo3::Python::initialize();
-    })
+    });
 }
 
 fn with_passwords_module<F: FnOnce(pyo3::Python<'_>, pyo3::Bound<'_, pyo3::types::PyModule>)>(

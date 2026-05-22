@@ -203,7 +203,7 @@ impl Inherit for AnySchema {
 
 #[cfg(test)]
 mod tests {
-    use super::Inherit;
+    use super::Inherit as _;
     use crate::any::AnySchema;
     use crate::boolean::Bool;
     use crate::dict::Dict;

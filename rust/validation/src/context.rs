@@ -49,7 +49,7 @@ impl<'a> Context<'a> {
         error: impl Into<ErrorIssue>,
     ) {
         self.result.errors.push(Feedback {
-            path: self.state.path.to_owned(),
+            path: self.state.path.clone(),
             span,
             issue: error.into(),
         });
@@ -61,7 +61,7 @@ impl<'a> Context<'a> {
         warning: impl Into<WarningIssue>,
     ) {
         self.result.warnings.push(Feedback {
-            path: self.state.path.to_owned(),
+            path: self.state.path.clone(),
             span,
             issue: warning.into(),
         });
@@ -73,7 +73,7 @@ impl<'a> Context<'a> {
         info: impl Into<InfoIssue>,
     ) {
         self.result.infos.push(Feedback {
-            path: self.state.path.to_owned(),
+            path: self.state.path.clone(),
             span: value.source_span(),
             issue: info.into(),
         });
@@ -149,7 +149,7 @@ impl<'a> Context<'a> {
 #[derive(Clone, Debug, Default)]
 pub(crate) struct State {
     /// Don't validate required keys.
-    /// Used for structured_config where we overload other config, and only the final result should be validated for required keys.
+    /// Used for `structured_config` where we overload other config, and only the final result should be validated for required keys.
     pub(crate) relaxed_validation: bool,
     pub(crate) path: Path,
 }
@@ -167,8 +167,8 @@ pub struct Configuration {
     /// Set to true when you need the coerced output (e.g., for data transformation).
     /// Set to false for validation-only use cases (e.g., LSP diagnostics).
     pub return_coercion_infos: bool,
-    /// When validating avd_design, emit warnings for top-level keys that exist in eos_config
-    /// but not in avd_design.
+    /// When validating `avd_design`, emit warnings for top-level keys that exist in `eos_config`
+    /// but not in `avd_design`.
     pub warn_eos_config_keys: bool,
 }
 

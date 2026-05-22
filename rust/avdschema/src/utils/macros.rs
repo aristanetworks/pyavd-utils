@@ -2,7 +2,7 @@
 // Use of this source code is governed by the Apache License 2.0
 // that can be found in the LICENSE file.
 
-/// Macro to avoid repeating the match for AnySchema just to call the same method on each variant.
+/// Macro to avoid repeating the match for `AnySchema` just to call the same method on each variant.
 ///
 /// ```rust
 /// use avdschema::{any::{AnySchema, Shortcuts}, delegate_anyschema_method};

@@ -1,6 +1,18 @@
 // Copyright (c) 2025-2026 Arista Networks, Inc.
 // Use of this source code is governed by the Apache License 2.0
 // that can be found in the LICENSE file.
+#![allow(
+    clippy::empty_structs_with_brackets,
+    clippy::empty_enum_variants_with_brackets,
+    clippy::impl_trait_in_params,
+    clippy::min_ident_chars,
+    clippy::module_name_repetitions,
+    clippy::multiple_inherent_impl,
+    clippy::partial_pub_fields,
+    clippy::shadow_unrelated,
+    clippy::tests_outside_test_module,
+    reason = "Existing schema models and feature-gated shared test helpers predate workspace lint inheritance"
+)]
 #![deny(unused_crate_dependencies)]
 
 mod inherit;

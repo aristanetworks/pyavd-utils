@@ -86,7 +86,7 @@ fn test_explicit_null_variants() {
 
     for input in inputs {
         let docs = parse_ok(input);
-        assert_eq!(docs.len(), 1, "Input {input:?} should produce 1 document",);
+        assert_eq!(docs.len(), 1, "Input {input:?} should produce 1 document");
         let doc = docs.first().expect("expected exactly one document");
         assert!(
             matches!(doc.value, Value::Null),
@@ -138,7 +138,7 @@ fn test_integer_edge_cases() {
 
     for (input, expected) in test_cases {
         let docs = parse_ok(input);
-        assert_eq!(docs.len(), 1, "Input {input:?} should produce 1 document",);
+        assert_eq!(docs.len(), 1, "Input {input:?} should produce 1 document");
         let doc = docs.first().expect("expected exactly one document");
         assert!(
             matches!(doc.value, Value::Int(Integer::I64(val)) if val == expected),
@@ -582,7 +582,7 @@ fn test_float_edge_cases() {
 
     for (input, expected) in test_cases {
         let docs = parse_ok(input);
-        assert_eq!(docs.len(), 1, "Input {input:?} should produce 1 document",);
+        assert_eq!(docs.len(), 1, "Input {input:?} should produce 1 document");
         let doc = docs.first().expect("expected exactly one document");
         assert!(
             matches!(doc.value, Value::Float(val) if val.to_bits() == expected.to_bits()),
@@ -695,7 +695,7 @@ fn test_unicode_scalars() {
 
     for (input, expected_value) in test_cases {
         let docs = parse_ok(input);
-        assert_eq!(docs.len(), 1, "Input {input:?} should produce 1 document",);
+        assert_eq!(docs.len(), 1, "Input {input:?} should produce 1 document");
         let doc = docs.first().expect("expected exactly one document");
 
         let pairs = match &doc.value {
@@ -734,7 +734,7 @@ fn test_escape_sequences() {
 
     for (input, expected) in test_cases {
         let docs = parse_ok(input);
-        assert_eq!(docs.len(), 1, "Input {input:?} should produce 1 document",);
+        assert_eq!(docs.len(), 1, "Input {input:?} should produce 1 document");
         let doc = docs.first().expect("expected exactly one document");
 
         let string_value = match &doc.value {

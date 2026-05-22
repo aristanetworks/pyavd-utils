@@ -8,7 +8,7 @@ use serde_json::Value;
 use yaml_parser::Node;
 use yaml_parser::parse;
 
-use super::Validation;
+use super::Validation as _;
 use crate::context::Configuration;
 use crate::context::Context;
 use crate::context::ValidationResult;
@@ -45,7 +45,7 @@ pub trait StoreValidate<V>
 where
     V: ValidatableValue,
 {
-    /// Entrypoint for validating a value implementing ValidatableValue against the given schema name.
+    /// Entrypoint for validating a value implementing `ValidatableValue` against the given schema name.
     fn validate_value(
         &self,
         value: &V,
@@ -199,7 +199,7 @@ mod tests {
                 }
                 .into()
             },]
-        )
+        );
     }
 
     #[test]

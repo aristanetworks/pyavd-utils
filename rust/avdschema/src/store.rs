@@ -40,7 +40,7 @@ impl Store {
         };
         self.schemas
             .get(schema_alias)
-            .ok_or_else(|| SchemaStoreError::InvalidSchemaName(schema_name.to_string()))
+            .ok_or_else(|| SchemaStoreError::InvalidSchemaName(schema_name.to_owned()))
     }
     pub fn as_resolved(mut self) -> Result<Self, SchemaResolverError> {
         // Clone each schema so we can resolve them while still being able to resolve $refs between them.
@@ -81,7 +81,7 @@ pub enum SchemaStoreError {
 mod tests {
 
     #[cfg(feature = "dump_load_files")]
-    use super::Load;
+    use super::Load as _;
     #[cfg(feature = "dump_load_files")]
     use crate::Dump as _;
     #[cfg(feature = "dump_load_files")]
