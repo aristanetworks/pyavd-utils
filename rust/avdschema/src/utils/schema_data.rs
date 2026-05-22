@@ -2,6 +2,8 @@
 // Use of this source code is governed by the Apache License 2.0
 // that can be found in the LICENSE file.
 
+use std::borrow::Cow;
+
 use ordermap::OrderMap;
 use serde_json::Map;
 use serde_json::Value;
@@ -62,8 +64,11 @@ pub trait SchemaDataValue<'a>: Sized + Copy {
 
 pub trait SchemaDataMapping<'a>: Copy {
     type Value: SchemaDataValue<'a> + 'a;
+    type Keys: Iterator<Item = Cow<'a, str>>;
 
     fn get(&self, key: &str) -> Option<Self::Value>;
+
+    fn keys(&self) -> Self::Keys;
 }
 
 pub trait SchemaDataSequence<'a> {
@@ -92,9 +97,18 @@ impl<'a> SchemaDataValue<'a> for &'a Value {
 
 impl<'a> SchemaDataMapping<'a> for &'a Map<String, Value> {
     type Value = &'a Value;
+    type Keys = std::iter::Map<serde_json::map::Keys<'a>, fn(&'a String) -> Cow<'a, str>>;
 
     fn get(&self, key: &str) -> Option<Self::Value> {
         Map::get(self, key)
+    }
+
+    fn keys(&self) -> Self::Keys {
+        fn key_as_cow(key: &String) -> Cow<'_, str> {
+            Cow::Borrowed(key.as_str())
+        }
+
+        Map::keys(self).map(key_as_cow)
     }
 }
 
