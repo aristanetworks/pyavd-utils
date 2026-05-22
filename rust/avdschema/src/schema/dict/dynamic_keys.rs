@@ -4,9 +4,10 @@
 
 use ordermap::OrderMap;
 
+use super::prefix_keys::PrefixKeyMatch;
+use super::prefix_keys::PrefixMatchResult;
+use super::prefix_keys::ResolvedPrefixConfig;
 use crate::any::AnySchema;
-
-use super::prefix_keys::{PrefixKeyMatch, PrefixMatchResult, ResolvedPrefixConfig};
 
 pub type DefaultDynamicKeys = OrderMap<String, Vec<String>>;
 pub(super) type CachedDefaultDynamicKeys = Option<Box<DefaultDynamicKeys>>;
@@ -25,6 +26,8 @@ pub enum DictKeyMatch<'a> {
     Dynamic(DynamicKeyInfo<'a>),
     Prefix(PrefixKeyMatch<'a>),
     PrefixInvalidSuffix,
+    PrefixAllowedOtherSuffix,
+    UnknownKey,
 }
 
 impl<'a> DictKeyMatch<'a> {
@@ -34,6 +37,10 @@ impl<'a> DictKeyMatch<'a> {
             Self::Dynamic(dynamic_key_info) => dynamic_key_info.schema,
             Self::Prefix(prefix_key_match) => prefix_key_match.schema,
             Self::PrefixInvalidSuffix => unreachable!("invalid suffix does not carry a schema"),
+            Self::PrefixAllowedOtherSuffix => {
+                unreachable!("allowed other suffix does not carry a schema")
+            }
+            Self::UnknownKey => unreachable!("unknown key does not carry a schema"),
         }
     }
 }
@@ -46,31 +53,37 @@ pub struct ResolvedDictKeys<'a> {
 }
 
 impl<'a> ResolvedDictKeys<'a> {
-    pub fn resolve(&self, key: &str) -> Option<DictKeyMatch<'a>> {
+    pub fn resolve(&self, key: &str) -> DictKeyMatch<'a> {
         if let Some(static_keys) = self.static_keys
             && let Some(schema) = static_keys.get(key)
         {
-            return Some(DictKeyMatch::Static(schema));
+            return DictKeyMatch::Static(schema);
         }
 
         if let Some(dynamic_keys) = &self.dynamic_keys
             && let Some(dynamic_key_info) = dynamic_keys.get(key)
         {
-            return Some(DictKeyMatch::Dynamic(dynamic_key_info.clone()));
+            return DictKeyMatch::Dynamic(dynamic_key_info.clone());
         }
 
-        self.prefix_configs.as_ref().and_then(|prefix_configs| {
-            prefix_configs
-                .iter()
-                .find_map(|config| match config.resolve_match(key) {
-                    Some(PrefixMatchResult::Valid(prefix_key_match)) => {
-                        Some(DictKeyMatch::Prefix(prefix_key_match))
-                    }
-                    Some(PrefixMatchResult::InvalidSuffix) => {
-                        Some(DictKeyMatch::PrefixInvalidSuffix)
-                    }
-                    None => None,
-                })
-        })
+        self.prefix_configs
+            .as_ref()
+            .and_then(|prefix_configs| {
+                prefix_configs
+                    .iter()
+                    .find_map(|config| match config.resolve_match(key) {
+                        Some(PrefixMatchResult::Valid(prefix_key_match)) => {
+                            Some(DictKeyMatch::Prefix(prefix_key_match))
+                        }
+                        Some(PrefixMatchResult::InvalidSuffix) => {
+                            Some(DictKeyMatch::PrefixInvalidSuffix)
+                        }
+                        Some(PrefixMatchResult::AllowedOtherSuffix) => {
+                            Some(DictKeyMatch::PrefixAllowedOtherSuffix)
+                        }
+                        None => None,
+                    })
+            })
+            .unwrap_or(DictKeyMatch::UnknownKey)
     }
 }

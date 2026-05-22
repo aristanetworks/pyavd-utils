@@ -6,7 +6,13 @@ pub mod prefix_keys;
 
 use std::sync::OnceLock;
 
+use dynamic_keys::CachedDefaultDynamicKeys;
+pub use dynamic_keys::DefaultDynamicKeys;
+pub use dynamic_keys::DictKeyMatch;
+pub use dynamic_keys::DynamicKeyInfo;
+pub use dynamic_keys::ResolvedDictKeys;
 use ordermap::OrderMap;
+pub use prefix_keys::PrefixKeys;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Map;
@@ -21,10 +27,6 @@ use crate::any::Shortcuts;
 use crate::base::Deprecation;
 use crate::utils::schema_data::SchemaDataMapping;
 use crate::utils::schema_data::SchemaDataSequence;
-
-use dynamic_keys::CachedDefaultDynamicKeys;
-pub use dynamic_keys::{DefaultDynamicKeys, DictKeyMatch, DynamicKeyInfo, ResolvedDictKeys};
-pub use prefix_keys::PrefixKeys;
 
 /// AVD Schema for dictionary data.
 #[skip_serializing_none]
@@ -218,25 +220,21 @@ impl<'x> TryFrom<&'x AnySchema> for &'x Dict {
 #[cfg(test)]
 mod tests {
     use ordermap::OrderMap;
+    use serde::Deserialize as _;
     use serde_json::Value;
     use serde_json::json;
 
     use super::DefaultDynamicKeys;
     use super::Dict;
+    use super::DictKeyMatch;
     use super::DynamicKeyInfo;
+    use crate::Store;
     use crate::any::AnySchema;
     use crate::boolean::Bool;
+    use crate::int::Int;
+    use crate::str::Str;
     use crate::utils::test_utils::get_test_dict_schema;
-    use serde::Deserialize as _;
-
-    use crate::{
-        Store,
-        int::Int,
-        str::Str,
-        utils::test_utils::{get_test_store},
-    };
-
-    use super::{DictKeyMatch};
+    use crate::utils::test_utils::get_test_store;
 
     #[test]
     fn try_from_anyschema_ok() {
@@ -492,19 +490,26 @@ mod tests {
 
         assert!(matches!(
             resolved_dict_keys.resolve("static"),
-            Some(DictKeyMatch::Static(_))
+            DictKeyMatch::Static(_)
         ));
         assert!(matches!(
             resolved_dict_keys.resolve("dyn_1"),
-            Some(DictKeyMatch::Dynamic(dynamic_key_info))
+            DictKeyMatch::Dynamic(dynamic_key_info)
                 if dynamic_key_info.dynamic_key_path == "dynamic.key"
         ));
         assert!(matches!(
             resolved_dict_keys.resolve("custom_foo"),
-            Some(DictKeyMatch::Prefix(prefix_key_match))
+            DictKeyMatch::Prefix(prefix_key_match)
                 if prefix_key_match.prefixes_key.as_deref() == Some("custom_prefixes")
         ));
-        assert!(resolved_dict_keys.resolve("missing").is_none());
+        assert_eq!(
+            resolved_dict_keys.resolve("missing"),
+            DictKeyMatch::UnknownKey
+        );
+        assert_eq!(
+            resolved_dict_keys.resolve("_ignored"),
+            DictKeyMatch::UnknownKey
+        );
     }
 
     #[test]
@@ -546,17 +551,59 @@ mod tests {
 
         assert!(matches!(
             resolved_dict_keys.resolve("custom_foo"),
-            Some(DictKeyMatch::Prefix(prefix_key_match))
+            DictKeyMatch::Prefix(prefix_key_match)
                 if matches!(prefix_key_match.schema, AnySchema::Str(_))
         ));
         assert!(matches!(
             resolved_dict_keys.resolve("custom_bar"),
-            Some(DictKeyMatch::Prefix(prefix_key_match))
+            DictKeyMatch::Prefix(prefix_key_match)
                 if matches!(prefix_key_match.schema, AnySchema::Int(_))
         ));
         assert!(matches!(
             resolved_dict_keys.resolve("custom_baz"),
-            Some(DictKeyMatch::PrefixInvalidSuffix)
+            DictKeyMatch::PrefixInvalidSuffix
+        ));
+    }
+
+    #[test]
+    fn resolve_dict_keys_prefix_with_suffix_allows_other_suffixes_from_target_schema() {
+        let store = Store::deserialize(json!({
+            "myschema": {
+                "type": "dict",
+                "keys": {
+                    "custom_prefixes": {
+                        "type": "list",
+                        "items": {
+                            "type": "str"
+                        },
+                        "default": ["custom_"]
+                    },
+                    "prefix_schema": {
+                        "type": "dict",
+                        "keys": {
+                            "foo": {"type": "str"}
+                        },
+                        "allow_other_keys": true
+                    }
+                },
+                "prefix_keys": [{
+                    "prefixes_key": "custom_prefixes",
+                    "include_suffix_in_data": true,
+                    "schema_ref": "myschema#/keys/prefix_schema"
+                }],
+                "allow_other_keys": false
+            }
+        }))
+        .unwrap();
+        let schema = store.get("myschema").unwrap();
+        let dict_schema: &Dict = schema.try_into().unwrap();
+        let value = json!({});
+
+        let resolved_dict_keys = dict_schema.resolve_dict_keys(value.as_object().unwrap(), &store);
+
+        assert!(matches!(
+            resolved_dict_keys.resolve("custom_bar"),
+            DictKeyMatch::PrefixAllowedOtherSuffix
         ));
     }
 }

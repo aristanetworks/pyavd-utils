@@ -5,6 +5,7 @@
 use avdschema::any::AnySchema;
 use avdschema::any::Shortcuts as _;
 use avdschema::dict::Dict;
+use avdschema::dict::DictKeyMatch;
 use avdschema::resolve_ref;
 use ordermap::OrderMap;
 
@@ -124,44 +125,54 @@ fn validate_keys<'a, M: ValidatableMapping<'a>>(
         let key_span = pair.key_span();
         ctx.state.path.push(path_key.to_owned());
 
-        // Determine what to do with this key. Only string keys participate in
-        // schema/dynamic/prefix lookups and string-key-specific exceptions.
-        let include_in_output = if let Some(input_schema_key) = schema_key.as_deref() {
-            if let Some(dict_key_match) = resolved_dict_keys.resolve(input_schema_key) {
-                match dict_key_match {
-                    avdschema::dict::DictKeyMatch::PrefixInvalidSuffix => {
-                        if !schema.allow_other_keys.unwrap_or_default() {
-                            ctx.add_error_with_span(key_span, Violation::UnexpectedKey());
-                        }
-                        true
-                    }
-                    dict_key_match => {
-                        let key_schema = dict_key_match.schema();
-                        if !check_deprecation(input_schema_key, key_schema, key_span, input, ctx) {
-                            if let Some(ref mut items) = coerced_items {
-                                let coerced = key_schema
-                                    .validate(input_value, ctx)
-                                    .unwrap_or_else(|| input_value.clone_to_coerced());
-                                items.push(pair.coerced_item(coerced));
-                            } else {
-                                let _ = key_schema.validate(input_value, ctx);
-                            }
-                        } else if let Some(ref mut items) = coerced_items {
-                            // Deprecated key with error - still include with original value
-                            items.push(pair.coerced_item(input_value.clone_to_coerced()));
-                        }
-                        false // Already handled
-                    }
-                }
-            } else if input_schema_key.starts_with("_") {
-                // Key starts with underscore - skip validation but include in output
-                true
-            } else if !schema.allow_other_keys.unwrap_or_default() {
-                // Key is not part of the schema and does not start with underscore
+        // Only string keys participate in AVD schema key matching.
+        // YAML allows non-string mapping keys, so handle those separately:
+        // report them as unexpected when other keys are disallowed, but keep
+        // the original key shape and spans in coerced output.
+        let Some(input_schema_key) = schema_key.as_deref() else {
+            if !schema.allow_other_keys.unwrap_or_default() {
                 ctx.add_error_with_span(key_span, Violation::UnexpectedKey());
-                true // Include the value in output (error is recorded)
-            } else {
-                if let Some(eos_config_keys) = &eos_config_keys
+            }
+            if let Some(ref mut items) = coerced_items {
+                items.push(pair.coerced_item(input_value.clone_to_coerced()));
+            }
+            ctx.state.path.pop();
+            continue;
+        };
+
+        let dict_key_match = resolved_dict_keys.resolve(input_schema_key);
+        let coerced_value = match dict_key_match {
+            // Static, dynamic, and prefix keys all have a concrete schema.
+            DictKeyMatch::Static(_) | DictKeyMatch::Dynamic(_) | DictKeyMatch::Prefix(_) => {
+                let key_schema = dict_key_match.schema();
+
+                if check_deprecation(input_schema_key, key_schema, key_span, input, ctx) {
+                    // Removed keys will skip further validation but preserves the original value in the coerced output.
+                    None
+                } else {
+                    // Validation may produce a coerced value.
+                    key_schema.validate(input_value, ctx)
+                }
+            }
+            // Prefix matched, but the suffix did not map to a key in the
+            // target schema and the target schema does not allow other keys.
+            DictKeyMatch::PrefixInvalidSuffix => {
+                ctx.add_error_with_span(key_span, Violation::UnexpectedKey());
+                None
+            }
+            // Prefix matched, and the target dict schema allows suffixes not
+            // listed under its keys. Preserve without falling back to the
+            // parent dict's allow_other_keys setting.
+            DictKeyMatch::PrefixAllowedOtherSuffix => None,
+            // Unmatched underscore keys are deliberately ignored by validation,
+            // but still preserved in coerced output.
+            DictKeyMatch::UnknownKey if input_schema_key.starts_with("_") => None,
+            // Unknown string keys are either errors or allowed passthrough.
+            // The EOS config warning only applies to allowed string keys.
+            DictKeyMatch::UnknownKey => {
+                if !schema.allow_other_keys.unwrap_or_default() {
+                    ctx.add_error_with_span(key_span, Violation::UnexpectedKey());
+                } else if let Some(eos_config_keys) = &eos_config_keys
                     && eos_config_keys.contains_key(input_schema_key)
                     && !EOS_CLI_CONFIG_GEN_ROLE_KEYS.contains(&input_schema_key)
                 {
@@ -169,20 +180,14 @@ fn validate_keys<'a, M: ValidatableMapping<'a>>(
                     // and allow_other_keys is true - emit a warning that it will be ignored
                     ctx.add_warning_with_span(key_span, IgnoredEosConfigKey {});
                 }
-                true // allow_other_keys is true - include as-is
+                None
             }
-        } else if !schema.allow_other_keys.unwrap_or_default() {
-            // Non-string YAML key and other keys are not allowed.
-            ctx.add_error_with_span(key_span, Violation::UnexpectedKey());
-            true // Include the value in output (error is recorded)
-        } else {
-            // Non-string YAML key under allow_other_keys: skip validation and
-            // warning logic, but preserve it in coerced output.
-            true
         };
 
-        if include_in_output && let Some(ref mut items) = coerced_items {
-            items.push(pair.coerced_item(input_value.clone_to_coerced()));
+        if let Some(ref mut items) = coerced_items {
+            items.push(
+                pair.coerced_item(coerced_value.unwrap_or_else(|| input_value.clone_to_coerced())),
+            );
         }
 
         ctx.state.path.pop();
@@ -1716,6 +1721,96 @@ mod tests {
                 issue: Violation::UnexpectedKey().into()
             }]
         )
+    }
+
+    #[test]
+    fn validate_prefix_keys_invalid_suffix_err_even_when_parent_allows_other_keys() {
+        let store = avdschema::Store::deserialize(serde_json::json!({
+            "myschema": {
+                "type": "dict",
+                "keys": {
+                    "custom_prefixes": {
+                        "type": "list",
+                        "items": {
+                            "type": "str"
+                        }
+                    },
+                    "prefix_schema": {
+                        "type": "dict",
+                        "keys": {
+                            "valid_suffix": {
+                                "type": "str"
+                            }
+                        }
+                    }
+                },
+                "prefix_keys": [{
+                    "prefixes_key": "custom_prefixes",
+                    "include_suffix_in_data": true,
+                    "schema_ref": "myschema#/keys/prefix_schema"
+                }],
+                "allow_other_keys": true
+            }
+        }))
+        .unwrap();
+
+        let input = serde_json::json!({
+            "custom_prefixes": ["custom_"],
+            "custom_invalid_suffix": "this should still trigger UnexpectedKey"
+        });
+        let result = store.validate_value(&input, "myschema", None).unwrap();
+
+        assert!(result.result.infos.is_empty());
+        assert_eq!(
+            result.result.errors,
+            vec![Feedback {
+                path: vec!["custom_invalid_suffix".into()].into(),
+                span: None,
+                issue: Violation::UnexpectedKey().into()
+            }]
+        )
+    }
+
+    #[test]
+    fn validate_prefix_keys_allowed_other_suffix_ok() {
+        let store = avdschema::Store::deserialize(serde_json::json!({
+            "myschema": {
+                "type": "dict",
+                "keys": {
+                    "custom_prefixes": {
+                        "type": "list",
+                        "items": {
+                            "type": "str"
+                        }
+                    },
+                    "prefix_schema": {
+                        "type": "dict",
+                        "keys": {
+                            "valid_suffix": {
+                                "type": "str"
+                            }
+                        },
+                        "allow_other_keys": true
+                    }
+                },
+                "prefix_keys": [{
+                    "prefixes_key": "custom_prefixes",
+                    "include_suffix_in_data": true,
+                    "schema_ref": "myschema#/keys/prefix_schema"
+                }],
+                "allow_other_keys": false
+            }
+        }))
+        .unwrap();
+
+        let input = serde_json::json!({
+            "custom_prefixes": ["custom_"],
+            "custom_unknown_suffix": "this should be accepted by the target schema"
+        });
+        let result = store.validate_value(&input, "myschema", None).unwrap();
+
+        assert!(result.result.errors.is_empty());
+        assert!(result.result.infos.is_empty());
     }
 
     #[test]

@@ -3,15 +3,18 @@
 // that can be found in the LICENSE file.
 
 use ordermap::OrderMap;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
+use serde::Serialize;
 use serde_with::skip_serializing_none;
 
-use crate::{
-    SchemaDataMapping, SchemaDataSequence, SchemaDataValue, Store, any::AnySchema,
-    resolve::resolve_ref::resolve_ref,
-};
-
-use super::{Dict, DictKeyMatch};
+use super::Dict;
+use super::DictKeyMatch;
+use crate::SchemaDataMapping;
+use crate::SchemaDataSequence;
+use crate::SchemaDataValue;
+use crate::Store;
+use crate::any::AnySchema;
+use crate::resolve::resolve_ref::resolve_ref;
 
 /// PrefixKeys represents keys like custom_structured_configuration_*.
 #[skip_serializing_none]
@@ -38,6 +41,7 @@ pub struct ResolvedPrefixConfig<'a> {
     pub schema: &'a AnySchema,
     pub include_suffix_in_data: bool,
     pub suffix_keys: Option<&'a OrderMap<String, AnySchema>>,
+    pub allow_other_suffixes: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -51,6 +55,7 @@ pub struct PrefixKeyMatch<'a> {
 pub enum PrefixMatchResult<'a> {
     Valid(PrefixKeyMatch<'a>),
     InvalidSuffix,
+    AllowedOtherSuffix,
 }
 
 impl PrefixKeys {
@@ -87,13 +92,17 @@ impl PrefixKeys {
 
         // Resolve the schema reference
         let schema = resolve_ref(&self.schema_ref, store).ok()?;
-        let suffix_keys = self
-            .include_suffix_in_data
-            .then_some(match schema {
-                AnySchema::Dict(dict_schema) => dict_schema.keys.as_ref(),
-                _ => None,
-            })
-            .flatten();
+        let (suffix_keys, allow_other_suffixes) = if self.include_suffix_in_data {
+            match schema {
+                AnySchema::Dict(dict_schema) => (
+                    dict_schema.keys.as_ref(),
+                    dict_schema.allow_other_keys.unwrap_or_default(),
+                ),
+                _ => (None, false),
+            }
+        } else {
+            (None, false)
+        };
 
         Some(ResolvedPrefixConfig {
             prefixes_key: self.prefixes_key.clone(),
@@ -102,6 +111,7 @@ impl PrefixKeys {
             schema,
             include_suffix_in_data: self.include_suffix_in_data,
             suffix_keys,
+            allow_other_suffixes,
         })
     }
 
@@ -137,6 +147,9 @@ impl<'a> ResolvedPrefixConfig<'a> {
                         .and_then(|suffix_keys| suffix_keys.get(suffix))
                     {
                         Some(schema) => (schema, format!("{}/keys/{suffix}", self.schema_ref)),
+                        None if self.allow_other_suffixes => {
+                            return Some(PrefixMatchResult::AllowedOtherSuffix);
+                        }
                         None => return Some(PrefixMatchResult::InvalidSuffix),
                     }
                 } else {
@@ -189,9 +202,7 @@ impl<'a> Dict {
         let result = dict
             .keys()
             .filter_map(|key| match resolved_dict_keys.resolve(&key) {
-                Some(DictKeyMatch::Prefix(prefix_key_match)) => {
-                    Some((key.to_string(), prefix_key_match))
-                }
+                DictKeyMatch::Prefix(prefix_key_match) => Some((key.to_string(), prefix_key_match)),
                 _ => None,
             })
             .collect::<OrderMap<_, _>>();
@@ -203,11 +214,15 @@ impl<'a> Dict {
 #[cfg(test)]
 mod tests {
     use ordermap::OrderMap;
-    use serde_json::{Value, json};
-
-    use crate::{Store, base::Base, int::Int, list::List, str::Str};
+    use serde_json::Value;
+    use serde_json::json;
 
     use super::*;
+    use crate::Store;
+    use crate::base::Base;
+    use crate::int::Int;
+    use crate::list::List;
+    use crate::str::Str;
 
     #[test]
     fn get_prefix_keys_basic() {

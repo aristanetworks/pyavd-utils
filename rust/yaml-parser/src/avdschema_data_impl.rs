@@ -407,7 +407,9 @@ key2: value
 ",
         );
 
-        let schema_keys = SchemaKeys::try_from_schema_with_value(&schema, &doc.value).unwrap();
+        let store = test_store();
+        let schema_keys =
+            SchemaKeys::try_from_schema_with_value(&schema, &doc.value, &store).unwrap();
 
         assert_eq!(schema_keys.keys.len(), 4);
         assert!(schema_keys.keys.contains_key("key2"));

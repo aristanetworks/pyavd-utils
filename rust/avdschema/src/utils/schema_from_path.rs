@@ -7,7 +7,8 @@ use ordermap::OrderMap;
 use crate::SchemaDataValue;
 use crate::Store;
 use crate::any::AnySchema;
-use crate::dict::{Dict, DictKeyMatch};
+use crate::dict::Dict;
+use crate::dict::DictKeyMatch;
 use crate::resolve::errors::SchemaResolverError;
 use crate::resolve::resolve_ref::resolve_ref;
 use crate::store::SchemaStoreError;
@@ -164,20 +165,19 @@ pub fn get_schema_from_path<'store, 'value>(
                 .ok_or(GetSchemaFromPathError::Keys(SchemaKeysError::ValueNotADict))?;
             let resolved_dict_keys = dict_schema.resolve_dict_keys(dict, store);
             match resolved_dict_keys.resolve(root_key) {
-                None => Ok(None),
-                Some(DictKeyMatch::Static(_)) => {
+                DictKeyMatch::Static(_) => {
                     let schema_ref =
                         SchemaKey::StaticKey.get_schema_ref_from_path(schema_name, data_path);
                     Ok(Some(resolve_ref(&schema_ref, store)?))
                 }
-                Some(DictKeyMatch::Dynamic(dynamic_key_info)) => {
+                DictKeyMatch::Dynamic(dynamic_key_info) => {
                     let schema_ref = SchemaKey::DynamicKey {
                         dynamic_key_path: dynamic_key_info.dynamic_key_path,
                     }
                     .get_schema_ref_from_path(schema_name, data_path);
                     Ok(Some(resolve_ref(&schema_ref, store)?))
                 }
-                Some(DictKeyMatch::Prefix(prefix_key_match)) => {
+                DictKeyMatch::Prefix(prefix_key_match) => {
                     let mut schema_ref = prefix_key_match.schema_ref;
                     for step in path {
                         if step.parse::<usize>().is_ok() {
@@ -189,7 +189,9 @@ pub fn get_schema_from_path<'store, 'value>(
                     }
                     Ok(Some(resolve_ref(&schema_ref, store)?))
                 }
-                Some(DictKeyMatch::PrefixInvalidSuffix) => Ok(None),
+                DictKeyMatch::PrefixInvalidSuffix
+                | DictKeyMatch::PrefixAllowedOtherSuffix
+                | DictKeyMatch::UnknownKey => Ok(None),
             }
         }
     }
@@ -201,9 +203,11 @@ mod tests {
     use serde::Deserialize as _;
     use serde_json::json;
 
-    use crate::{int::Int, list::List, str::Str, utils::test_utils::get_test_store};
-
     use super::*;
+    use crate::int::Int;
+    use crate::list::List;
+    use crate::str::Str;
+    use crate::utils::test_utils::get_test_store;
 
     #[test]
     fn schema_keys_try_from_schema_with_value_ok() {
