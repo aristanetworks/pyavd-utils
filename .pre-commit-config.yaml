@@ -84,7 +84,7 @@ repos:
         files: ^rust/
 
   - repo: https://github.com/EmbarkStudios/cargo-deny
-    rev: 0.19.6
+    rev: 0.19.7
     hooks:
       # Check licenses of Rust dependencies
       - id: cargo-deny
@@ -103,7 +103,7 @@ repos:
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
     # Ruff version.
-    rev: v0.15.13
+    rev: v0.15.14
     hooks:
       # Run the linter.
       - id: ruff
