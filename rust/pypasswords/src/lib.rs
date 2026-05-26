@@ -4,6 +4,8 @@
 // TODO: Reevaluate the allow
 #![allow(
     missing_docs,
+    clippy::needless_pass_by_value,
+    clippy::unseparated_literal_suffix,
     reason = "PyO3 module exports predate workspace lint inheritance"
 )]
 #![deny(unused_crate_dependencies)]

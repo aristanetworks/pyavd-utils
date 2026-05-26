@@ -4,9 +4,16 @@
 // TODO: Reevaluate the allow
 #![allow(
     missing_docs,
+    clippy::as_conversions,
+    clippy::cast_possible_truncation,
     clippy::indexing_slicing,
+    clippy::integer_division,
+    clippy::integer_division_remainder_used,
     clippy::map_err_ignore,
     clippy::min_ident_chars,
+    clippy::string_slice,
+    clippy::unseparated_literal_suffix,
+    clippy::unused_trait_names,
     clippy::shadow_unrelated,
     reason = "Existing password codec implementation uses fixed-size lookup tables and compact algorithm names"
 )]
