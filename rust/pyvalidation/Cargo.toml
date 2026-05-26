@@ -9,6 +9,7 @@ pyo3-build-config = { workspace = true }
 
 [dev-dependencies]
 criterion = { version = "0.7.0" }
+serde_yaml = { workspace = true }
 test_schema_store = { path = "../test_schema_store" }
 
 [dependencies]

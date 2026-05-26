@@ -3,6 +3,7 @@
 // that can be found in the LICENSE file.
 
 use super::*;
+use crate::passwords::ToPythonError as _;
 #[test]
 fn sha512_crypt_valid_hash_with_salt_ok() {
     with_passwords_module(|py, module| {
@@ -45,6 +46,8 @@ fn sha512_crypt_empty_salt_err() {
             err.value(py).to_string(),
             "Invalid Salt: Salt cannot be empty."
         );
+        assert!(err.is_instance_of::<passwords::Sha512CryptInvalidSaltEmptyError>(py));
+        assert!(err.is_instance_of::<passwords::PasswordError>(py));
     });
 }
 
@@ -65,7 +68,24 @@ fn sha512_crypt_invalid_character_in_salt_err() {
 
         assert_eq!(
             err.value(py).to_string(),
-            "Invalid Salt: Salt contains an invalid character: '🐍'"
+            "Invalid Salt: Salt contains an invalid character: '🐍'."
+        );
+        assert!(err.is_instance_of::<passwords::Sha512CryptInvalidSaltCharacterError>(py));
+    });
+}
+
+#[test]
+fn sha512_crypt_library_error_maps_to_specific_pyerr() {
+    with_passwords_module(|py, _module| {
+        let err = ::passwords::Sha512CryptError::ShaCrypt(sha_crypt::CryptError::RoundsError)
+            .to_python_error();
+
+        assert!(err.is_instance_of::<passwords::Sha512CryptLibraryError>(py));
+        assert!(err.is_instance_of::<passwords::PasswordError>(py));
+        assert!(
+            err.value(py)
+                .to_string()
+                .contains("SHA crypt library error")
         );
     });
 }

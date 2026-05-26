@@ -3,7 +3,18 @@
 # that can be found in the LICENSE file.
 import pytest
 
-from pyavd_utils.validation import validate_json
+from pyavd_utils.validation import (
+    ValidationError,
+    ValidationInvalidJsonDataError,
+    ValidationInvalidSchemaNameError,
+    validate_json,
+)
+
+
+def test_validation_error_hierarchy() -> None:
+    """Test that validation errors inherit from the validation base error."""
+    assert issubclass(ValidationInvalidSchemaNameError, ValidationError)
+    assert issubclass(ValidationInvalidJsonDataError, ValidationError)
 
 
 @pytest.mark.usefixtures("init_store")
@@ -21,6 +32,18 @@ def test_validate_json() -> None:
 
     assert len(validation_result.deprecations) == 0
     assert len(validation_result.ignored_eos_config_keys) == 0
+
+
+@pytest.mark.usefixtures("init_store")
+def test_validate_json_invalid_schema_name_error() -> None:
+    with pytest.raises(ValidationInvalidSchemaNameError, match="Schema name 'invalid_schema' not found"):
+        validate_json("{}", "invalid_schema")  # type: ignore[arg-type]
+
+
+@pytest.mark.usefixtures("init_store")
+def test_validate_json_invalid_json_data_error() -> None:
+    with pytest.raises(ValidationInvalidJsonDataError, match="Invalid JSON in data"):
+        validate_json("invalid_json", "eos_config")
 
 
 @pytest.mark.usefixtures("init_store")

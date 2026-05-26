@@ -1462,9 +1462,11 @@ dependencies = [
 name = "pypasswords"
 version = "0.0.5"
 dependencies = [
+ "getrandom 0.4.2",
  "passwords",
  "pyo3",
  "pyo3-build-config",
+ "sha-crypt",
 ]
 
 [[package]]
@@ -1478,6 +1480,7 @@ dependencies = [
  "pyo3-build-config",
  "pyo3-log",
  "serde_json",
+ "serde_yaml",
  "test_schema_store",
  "validation",
 ]

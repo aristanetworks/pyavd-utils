@@ -3,6 +3,7 @@
 // that can be found in the LICENSE file.
 
 use super::*;
+use crate::passwords::ToPythonError as _;
 
 #[test]
 fn simple_7_encrypt_decrypt_roundtrip() {
@@ -56,8 +57,9 @@ fn simple_7_encrypt_empty_password_err() {
             .call_method1("simple_7_encrypt", ("", Some(5u8)))
             .unwrap_err();
 
-        assert!(err.is_instance_of::<pyo3::exceptions::PyValueError>(py));
-        assert_eq!(err.value(py).to_string(), "Password must not be empty");
+        assert!(err.is_instance_of::<passwords::Simple7EmptyPasswordError>(py));
+        assert!(err.is_instance_of::<passwords::PasswordError>(py));
+        assert_eq!(err.value(py).to_string(), "Password must not be empty.");
     });
 }
 
@@ -71,11 +73,11 @@ fn simple_7_encrypt_invalid_salt_err() {
             .call_method1("simple_7_encrypt", (password, Some(invalid_salt)))
             .unwrap_err();
 
-        // Maps Simple7Error::InvalidSaltValue -> PyValueError
-        assert!(err.is_instance_of::<pyo3::exceptions::PyValueError>(py));
+        assert!(err.is_instance_of::<passwords::Simple7InvalidSaltValueError>(py));
+        assert!(err.is_instance_of::<passwords::PasswordError>(py));
         assert_eq!(
             err.value(py).to_string(),
-            "Salt must be in the range 0-15, got 16"
+            "Salt must be in the range 0-15, got 16."
         );
     });
 }
@@ -85,10 +87,10 @@ fn simple_7_decrypt_data_too_short_err() {
     with_passwords_module(|py, module| {
         let err = module.call_method1("simple_7_decrypt", ("0",)).unwrap_err();
 
-        assert!(err.is_instance_of::<pyo3::exceptions::PyValueError>(py));
+        assert!(err.is_instance_of::<passwords::Simple7DataTooShortError>(py));
         assert_eq!(
             err.value(py).to_string(),
-            "Encrypted data too short (minimum 2 characters required for salt)"
+            "Encrypted data too short (minimum 2 characters required for salt)."
         );
     });
 }
@@ -100,7 +102,7 @@ fn simple_7_decrypt_invalid_hex_err() {
             .call_method1("simple_7_decrypt", ("01GGGG",))
             .unwrap_err();
 
-        assert!(err.is_instance_of::<pyo3::exceptions::PyValueError>(py));
+        assert!(err.is_instance_of::<passwords::Simple7InvalidHexEncodingError>(py));
         assert!(err.value(py).to_string().contains("Invalid hex encoding"));
     });
 }
@@ -112,7 +114,7 @@ fn simple_7_decrypt_invalid_salt_format_err() {
             .call_method1("simple_7_decrypt", ("XX1234",))
             .unwrap_err();
 
-        assert!(err.is_instance_of::<pyo3::exceptions::PyValueError>(py));
+        assert!(err.is_instance_of::<passwords::Simple7InvalidSaltFormatError>(py));
         assert!(err.value(py).to_string().contains("Invalid salt format"));
     });
 }
@@ -124,11 +126,36 @@ fn simple_7_decrypt_salt_out_of_range_err() {
             .call_method1("simple_7_decrypt", ("161234",))
             .unwrap_err();
 
-        assert!(err.is_instance_of::<pyo3::exceptions::PyValueError>(py));
+        assert!(err.is_instance_of::<passwords::Simple7InvalidSaltValueError>(py));
         assert_eq!(
             err.value(py).to_string(),
-            "Salt must be in the range 0-15, got 16"
+            "Salt must be in the range 0-15, got 16."
         );
+    });
+}
+
+#[test]
+fn simple_7_decrypt_invalid_utf8_err() {
+    with_passwords_module(|py, module| {
+        // Salt 0 uses seed byte 0x64. Encrypted byte 0x9b decrypts to 0xff,
+        // which is not a valid single-byte UTF-8 sequence.
+        let err = module
+            .call_method1("simple_7_decrypt", ("009B",))
+            .unwrap_err();
+
+        assert!(err.is_instance_of::<passwords::Simple7InvalidUtf8Error>(py));
+        assert!(err.value(py).to_string().contains("not valid UTF-8"));
+    });
+}
+
+#[test]
+fn simple_7_random_source_unavailable_maps_to_specific_pyerr() {
+    with_passwords_module(|py, _module| {
+        let err = ::passwords::Simple7Error::RandomSourceUnavailable(getrandom::Error::UNSUPPORTED)
+            .to_python_error();
+
+        assert!(err.is_instance_of::<passwords::Simple7RandomSourceUnavailableError>(py));
+        assert!(err.value(py).to_string().contains("random salt"));
     });
 }
 

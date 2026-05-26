@@ -11,9 +11,114 @@
 use std::sync::OnceLock;
 
 use avdschema::Store;
+use pyo3::create_exception;
+use pyo3::exceptions::PyException;
 use pyo3::pymodule;
 
 static STORE: OnceLock<Store> = OnceLock::new();
+
+create_exception!(
+    validation,
+    ValidationError,
+    PyException,
+    "Base exception for pyavd_utils.validation."
+);
+create_exception!(
+    validation,
+    ValidationStoreNotInitializedError,
+    ValidationError,
+    "Schema store was not initialized."
+);
+create_exception!(
+    validation,
+    ValidationStoreAlreadyInitializedError,
+    ValidationError,
+    "Schema store was already initialized."
+);
+create_exception!(
+    validation,
+    ValidationStoreLoadJsonError,
+    ValidationError,
+    "Schema store JSON load error."
+);
+create_exception!(
+    validation,
+    ValidationStoreLoadYamlError,
+    ValidationError,
+    "Schema store YAML load error."
+);
+create_exception!(
+    validation,
+    ValidationStoreLoadIoError,
+    ValidationError,
+    "Schema store I/O load error."
+);
+create_exception!(
+    validation,
+    ValidationStoreInvalidExtensionError,
+    ValidationError,
+    "Schema store input file has an invalid extension."
+);
+create_exception!(
+    validation,
+    ValidationStoreNoFilesFoundError,
+    ValidationError,
+    "Schema store input directory has no matching files."
+);
+create_exception!(
+    validation,
+    ValidationSchemaTypeError,
+    ValidationError,
+    "Schema reference resolved to an invalid schema type."
+);
+create_exception!(
+    validation,
+    ValidationRefSyntaxError,
+    ValidationError,
+    "Schema reference has invalid syntax."
+);
+create_exception!(
+    validation,
+    ValidationSchemaPathError,
+    ValidationError,
+    "Schema reference path was not found."
+);
+create_exception!(
+    validation,
+    ValidationInvalidSchemaNameError,
+    ValidationError,
+    "Schema name was not found in the schema store."
+);
+create_exception!(
+    validation,
+    ValidationSchemaWalkError,
+    ValidationError,
+    "Schema reference walk failed."
+);
+create_exception!(
+    validation,
+    ValidationInvalidJsonDataError,
+    ValidationError,
+    "Input data is not valid JSON."
+);
+create_exception!(
+    validation,
+    ValidationInvalidAdhocSchemaJsonError,
+    ValidationError,
+    "Ad hoc schema is not valid JSON."
+);
+create_exception!(
+    validation,
+    ValidationInvalidCoercedDataJsonError,
+    ValidationError,
+    "Coerced validation output could not be serialized as JSON."
+);
+create_exception!(
+    validation,
+    ValidationInternalError,
+    ValidationError,
+    "Internal validation error."
+);
 
 #[pymodule(gil_used = false)]
 pub mod validation {
@@ -26,7 +131,6 @@ pub mod validation {
     use log::info;
     use pyo3::Bound;
     use pyo3::PyResult;
-    use pyo3::exceptions::PyRuntimeError;
     use pyo3::pyclass;
     use pyo3::pyfunction;
     use pyo3::pymethods;
@@ -37,9 +141,111 @@ pub mod validation {
     use validation::feedback::InputDiagnostic;
 
     use super::STORE;
+    #[pymodule_export]
+    pub use super::ValidationError;
+    #[pymodule_export]
+    pub use super::ValidationInternalError;
+    #[pymodule_export]
+    pub use super::ValidationInvalidAdhocSchemaJsonError;
+    #[pymodule_export]
+    pub use super::ValidationInvalidCoercedDataJsonError;
+    #[pymodule_export]
+    pub use super::ValidationInvalidJsonDataError;
+    #[pymodule_export]
+    pub use super::ValidationInvalidSchemaNameError;
+    #[pymodule_export]
+    pub use super::ValidationRefSyntaxError;
+    #[pymodule_export]
+    pub use super::ValidationSchemaPathError;
+    #[pymodule_export]
+    pub use super::ValidationSchemaTypeError;
+    #[pymodule_export]
+    pub use super::ValidationSchemaWalkError;
+    #[pymodule_export]
+    pub use super::ValidationStoreAlreadyInitializedError;
+    #[pymodule_export]
+    pub use super::ValidationStoreInvalidExtensionError;
+    #[pymodule_export]
+    pub use super::ValidationStoreLoadIoError;
+    #[pymodule_export]
+    pub use super::ValidationStoreLoadJsonError;
+    #[pymodule_export]
+    pub use super::ValidationStoreLoadYamlError;
+    #[pymodule_export]
+    pub use super::ValidationStoreNoFilesFoundError;
+    #[pymodule_export]
+    pub use super::ValidationStoreNotInitializedError;
+
+    pub(crate) trait ToPythonError {
+        fn to_python_error(self) -> pyo3::PyErr;
+    }
+
+    impl ToPythonError for avdschema::LoadError {
+        fn to_python_error(self) -> pyo3::PyErr {
+            match self {
+                avdschema::LoadError::JsonError(err) => ValidationStoreLoadJsonError::new_err(
+                    format!("Error while loading the Schema Store from file: {err}."),
+                ),
+                avdschema::LoadError::YamlError(err) => ValidationStoreLoadYamlError::new_err(
+                    format!("Error while loading the Schema Store from file: {err}."),
+                ),
+                avdschema::LoadError::IoError(err) => ValidationStoreLoadIoError::new_err(format!(
+                    "Error while loading the Schema Store from file: {err}."
+                )),
+                avdschema::LoadError::InvalidExtension {} => {
+                    ValidationStoreInvalidExtensionError::new_err(
+                        "Error while loading the Schema Store from file: Invalid extension for input file.",
+                    )
+                }
+                avdschema::LoadError::NoFilesFound {} => ValidationStoreNoFilesFoundError::new_err(
+                    "Error while loading the Schema Store from file: No files found.",
+                ),
+            }
+        }
+    }
+
+    impl ToPythonError for avdschema::SchemaStoreError {
+        fn to_python_error(self) -> pyo3::PyErr {
+            let message = self.to_string();
+            match self {
+                avdschema::SchemaStoreError::InvalidSchemaName(_) => {
+                    ValidationInvalidSchemaNameError::new_err(message)
+                }
+            }
+        }
+    }
+
+    impl ToPythonError for avdschema::SchemaResolverError {
+        fn to_python_error(self) -> pyo3::PyErr {
+            let message = format!("Error while resolving the Schema Store: {self}");
+            match self {
+                avdschema::SchemaResolverError::SchemaType(_) => {
+                    ValidationSchemaTypeError::new_err(message)
+                }
+                avdschema::SchemaResolverError::RefSyntax(_) => {
+                    ValidationRefSyntaxError::new_err(message)
+                }
+                avdschema::SchemaResolverError::SchemaPath(_) => {
+                    ValidationSchemaPathError::new_err(message)
+                }
+                avdschema::SchemaResolverError::SchemaStoreError(err) => err.to_python_error(),
+                avdschema::SchemaResolverError::SchemaWalkError(_) => {
+                    ValidationSchemaWalkError::new_err(message)
+                }
+            }
+        }
+    }
+
+    impl ToPythonError for validation::StoreValidateError {
+        fn to_python_error(self) -> pyo3::PyErr {
+            match self {
+                validation::StoreValidateError::SchemaStore(err) => err.to_python_error(),
+            }
+        }
+    }
 
     fn invalid_json_in_data_err(message: impl std::fmt::Display) -> pyo3::PyErr {
-        PyRuntimeError::new_err(format!("Invalid JSON in data: {message}"))
+        ValidationInvalidJsonDataError::new_err(format!("Invalid JSON in data: {message}."))
     }
 
     pub(crate) fn first_input_diagnostic_as_pyerr(
@@ -52,7 +258,7 @@ pub mod validation {
 
     fn get_store() -> PyResult<&'static Store> {
         STORE.get().ok_or_else(|| {
-            PyRuntimeError::new_err(
+            ValidationStoreNotInitializedError::new_err(
                 "The schema store was not initialized. \
              Initialization can only happen once, and must be done before running any validations."
                     .to_string(),
@@ -146,8 +352,8 @@ pub mod validation {
                         });
                     }
                     validation::feedback::ErrorIssue::InternalError { message } => {
-                        return Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
-                            "Error occurred during validation: {message}"
+                        return Err(ValidationInternalError::new_err(format!(
+                            "Error occurred during validation: {message}."
                         )));
                     }
                 }
@@ -195,21 +401,13 @@ pub mod validation {
 
         // Load the store from path including resolving the $refs where applicable.
         let store = {
-            let store = Store::from_file(Some(&file)).map_err(|err| {
-                pyo3::exceptions::PyRuntimeError::new_err(format!(
-                    "Error while loading the Schema Store from file: {err}",
-                ))
-            })?;
-            store.as_resolved().map_err(|err| {
-                pyo3::exceptions::PyRuntimeError::new_err(format!(
-                    "Error while resolving the Schema Store: {err}",
-                ))
-            })
+            let store = Store::from_file(Some(&file)).map_err(ToPythonError::to_python_error)?;
+            store.as_resolved().map_err(ToPythonError::to_python_error)
         }?;
 
         // Insert the resolved store into the OnceLock.
         STORE.set(store).map_err(|_| {
-            PyRuntimeError::new_err(
+            ValidationStoreAlreadyInitializedError::new_err(
                 "Unable to initialize the schema store. \
                  Initialization can only happen once, and must be done before running any validations."
                     .to_string(),
@@ -227,9 +425,7 @@ pub mod validation {
         let config = configuration.map(Into::into);
         let output = get_store()?
             .validate_json(data_as_json, schema_name, config.as_ref())
-            .map_err(|err| {
-                PyRuntimeError::new_err(format!("Error while validating the data: {err}"))
-            })?;
+            .map_err(ToPythonError::to_python_error)?;
         if let Some(err) = first_input_diagnostic_as_pyerr(output.input_diagnostics.first()) {
             return Err(err);
         }
@@ -252,23 +448,16 @@ pub mod validation {
             config.return_coerced_data = true;
             let output = get_store()?
                 .validate_json(data_as_json, schema_name, Some(&config))
-                .map_err(|err| {
-                    PyRuntimeError::new_err(format!("Error while validating the data: {err}"))
-                })?;
+                .map_err(ToPythonError::to_python_error)?;
             if let Some(err) = first_input_diagnostic_as_pyerr(output.input_diagnostics.first()) {
                 return Err(err);
             }
             debug!("pyvalidation::get_validated_data Validation Done");
             let validated_data = if output.document.result.errors.is_empty() {
-                output
-                    .document
-                    .coerced
-                    .map(|coerced| {
-                        serde_json::to_string(&coerced).map_err(|err| {
-                            PyRuntimeError::new_err(format!("Invalid JSON in coerced data: {err}"))
-                        })
-                    })
-                    .transpose()?
+                output.document.coerced.map(|coerced| {
+                    serde_json::to_string(&coerced)
+                        .expect("serde_json::Value should serialize as JSON")
+                })
             } else {
                 None
             };
@@ -292,7 +481,9 @@ pub mod validation {
     ) -> PyResult<ValidationResult> {
         // Parse schema JSON
         let schema: AnySchema = serde_json::from_str(schema_as_json).map_err(|err| {
-            PyRuntimeError::new_err(format!("Invalid JSON in adhoc schema: {err}"))
+            ValidationInvalidAdhocSchemaJsonError::new_err(format!(
+                "Invalid JSON in adhoc schema: {err}."
+            ))
         })?;
         // Parse data JSON
         let data: serde_json::Value =
@@ -319,16 +510,24 @@ mod tests {
 
     use super::STORE;
     use super::validation;
+    use crate::validation::ToPythonError as _;
     use crate::validation::ValidationResult;
     use crate::validation::first_input_diagnostic_as_pyerr;
 
     // Initializing python only once. Otherwise things may crash when running in multiple threads.
     // Also downloading the test schema and extracting to fragments.
     static INIT_PY: OnceLock<()> = OnceLock::new();
-    fn setup() {
+    static INIT_STORE: OnceLock<()> = OnceLock::new();
+    fn setup_py() {
         INIT_PY.get_or_init(|| {
             pyo3::append_to_inittab!(validation);
             pyo3::Python::initialize();
+        });
+    }
+
+    fn setup() {
+        setup_py();
+        INIT_STORE.get_or_init(|| {
             pyo3::Python::attach(|py| {
                 init_test_store(py);
             });
@@ -398,7 +597,7 @@ mod tests {
 
     #[test]
     fn validation_result_from_validation_result_internal_error_returns_pyerr() {
-        setup();
+        setup_py();
         let result = ::validation::ValidationResult {
             errors: vec![::validation::feedback::Feedback {
                 path: vec![].into(),
@@ -419,14 +618,16 @@ mod tests {
         pyo3::Python::attach(|py| {
             assert_eq!(
                 err.value(py).to_string(),
-                "Error occurred during validation: boom"
+                "Error occurred during validation: boom."
             );
+            assert!(err.is_instance_of::<validation::ValidationInternalError>(py));
+            assert!(err.is_instance_of::<validation::ValidationError>(py));
         });
     }
 
     #[test]
     fn first_input_diagnostic_as_pyerr_maps_parse_diagnostic() {
-        setup();
+        setup_py();
         let diagnostic = ::validation::feedback::InputDiagnostic::ParseDiagnostic(
             ::validation::feedback::ParseDiagnostic {
                 kind: ::validation::feedback::ParseDiagnosticKind::JsonSyntax,
@@ -443,9 +644,135 @@ mod tests {
         pyo3::Python::attach(|py| {
             assert_eq!(
                 err.value(py).to_string(),
-                "Invalid JSON in data: expected value at line 1 column 1"
+                "Invalid JSON in data: expected value at line 1 column 1."
             );
+            assert!(err.is_instance_of::<validation::ValidationInvalidJsonDataError>(py));
+            assert!(err.is_instance_of::<validation::ValidationError>(py));
         });
+    }
+
+    #[test]
+    fn schema_resolver_errors_map_to_specific_pyerrs() {
+        setup_py();
+        pyo3::Python::attach(|py| {
+            let err = avdschema::SchemaResolverError::SchemaType(avdschema::SchemaType::new(
+                "schema_ref".into(),
+                "dict".into(),
+                "list".into(),
+            ))
+            .to_python_error();
+            assert!(err.is_instance_of::<validation::ValidationSchemaTypeError>(py));
+            assert!(err.value(py).to_string().contains("Invalid schema type"));
+
+            let err = avdschema::SchemaResolverError::RefSyntax(avdschema::RefSyntax::new(
+                "bad_ref".into(),
+            ))
+            .to_python_error();
+            assert!(err.is_instance_of::<validation::ValidationRefSyntaxError>(py));
+            assert!(err.value(py).to_string().contains("Invalid syntax"));
+
+            let err = avdschema::SchemaResolverError::SchemaPath(avdschema::SchemaPath::new(
+                "missing.path".into(),
+            ))
+            .to_python_error();
+            assert!(err.is_instance_of::<validation::ValidationSchemaPathError>(py));
+            assert!(err.value(py).to_string().contains("was not found"));
+
+            let err = avdschema::SchemaResolverError::SchemaStoreError(
+                avdschema::SchemaStoreError::InvalidSchemaName("missing_schema".into()),
+            )
+            .to_python_error();
+            assert!(err.is_instance_of::<validation::ValidationInvalidSchemaNameError>(py));
+
+            let err =
+                avdschema::SchemaResolverError::SchemaWalkError(
+                    avdschema::SchemaWalkError::InternalError(
+                        avdschema::SchemaWalkInternalError::new(),
+                    ),
+                )
+                .to_python_error();
+            assert!(err.is_instance_of::<validation::ValidationSchemaWalkError>(py));
+            assert!(err.value(py).to_string().contains("Internal error"));
+        });
+    }
+
+    #[test]
+    fn load_errors_map_to_specific_pyerrs() {
+        setup_py();
+        pyo3::Python::attach(|py| {
+            let err = avdschema::LoadError::JsonError(
+                serde_json::from_str::<serde_json::Value>("invalid").unwrap_err(),
+            )
+            .to_python_error();
+            assert!(err.is_instance_of::<validation::ValidationStoreLoadJsonError>(py));
+
+            let err = avdschema::LoadError::YamlError(
+                serde_yaml::from_str::<serde_yaml::Value>(":").unwrap_err(),
+            )
+            .to_python_error();
+            assert!(err.is_instance_of::<validation::ValidationStoreLoadYamlError>(py));
+
+            let err = avdschema::LoadError::IoError(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "missing",
+            ))
+            .to_python_error();
+            assert!(err.is_instance_of::<validation::ValidationStoreLoadIoError>(py));
+
+            let err = avdschema::LoadError::InvalidExtension {}.to_python_error();
+            assert!(err.is_instance_of::<validation::ValidationStoreInvalidExtensionError>(py));
+
+            let err = avdschema::LoadError::NoFilesFound {}.to_python_error();
+            assert!(err.is_instance_of::<validation::ValidationStoreNoFilesFoundError>(py));
+        });
+    }
+
+    #[test]
+    fn store_validate_error_maps_to_specific_pyerr() {
+        setup_py();
+        pyo3::Python::attach(|py| {
+            let err = ::validation::StoreValidateError::SchemaStore(
+                avdschema::SchemaStoreError::InvalidSchemaName("missing_schema".into()),
+            )
+            .to_python_error();
+
+            assert!(err.is_instance_of::<validation::ValidationInvalidSchemaNameError>(py));
+        });
+    }
+
+    #[test]
+    fn validation_result_from_validation_result_maps_deprecation() {
+        let result = ::validation::ValidationResult {
+            errors: vec![],
+            warnings: vec![::validation::feedback::Feedback {
+                path: vec!["old_key".into()].into(),
+                span: None,
+                issue: ::validation::feedback::WarningIssue::Deprecated(
+                    ::validation::feedback::Deprecated {
+                        path: vec!["old_key".into()].into(),
+                        replacement: Some("new_key".to_string()).into(),
+                        version: Some("5.0.0".to_string()).into(),
+                        url: Some("https://example.invalid".to_string()).into(),
+                    },
+                ),
+            }],
+            infos: vec![],
+        };
+
+        let py_result = ValidationResult::from_validation_result(result).unwrap();
+
+        assert_eq!(py_result.deprecations.len(), 1);
+        assert_eq!(py_result.deprecations[0].path, vec!["old_key"]);
+        assert!(py_result.deprecations[0].message.contains("deprecated"));
+        assert_eq!(py_result.deprecations[0].version.as_deref(), Some("5.0.0"));
+        assert_eq!(
+            py_result.deprecations[0].replacement.as_deref(),
+            Some("new_key")
+        );
+        assert_eq!(
+            py_result.deprecations[0].url.as_deref(),
+            Some("https://example.invalid")
+        );
     }
 
     #[test]
@@ -501,7 +828,8 @@ mod tests {
                 err.value(py).to_string(),
                 "Unable to initialize the schema store. \
                  Initialization can only happen once, and must be done before running any validations."
-            )
+            );
+            assert!(err.is_instance_of::<validation::ValidationStoreAlreadyInitializedError>(py));
         })
     }
 
@@ -521,8 +849,9 @@ mod tests {
             };
             assert_eq!(
                 err.value(py).to_string(),
-                "Invalid JSON in data: expected value at line 1 column 1"
-            )
+                "Invalid JSON in data: expected value at line 1 column 1."
+            );
+            assert!(err.is_instance_of::<validation::ValidationInvalidJsonDataError>(py));
         });
     }
 
@@ -587,8 +916,9 @@ mod tests {
             };
             assert_eq!(
                 err.value(py).to_string(),
-                "Invalid JSON in data: expected value at line 1 column 1"
-            )
+                "Invalid JSON in data: expected value at line 1 column 1."
+            );
+            assert!(err.is_instance_of::<validation::ValidationInvalidJsonDataError>(py));
         });
     }
 
@@ -613,8 +943,9 @@ mod tests {
             };
             assert_eq!(
                 err.value(py).to_string(),
-                "Invalid JSON in adhoc schema: missing field `type` at line 1 column 14"
-            )
+                "Invalid JSON in adhoc schema: missing field `type` at line 1 column 14."
+            );
+            assert!(err.is_instance_of::<validation::ValidationInvalidAdhocSchemaJsonError>(py));
         });
     }
 

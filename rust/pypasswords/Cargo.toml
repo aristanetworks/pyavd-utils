@@ -7,6 +7,10 @@ license.workspace = true
 [build-dependencies]
 pyo3-build-config = { workspace = true }
 
+[dev-dependencies]
+getrandom = { version = "0.4", default-features = false }
+sha-crypt = { version = "0.5.0", default-features = false }
+
 [dependencies]
 pyo3 = { workspace = true, "features" = ["abi3-py310"] }
 passwords = { path = "../passwords", default-features = false }
