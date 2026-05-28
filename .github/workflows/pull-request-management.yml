@@ -152,6 +152,9 @@ jobs:
     name: Upload coverage to CodeCov
     needs: [python_coverage, cargo_build_and_test]
     if: github.repository == 'aristanetworks/pyavd-utils'
+    permissions:
+      contents: read
+      id-token: write
     uses: ./.github/workflows/codecov.yml
 
   # --------------------------------------------------------------------- #
