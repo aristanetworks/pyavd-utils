@@ -13,7 +13,6 @@
     clippy::min_ident_chars,
     clippy::string_slice,
     clippy::unseparated_literal_suffix,
-    clippy::unused_trait_names,
     clippy::shadow_unrelated,
     reason = "Existing password codec implementation uses fixed-size lookup tables and compact algorithm names"
 )]

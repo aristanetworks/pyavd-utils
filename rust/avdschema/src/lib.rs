@@ -18,9 +18,7 @@
     clippy::redundant_type_annotations,
     clippy::ref_patterns,
     clippy::shadow_unrelated,
-    clippy::str_to_string,
     clippy::used_underscore_binding,
-    clippy::unused_trait_names,
     clippy::unwrap_used,
     clippy::tests_outside_test_module,
     reason = "Existing schema models and feature-gated shared test helpers predate workspace lint inheritance"
