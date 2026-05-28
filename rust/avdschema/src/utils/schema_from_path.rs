@@ -21,8 +21,8 @@ pub enum SchemaKey {
 }
 impl SchemaKey {
     /// Return a schema $ref like
-    /// `eos_config#/keys/somekey/items/` or
-    /// `avd_design#/dynamic_keys/connected_endpoint_keys.key`
+    /// `"eos_config#/keys/somekey/items/"` or
+    /// `"avd_design#/dynamic_keys/connected_endpoint_keys.key"`
     /// For dynamic keys the first item of the path is replaced with with dynamic key path.
     pub fn get_schema_ref_from_path(&self, schema_name: &str, data_path: &[String]) -> String {
         let mut path = data_path.iter();
