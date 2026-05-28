@@ -2,17 +2,19 @@
 // Use of this source code is governed by the Apache License 2.0
 // that can be found in the LICENSE file.
 
-//! Implementation of ValidatableValue traits for serde_json types.
+//! Implementation of `ValidatableValue` traits for `serde_json` types.
 
 use std::borrow::Cow;
 
 use serde_json::Map;
+use serde_json::Number;
 use serde_json::Value;
 
 use super::ValidatableMapping;
 use super::ValidatableMappingPair;
 use super::ValidatableSequence;
 use super::ValidatableValue;
+use super::integral_float_to_i64;
 
 // === ValidatableValue for serde_json::Value ===
 
@@ -20,6 +22,7 @@ impl ValidatableValue for Value {
     type Mapping<'a> = &'a Map<String, Value>;
     type Sequence<'a> = &'a Vec<Value>;
     type Coerced = Value;
+    type CoercedMappingItem = (String, Value);
 
     fn is_null(&self) -> bool {
         self.is_null()
@@ -49,14 +52,9 @@ impl ValidatableValue for Value {
 
     fn as_i64(&self) -> Option<i64> {
         match self {
-            Value::Number(n) => n.as_i64().or_else(|| {
-                n.as_f64()
-                    .filter(|float| float.is_finite() && float.fract() == 0.0)
-                    .filter(|float| *float >= i64::MIN as f64 && *float <= i64::MAX as f64)
-                    .map(|float| float as i64)
-            }),
+            Value::Number(n) => number_as_i64(n),
             Value::String(s) => s.parse().ok(),
-            Value::Bool(b) => Some(if *b { 1 } else { 0 }),
+            Value::Bool(b) => Some(i64::from(*b)),
             _ => None,
         }
     }
@@ -103,7 +101,7 @@ impl ValidatableValue for Value {
         Value::Array(items)
     }
 
-    fn coerce_mapping(&self, items: Vec<(String, Self::Coerced)>) -> Self::Coerced {
+    fn coerce_mapping(&self, items: Vec<Self::CoercedMappingItem>) -> Self::Coerced {
         Value::Object(items.into_iter().collect())
     }
 
@@ -118,6 +116,22 @@ impl ValidatableValue for Value {
 
     fn is_float(&self) -> bool {
         matches!(self, Value::Number(n) if n.is_f64())
+    }
+}
+
+// Attempt lossless conversion to i64.
+fn number_as_i64(number: &Number) -> Option<i64> {
+    if let Some(value) = number.as_i64() {
+        return Some(value);
+    }
+    if let Some(value) = number.as_u64() {
+        return value.try_into().ok();
+    }
+    // Checking first since as_f64 will coerce.
+    if number.is_f64() {
+        integral_float_to_i64(number.as_f64()?)
+    } else {
+        None
     }
 }
 
@@ -155,7 +169,7 @@ impl<'a> ValidatableMapping<'a> for &'a Map<String, Value> {
     }
 }
 
-/// Iterator adapter for serde_json Map.
+/// Iterator adapter for `serde_json` Map.
 pub struct MapIter<'a> {
     inner: serde_json::map::Iter<'a>,
 }
@@ -174,6 +188,10 @@ impl<'a> Iterator for MapIter<'a> {
 
 impl ExactSizeIterator for MapIter<'_> {}
 
+/// Validation view over a JSON object entry.
+///
+/// JSON object keys are always strings, so the schema, display, and coerced
+/// key representations are all the same string key.
 pub struct MapPair<'a> {
     key: &'a String,
     value: &'a Value,
@@ -182,12 +200,27 @@ pub struct MapPair<'a> {
 impl<'a> ValidatableMappingPair<'a> for MapPair<'a> {
     type Value = Value;
 
-    fn key(&self) -> Cow<'a, str> {
+    /// JSON keys are always valid schema lookup keys.
+    fn schema_key(&self) -> Option<Cow<'a, str>> {
+        Some(Cow::Borrowed(self.key.as_str()))
+    }
+
+    /// Use the JSON key directly for paths and diagnostics.
+    fn display_key(&self) -> Cow<'a, str> {
         Cow::Borrowed(self.key.as_str())
     }
 
+    /// Return the JSON value associated with this object entry.
     fn value(&self) -> &'a Self::Value {
         self.value
+    }
+
+    /// Build the JSON object entry for coerced output.
+    fn coerced_item(
+        &self,
+        value: <Self::Value as ValidatableValue>::Coerced,
+    ) -> <Self::Value as ValidatableValue>::CoercedMappingItem {
+        (self.key.to_owned(), value)
     }
 }
 

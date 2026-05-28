@@ -33,11 +33,9 @@ impl Validation for Str {
             validate_min_length(self, value, &s, ctx);
             validate_max_length(self, value, &s, ctx);
             validate_pattern(self, value, &s, ctx);
-            if ctx.configuration.return_coerced_data {
-                Some(value.coerce_str(s))
-            } else {
-                None
-            }
+            ctx.configuration
+                .return_coerced_data
+                .then(|| value.coerce_str(s))
         } else {
             Self::handle_invalid_type(value, ctx, Type::Str)
         }
@@ -54,11 +52,11 @@ fn convert_to_lower_case<V: ValidatableValue>(
         return s;
     }
     let lower = s.to_lowercase();
-    if lower != s {
+    if lower == s {
+        s
+    } else {
         ctx.add_string_lowered_for(value, &s, &lower);
         lower
-    } else {
-        s
     }
 }
 
@@ -122,10 +120,7 @@ fn validate_pattern<V: ValidatableValue>(schema: &Str, value: &V, input: &str, c
             Err(e) => ctx.add_error_for(
                 value,
                 ErrorIssue::InternalError {
-                    message: format!(
-                        "Schema contains an invalid regex pattern '{}': {e}",
-                        pattern
-                    ),
+                    message: format!("Schema contains an invalid regex pattern '{pattern}': {e}"),
                 },
             ),
             Ok(regex_pattern) => match regex_pattern.is_match(input) {
@@ -228,7 +223,7 @@ mod tests {
                 path: vec![].into(),
                 span: None,
                 issue: Violation::InvalidValue {
-                    expected: vec!["foo".to_string()].into(),
+                    expected: vec!["foo".to_owned()].into(),
                     found: "FOO".into()
                 }
                 .into()

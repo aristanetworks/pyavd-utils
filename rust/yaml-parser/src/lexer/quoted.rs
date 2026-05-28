@@ -42,7 +42,10 @@ impl<'input> Lexer<'input> {
     fn finish_quoted_newline(&mut self) -> usize {
         // Consume newline
         let newline_start = self.byte_pos;
-        let ch = self.advance().unwrap();
+        let Some(ch) = self.advance() else {
+            debug_assert!(false, "finish_quoted_newline called at EOF");
+            return self.byte_pos;
+        };
         if ch == '\r' && self.peek() == Some('\n') {
             self.advance();
         }
@@ -220,7 +223,7 @@ impl<'input> Lexer<'input> {
         // Track the content length after the last non-escape character.
         // When we see a newline, we trim trailing whitespace but only up to this position.
         // This preserves escaped whitespace like \t while trimming literal trailing whitespace.
-        let mut escape_protected_len = 0usize;
+        let mut escape_protected_len = 0_usize;
 
         loop {
             match self.peek() {
@@ -310,6 +313,15 @@ impl<'input> Lexer<'input> {
         Some(result)
     }
 
+    fn ascii_hex_digit_value(ch: char) -> Option<u32> {
+        match ch {
+            '0'..='9' => Some(u32::from(ch) - u32::from('0')),
+            'a'..='f' => Some(u32::from(ch) - u32::from('a') + 10),
+            'A'..='F' => Some(u32::from(ch) - u32::from('A') + 10),
+            _ => None,
+        }
+    }
+
     #[allow(
         clippy::string_slice,
         reason = "self.byte_pos is always at proper UTF-8 boundaries"
@@ -320,12 +332,11 @@ impl<'input> Lexer<'input> {
             'u' => 4,
             _ => 8, // 'U' case
         };
-        let mut value = 0u32;
-        let mut consumed = 0u8;
+        let mut value = 0_u32;
+        let mut consumed = 0_u8;
         for _ in 0..digits {
             if let Some(peek_ch) = self.peek() {
-                if peek_ch.is_ascii_hexdigit() {
-                    let digit = peek_ch.to_digit(16).unwrap();
+                if let Some(digit) = Self::ascii_hex_digit_value(peek_ch) {
                     value = value * 16 + digit;
                     consumed += 1;
                     self.advance();

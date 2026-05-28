@@ -58,11 +58,11 @@ impl From<&AnySchema> for String {
     /// Get schema type as Python-like type string
     fn from(value: &AnySchema) -> Self {
         match value {
-            AnySchema::Bool(_) => "bool".to_string(),
-            AnySchema::Dict(_) => "dict".to_string(),
-            AnySchema::Int(_) => "int".to_string(),
-            AnySchema::List(_) => "list".to_string(),
-            AnySchema::Str(_) => "str".to_string(),
+            AnySchema::Bool(_) => "bool".to_owned(),
+            AnySchema::Dict(_) => "dict".to_owned(),
+            AnySchema::Int(_) => "int".to_owned(),
+            AnySchema::List(_) => "list".to_owned(),
+            AnySchema::Str(_) => "str".to_owned(),
         }
     }
 }

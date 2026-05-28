@@ -4,6 +4,9 @@ version.workspace = true
 edition = "2024"
 license.workspace = true
 
+[lints]
+workspace = true
+
 [dependencies]
 avdschema = { path = "../avdschema" }
 derive_more = { workspace = true, features = ["display", "from"] }

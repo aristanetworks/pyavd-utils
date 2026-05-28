@@ -21,8 +21,8 @@ pub enum SchemaKey {
 }
 impl SchemaKey {
     /// Return a schema $ref like
-    /// "eos_config#/keys/somekey/items/" or
-    /// "avd_design#/dynamic_keys/connected_endpoint_keys.key"
+    /// `"eos_config#/keys/somekey/items/"` or
+    /// `"avd_design#/dynamic_keys/connected_endpoint_keys.key"`
     /// For dynamic keys the first item of the path is replaced with with dynamic key path.
     pub fn get_schema_ref_from_path(&self, schema_name: &str, data_path: &[String]) -> String {
         let mut path = data_path.iter();
@@ -30,7 +30,7 @@ impl SchemaKey {
         match path.next() {
             Some(root_key) => match self {
                 SchemaKey::DynamicKey { dynamic_key_path } => {
-                    schema_ref.push_str(format!("/dynamic_keys/{dynamic_key_path}").as_str())
+                    schema_ref.push_str(format!("/dynamic_keys/{dynamic_key_path}").as_str());
                 }
                 SchemaKey::StaticKey => schema_ref.push_str(format!("/keys/{root_key}").as_str()),
             },
@@ -81,9 +81,7 @@ impl SchemaKeys {
                 .get_dynamic_keys(dict)
                 .unwrap_or_default()
                 .into_iter()
-                .map(|(key, dynamic_key_info)| {
-                    (key.to_owned(), SchemaKey::from(&dynamic_key_info))
-                }),
+                .map(|(key, dynamic_key_info)| (key.clone(), SchemaKey::from(&dynamic_key_info))),
         );
         Ok(schema_keys)
     }
@@ -91,7 +89,7 @@ impl SchemaKeys {
 impl From<&DynamicKeyInfo<'_>> for SchemaKey {
     fn from(value: &DynamicKeyInfo) -> Self {
         Self::DynamicKey {
-            dynamic_key_path: value.dynamic_key_path.to_owned(),
+            dynamic_key_path: value.dynamic_key_path.clone(),
         }
     }
 }

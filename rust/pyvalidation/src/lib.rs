@@ -1,6 +1,21 @@
 // Copyright (c) 2025-2026 Arista Networks, Inc.
 // Use of this source code is governed by the Apache License 2.0
 // that can be found in the LICENSE file.
+// TODO: Reevaluate the allow
+#![allow(
+    missing_docs,
+    missing_debug_implementations,
+    clippy::fn_params_excessive_bools,
+    clippy::indexing_slicing,
+    clippy::manual_let_else,
+    clippy::map_err_ignore,
+    clippy::needless_pass_by_value,
+    clippy::module_name_repetitions,
+    clippy::struct_excessive_bools,
+    clippy::unnecessary_trailing_comma,
+    clippy::unnecessary_wraps,
+    reason = "PyO3-facing API names and test assertions mirror the exported Python module contract"
+)]
 
 // When running from Python we wish to cache Store inside Rust,
 // to avoid sending the huge object back and forth.
@@ -55,7 +70,7 @@ pub mod validation {
             PyRuntimeError::new_err(
                 "The schema store was not initialized. \
              Initialization can only happen once, and must be done before running any validations."
-                    .to_string(),
+                    .to_owned(),
             )
         })
     }
@@ -146,7 +161,7 @@ pub mod validation {
                         });
                     }
                     validation::feedback::ErrorIssue::InternalError { message } => {
-                        return Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
+                        return Err(PyRuntimeError::new_err(format!(
                             "Error occurred during validation: {message}"
                         )));
                     }
@@ -162,13 +177,13 @@ pub mod validation {
                             version: deprecated.version.into(),
                             replacement: deprecated.replacement.into(),
                             url: deprecated.url.into(),
-                        })
+                        });
                     }
                     validation::feedback::WarningIssue::IgnoredEosConfigKey(ignored) => {
                         result.ignored_eos_config_keys.push(IgnoredEosConfigKey {
                             message: ignored.to_string(),
                             path: feedback.path.into(),
-                        })
+                        });
                     }
                 }
             }
@@ -196,14 +211,12 @@ pub mod validation {
         // Load the store from path including resolving the $refs where applicable.
         let store = {
             let store = Store::from_file(Some(&file)).map_err(|err| {
-                pyo3::exceptions::PyRuntimeError::new_err(format!(
+                PyRuntimeError::new_err(format!(
                     "Error while loading the Schema Store from file: {err}",
                 ))
             })?;
             store.as_resolved().map_err(|err| {
-                pyo3::exceptions::PyRuntimeError::new_err(format!(
-                    "Error while resolving the Schema Store: {err}",
-                ))
+                PyRuntimeError::new_err(format!("Error while resolving the Schema Store: {err}",))
             })
         }?;
 
@@ -211,10 +224,9 @@ pub mod validation {
         STORE.set(store).map_err(|_| {
             PyRuntimeError::new_err(
                 "Unable to initialize the schema store. \
-                 Initialization can only happen once, and must be done before running any validations."
-                    .to_string(),
+                 Initialization can only happen once, and must be done before running any validations.".to_owned(),
             )
-            }).inspect(|_| info!("Initialized the schema store from file."))
+            }).inspect(|()| info!("Initialized the schema store from file."))
     }
 
     #[pyfunction]
@@ -338,9 +350,7 @@ mod tests {
     // Initialize the store and ignoring errors for duplicate initialization.
     // This avoids false negatives when multiple tests are executed at once.
     fn init_test_store(py: pyo3::Python<'_>) {
-        if STORE.get().is_some() {
-            panic!("Already set")
-        }
+        assert!(STORE.get().is_none(), "Already set");
         let module = py.import("validation").unwrap();
         {
             let args = ();
@@ -351,8 +361,8 @@ mod tests {
         };
     }
 
-    fn get_path_and_message_from_py_violation<'py>(
-        violation: pyo3::Bound<'py, pyo3::PyAny>,
+    fn get_path_and_message_from_py_violation(
+        violation: pyo3::Bound<'_, pyo3::PyAny>,
     ) -> (Vec<String>, String) {
         let path: Vec<String> = violation
             .getattr("path")
@@ -477,7 +487,7 @@ mod tests {
                 assert!(
                     expected_violations.contains(&expected_violation),
                     "violation was not found in expected violations: {expected_violation:?}"
-                )
+                );
             }
         });
     }
@@ -501,8 +511,8 @@ mod tests {
                 err.value(py).to_string(),
                 "Unable to initialize the schema store. \
                  Initialization can only happen once, and must be done before running any validations."
-            )
-        })
+            );
+        });
     }
 
     #[test]
@@ -522,7 +532,7 @@ mod tests {
             assert_eq!(
                 err.value(py).to_string(),
                 "Invalid JSON in data: expected value at line 1 column 1"
-            )
+            );
         });
     }
 
@@ -561,7 +571,7 @@ mod tests {
                 assert!(
                     expected_violations.contains(&expected_violation),
                     "violation was not found in expected violations: {expected_violation:?}"
-                )
+                );
             }
         });
     }
@@ -588,7 +598,7 @@ mod tests {
             assert_eq!(
                 err.value(py).to_string(),
                 "Invalid JSON in data: expected value at line 1 column 1"
-            )
+            );
         });
     }
 
@@ -614,7 +624,7 @@ mod tests {
             assert_eq!(
                 err.value(py).to_string(),
                 "Invalid JSON in adhoc schema: missing field `type` at line 1 column 14"
-            )
+            );
         });
     }
 
@@ -684,7 +694,7 @@ mod tests {
                 assert!(
                     expected_violations.contains(&expected_violation),
                     "violation was not found in expected violations: {expected_violation:?}"
-                )
+                );
             }
         });
     }

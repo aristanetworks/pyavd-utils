@@ -16,7 +16,7 @@ use crate::feedback::Removed;
 use crate::feedback::Type;
 use crate::feedback::Violation;
 use crate::validatable::ValidatableMapping;
-use crate::validatable::ValidatableMappingPair;
+use crate::validatable::ValidatableMappingPair as _;
 use crate::validatable::ValidatableValue;
 
 // This must be kept up to date when adding role keys in eos_config schema.
@@ -61,7 +61,7 @@ impl Validation for Dict {
 
 /// Validation of ref which will not merge in the schema, so it only works as expected
 /// when there are no local variables set. In practice this is only used for
-/// structured_config, where we $ref in the full eos_config schema.
+/// `structured_config`, where we $ref in the full `eos_config` schema.
 fn validate_ref<V: ValidatableValue>(
     schema: &Dict,
     value: &V,
@@ -73,7 +73,7 @@ fn validate_ref<V: ValidatableValue>(
         // Handle relaxed validation here, since the places we use it is also where we skip resolving the $ref before validation.
         let previous_relaxed_validation = ctx.state.relaxed_validation;
         if schema.relaxed_validation.unwrap_or_default() {
-            ctx.state.relaxed_validation = true
+            ctx.state.relaxed_validation = true;
         }
         let result = ref_schema.validate(value, ctx);
         ctx.state.relaxed_validation = previous_relaxed_validation;
@@ -83,21 +83,20 @@ fn validate_ref<V: ValidatableValue>(
 }
 
 /// Validate and optionally coerce mapping keys.
-/// Returns Some(coerced_items) when coercion is enabled, None otherwise.
+/// Returns `Some(coerced_items)` when coercion is enabled, None otherwise.
 fn validate_keys<'a, M: ValidatableMapping<'a>>(
     schema: &Dict,
     input: &M,
     ctx: &mut Context,
-) -> Option<Vec<(String, <M::Value as ValidatableValue>::Coerced)>> {
+) -> Option<Vec<<M::Value as ValidatableValue>::CoercedMappingItem>> {
     let mut coerced_items = ctx.configuration.return_coerced_data.then(Vec::new);
 
     let Some(keys) = &schema.keys else {
         // No schema keys - preserve all input as-is when coercing
         if let Some(ref mut items) = coerced_items {
             for pair in input.iter() {
-                let input_key = pair.key();
                 let input_value = pair.value();
-                items.push((input_key.into_owned(), input_value.clone_to_coerced()));
+                items.push(pair.coerced_item(input_value.clone_to_coerced()));
             }
         }
         return coerced_items;
@@ -117,66 +116,80 @@ fn validate_keys<'a, M: ValidatableMapping<'a>>(
     let dynamic_keys_infos = schema.get_dynamic_keys(input.as_schema_data_mapping());
 
     for pair in input.iter() {
-        let input_key = pair.key();
-        let input_key_str: &str = &input_key;
+        // We fall back to display key for path in case of non-string keys.
+        let display_key = pair.display_key();
+        let schema_key = pair.schema_key();
+        let path_key: &str = schema_key.as_deref().unwrap_or(&display_key);
         let input_value = pair.value();
         let key_span = pair.key_span();
-        ctx.state.path.push(input_key_str.to_owned());
+        ctx.state.path.push(path_key.to_owned());
 
-        // Determine what to do with this key
-        let include_in_output = if let Some(key_schema) = keys.get(input_key_str) {
-            if !check_deprecation(input_key_str, key_schema, key_span, input, ctx) {
-                if let Some(ref mut items) = coerced_items {
-                    let coerced = key_schema
-                        .validate(input_value, ctx)
-                        .unwrap_or_else(|| input_value.clone_to_coerced());
-                    items.push((input_key_str.to_owned(), coerced));
-                } else {
-                    let _ = key_schema.validate(input_value, ctx);
+        // Determine what to do with this key. Only string keys participate in
+        // schema/dynamic lookups and string-key-specific exceptions.
+        let include_in_output = if let Some(input_schema_key) = schema_key.as_deref() {
+            // This is a string key
+            if let Some(key_schema) = keys.get(input_schema_key) {
+                if !check_deprecation(input_schema_key, key_schema, key_span, input, ctx) {
+                    if let Some(ref mut items) = coerced_items {
+                        let coerced = key_schema
+                            .validate(input_value, ctx)
+                            .unwrap_or_else(|| input_value.clone_to_coerced());
+                        items.push(pair.coerced_item(coerced));
+                    } else {
+                        let _ = key_schema.validate(input_value, ctx);
+                    }
+                } else if let Some(ref mut items) = coerced_items {
+                    // Deprecated key with error - still include with original value
+                    items.push(pair.coerced_item(input_value.clone_to_coerced()));
                 }
-            } else if let Some(ref mut items) = coerced_items {
-                // Deprecated key with error - still include with original value
-                items.push((input_key_str.to_owned(), input_value.clone_to_coerced()));
-            }
-            false // Already handled
-        } else if let Some(dynamic_keys_infos) = &dynamic_keys_infos
-            && let Some(dynamic_key_info) = dynamic_keys_infos.get(input_key_str)
-        {
-            let key_schema = dynamic_key_info.schema;
-            if !check_deprecation(input_key_str, key_schema, key_span, input, ctx) {
-                if let Some(ref mut items) = coerced_items {
-                    let coerced = key_schema
-                        .validate(input_value, ctx)
-                        .unwrap_or_else(|| input_value.clone_to_coerced());
-                    items.push((input_key_str.to_owned(), coerced));
-                } else {
-                    let _ = key_schema.validate(input_value, ctx);
+                false // Already handled
+            } else if let Some(dynamic_keys_infos) = &dynamic_keys_infos
+                && let Some(dynamic_key_info) = dynamic_keys_infos.get(input_schema_key)
+            {
+                let key_schema = dynamic_key_info.schema;
+                if !check_deprecation(input_schema_key, key_schema, key_span, input, ctx) {
+                    if let Some(ref mut items) = coerced_items {
+                        let coerced = key_schema
+                            .validate(input_value, ctx)
+                            .unwrap_or_else(|| input_value.clone_to_coerced());
+                        items.push(pair.coerced_item(coerced));
+                    } else {
+                        let _ = key_schema.validate(input_value, ctx);
+                    }
+                } else if let Some(ref mut items) = coerced_items {
+                    items.push(pair.coerced_item(input_value.clone_to_coerced()));
                 }
-            } else if let Some(ref mut items) = coerced_items {
-                items.push((input_key_str.to_owned(), input_value.clone_to_coerced()));
+                false // Already handled
+            } else if input_schema_key.starts_with('_') {
+                // Key starts with underscore - skip validation but include in output
+                true
+            } else if !schema.allow_other_keys.unwrap_or_default() {
+                // Key is not part of the schema and does not start with underscore
+                ctx.add_error_with_span(key_span, Violation::UnexpectedKey());
+                true // Include the value in output (error is recorded)
+            } else {
+                if let Some(eos_config_keys) = &eos_config_keys
+                    && eos_config_keys.contains_key(input_schema_key)
+                    && !EOS_CLI_CONFIG_GEN_ROLE_KEYS.contains(&input_schema_key)
+                {
+                    // Key is not in avd_design schema but is in eos_config_keys
+                    // and allow_other_keys is true - emit a warning that it will be ignored
+                    ctx.add_warning_with_span(key_span, IgnoredEosConfigKey {});
+                }
+                true // allow_other_keys is true - include as-is
             }
-            false // Already handled
-        } else if input_key_str.starts_with("_") {
-            // Key starts with underscore - skip validation but include in output
-            true
         } else if !schema.allow_other_keys.unwrap_or_default() {
-            // Key is not part of the schema and does not start with underscore
+            // Non-string YAML key and other keys are not allowed.
             ctx.add_error_with_span(key_span, Violation::UnexpectedKey());
             true // Include the value in output (error is recorded)
         } else {
-            if let Some(eos_config_keys) = &eos_config_keys
-                && eos_config_keys.contains_key(input_key_str)
-                && !EOS_CLI_CONFIG_GEN_ROLE_KEYS.contains(&input_key_str)
-            {
-                // Key is not in avd_design schema but is in eos_config_keys
-                // and allow_other_keys is true - emit a warning that it will be ignored
-                ctx.add_warning_with_span(key_span, IgnoredEosConfigKey {});
-            }
-            true // allow_other_keys is true - include as-is
+            // Non-string YAML key under allow_other_keys: skip validation and
+            // warning logic, but preserve it in coerced output.
+            true
         };
 
         if include_in_output && let Some(ref mut items) = coerced_items {
-            items.push((input_key_str.to_owned(), input_value.clone_to_coerced()));
+            items.push(pair.coerced_item(input_value.clone_to_coerced()));
         }
 
         ctx.state.path.pop();
@@ -200,12 +213,7 @@ fn validate_required_keys<'a, M: ValidatableMapping<'a>>(
     if let Some(keys) = &schema.keys {
         for (key, key_schema) in keys {
             if key_schema.is_required() && !input.contains_key(key) {
-                ctx.add_error_for(
-                    value,
-                    Violation::MissingRequiredKey {
-                        key: key.to_string(),
-                    },
-                );
+                ctx.add_error_for(value, Violation::MissingRequiredKey { key: key.clone() });
             }
         }
     }
@@ -256,7 +264,7 @@ fn check_deprecation<'a, M: ValidatableMapping<'a>>(
                                 key_span.clone(),
                                 Violation::DeprecatedConflict {
                                     other_path: new_key.into(),
-                                    url: deprecation.url.to_owned().into(),
+                                    url: deprecation.url.clone().into(),
                                 },
                             );
                         }
@@ -279,12 +287,14 @@ mod tests {
     use avdschema::str::Str;
     use ordermap::OrderMap;
     use serde::Deserialize as _;
+    use yaml_parser::parse;
 
     use super::*;
     use crate::context::Configuration;
     use crate::context::Context;
     use crate::feedback::CoercionNote;
     use crate::feedback::Feedback;
+    use crate::feedback::SourceSpan;
     use crate::feedback::WarningIssue;
     use crate::validation::test_utils::get_test_store;
 
@@ -372,7 +382,7 @@ mod tests {
                     .into()
                 }
             ]
-        )
+        );
     }
 
     #[test]
@@ -557,7 +567,7 @@ mod tests {
                     .into()
                 }
             ]
-        )
+        );
     }
 
     #[test]
@@ -660,7 +670,7 @@ mod tests {
                     .into()
                 }
             ]
-        )
+        );
     }
 
     #[test]
@@ -695,7 +705,89 @@ mod tests {
                 span: None,
                 issue: Violation::UnexpectedKey().into()
             }]
-        )
+        );
+    }
+
+    #[test]
+    fn validate_yaml_unexpected_key_uses_key_span() {
+        let schema = Dict {
+            keys: Some(OrderMap::from_iter([("foo".into(), Str::default().into())])),
+            ..Default::default()
+        };
+        let (docs, errors) = parse("bar: 1\n");
+        assert!(errors.is_empty());
+        let input = docs.first().expect("expected a parsed document");
+
+        let store = get_test_store();
+        let mut ctx = Context::new(&store, None);
+        let _ = schema.validate(input, &mut ctx);
+
+        assert_eq!(
+            ctx.result.errors,
+            vec![Feedback {
+                path: vec!["bar".into()].into(),
+                span: Some(SourceSpan { start: 0, end: 3 }),
+                issue: Violation::UnexpectedKey().into()
+            }]
+        );
+    }
+
+    #[test]
+    fn validate_yaml_non_string_key_does_not_match_schema_key() {
+        let schema = Dict {
+            keys: Some(OrderMap::from_iter([("123".into(), Str::default().into())])),
+            ..Default::default()
+        };
+        let (docs, errors) = parse("123: value\n");
+        assert!(errors.is_empty());
+        let input = docs.first().expect("expected a parsed document");
+
+        let store = get_test_store();
+        let mut ctx = Context::new(&store, None);
+        let _ = schema.validate(input, &mut ctx);
+
+        assert_eq!(
+            ctx.result.errors,
+            vec![Feedback {
+                path: vec!["123".into()].into(),
+                span: Some(SourceSpan { start: 0, end: 3 }),
+                issue: Violation::UnexpectedKey().into()
+            }]
+        );
+    }
+
+    #[test]
+    fn validate_yaml_non_string_key_allowed_and_preserved_in_coerced_output() {
+        let schema = Dict {
+            keys: Some(OrderMap::from_iter([("foo".into(), Str::default().into())])),
+            allow_other_keys: Some(true),
+            ..Default::default()
+        };
+        let (docs, errors) = parse("123: value\n");
+        assert!(errors.is_empty());
+        let input = docs.first().expect("expected a parsed document");
+
+        let store = get_test_store();
+        let configuration = Configuration {
+            return_coerced_data: true,
+            ..Default::default()
+        };
+        let mut ctx = Context::new(&store, Some(&configuration));
+        let coerced = schema
+            .validate(input, &mut ctx)
+            .expect("expected coerced data");
+
+        assert!(ctx.result.errors.is_empty());
+        let yaml_parser::Value::Mapping(pairs) = coerced.value else {
+            panic!("expected coerced mapping");
+        };
+        let pair = pairs.first().expect("expected one mapping pair");
+        assert!(matches!(
+            pair.key.value,
+            yaml_parser::Value::Int(yaml_parser::Integer::I64(123))
+        ));
+        assert_eq!(pair.key.span, yaml_parser::Span::new(0..3));
+        assert_eq!(pair.pair_span, yaml_parser::Span::new(0..10));
     }
 
     /// Test that keys starting with underscore are preserved in output but not validated
@@ -774,7 +866,44 @@ mod tests {
                 }
                 .into()
             }]
-        )
+        );
+    }
+
+    #[test]
+    fn validate_yaml_deprecated_key_uses_key_span() {
+        let schema: Dict = Dict::deserialize(serde_json::json!({
+            "keys": {
+                "foo": {
+                    "type": "str",
+                    "deprecation": {
+                        "warning": true,
+                        "remove_in_version": "1.2.3",
+                    }
+                }
+            }
+        }))
+        .unwrap();
+        let (docs, errors) = parse("foo: bar\n");
+        assert!(errors.is_empty());
+        let input = docs.first().expect("expected a parsed document");
+
+        let store = get_test_store();
+        let mut ctx = Context::new(&store, None);
+        let _ = schema.validate(input, &mut ctx);
+
+        assert_eq!(
+            ctx.result.warnings,
+            vec![Feedback {
+                path: vec!["foo".into()].into(),
+                span: Some(SourceSpan { start: 0, end: 3 }),
+                issue: WarningIssue::Deprecated(Deprecated {
+                    path: vec!["foo".into()].into(),
+                    replacement: None.into(),
+                    version: Some("1.2.3".into()).into(),
+                    url: None.into()
+                })
+            }]
+        );
     }
 
     // Tests a key that is marked as removed returns the proper error.
@@ -796,9 +925,14 @@ mod tests {
         .unwrap();
         let input = serde_json::json!({"foo": 123});
         let store = get_test_store();
-        let mut ctx = Context::new(&store, None);
-        let _ = schema.validate(&input, &mut ctx);
+        let configuration = Configuration {
+            return_coerced_data: true,
+            ..Default::default()
+        };
+        let mut ctx = Context::new(&store, Some(&configuration));
+        let coerced = schema.validate(&input, &mut ctx);
         assert!(ctx.result.infos.is_empty());
+        assert_eq!(coerced, Some(input));
         assert_eq!(
             ctx.result.errors,
             vec![Feedback {
@@ -812,7 +946,7 @@ mod tests {
                 })
                 .into()
             }]
-        )
+        );
     }
 
     // Tests a key that is marked as deprecated but where warning is disabled
@@ -1125,7 +1259,7 @@ mod tests {
                 span: None,
                 issue: Violation::MissingRequiredKey { key: "foo".into() }.into()
             }]
-        )
+        );
     }
 
     #[test]
@@ -1190,7 +1324,7 @@ mod tests {
                 span: None,
                 issue: Violation::MissingRequiredKey { key: "foo".into() }.into()
             }]
-        )
+        );
     }
 
     #[test]
@@ -1313,5 +1447,82 @@ mod tests {
         assert!(ctx.result.warnings.is_empty());
         // Should have no errors either
         assert!(ctx.result.errors.is_empty());
+    }
+
+    #[test]
+    fn validate_no_schema_keys_preserves_input_when_coercing() {
+        let schema = Dict::default();
+        let input = serde_json::json!({
+            "foo": 123,
+            "nested": {
+                "bar": true
+            }
+        });
+
+        let store = get_test_store();
+        let configuration = Configuration {
+            return_coerced_data: true,
+            ..Default::default()
+        };
+        let mut ctx = Context::new(&store, Some(&configuration));
+
+        let coerced = schema.validate(&input, &mut ctx);
+
+        assert!(ctx.result.errors.is_empty());
+        assert_eq!(coerced, Some(input));
+    }
+
+    #[test]
+    fn validate_dynamic_key_deprecated_ok() {
+        let schema: Dict = Dict::deserialize(serde_json::json!({
+            "keys": {
+                "my_dynamic_keys": {
+                    "type": "list",
+                    "items": {
+                        "type": "dict",
+                        "keys": {
+                            "key": {
+                                "type": "str"
+                            }
+                        }
+                    }
+                }
+            },
+            "dynamic_keys": {
+                "my_dynamic_keys.key": {
+                    "type": "int",
+                    "deprecation": {
+                        "warning": true,
+                        "remove_in_version": "1.2.3"
+                    }
+                }
+            },
+            "allow_other_keys": true
+        }))
+        .unwrap();
+
+        let input = serde_json::json!({
+            "my_dynamic_keys": [{"key": "dynkey1"}],
+            "dynkey1": 5
+        });
+
+        let store = get_test_store();
+        let mut ctx = Context::new(&store, None);
+        let _ = schema.validate(&input, &mut ctx);
+
+        assert!(ctx.result.errors.is_empty());
+        assert_eq!(
+            ctx.result.warnings,
+            vec![Feedback {
+                path: vec!["dynkey1".into()].into(),
+                span: None,
+                issue: WarningIssue::Deprecated(Deprecated {
+                    path: vec!["dynkey1".into()].into(),
+                    replacement: None.into(),
+                    version: Some("1.2.3".into()).into(),
+                    url: None.into(),
+                })
+            }]
+        );
     }
 }

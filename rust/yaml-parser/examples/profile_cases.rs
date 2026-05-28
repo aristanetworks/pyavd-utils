@@ -116,8 +116,15 @@ fn main() -> ExitCode {
         #[cfg(feature = "serde")]
         Mode::Serde => {
             for _ in 0..iterations {
-                let value: OwnedYamlValue = yaml_parser::serde::from_str(black_box(input)).unwrap();
-                black_box(value);
+                match yaml_parser::serde::from_str::<OwnedYamlValue>(black_box(input)) {
+                    Ok(value) => {
+                        black_box(value);
+                    }
+                    Err(error) => {
+                        eprintln!("serde deserialization failed for {dataset_arg}: {error}");
+                        return ExitCode::FAILURE;
+                    }
+                }
             }
         }
     }

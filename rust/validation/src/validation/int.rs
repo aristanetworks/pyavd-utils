@@ -7,7 +7,7 @@ use avdschema::int::Int;
 use avdschema::resolve_ref;
 
 use super::Validation;
-use super::valid_values::ValidateValidValues;
+use super::valid_values::ValidateValidValues as _;
 use crate::context::Context;
 use crate::feedback::Type;
 use crate::feedback::Violation;
@@ -23,16 +23,25 @@ impl Validation for Int {
         if let Some(v) = value.as_i64() {
             // Emit coercion info if the original value was not an int
             if !value.is_int() {
-                ctx.add_coercion_for(value, v)
+                ctx.add_coercion_for(value, v);
             }
             self.valid_values.validate(value, &v, ctx);
             validate_min(self, value, &v, ctx);
             validate_max(self, value, &v, ctx);
-            if ctx.configuration.return_coerced_data {
-                Some(value.coerce_int(v))
-            } else {
-                None
-            }
+            ctx.configuration
+                .return_coerced_data
+                .then(|| value.coerce_int(v))
+        } else if value.is_int() {
+            ctx.add_error_for(
+                value,
+                Violation::IntegerOutOfRange {
+                    found: value.as_str().map_or_else(
+                        || value.to_feedback_value().to_string(),
+                        std::borrow::Cow::into_owned,
+                    ),
+                },
+            );
+            None
         } else {
             Self::handle_invalid_type(value, ctx, Type::Int)
         }
@@ -119,6 +128,64 @@ mod tests {
                 issue: Violation::InvalidType {
                     expected: Type::Int,
                     found: Type::Dict,
+                }
+                .into()
+            }]
+        );
+    }
+
+    #[test]
+    fn validate_json_integer_out_of_range_err() {
+        let schema = Int::default();
+        let input = Value::Number(serde_json::Number::from(i64::MAX as u64 + 1));
+        let store = get_test_store();
+        let mut ctx = Context::new(&store, None);
+        let _ = schema.validate(&input, &mut ctx);
+        assert!(ctx.result.infos.is_empty());
+        assert_eq!(
+            ctx.result.errors,
+            vec![Feedback {
+                path: vec![].into(),
+                span: None,
+                issue: Violation::IntegerOutOfRange {
+                    found: "9223372036854775808".into()
+                }
+                .into()
+            }]
+        );
+    }
+
+    #[test]
+    fn validate_yaml_integer_variant_within_i64_ok() {
+        let schema = Int::default();
+        let input = yaml_parser::Node::new(
+            yaml_parser::Value::Int(yaml_parser::Integer::U64(123)),
+            yaml_parser::Span::default(),
+        );
+        let store = get_test_store();
+        let mut ctx = Context::new(&store, None);
+        let _ = schema.validate(&input, &mut ctx);
+        assert!(ctx.result.errors.is_empty() && ctx.result.infos.is_empty());
+    }
+
+    #[test]
+    fn validate_yaml_integer_out_of_range_err() {
+        let schema = Int::default();
+        let input = yaml_parser::Node::new(
+            yaml_parser::Value::Int(yaml_parser::Integer::U64(i64::MAX as u64 + 1)),
+            yaml_parser::Span::default(),
+        );
+        let store = get_test_store();
+        let mut ctx = Context::new(&store, None);
+        let _ = schema.validate(&input, &mut ctx);
+        assert!(ctx.result.infos.is_empty());
+        assert_eq!(
+            ctx.result.errors,
+            vec![Feedback {
+                path: vec![].into(),
+                span: Some(crate::feedback::SourceSpan { start: 0, end: 0 }),
+                issue: Violation::IntegerOutOfRange {
+                    found: "9223372036854775808".into()
                 }
                 .into()
             }]
