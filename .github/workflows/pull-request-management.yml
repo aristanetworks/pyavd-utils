@@ -8,6 +8,9 @@ name: "Build and Test Pull Request and main branch"
     branches:
       - main
 
+permissions:
+  contents: read
+
 concurrency:
   # For PRs the head_ref will be used. For Merge Queues (merge_group) we fallback to run_id.
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
@@ -29,8 +32,10 @@ jobs:
     name: Python Linting not covered in pre-commit
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
         with:
           python-version: "3.12"
       - name: Install pyavd-utils
@@ -45,8 +50,10 @@ jobs:
     name: Python coverage
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
         with:
           python-version: 3.11
       - name: Install tox
@@ -56,7 +63,7 @@ jobs:
         run: |-
           tox run -e coverage,report
       - name: Upload pytest coverage data
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: pytest-coverage
           path: coverage.xml
@@ -77,12 +84,14 @@ jobs:
           - macos-15-intel
           - macos-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
       - name: Install Rust toolchain from rust-toolchain.toml
         run: rustup show
       # This is needed because we have pyo3 tests and our minimum python version is 3.10.
       # On some test containers (looking at you windows-latest) the included Python is 3.9.
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
         with:
           python-version: "3.12"
       - name: Install YAML test suite fixture
@@ -92,31 +101,31 @@ jobs:
         if: |
           matrix.os == 'ubuntu-latest'
       - name: Run cargo fmt pre-commit hook
-        uses: pre-commit/action@v3.0.1
+        uses: pre-commit/action@2c7b3805fd2a0fd8c1884dcaebf91fc102a13ecd # v3.0.1
         with:
           extra_args: fmt --all-files
         if: |
           matrix.os == 'ubuntu-latest'
       - name: Run cargo check pre-commit hook
-        uses: pre-commit/action@v3.0.1
+        uses: pre-commit/action@2c7b3805fd2a0fd8c1884dcaebf91fc102a13ecd # v3.0.1
         with:
           extra_args: cargo-check --all-files
         if: |
           matrix.os == 'ubuntu-latest'
       - name: Run clippy pre-commit hook
-        uses: pre-commit/action@v3.0.1
+        uses: pre-commit/action@2c7b3805fd2a0fd8c1884dcaebf91fc102a13ecd # v3.0.1
         with:
           extra_args: clippy --all-files
         if: |
           matrix.os == 'ubuntu-latest'
       - name: Run cargo about pre-commit hook
-        uses: pre-commit/action@v3.0.1
+        uses: pre-commit/action@2c7b3805fd2a0fd8c1884dcaebf91fc102a13ecd # v3.0.1
         with:
           extra_args: cargo-about-generate --all-files
         if: |
           matrix.os == 'ubuntu-latest'
       - name: Run cargo deny pre-commit hook
-        uses: pre-commit/action@v3.0.1
+        uses: pre-commit/action@2c7b3805fd2a0fd8c1884dcaebf91fc102a13ecd # v3.0.1
         with:
           extra_args: cargo-deny --all-files
         if: |
@@ -130,7 +139,7 @@ jobs:
         if: |
           matrix.os == 'ubuntu-latest'
       - name: Upload coverage report
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: rust-llvm-cov
           path: lcov.info
