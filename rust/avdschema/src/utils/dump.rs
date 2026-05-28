@@ -83,7 +83,7 @@ pub enum DumpError {
 // These tests are also called from the load tests.
 #[cfg(all(test, feature = "dump_load_files"))]
 pub(crate) mod tests {
-    use super::Dump;
+    use super::Dump as _;
     use crate::utils::test_utils::get_test_dict_schema;
     use crate::utils::test_utils::get_test_store;
     use crate::utils::test_utils::get_tmp_file;
@@ -93,14 +93,14 @@ pub(crate) mod tests {
         let file_path = get_tmp_file("test_dump.yml");
         let schema = get_test_dict_schema();
         let result = schema.to_file(Some(&file_path));
-        assert!(result.is_ok())
+        assert!(result.is_ok());
     }
     #[test]
     pub(crate) fn dump_json() {
         let file_path = get_tmp_file("test_dump.json");
         let schema = get_test_dict_schema();
         let result = schema.to_file(Some(&file_path));
-        assert!(result.is_ok())
+        assert!(result.is_ok());
     }
     #[cfg(feature = "xz2")]
     #[test]
@@ -108,20 +108,20 @@ pub(crate) mod tests {
         let file_path = get_tmp_file("test_dump.xz2");
         let schema = get_test_dict_schema();
         let result = schema.to_file(Some(&file_path));
-        assert!(result.is_ok())
+        assert!(result.is_ok());
     }
     #[test]
     pub(crate) fn dump_gz() {
         let file_path = get_tmp_file("test_dump.gz");
         let schema = get_test_dict_schema();
         let result = schema.to_file(Some(&file_path));
-        assert!(result.is_ok())
+        assert!(result.is_ok());
     }
     #[test]
     pub(crate) fn dump_store_yaml() {
         let file_path = get_tmp_file("test_dump_store.yml");
         let store = get_test_store();
         let result = store.to_file(Some(&file_path));
-        assert!(result.is_ok())
+        assert!(result.is_ok());
     }
 }

@@ -1,6 +1,21 @@
 // Copyright (c) 2025-2026 Arista Networks, Inc.
 // Use of this source code is governed by the Apache License 2.0
 // that can be found in the LICENSE file.
+// TODO: Reevaluate the allow
+#![allow(
+    missing_docs,
+    clippy::as_conversions,
+    clippy::cast_possible_truncation,
+    clippy::indexing_slicing,
+    clippy::integer_division,
+    clippy::integer_division_remainder_used,
+    clippy::map_err_ignore,
+    clippy::min_ident_chars,
+    clippy::string_slice,
+    clippy::unseparated_literal_suffix,
+    clippy::shadow_unrelated,
+    reason = "Existing password codec implementation uses fixed-size lookup tables and compact algorithm names"
+)]
 #![deny(unused_crate_dependencies)]
 
 // Feature sha512

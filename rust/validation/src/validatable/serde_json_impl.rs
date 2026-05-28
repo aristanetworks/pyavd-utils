@@ -2,7 +2,7 @@
 // Use of this source code is governed by the Apache License 2.0
 // that can be found in the LICENSE file.
 
-//! Implementation of ValidatableValue traits for serde_json types.
+//! Implementation of `ValidatableValue` traits for `serde_json` types.
 
 use std::borrow::Cow;
 
@@ -54,7 +54,7 @@ impl ValidatableValue for Value {
         match self {
             Value::Number(n) => number_as_i64(n),
             Value::String(s) => s.parse().ok(),
-            Value::Bool(b) => Some(if *b { 1 } else { 0 }),
+            Value::Bool(b) => Some(i64::from(*b)),
             _ => None,
         }
     }
@@ -169,7 +169,7 @@ impl<'a> ValidatableMapping<'a> for &'a Map<String, Value> {
     }
 }
 
-/// Iterator adapter for serde_json Map.
+/// Iterator adapter for `serde_json` Map.
 pub struct MapIter<'a> {
     inner: serde_json::map::Iter<'a>,
 }

@@ -4,9 +4,9 @@
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as B64;
-use cbc::cipher::BlockDecryptMut;
-use cbc::cipher::BlockEncryptMut;
-use cbc::cipher::KeyIvInit;
+use cbc::cipher::BlockDecryptMut as _;
+use cbc::cipher::BlockEncryptMut as _;
+use cbc::cipher::KeyIvInit as _;
 use cbc::cipher::block_padding::NoPadding;
 use cipher as _;
 use des::TdesEde3;
@@ -172,7 +172,7 @@ mod tests {
     #[test]
     fn test_cbc_check_password_failure() {
         for (key, ciphertext) in INVALID_PAIRS {
-            assert!(!cbc_check_password(key, ciphertext))
+            assert!(!cbc_check_password(key, ciphertext));
         }
     }
 }

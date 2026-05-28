@@ -4,6 +4,9 @@ version.workspace = true
 edition = "2024"
 license.workspace = true
 
+[lints]
+workspace = true
+
 [features]
 default = ["cbc", "sha512", "simple-7"]
 cbc = ["dep:cbc", "dep:cipher", "dep:des", "dep:base64"]

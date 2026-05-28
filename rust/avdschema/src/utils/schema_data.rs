@@ -24,7 +24,7 @@ pub trait SchemaDataValue<'a>: Sized + Copy {
     ) -> OrderMap<Vec<String>, Self> {
         if let Some(component) = path.next() {
             if let Some(trail) = &mut trail {
-                trail.push(component.to_string());
+                trail.push(component.to_owned());
             }
             if let Some(mapping) = self.as_mapping()
                 && let Some(value) = mapping.get(component)
@@ -45,7 +45,7 @@ pub trait SchemaDataValue<'a>: Sized + Copy {
                         })
                         .flat_map(|(index, value)| {
                             let mut forked_trail = trail.as_ref().map(|trail| {
-                                let mut forked_trail = trail.to_vec();
+                                let mut forked_trail = (*trail).clone();
                                 forked_trail.push(index.to_string());
                                 forked_trail
                             });
@@ -74,7 +74,7 @@ pub trait SchemaDataSequence<'a> {
 }
 
 impl<'a> SchemaDataValue<'a> for &'a Value {
-    type Mapping = &'a serde_json::Map<String, Value>;
+    type Mapping = &'a Map<String, Value>;
     type Sequence = &'a [Value];
 
     fn as_mapping(self) -> Option<Self::Mapping> {

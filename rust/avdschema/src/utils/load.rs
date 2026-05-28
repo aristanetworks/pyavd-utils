@@ -98,7 +98,7 @@ where
             .into_iter()
             .filter_map(Result::ok)
             .filter_map(|entry| {
-                std::path::Path::new(entry.file_name().to_str()?)
+                Path::new(entry.file_name().to_str()?)
                     .extension()
                     .is_some_and(|ext| ext.eq_ignore_ascii_case("yml"))
                     .then_some(entry)
@@ -118,7 +118,7 @@ pub enum LoadError {
     JsonError(serde_json::Error),
     YamlError(serde_yaml::Error),
     #[cfg(feature = "dump_load_files")]
-    IoError(std::io::Error),
+    IoError(io::Error),
     #[cfg(feature = "dump_load_files")]
     #[display("Invalid extension for input file.")]
     InvalidExtension {},
@@ -129,7 +129,7 @@ pub enum LoadError {
 
 #[cfg(all(test, feature = "dump_load_files"))]
 mod tests {
-    use super::Load;
+    use super::Load as _;
     use crate::Store;
     use crate::any::AnySchema;
     use crate::utils::test_utils::get_test_dict_schema;

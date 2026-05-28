@@ -2,7 +2,7 @@
 // Use of this source code is governed by the Apache License 2.0
 // that can be found in the LICENSE file.
 
-//! Implementation of ValidatableValue traits for yaml_parser types.
+//! Implementation of `ValidatableValue` traits for `yaml_parser` types.
 
 use std::borrow::Cow;
 
@@ -64,7 +64,7 @@ impl<'input> ValidatableValue for Node<'input> {
             Value::Int(integer) => integer.as_i64(),
             Value::Float(float) => integral_float_to_i64(*float),
             Value::String(s) => s.parse().ok(),
-            Value::Bool(b) => Some(if *b { 1 } else { 0 }),
+            Value::Bool(b) => Some(i64::from(*b)),
             _ => None,
         }
     }
@@ -165,10 +165,7 @@ impl<'input> ValidatableValue for Node<'input> {
         match &self.value {
             Value::Null => FV::Null(),
             Value::Bool(b) => FV::Bool(*b),
-            Value::Int(i) => i
-                .as_i64()
-                .map(FV::Int)
-                .unwrap_or_else(|| FV::Str(i.to_string())),
+            Value::Int(i) => i.as_i64().map_or_else(|| FV::Str(i.to_string()), FV::Int),
             Value::Float(f) => FV::Float(*f),
             Value::String(s) => FV::Str(s.to_string()),
             Value::Sequence(seq) => FV::List(
@@ -201,7 +198,7 @@ impl<'input> ValidatableValue for Node<'input> {
 
 // === Wrapper for yaml_parser Mapping ===
 
-/// A wrapper around yaml_parser's mapping representation.
+/// A wrapper around `yaml_parser`'s mapping representation.
 ///
 /// Note: YAML mappings can have non-string keys, but only string keys
 /// participate in schema lookups.
@@ -271,7 +268,7 @@ impl<'a, 'input: 'a> ValidatableMapping<'a> for NodeMapping<'a, 'input> {
     }
 }
 
-/// Iterator over yaml_parser mapping entries.
+/// Iterator over `yaml_parser` mapping entries.
 pub struct NodeMappingIter<'a, 'input> {
     inner: std::slice::Iter<'a, MappingPair<'input>>,
 }
@@ -387,7 +384,7 @@ mod tests {
     use yaml_parser::Value;
 
     use crate::validatable::ValidatableMapping;
-    use crate::validatable::ValidatableMappingPair;
+    use crate::validatable::ValidatableMappingPair as _;
     use crate::validatable::ValidatableSequence;
     use crate::validatable::ValidatableValue;
 
@@ -476,7 +473,7 @@ mod tests {
             (Integer::U128(u128::MAX), u128::MAX.to_string()),
             (
                 Integer::BigIntStr(Cow::Borrowed("340282366920938463463374607431768211456")),
-                "340282366920938463463374607431768211456".to_string(),
+                "340282366920938463463374607431768211456".to_owned(),
             ),
         ];
 
@@ -552,8 +549,8 @@ mod tests {
         let keys: Vec<String> = ValidatableMapping::iter(&mapping)
             .map(|pair| pair.display_key().into_owned())
             .collect();
-        assert!(keys.contains(&"name".to_string()));
-        assert!(keys.contains(&"age".to_string()));
+        assert!(keys.contains(&"name".to_owned()));
+        assert!(keys.contains(&"age".to_owned()));
     }
 
     #[test]
@@ -573,7 +570,7 @@ mod tests {
         assert!(!seq.is_empty());
 
         let items: Vec<i64> = ValidatableSequence::iter(&seq)
-            .filter_map(|v| v.as_i64())
+            .filter_map(ValidatableValue::as_i64)
             .collect();
         assert_eq!(items, vec![1, 2, 3]);
     }

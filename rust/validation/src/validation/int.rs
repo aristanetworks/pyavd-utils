@@ -7,7 +7,7 @@ use avdschema::int::Int;
 use avdschema::resolve_ref;
 
 use super::Validation;
-use super::valid_values::ValidateValidValues;
+use super::valid_values::ValidateValidValues as _;
 use crate::context::Context;
 use crate::feedback::Type;
 use crate::feedback::Violation;
@@ -23,24 +23,22 @@ impl Validation for Int {
         if let Some(v) = value.as_i64() {
             // Emit coercion info if the original value was not an int
             if !value.is_int() {
-                ctx.add_coercion_for(value, v)
+                ctx.add_coercion_for(value, v);
             }
             self.valid_values.validate(value, &v, ctx);
             validate_min(self, value, &v, ctx);
             validate_max(self, value, &v, ctx);
-            if ctx.configuration.return_coerced_data {
-                Some(value.coerce_int(v))
-            } else {
-                None
-            }
+            ctx.configuration
+                .return_coerced_data
+                .then(|| value.coerce_int(v))
         } else if value.is_int() {
             ctx.add_error_for(
                 value,
                 Violation::IntegerOutOfRange {
-                    found: value
-                        .as_str()
-                        .map(|found| found.into_owned())
-                        .unwrap_or_else(|| value.to_feedback_value().to_string()),
+                    found: value.as_str().map_or_else(
+                        || value.to_feedback_value().to_string(),
+                        std::borrow::Cow::into_owned,
+                    ),
                 },
             );
             None
