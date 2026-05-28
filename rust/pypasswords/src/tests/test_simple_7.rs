@@ -8,7 +8,7 @@ use super::*;
 fn simple_7_encrypt_decrypt_roundtrip() {
     with_passwords_module(|_py, module| {
         let password = "test_password";
-        let salt = 5u8;
+        let salt = 5_u8;
 
         let encrypted: String = module
             .call_method1("simple_7_encrypt", (password, Some(salt)))
@@ -53,7 +53,7 @@ fn simple_7_encrypt_with_random_salt() {
 fn simple_7_encrypt_empty_password_err() {
     with_passwords_module(|py, module| {
         let err = module
-            .call_method1("simple_7_encrypt", ("", Some(5u8)))
+            .call_method1("simple_7_encrypt", ("", Some(5_u8)))
             .unwrap_err();
 
         assert!(err.is_instance_of::<pyo3::exceptions::PyValueError>(py));
@@ -65,7 +65,7 @@ fn simple_7_encrypt_empty_password_err() {
 fn simple_7_encrypt_invalid_salt_err() {
     with_passwords_module(|py, module| {
         let password = "test_password";
-        let invalid_salt = 16u8; // Out of range (0-15)
+        let invalid_salt = 16_u8; // Out of range (0-15)
 
         let err = module
             .call_method1("simple_7_encrypt", (password, Some(invalid_salt)))

@@ -1,11 +1,7 @@
 // Copyright (c) 2025-2026 Arista Networks, Inc.
 // Use of this source code is governed by the Apache License 2.0
 // that can be found in the LICENSE file.
-// TODO: Reevaluate the allow
-#![allow(
-    missing_docs,
-    reason = "Build scripts do not expose public API documentation"
-)]
+//! Build script adding the `PyO3` extension-module linker arguments required on macOS.
 
 use std::env;
 
@@ -17,7 +13,6 @@ fn main() {
         && current_target_os == "macos"
     {
         println!("cargo:warning=Compiling on 'macos'");
-        // Needed for MacOS when using pyo3 extension-module
         pyo3_build_config::add_extension_module_link_args();
     }
 }
