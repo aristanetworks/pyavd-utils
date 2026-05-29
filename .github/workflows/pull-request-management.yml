@@ -22,25 +22,6 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  # -------------------------------------------- #
-  # Python type checking not covered in pre-commit
-  # -------------------------------------------- #
-  python_type_checking:
-    name: Python Linting not covered in pre-commit
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
-      - name: Install pyavd-utils
-        # Adding pyavd-utils as editable to force a build of the .so files.
-        run: |
-          pip install -e . --group pytest setuptools --upgrade
-      - name: PyRight static type checker
-        # Specific SHA as allowed by github org admins
-        uses: jakebailey/pyright-action@6cabc0f01c4994be48fd45cd9dbacdd6e1ee6e5e
-
   python_coverage:
     name: Python coverage
     runs-on: ubuntu-latest
@@ -60,6 +41,22 @@ jobs:
         with:
           name: pytest-coverage
           path: coverage.xml
+
+  # ----------------------------------- #
+  # Pre-commit
+  # ----------------------------------- #
+  pre_commit:
+    name: Run pre-commit and commit back any changes
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout the repo
+        uses: actions/checkout@v6
+      - name: Run pre-commit
+        uses: pre-commit/action@v3.0.1
+        with:
+          extra_args: --all-files
+      - name: Commit back any git diff
+        uses: autofix-ci/action@c5b2d67aa2274e7b5a18224e8171550871fc7e4a
 
   # ----------------------------------- #
   # Cargo build, test and linting
@@ -87,40 +84,6 @@ jobs:
           python-version: "3.12"
       - name: Install YAML test suite fixture
         run: python scripts/fetch_yaml_test_suite.py
-      - name: Install nightly rustfmt
-        run: rustup toolchain install nightly --profile minimal --component rustfmt
-        if: |
-          matrix.os == 'ubuntu-latest'
-      - name: Run cargo fmt pre-commit hook
-        uses: pre-commit/action@v3.0.1
-        with:
-          extra_args: fmt --all-files
-        if: |
-          matrix.os == 'ubuntu-latest'
-      - name: Run cargo check pre-commit hook
-        uses: pre-commit/action@v3.0.1
-        with:
-          extra_args: cargo-check --all-files
-        if: |
-          matrix.os == 'ubuntu-latest'
-      - name: Run clippy pre-commit hook
-        uses: pre-commit/action@v3.0.1
-        with:
-          extra_args: clippy --all-files
-        if: |
-          matrix.os == 'ubuntu-latest'
-      - name: Run cargo about pre-commit hook
-        uses: pre-commit/action@v3.0.1
-        with:
-          extra_args: cargo-about-generate --all-files
-        if: |
-          matrix.os == 'ubuntu-latest'
-      - name: Run cargo deny pre-commit hook
-        uses: pre-commit/action@v3.0.1
-        with:
-          extra_args: cargo-deny --all-files
-        if: |
-          matrix.os == 'ubuntu-latest'
       - name: Run all tests
         run: cargo test --locked --all-targets --all-features
       - name: Generate coverage report with cargo llvm-cov

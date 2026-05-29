@@ -3,7 +3,7 @@
 # See https://pre-commit.com/hooks.html for more hooks
 ci:
   autoupdate_commit_msg: "CI: pre-commit autoupdate"
-  skip: [pyright, fmt, cargo-check, clippy, cargo-about-generate, cargo-deny]
+  skip: [pyright, cargo-fmt-nightly, cargo-check, clippy, cargo-about-generate, cargo-deny]
 
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
@@ -61,49 +61,46 @@ repos:
           - --comment-style
           - "//"
 
-  - repo: https://github.com/doublify/pre-commit-rust
-    rev: v1.0
+  - repo: https://github.com/arista-netdevops-community/pre-commit-hooks
+    rev: v0.1.2
     hooks:
-      - id: fmt
-        name: Lint Rust files using fmt (nightly)
-        entry: env RUSTUP_TOOLCHAIN=nightly cargo fmt
+      - id: cargo-fmt-nightly
         args:
           - --all
           - --
           - --config
           - unstable_features=true,group_imports=StdExternalCrate,imports_granularity=Item
         files: ^rust/
-        pass_filenames: false
       - id: cargo-check
-        name: Lint Rust files using cargo check
         args: ["--locked"]
         files: ^rust/
-      - id: clippy
-        name: Lint Rust files using clippy
-        args: ["--locked", "--all-targets", "--all-features"]
+      - id: cargo-clippy
+        args:
+          - --locked
+          - --all-targets
+          - --all-features
         files: ^rust/
-
-  - repo: https://github.com/EmbarkStudios/cargo-deny
-    rev: 0.19.7
-    hooks:
       # Check licenses of Rust dependencies
       - id: cargo-deny
-        args: ["--locked", "--all-features", "check"]
+        args:
+          - --locked
+          - --all-features
+          - check
         files: ^rust/
-
-  - repo: local
-    hooks:
-      - id: cargo-about-generate
+      - id: cargo-about
         name: Generate third-party Rust licenses
-        entry: cargo-about generate --locked --fail -o pyavd_utils/THIRD_PARTY_LICENSES.txt about-text.hbs
-        language: rust
-        additional_dependencies: ["cli:cargo-about:0.8.4"]
+        args:
+          - generate
+          - --locked
+          - --fail
+          - -o
+          - pyavd_utils/THIRD_PARTY_LICENSES.txt
+          - about-text.hbs
         files: (^|/)Cargo\.(toml|lock)$|^about\.toml$|^about-text\.hbs$
-        pass_filenames: false
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
     # Ruff version.
-    rev: v0.15.14
+    rev: v0.15.13
     hooks:
       # Run the linter.
       - id: ruff
