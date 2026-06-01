@@ -160,6 +160,11 @@ pub(crate) struct State {
 /// Configuration to use during validation.
 #[derive(Clone, Debug, Default)]
 pub struct Configuration {
+    /// Optional caller-supplied dynamic key overrides keyed by concrete input key.
+    /// The override value is the schema dynamic-key path that should be used for that key.
+    /// This is used by the LSP when interpreting # comments on keys.
+    /// Stored behind Arc so cloning Configuration for each new Context stays cheap.
+    pub dynamic_key_overrides: Option<Arc<DynamicKeyOverrides>>,
     pub ignore_required_keys_on_root_dict: bool,
     /// By default Null/None values are ignored no matter which data type is expected.
     /// Setting this will instead emit type errors for Null values.
@@ -173,11 +178,6 @@ pub struct Configuration {
     /// When validating `avd_design`, emit warnings for top-level keys that exist in `eos_config`
     /// but not in `avd_design`.
     pub warn_eos_config_keys: bool,
-    /// Optional caller-supplied dynamic key overrides keyed by concrete input key.
-    /// The override value is the schema dynamic-key path that should be used for that key.
-    /// This is used by the LSP when interpreting # comments on keys.
-    /// Stored behind Arc so cloning Configuration for each new Context stays cheap.
-    pub dynamic_key_overrides: Option<Arc<DynamicKeyOverrides>>,
 }
 
 #[derive(Clone, Debug, Default)]

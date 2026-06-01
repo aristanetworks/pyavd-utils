@@ -441,22 +441,22 @@ mod tests {
             ..Default::default()
         };
         let value: Value = json!({"list": ["one"], "other": ["other"]});
-        let overrides = DynamicKeyOverrides::from_iter([("two".to_string(), "list".to_string())]);
+        let overrides = DynamicKeyOverrides::from_iter([("two".to_owned(), "list".to_owned())]);
         let result = dict_schema.get_dynamic_keys(value.as_object().unwrap(), Some(&overrides));
         assert_eq!(
             result,
             Some(OrderMap::from_iter([
                 (
-                    "one".to_string(),
+                    "one".to_owned(),
                     DynamicKeyInfo {
-                        dynamic_key_path: "list".to_string(),
+                        dynamic_key_path: "list".to_owned(),
                         schema: &dynamic_key_schema,
                     }
                 ),
                 (
-                    "two".to_string(),
+                    "two".to_owned(),
                     DynamicKeyInfo {
-                        dynamic_key_path: "list".to_string(),
+                        dynamic_key_path: "list".to_owned(),
                         schema: &dynamic_key_schema,
                     }
                 ),
@@ -470,16 +470,16 @@ mod tests {
         let override_dynamic_key_schema: AnySchema = Bool::default().into();
         let dict_schema = Dict {
             keys: Some(OrderMap::from_iter([(
-                "tenants".to_string(),
-                crate::list::List {
+                "tenants".to_owned(),
+                List {
                     items: Some(Box::new(AnySchema::Dict(Dict {
                         keys: Some(OrderMap::from_iter([(
-                            "name".to_string(),
+                            "name".to_owned(),
                             crate::str::Str::default().into(),
                         )])),
                         ..Default::default()
                     }))),
-                    base: crate::base::Base {
+                    base: Base {
                         default: Some(vec![json!({"name": "l3spine"})]),
                         ..Default::default()
                     },
@@ -488,9 +488,9 @@ mod tests {
                 .into(),
             )])),
             dynamic_keys: Some(OrderMap::from_iter([
-                ("tenants.name".to_string(), default_dynamic_key_schema),
+                ("tenants.name".to_owned(), default_dynamic_key_schema),
                 (
-                    "network_services_keys.name".to_string(),
+                    "network_services_keys.name".to_owned(),
                     override_dynamic_key_schema.clone(),
                 ),
             ])),
@@ -498,16 +498,16 @@ mod tests {
         };
         let value: Value = json!({});
         let overrides = DynamicKeyOverrides::from_iter([(
-            "l3spine".to_string(),
-            "network_services_keys.name".to_string(),
+            "l3spine".to_owned(),
+            "network_services_keys.name".to_owned(),
         )]);
         let result = dict_schema.get_dynamic_keys(value.as_object().unwrap(), Some(&overrides));
         assert_eq!(
             result,
             Some(OrderMap::from_iter([(
-                "l3spine".to_string(),
+                "l3spine".to_owned(),
                 DynamicKeyInfo {
-                    dynamic_key_path: "network_services_keys.name".to_string(),
+                    dynamic_key_path: "network_services_keys.name".to_owned(),
                     schema: &override_dynamic_key_schema,
                 }
             )]))
@@ -520,9 +520,9 @@ mod tests {
         let later_dynamic_key_schema: AnySchema = Int::default().into();
         let dict_schema = Dict {
             dynamic_keys: Some(OrderMap::from_iter([
-                ("kept_list".to_string(), kept_dynamic_key_schema.clone()),
-                ("removed_list".to_string(), removed_bool_schema()),
-                ("later_list".to_string(), later_dynamic_key_schema.clone()),
+                ("kept_list".to_owned(), kept_dynamic_key_schema.clone()),
+                ("removed_list".to_owned(), removed_bool_schema()),
+                ("later_list".to_owned(), later_dynamic_key_schema.clone()),
             ])),
             ..Default::default()
         };
@@ -538,16 +538,16 @@ mod tests {
             result,
             Some(OrderMap::from_iter([
                 (
-                    "kept".to_string(),
+                    "kept".to_owned(),
                     DynamicKeyInfo {
-                        dynamic_key_path: "kept_list".to_string(),
+                        dynamic_key_path: "kept_list".to_owned(),
                         schema: &kept_dynamic_key_schema,
                     }
                 ),
                 (
-                    "later".to_string(),
+                    "later".to_owned(),
                     DynamicKeyInfo {
-                        dynamic_key_path: "later_list".to_string(),
+                        dynamic_key_path: "later_list".to_owned(),
                         schema: &later_dynamic_key_schema,
                     }
                 ),
@@ -560,7 +560,7 @@ mod tests {
         let dict_schema = Dict {
             keys: Some(OrderMap::from_iter([
                 (
-                    "kept_list".to_string(),
+                    "kept_list".to_owned(),
                     List {
                         base: Base {
                             default: Some(vec![json!("kept")]),
@@ -571,7 +571,7 @@ mod tests {
                     .into(),
                 ),
                 (
-                    "removed_list".to_string(),
+                    "removed_list".to_owned(),
                     List {
                         base: Base {
                             default: Some(vec![json!("removed")]),
@@ -582,7 +582,7 @@ mod tests {
                     .into(),
                 ),
                 (
-                    "later_list".to_string(),
+                    "later_list".to_owned(),
                     List {
                         base: Base {
                             default: Some(vec![json!("later")]),
@@ -594,15 +594,15 @@ mod tests {
                 ),
             ])),
             dynamic_keys: Some(OrderMap::from_iter([
-                ("kept_list".to_string(), Bool::default().into()),
-                ("removed_list".to_string(), removed_bool_schema()),
-                ("later_list".to_string(), Int::default().into()),
+                ("kept_list".to_owned(), Bool::default().into()),
+                ("removed_list".to_owned(), removed_bool_schema()),
+                ("later_list".to_owned(), Int::default().into()),
             ])),
             ..Default::default()
         };
         let expected_result: DefaultDynamicKeys = OrderMap::from_iter([
-            ("kept_list".to_string(), vec!["kept".to_string()]),
-            ("later_list".to_string(), vec!["later".to_string()]),
+            ("kept_list".to_owned(), vec!["kept".to_owned()]),
+            ("later_list".to_owned(), vec!["later".to_owned()]),
         ]);
 
         let result = dict_schema.default_dynamic_keys();
