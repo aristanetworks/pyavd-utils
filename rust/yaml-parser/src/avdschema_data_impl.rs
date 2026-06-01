@@ -317,7 +317,7 @@ dynamic_keys:
 
         let string_doc = parse_single_document("name: single\n");
         let string_dynamic_keys =
-            schema.get_dynamic_keys((&string_doc.value).as_mapping().unwrap());
+            schema.get_dynamic_keys((&string_doc.value).as_mapping().unwrap(), None);
         assert_eq!(
             string_dynamic_keys
                 .unwrap()
@@ -329,7 +329,7 @@ dynamic_keys:
 
         let sequence_doc = parse_single_document("names: [one, two]\n");
         let sequence_dynamic_keys =
-            schema.get_dynamic_keys((&sequence_doc.value).as_mapping().unwrap());
+            schema.get_dynamic_keys((&sequence_doc.value).as_mapping().unwrap(), None);
         assert_eq!(
             sequence_dynamic_keys
                 .unwrap()
@@ -341,12 +341,12 @@ dynamic_keys:
 
         let wrong_type_doc = parse_single_document("wrong: 7\n");
         let wrong_type_dynamic_keys =
-            schema.get_dynamic_keys((&wrong_type_doc.value).as_mapping().unwrap());
+            schema.get_dynamic_keys((&wrong_type_doc.value).as_mapping().unwrap(), None);
         assert!(wrong_type_dynamic_keys.unwrap().is_empty());
 
         let missing_root_doc = parse_single_document("other: value\n");
         let missing_root_dynamic_keys =
-            schema.get_dynamic_keys((&missing_root_doc.value).as_mapping().unwrap());
+            schema.get_dynamic_keys((&missing_root_doc.value).as_mapping().unwrap(), None);
         assert!(missing_root_dynamic_keys.unwrap().is_empty());
     }
 
@@ -382,7 +382,8 @@ key2: value
 ",
         );
 
-        let schema_keys = SchemaKeys::try_from_schema_with_value(&schema, &doc.value).unwrap();
+        let schema_keys =
+            SchemaKeys::try_from_schema_with_value(&schema, &doc.value, None).unwrap();
 
         assert_eq!(schema_keys.keys.len(), 4);
         assert!(schema_keys.keys.contains_key("key2"));
@@ -403,17 +404,19 @@ key2: value
 ",
         );
 
-        let root = get_schema_from_path("eos_config", &store, &[], &doc.value).unwrap();
+        let root = get_schema_from_path("eos_config", &store, &[], &doc.value, None).unwrap();
         assert_eq!(root, Some(store.get("eos_config").unwrap()));
 
         let static_key =
-            get_schema_from_path("eos_config", &store, &["key2".to_owned()], &doc.value).unwrap();
+            get_schema_from_path("eos_config", &store, &["key2".to_owned()], &doc.value, None)
+                .unwrap();
         let expected_static: AnySchema =
             from_str("type: str\ndescription: this is from key2\n").unwrap();
         assert_eq!(static_key, Some(&expected_static),);
 
         let dynamic_key =
-            get_schema_from_path("eos_config", &store, &["two".to_owned()], &doc.value).unwrap();
+            get_schema_from_path("eos_config", &store, &["two".to_owned()], &doc.value, None)
+                .unwrap();
         let expected_dynamic: AnySchema = from_str("type: int\nmax: 10\n").unwrap();
         assert_eq!(dynamic_key, Some(&expected_dynamic),);
     }

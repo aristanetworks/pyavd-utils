@@ -113,7 +113,10 @@ fn validate_keys<'a, M: ValidatableMapping<'a>>(
             None
         }
     };
-    let dynamic_keys_infos = schema.get_dynamic_keys(input.as_schema_data_mapping());
+    let dynamic_keys_infos = schema.get_dynamic_keys(
+        input.as_schema_data_mapping(),
+        ctx.configuration.dynamic_key_overrides.as_deref(),
+    );
 
     for pair in input.iter() {
         // We fall back to display key for path in case of non-string keys.
@@ -281,7 +284,10 @@ fn check_deprecation<'a, M: ValidatableMapping<'a>>(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use avdschema::base::Base;
+    use avdschema::dict::DynamicKeyOverrides;
     use avdschema::int::Int;
     use avdschema::list::List;
     use avdschema::str::Str;
@@ -568,6 +574,69 @@ mod tests {
                 }
             ]
         );
+    }
+
+    #[test]
+    fn validate_dynamic_keys_from_overrides_ok() {
+        let schema = Dict {
+            dynamic_keys: Some(OrderMap::from_iter([(
+                "my_dynamic_keys.key".into(),
+                Int {
+                    max: Some(10),
+                    ..Default::default()
+                }
+                .into(),
+            )])),
+            allow_other_keys: Some(true),
+            keys: Some(Default::default()),
+            ..Default::default()
+        };
+        let input = serde_json::json!({ "dynkey1": 5 });
+        let store = get_test_store();
+        let configuration = Configuration {
+            dynamic_key_overrides: Some(Arc::new(DynamicKeyOverrides::from_iter([(
+                "dynkey1".into(),
+                "my_dynamic_keys.key".into(),
+            )]))),
+            ..Default::default()
+        };
+        let mut ctx = Context::new(&store, Some(&configuration));
+        let _ = schema.validate(&input, &mut ctx);
+        assert!(ctx.result.errors.is_empty());
+        assert!(ctx.result.infos.is_empty());
+    }
+
+    #[test]
+    fn validate_static_key_beats_dynamic_key_override_collision() {
+        let schema = Dict {
+            keys: Some(OrderMap::from_iter([(
+                "dynkey1".into(),
+                Str::default().into(),
+            )])),
+            dynamic_keys: Some(OrderMap::from_iter([(
+                "my_dynamic_keys.key".into(),
+                Int {
+                    max: Some(10),
+                    ..Default::default()
+                }
+                .into(),
+            )])),
+            allow_other_keys: Some(true),
+            ..Default::default()
+        };
+        let input = serde_json::json!({ "dynkey1": "static schema value" });
+        let store = get_test_store();
+        let configuration = Configuration {
+            dynamic_key_overrides: Some(Arc::new(DynamicKeyOverrides::from_iter([(
+                "dynkey1".into(),
+                "my_dynamic_keys.key".into(),
+            )]))),
+            ..Default::default()
+        };
+        let mut ctx = Context::new(&store, Some(&configuration));
+        let _ = schema.validate(&input, &mut ctx);
+        assert!(ctx.result.errors.is_empty());
+        assert!(ctx.result.infos.is_empty());
     }
 
     #[test]
