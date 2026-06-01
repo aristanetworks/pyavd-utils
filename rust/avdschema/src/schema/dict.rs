@@ -531,8 +531,11 @@ mod tests {
             "removed_list": ["removed"],
             "later_list": ["later"],
         });
-
-        let result = dict_schema.get_dynamic_keys(value.as_object().unwrap(), None);
+        let overrides: OrderMap<String, String> = DynamicKeyOverrides::from_iter([(
+            "removed_override".to_owned(),
+            "removed_list".to_owned(),
+        )]);
+        let result = dict_schema.get_dynamic_keys(value.as_object().unwrap(), Some(&overrides));
 
         assert_eq!(
             result,
