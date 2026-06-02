@@ -55,6 +55,11 @@ jobs:
         uses: pre-commit/action@v3.0.1
         with:
           extra_args: --all-files
+        # Allowing cargo installs to be unoptimized for install speed.
+        env:
+          CARGO_PROFILE_RELEASE_OPT_LEVEL: 0
+          CARGO_PROFILE_RELEASE_LTO: false
+          CARGO_PROFILE_RELEASE_CODEGEN_UNITS: 256
       - name: Commit back any git diff
         uses: autofix-ci/action@c5b2d67aa2274e7b5a18224e8171550871fc7e4a
 
