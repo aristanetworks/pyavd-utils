@@ -51,6 +51,13 @@ jobs:
     steps:
       - name: Checkout the repo
         uses: actions/checkout@v6
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      # Needed until we move to prek and get proper support for toolchain profile - preferably per hook.
+      - name: Install Rust nightly formatter
+        run: rustup toolchain install nightly --component rustfmt --no-self-update
       - name: Run pre-commit
         uses: pre-commit/action@v3.0.1
         with:
