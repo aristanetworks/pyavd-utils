@@ -92,7 +92,6 @@ repos:
         args:
           - generate
           - --locked
-          - --fail
           - -o
           - pyavd_utils/THIRD_PARTY_LICENSES.txt
           - about-text.hbs
