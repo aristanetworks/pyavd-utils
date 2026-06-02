@@ -46,7 +46,8 @@ jobs:
   # Pre-commit
   # ----------------------------------- #
   pre_commit:
-    name: Run pre-commit and commit back any changes
+    # For security reasons, the workflow in which the autofix.ci action is used must be named "autofix.ci".
+    name: autofix.ci
     runs-on: ubuntu-latest
     steps:
       - name: Checkout the repo
