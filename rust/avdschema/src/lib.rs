@@ -23,6 +23,9 @@
 )]
 #![deny(unused_crate_dependencies)]
 
+#[cfg(test)]
+use test_schema_store as _;
+
 mod inherit;
 mod resolve;
 mod schema;
@@ -36,6 +39,7 @@ pub use self::schema::any;
 pub use self::schema::base;
 pub use self::schema::boolean;
 pub use self::schema::dict;
+pub use self::schema::dict::DynamicKeyOverrides;
 pub use self::schema::int;
 pub use self::schema::list;
 pub use self::schema::str;
