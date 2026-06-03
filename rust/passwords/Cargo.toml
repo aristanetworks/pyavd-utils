@@ -21,7 +21,7 @@ sha-crypt = { version = "0.5.0", default-features = false , optional = true}
 cbc = { version = "0.1.0", default-features = false , optional = true}
 cipher = { version = "0.4.4", default-features = false, features = ["block-padding"] , optional = true}
 des = { version = "0.8.0", default-features = false , optional = true}
-base64 = { version = "0.21.0", default-features = false , features = ["std"], optional = true}
+base64 = { version = "0.22.1", default-features = false , features = ["std"], optional = true}
 # simple-7 feature
 hex = { version = "0.4", default-features = false, features = ["std"], optional = true}
 getrandom = { version = "0.4", default-features = false, optional = true }
