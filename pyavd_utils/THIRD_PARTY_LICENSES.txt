@@ -238,12 +238,12 @@ Apache License 2.0
 ================================================================================
 
 Used by:
-  - avdschema 0.0.5
-  - passwords 0.0.5
-  - pypasswords 0.0.5
-  - pyvalidation 0.0.5
-  - validation 0.0.5
-  - yaml-parser 0.0.5
+  - avdschema 0.0.6
+  - passwords 0.0.6
+  - pypasswords 0.0.6
+  - pyvalidation 0.0.6
+  - validation 0.0.6
+  - yaml-parser 0.0.6
   - ryu 1.0.22
 
 License text:
@@ -572,8 +572,8 @@ MIT License
 ================================================================================
 
 Used by:
-  - serde_with 3.16.1
-  - serde_with_macros 3.16.1
+  - serde_with 3.20.0
+  - serde_with_macros 3.20.0
 
 License text:
 --------------------------------------------------------------------------------
@@ -821,41 +821,6 @@ MIT License
 ================================================================================
 
 Used by:
-  - fnv 1.0.7
-
-License text:
---------------------------------------------------------------------------------
-Copyright (c) 2017 Contributors
-
-Permission is hereby granted, free of charge, to any
-person obtaining a copy of this software and associated
-documentation files (the &quot;Software&quot;), to deal in the
-Software without restriction, including without
-limitation the rights to use, copy, modify, merge,
-publish, distribute, sublicense, and/or sell copies of
-the Software, and to permit persons to whom the Software
-is furnished to do so, subject to the following
-conditions:
-
-The above copyright notice and this permission notice
-shall be included in all copies or substantial portions
-of the Software.
-
-THE SOFTWARE IS PROVIDED &quot;AS IS&quot;, WITHOUT WARRANTY OF
-ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
-TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
-PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
-SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
-CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
-OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
-IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
-DEALINGS IN THE SOFTWARE.
-
-================================================================================
-MIT License
-================================================================================
-
-Used by:
   - memoffset 0.9.1
 
 License text:
@@ -920,7 +885,7 @@ MIT License
 
 Used by:
   - arc-swap 1.8.1
-  - pyo3-log 0.13.2
+  - pyo3-log 0.13.3
 
 License text:
 --------------------------------------------------------------------------------
@@ -1279,9 +1244,9 @@ MIT License
 ================================================================================
 
 Used by:
-  - darling 0.21.3
-  - darling_core 0.21.3
-  - darling_macro 0.21.3
+  - darling 0.23.0
+  - darling_core 0.23.0
+  - darling_macro 0.23.0
 
 License text:
 --------------------------------------------------------------------------------
@@ -1373,8 +1338,10 @@ MIT License
 ================================================================================
 
 Used by:
-  - windows-link 0.2.1
-  - windows-sys 0.61.2
+  - windows-sys 0.60.2
+  - windows-targets 0.53.5
+  - windows_x86_64_gnu 0.53.1
+  - windows_x86_64_msvc 0.53.1
 
 License text:
 --------------------------------------------------------------------------------
@@ -1607,7 +1574,7 @@ MIT License
 ================================================================================
 
 Used by:
-  - base64 0.21.7
+  - base64 0.22.1
 
 License text:
 --------------------------------------------------------------------------------
