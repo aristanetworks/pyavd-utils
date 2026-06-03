@@ -30,10 +30,9 @@ mod trivia;
 
 #[cfg(test)]
 #[allow(
-    clippy::indexing_slicing,
     clippy::min_ident_chars,
     clippy::shadow_reuse,
-    reason = "Tests benefit from direct indexing, short identifiers, and variable shadowing for readability"
+    reason = "Tests benefit from short identifiers and variable shadowing for readability"
 )]
 mod tests;
 

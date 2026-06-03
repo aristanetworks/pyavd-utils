@@ -19,11 +19,9 @@ impl Validation for Bool {
 
         if let Some(v) = value.as_bool() {
             // Bool schema has no constraints to validate beyond type checking
-            if ctx.configuration.return_coerced_data {
-                Some(value.coerce_bool(v))
-            } else {
-                None
-            }
+            ctx.configuration
+                .return_coerced_data
+                .then(|| value.coerce_bool(v))
         } else {
             Self::handle_invalid_type(value, ctx, Type::Bool)
         }

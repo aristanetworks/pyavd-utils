@@ -53,21 +53,21 @@ impl Walker for Dict {
     {
         match path.next() {
             Some("keys") => {
-                if let Some(ref keys) = self.keys {
+                if let Some(keys) = &self.keys {
                     keys.walk(path)
                 } else {
                     Err(PathNotFound::new("keys".into()).into())
                 }
             }
             Some("dynamic_keys") => {
-                if let Some(ref dynamic_keys) = self.dynamic_keys {
+                if let Some(dynamic_keys) = &self.dynamic_keys {
                     dynamic_keys.walk(path)
                 } else {
                     Err(PathNotFound::new("dynamic_keys".into()).into())
                 }
             }
             Some("$defs") => {
-                if let Some(ref schema_defs) = self.schema_defs {
+                if let Some(schema_defs) = &self.schema_defs {
                     schema_defs.walk(path)
                 } else {
                     Err(PathNotFound::new("$defs".into()).into())

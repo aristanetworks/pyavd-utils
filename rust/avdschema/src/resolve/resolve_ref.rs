@@ -104,7 +104,7 @@ mod tests {
         assert!(matches!(
             result.unwrap_err(),
             SchemaResolverError::RefSyntax(_)
-        ))
+        ));
     }
 
     #[test]
@@ -116,7 +116,7 @@ mod tests {
         assert!(matches!(
             result.unwrap_err(),
             SchemaResolverError::RefSyntax(_)
-        ))
+        ));
     }
 
     #[test]
@@ -128,6 +128,6 @@ mod tests {
         assert!(matches!(
             result.unwrap_err(),
             SchemaResolverError::SchemaStoreError(SchemaStoreError::InvalidSchemaName(_))
-        ))
+        ));
     }
 }

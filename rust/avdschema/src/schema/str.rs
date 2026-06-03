@@ -97,7 +97,7 @@ impl Pattern {
     fn new(pattern: String) -> Self {
         Self {
             pattern,
-            compiled_pattern: Default::default(),
+            compiled_pattern: OnceLock::default(),
         }
     }
     pub fn get_compiled_pattern(&self) -> Result<&Regex, &fancy_regex::Error> {
@@ -113,7 +113,7 @@ impl PartialEq for Pattern {
 }
 impl From<&str> for Pattern {
     fn from(value: &str) -> Self {
-        Self::new(value.to_string())
+        Self::new(value.to_owned())
     }
 }
 

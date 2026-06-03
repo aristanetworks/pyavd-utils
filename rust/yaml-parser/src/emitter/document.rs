@@ -129,20 +129,14 @@ impl Emitter<'_> {
         self.tag_handles.insert("!!", "tag:yaml.org,2002:");
 
         let mut idx = self.pos;
-        loop {
-            let Some(continue_scan) = self.cursor.peek_with(idx, |token, _| match token {
-                Token::TagDirective(handle, prefix) => {
-                    self.tag_handles.insert(handle, prefix);
-                    true
-                }
-                Token::DocStart | Token::DocEnd => false,
-                _ => true,
-            }) else {
-                break;
-            };
-            if !continue_scan {
-                break;
+        while let Some(true) = self.cursor.peek_with(idx, |token, _| match token {
+            Token::TagDirective(handle, prefix) => {
+                self.tag_handles.insert(handle, prefix);
+                true
             }
+            Token::DocStart | Token::DocEnd => false,
+            _ => true,
+        }) {
             idx += 1;
         }
     }

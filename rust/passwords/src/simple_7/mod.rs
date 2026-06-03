@@ -100,7 +100,7 @@ mod tests {
     fn test_simple_7_encrypt_ok() {
         for (salt, expected) in VALID_ENCRYPT_DECRYPT_PAIRS {
             let result = simple_7_encrypt(TEST_PASSWORD, Some(salt)).expect("Encryption failed");
-            assert_eq!(result, expected, "Failed for salt {}", salt);
+            assert_eq!(result, expected, "Failed for salt {salt}");
         }
     }
 
@@ -108,7 +108,7 @@ mod tests {
     fn test_simple_7_decrypt_ok() {
         for (salt, encrypted) in VALID_ENCRYPT_DECRYPT_PAIRS {
             let result = simple_7_decrypt(encrypted).expect("Decryption failed");
-            assert_eq!(result, TEST_PASSWORD, "Failed for salt {}", salt);
+            assert_eq!(result, TEST_PASSWORD, "Failed for salt {salt}");
         }
     }
 
@@ -135,11 +135,10 @@ mod tests {
     fn test_simple_7_encrypt_invalid_salt() {
         for salt in INVALID_SALT_VALUES {
             let result = simple_7_encrypt(TEST_PASSWORD, Some(salt));
-            assert!(result.is_err(), "Expected error for salt {}", salt);
+            assert!(result.is_err(), "Expected error for salt {salt}");
             assert!(
                 matches!(result.unwrap_err(), Simple7Error::InvalidSaltValue(_)),
-                "Expected InvalidSaltValue error for salt {}",
-                salt
+                "Expected InvalidSaltValue error for salt {salt}"
             );
         }
     }

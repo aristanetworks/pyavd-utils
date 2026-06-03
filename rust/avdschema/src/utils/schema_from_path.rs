@@ -9,6 +9,7 @@ use crate::Store;
 use crate::any::AnySchema;
 use crate::dict::Dict;
 use crate::dict::DynamicKeyInfo;
+use crate::dict::DynamicKeyOverrides;
 use crate::resolve::errors::SchemaResolverError;
 use crate::resolve::resolve_ref::resolve_ref;
 use crate::store::SchemaStoreError;
@@ -21,8 +22,8 @@ pub enum SchemaKey {
 }
 impl SchemaKey {
     /// Return a schema $ref like
-    /// "eos_config#/keys/somekey/items/" or
-    /// "avd_design#/dynamic_keys/connected_endpoint_keys.key"
+    /// `"eos_config#/keys/somekey/items/"` or
+    /// `"avd_design#/dynamic_keys/connected_endpoint_keys.key"`
     /// For dynamic keys the first item of the path is replaced with with dynamic key path.
     pub fn get_schema_ref_from_path(&self, schema_name: &str, data_path: &[String]) -> String {
         let mut path = data_path.iter();
@@ -30,7 +31,7 @@ impl SchemaKey {
         match path.next() {
             Some(root_key) => match self {
                 SchemaKey::DynamicKey { dynamic_key_path } => {
-                    schema_ref.push_str(format!("/dynamic_keys/{dynamic_key_path}").as_str())
+                    schema_ref.push_str(format!("/dynamic_keys/{dynamic_key_path}").as_str());
                 }
                 SchemaKey::StaticKey => schema_ref.push_str(format!("/keys/{root_key}").as_str()),
             },
@@ -56,6 +57,7 @@ impl SchemaKeys {
     pub fn try_from_schema_with_value<'a, V>(
         schema: &AnySchema,
         value: V,
+        dynamic_key_overrides: Option<&DynamicKeyOverrides>,
     ) -> Result<Self, SchemaKeysError>
     where
         V: SchemaDataValue<'a>,
@@ -76,22 +78,23 @@ impl SchemaKeys {
                 .unwrap_or_default(),
         };
 
-        schema_keys.keys.extend(
-            dict_schema
-                .get_dynamic_keys(dict)
-                .unwrap_or_default()
-                .into_iter()
-                .map(|(key, dynamic_key_info)| {
-                    (key.to_owned(), SchemaKey::from(&dynamic_key_info))
-                }),
-        );
+        for (key, dynamic_key_info) in dict_schema
+            .get_dynamic_keys(dict, dynamic_key_overrides)
+            .unwrap_or_default()
+        {
+            if !schema_keys.keys.contains_key(&key) {
+                schema_keys
+                    .keys
+                    .insert(key, SchemaKey::from(&dynamic_key_info));
+            }
+        }
         Ok(schema_keys)
     }
 }
 impl From<&DynamicKeyInfo<'_>> for SchemaKey {
     fn from(value: &DynamicKeyInfo) -> Self {
         Self::DynamicKey {
-            dynamic_key_path: value.dynamic_key_path.to_owned(),
+            dynamic_key_path: value.dynamic_key_path.clone(),
         }
     }
 }
@@ -116,13 +119,15 @@ pub fn get_schema_from_path<'store, 'value>(
     store: &'store Store,
     data_path: &'_ [String],
     data_value: impl SchemaDataValue<'value>,
+    dynamic_key_overrides: Option<&DynamicKeyOverrides>,
 ) -> Result<Option<&'store AnySchema>, GetSchemaFromPathError> {
     let mut path = data_path.iter();
     let schema = store.get(schema_name)?;
     match path.next() {
         None => Ok(Some(schema)),
         Some(root_key) => {
-            let schema_keys = SchemaKeys::try_from_schema_with_value(schema, data_value)?;
+            let schema_keys =
+                SchemaKeys::try_from_schema_with_value(schema, data_value, dynamic_key_overrides)?;
             match schema_keys.keys.get(root_key) {
                 None => Ok(None),
                 Some(schema_key) => {
@@ -140,6 +145,7 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+    use crate::base::Base;
     use crate::int::Int;
     use crate::list::List;
     use crate::str::Str;
@@ -186,7 +192,7 @@ mod tests {
             ..Default::default()
         });
         let value = json!({"outer": [ {"inner": "one"}, {"inner": "two"}, {"inner": "three"}]});
-        let result = SchemaKeys::try_from_schema_with_value(&schema, &value);
+        let result = SchemaKeys::try_from_schema_with_value(&schema, &value, None);
         assert!(result.is_ok());
         let schema_keys = result.unwrap();
         assert_eq!(
@@ -222,7 +228,7 @@ mod tests {
             ..Default::default()
         });
         let value = json!({});
-        let result = SchemaKeys::try_from_schema_with_value(&schema, &value);
+        let result = SchemaKeys::try_from_schema_with_value(&schema, &value, None);
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(matches!(err, SchemaKeysError::SchemaNotDict));
@@ -233,7 +239,7 @@ mod tests {
             ..Default::default()
         });
         let value = json!([]);
-        let result = SchemaKeys::try_from_schema_with_value(&schema, &value);
+        let result = SchemaKeys::try_from_schema_with_value(&schema, &value, None);
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(matches!(err, SchemaKeysError::ValueNotADict));
@@ -244,7 +250,7 @@ mod tests {
         let value = json!(
             {"dynamic": [ {"key": "one"}, {"key": "two"}, {"key": "three"}]});
         let store = get_test_store();
-        let result = get_schema_from_path("eos_config", &store, &[], &value);
+        let result = get_schema_from_path("eos_config", &store, &[], &value, None);
         assert!(result.is_ok());
         let opt = result.unwrap();
         assert!(opt.is_some());
@@ -257,7 +263,7 @@ mod tests {
         let value = json!(
             {"dynamic": [ {"key": "one"}, {"key": "two"}, {"key": "three"}]});
         let store = get_test_store();
-        let result = get_schema_from_path("eos_config", &store, &["key2".into()], &value);
+        let result = get_schema_from_path("eos_config", &store, &["key2".into()], &value, None);
         assert!(result.is_ok());
         let opt = result.unwrap();
         assert!(opt.is_some());
@@ -275,7 +281,7 @@ mod tests {
         let value = json!(
             {"dynamic": [ {"key": "one"}, {"key": "two"}, {"key": "three"}]});
         let store = get_test_store();
-        let result = get_schema_from_path("eos_config", &store, &["two".into()], &value);
+        let result = get_schema_from_path("eos_config", &store, &["two".into()], &value, None);
         assert!(result.is_ok());
         let opt = result.unwrap();
         assert!(opt.is_some());
@@ -286,5 +292,108 @@ mod tests {
         }))
         .unwrap();
         assert_eq!(schema, &expected_schema);
+    }
+
+    #[test]
+    fn get_schema_from_path_dynamic_key_from_overrides_some_ok() {
+        let value = json!({});
+        let overrides = DynamicKeyOverrides::from_iter([("two".into(), "dynamic.key".into())]);
+        let store = get_test_store();
+        let result = get_schema_from_path(
+            "eos_config",
+            &store,
+            &["two".into()],
+            &value,
+            Some(&overrides),
+        );
+        assert!(result.is_ok());
+        let opt = result.unwrap();
+        assert!(opt.is_some());
+        let schema = opt.unwrap();
+        let expected_schema: AnySchema = serde_json::from_value(json!({
+            "type": "int",
+            "max": 10,
+        }))
+        .unwrap();
+        assert_eq!(schema, &expected_schema);
+    }
+
+    #[test]
+    fn schema_keys_static_key_beats_dynamic_key_collision() {
+        let value = json!(
+            {"dynamic": [ {"key": "key2"}]});
+        let store = get_test_store();
+        let schema = store.get("eos_config").unwrap();
+        let schema_keys = SchemaKeys::try_from_schema_with_value(schema, &value, None).unwrap();
+
+        assert_eq!(schema_keys.keys.get("key2"), Some(&SchemaKey::StaticKey));
+    }
+
+    #[test]
+    fn get_schema_from_path_static_key_beats_dynamic_key_override_collision() {
+        let value = json!({});
+        let overrides = DynamicKeyOverrides::from_iter([("key2".into(), "dynamic.key".into())]);
+        let store = get_test_store();
+        let result = get_schema_from_path(
+            "eos_config",
+            &store,
+            &["key2".into()],
+            &value,
+            Some(&overrides),
+        );
+        assert!(result.is_ok());
+        let opt = result.unwrap();
+        assert!(opt.is_some());
+        let schema = opt.unwrap();
+        let expected_schema: AnySchema = serde_json::from_value(json!({
+            "type": "str",
+            "description": "this is from key2",
+        }))
+        .unwrap();
+        assert_eq!(schema, &expected_schema);
+    }
+
+    #[test]
+    fn schema_keys_override_beats_default_collision() {
+        let override_schema: AnySchema = Str::default().into();
+        let schema = AnySchema::Dict(Dict {
+            keys: Some(OrderMap::from_iter([(
+                "tenants".into(),
+                List {
+                    items: Some(Box::new(AnySchema::Dict(Dict {
+                        keys: Some(OrderMap::from_iter([(
+                            "name".into(),
+                            Str::default().into(),
+                        )])),
+                        ..Default::default()
+                    }))),
+                    base: Base {
+                        default: Some(vec![json!({"name": "l3spine"})]),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                }
+                .into(),
+            )])),
+            dynamic_keys: Some(OrderMap::from_iter([
+                ("tenants.name".into(), Int::default().into()),
+                ("network_services_keys.name".into(), override_schema.clone()),
+            ])),
+            ..Default::default()
+        });
+        let overrides = DynamicKeyOverrides::from_iter([(
+            "l3spine".into(),
+            "network_services_keys.name".into(),
+        )]);
+
+        let schema_keys =
+            SchemaKeys::try_from_schema_with_value(&schema, &json!({}), Some(&overrides)).unwrap();
+
+        assert_eq!(
+            schema_keys.keys.get("l3spine"),
+            Some(&SchemaKey::DynamicKey {
+                dynamic_key_path: "network_services_keys.name".into()
+            })
+        );
     }
 }

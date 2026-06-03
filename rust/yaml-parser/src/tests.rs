@@ -7,8 +7,6 @@
 //! These tests verify parsing behavior for various YAML constructs,
 //! error recovery, and edge cases.
 
-// Allow these pedantic lints in test code where they add noise without benefit
-#![allow(clippy::indexing_slicing, reason = "panics are acceptable in tests")]
 #![allow(
     clippy::approx_constant,
     reason = "test values don't need constant refs"
@@ -17,22 +15,10 @@
     clippy::as_conversions,
     reason = "pointer conversions are fine in tests"
 )]
-#![allow(
-    clippy::expect_used,
-    reason = "expect() in tests provides precise failure messages for structural invariants"
-)]
-#![allow(
-    clippy::panic,
-    reason = "panic() in tests provides precise failure messages for structural invariants"
-)]
 
 use super::*;
 
 #[test]
-#[allow(
-    clippy::print_stdout,
-    reason = "this test prints struct sizes for manual inspection"
-)]
 fn check_struct_sizes() {
     use std::mem::size_of;
     let (emitter_properties_size, parse_state_size) = emitter::internal_type_sizes();
