@@ -238,12 +238,12 @@ Apache License 2.0
 ================================================================================
 
 Used by:
-  - avdschema 0.0.5
-  - passwords 0.0.5
-  - pypasswords 0.0.5
-  - pyvalidation 0.0.5
-  - validation 0.0.5
-  - yaml-parser 0.0.5
+  - avdschema 0.0.6
+  - passwords 0.0.6
+  - pypasswords 0.0.6
+  - pyvalidation 0.0.6
+  - validation 0.0.6
+  - yaml-parser 0.0.6
   - ryu 1.0.22
 
 License text:
