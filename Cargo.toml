@@ -15,7 +15,7 @@ pyo3-build-config = { version = "0.28.3" }
 pyo3-log = { version = "0.13.3" }
 fancy-regex = { version = "0.18" }
 serde = { version = "1.0.217" }
-serde_json = { version = "1.0.135" }
+serde_json = { version = "1.0.150" }
 serde_yaml = { version = "0.9.33" }
 
 [profile.release]
