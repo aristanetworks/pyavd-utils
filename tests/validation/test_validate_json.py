@@ -9,11 +9,11 @@ from pyavd_utils.validation import validate_json
 @pytest.mark.usefixtures("init_store")
 def test_validate_json() -> None:
     expected_violations: list[tuple[list[str], str]] = [
-        (["ethernet_interfaces", "2"], "Missing the required key 'name'."),
-        (["ethernet_interfaces", "0", "name"], "The value is not unique among similar items. Conflicting item: ethernet_interfaces[1].name"),
-        (["ethernet_interfaces", "1", "name"], "The value is not unique among similar items. Conflicting item: ethernet_interfaces[0].name"),
+        (["named_items", "2"], "Missing the required key 'name'."),
+        (["named_items", "0", "name"], "The value is not unique among similar items. Conflicting item: named_items[1].name"),
+        (["named_items", "1", "name"], "The value is not unique among similar items. Conflicting item: named_items[0].name"),
     ]
-    validation_result = validate_json('{"ethernet_interfaces": [{"name": "Ethernet1", "description": 12345}, {"name": "Ethernet1"}, {}]}', "eos_config")
+    validation_result = validate_json('{"named_items": [{"name": "item_1", "description": 12345}, {"name": "item_1"}, {}]}', "eos_config")
 
     assert len(validation_result.violations) == len(expected_violations)
     for violation in validation_result.violations:
@@ -28,9 +28,9 @@ def test_validate_json_with_ignored_eos_config_key() -> None:
     """Test that eos_config keys are ignored when validating avd_design."""
     from pyavd_utils.validation import Configuration
 
-    # router_isis is a key from eos_config that should be ignored when validating avd_design
+    # config_only_setting is a key from eos_config that should be ignored when validating avd_design
     config = Configuration(warn_eos_config_keys=True)
-    validation_result = validate_json('{"fabric_name": "TEST_FABRIC", "router_isis": {"instance": "ISIS_TEST"}}', "avd_design", config)
+    validation_result = validate_json('{"fabric_label": "TEST_FABRIC", "config_only_setting": {"instance": "TEST_INSTANCE"}}', "avd_design", config)
 
     # Should have no violations
     assert len(validation_result.violations) == 0, f"Unexpected violations: {[(v.path, v.message) for v in validation_result.violations]}"
@@ -43,15 +43,15 @@ def test_validate_json_with_ignored_eos_config_key() -> None:
 
     # Check the ignored key details
     ignored_key = validation_result.ignored_eos_config_keys[0]
-    assert ignored_key.path == ["router_isis"]
+    assert ignored_key.path == ["config_only_setting"]
     assert ignored_key.message == "Ignoring key from the EOS Config schema when validating with the AVD Design schema."
 
 
 @pytest.mark.usefixtures("init_store")
 def test_validate_json_without_config_no_warning() -> None:
     """Test that without configuration, no warnings are emitted for eos_config keys."""
-    # router_isis is a key from eos_config
-    validation_result = validate_json('{"fabric_name": "TEST_FABRIC", "router_isis": {"instance": "ISIS_TEST"}}', "avd_design")
+    # config_only_setting is a key from eos_config
+    validation_result = validate_json('{"fabric_label": "TEST_FABRIC", "config_only_setting": {"instance": "TEST_INSTANCE"}}', "avd_design")
 
     # Should have no violations
     assert len(validation_result.violations) == 0, f"Unexpected violations: {[(v.path, v.message) for v in validation_result.violations]}"
@@ -71,7 +71,7 @@ def test_validate_json_with_eos_cli_config_gen_role_keys_no_warning() -> None:
     # These special keys should be ignored
     config = Configuration(warn_eos_config_keys=True)
     json_as_str = (
-        '{"fabric_name": "TEST_FABRIC", '
+        '{"fabric_label": "TEST_FABRIC", '
         '"eos_cli_config_gen_validate_inputs_batch_size": 10,'
         '"avd_structured_config_file_format": "yaml",'
         '"custom_templates": "templates",'

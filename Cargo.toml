@@ -3,7 +3,6 @@ package.version = "0.0.6"
 package.license = "Apache-2.0"
 
 members = ["rust/*"]
-exclude = ["rust/test_schema_store"]
 resolver = "2"
 
 [workspace.dependencies]

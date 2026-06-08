@@ -8,9 +8,9 @@ from pyavd_utils.validation import get_validated_data
 
 @pytest.mark.usefixtures("init_store")
 def test_get_validated_data() -> None:
-    coercion_and_validation_result = get_validated_data('{"ethernet_interfaces": [{"name": "Ethernet1", "description": 12345}]}', "eos_config")
+    coercion_and_validation_result = get_validated_data('{"named_items": [{"name": "item_1", "description": 12345}]}', "eos_config")
     validated_data = coercion_and_validation_result.validated_data
-    assert validated_data == ('{"ethernet_interfaces":[{"name":"Ethernet1","description":"12345"}]}')
+    assert validated_data == ('{"named_items":[{"name":"item_1","description":"12345"}]}')
     validation_result = coercion_and_validation_result.validation_result
     assert len(validation_result.violations) == 0
     assert len(validation_result.deprecations) == 0
@@ -20,10 +20,10 @@ def test_get_validated_data() -> None:
 @pytest.mark.usefixtures("init_store")
 def test_get_validated_data_not_ok() -> None:
     expected_violations: list[tuple[list[str], str]] = [
-        (["ethernet_interfaces", "0", "unknown"], "Invalid key."),
+        (["named_items", "0", "unknown"], "Invalid key."),
     ]
 
-    get_validated_data_result = get_validated_data('{"ethernet_interfaces": [{"name": "Ethernet1", "unknown": 12345}]}', "eos_config")
+    get_validated_data_result = get_validated_data('{"named_items": [{"name": "item_1", "unknown": 12345}]}', "eos_config")
     validated_data = get_validated_data_result.validated_data
     assert validated_data is None
 
@@ -42,7 +42,7 @@ def test_get_validated_data_with_config() -> None:
     from pyavd_utils.validation import Configuration
 
     config = Configuration(warn_eos_config_keys=True)
-    result = get_validated_data('{"fabric_name": "TEST_FABRIC", "router_isis": {"instance": "ISIS_TEST"}}', "avd_design", config)
+    result = get_validated_data('{"fabric_label": "TEST_FABRIC", "config_only_setting": {"instance": "TEST_INSTANCE"}}', "avd_design", config)
 
     # Should have no violations
     assert len(result.validation_result.violations) == 0
@@ -55,7 +55,7 @@ def test_get_validated_data_with_config() -> None:
 
     # Check the ignored key details
     ignored_key = result.validation_result.ignored_eos_config_keys[0]
-    assert ignored_key.path == ["router_isis"]
+    assert ignored_key.path == ["config_only_setting"]
     assert ignored_key.message == "Ignoring key from the EOS Config schema when validating with the AVD Design schema."
 
     # Validated data should be present since there are no violations

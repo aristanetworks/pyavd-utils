@@ -1,0 +1,19 @@
+# Generic design-like schema used to exercise validation behavior that is keyed
+# on the historical "avd_design" schema name.
+type: dict
+$version: "0.0.6"
+description: Generic design schema for pyavd-utils tests.
+allow_other_keys: true
+keys:
+  fabric_label:
+    type: str
+    description: Required root label used by tests that allow unrelated config keys.
+    required: true
+  shared_setting:
+    type: str
+    description: Key intentionally shared with eos_config.
+  structured_config:
+    type: dict
+    description: Generic nested config passthrough using a schema reference.
+    relaxed_validation: true
+    $ref: eos_config#

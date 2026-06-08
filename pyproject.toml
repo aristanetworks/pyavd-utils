@@ -273,3 +273,18 @@ serialize = [
     "{major}.{minor}.{patch}.{pre_l}{pre_n}",
     "{major}.{minor}.{patch}",
 ]
+
+[[tool.bumpversion.files]]
+filename = "rust/test_schema_store/test_schemas/avd_design.schema.yml"
+search = '$version: "{current_version}"'
+replace = '$version: "{new_version}"'
+
+[[tool.bumpversion.files]]
+filename = "rust/test_schema_store/test_schemas/eos_config.schema.yml"
+search = '$version: "{current_version}"'
+replace = '$version: "{new_version}"'
+
+[[tool.bumpversion.files]]
+filename = "rust/test_schema_store/test_schemas/schema_features.schema.yml"
+search = '$version: "{current_version}"'
+replace = '$version: "{new_version}"'

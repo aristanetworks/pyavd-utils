@@ -1,0 +1,51 @@
+# Generic configuration-like schema used to exercise validation behavior that
+# is keyed on the historical "eos_config" schema name.
+type: dict
+$version: "0.0.6"
+description: Generic config schema for pyavd-utils tests.
+allow_other_keys: false
+keys:
+  named_items:
+    type: list
+    description: List of named records used to exercise primary keys and nested validation.
+    primary_key: name
+    items:
+      type: dict
+      allow_other_keys: false
+      keys:
+        name:
+          type: str
+          description: Unique record name.
+        description:
+          type: str
+          description: Optional text field that accepts integer coercion.
+          convert_types:
+            - int
+  config_only_setting:
+    type: dict
+    description: Key present only in this schema to test cross-schema ignored-key warnings.
+    allow_other_keys: false
+    keys:
+      instance:
+        type: str
+        convert_types:
+          - int
+  shared_setting:
+    type: str
+    description: Key intentionally shared with avd_design.
+  avd_structured_config_file_format:
+    type: str
+  custom_templates:
+    type: str
+  eos_cli_config_gen_configuration:
+    type: str
+  eos_cli_config_gen_documentation:
+    type: str
+  eos_cli_config_gen_keep_tmp_files:
+    type: bool
+  eos_cli_config_gen_tmp_dir:
+    type: str
+  eos_cli_config_gen_validate_inputs_batch_size:
+    type: int
+  read_structured_config_from_file:
+    type: str

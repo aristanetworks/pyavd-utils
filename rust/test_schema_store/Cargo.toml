@@ -1,12 +1,11 @@
 [package]
 name = "test_schema_store"
+version.workspace = true
 edition = "2024"
+license.workspace = true
 
 [dependencies]
-reqwest = { version = "0.12.24", default-features = false, features = [
-    "blocking",
-    "default-tls",
-] }
+avdschema = { path = "../avdschema", features = ["dump_load_files"] }
 
 [lib]
 crate-type = ["cdylib", "lib"]

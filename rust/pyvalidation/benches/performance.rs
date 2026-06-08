@@ -14,7 +14,7 @@ use pyvalidation::validation::get_validated_data;
 use pyvalidation::validation::init_store_from_file;
 use test_schema_store::get_store_gz_path;
 
-const TEST_DATA: &str = "{'fabric_name': 'foo', 'type': 123}";
+const TEST_DATA: &str = "{'fabric_label': 'foo', 'record_type': 123}";
 
 fn benchmark_init_store_from_file(criterion: &mut Criterion) {
     let schema_file = get_store_gz_path();

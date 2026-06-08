@@ -56,6 +56,8 @@ pub struct Dict {
     pub schema_id: Option<String>,
     #[serde(rename = "$schema")]
     pub schema_schema: Option<String>,
+    #[serde(rename = "$version")]
+    pub schema_version: Option<String>,
     #[serde(rename = "$defs")]
     pub schema_defs: Option<OrderMap<String, AnySchema>>,
     #[serde(flatten)]
