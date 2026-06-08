@@ -335,7 +335,7 @@ mod tests {
     use crate::validation::first_input_diagnostic_as_pyerr;
 
     // Initializing python only once. Otherwise things may crash when running in multiple threads.
-    // Also downloading the test schema and extracting to fragments.
+    // The test schema store is generated locally from YAML schema sources.
     static INIT_PY: OnceLock<()> = OnceLock::new();
     fn setup() {
         INIT_PY.get_or_init(|| {
@@ -463,7 +463,7 @@ mod tests {
         setup();
         pyo3::Python::attach(|py| {
             let module = py.import("validation").unwrap();
-            let data_as_json_str = serde_json::json!({"ethernet_interfaces": [{"name": "Ethernet1", "description": 12345}, {"name": "Ethernet1"}, {}]}).to_string();
+            let data_as_json_str = serde_json::json!({"named_items": [{"name": "item_1", "description": 12345}, {"name": "item_1"}, {}]}).to_string();
             let validation_result = {
                 let args = ();
                 let kwargs = pyo3::types::PyDict::new(py);
@@ -476,9 +476,9 @@ mod tests {
             let violations = validation_result.getattr("violations").unwrap();
             assert!(violations.is_instance_of::<pyo3::types::PyList>());
             let expected_violations: [(Vec<String>, String); 3] = [
-                (vec!["ethernet_interfaces".into(), "2".into()], "Missing the required key 'name'.".into()),
-                (vec!["ethernet_interfaces".into(), "0".into(), "name".into()], "The value is not unique among similar items. Conflicting item: ethernet_interfaces[1].name".into()),
-                (vec!["ethernet_interfaces".into(), "1".into(), "name".into()], "The value is not unique among similar items. Conflicting item: ethernet_interfaces[0].name".into()),
+                (vec!["named_items".into(), "2".into()], "Missing the required key 'name'.".into()),
+                (vec!["named_items".into(), "0".into(), "name".into()], "The value is not unique among similar items. Conflicting item: named_items[1].name".into()),
+                (vec!["named_items".into(), "1".into(), "name".into()], "The value is not unique among similar items. Conflicting item: named_items[0].name".into()),
             ];
 
             assert_eq!(violations.len().unwrap(), expected_violations.len());
@@ -633,7 +633,9 @@ mod tests {
         setup();
         pyo3::Python::attach(|py| {
             let module = py.import("validation").unwrap();
-            let data_as_json_str = serde_json::json!({"ethernet_interfaces": [{"name": "Ethernet1", "description": 12345}]}).to_string();
+            let data_as_json_str =
+                serde_json::json!({"named_items": [{"name": "item_1", "description": 12345}]})
+                    .to_string();
             let get_validated_data_result = {
                 let args = ();
                 let kwargs = pyo3::types::PyDict::new(py);
@@ -644,7 +646,11 @@ mod tests {
                     .unwrap()
             };
             let validated_data = get_validated_data_result.getattr("validated_data").unwrap();
-            let expected_data = pyo3::types::PyString::new(py, &serde_json::json!({"ethernet_interfaces": [{"name": "Ethernet1", "description": "12345"}]}).to_string());
+            let expected_data = pyo3::types::PyString::new(
+                py,
+                &serde_json::json!({"named_items": [{"name": "item_1", "description": "12345"}]})
+                    .to_string(),
+            );
             assert!(
                 validated_data.eq(&expected_data).unwrap(),
                 "Different data: {validated_data} vs {expected_data}"
@@ -663,7 +669,9 @@ mod tests {
         setup();
         pyo3::Python::attach(|py| {
             let module = py.import("validation").unwrap();
-            let data_as_json_str = serde_json::json!({"ethernet_interfaces": [{"name": "Ethernet1", "unknown": 12345}]}).to_string();
+            let data_as_json_str =
+                serde_json::json!({"named_items": [{"name": "item_1", "unknown": 12345}]})
+                    .to_string();
             let get_validated_data_result = {
                 let args = ();
                 let kwargs = pyo3::types::PyDict::new(py);
@@ -684,7 +692,7 @@ mod tests {
             let violations = validation_result.getattr("violations").unwrap();
             assert!(violations.is_instance_of::<pyo3::types::PyList>());
             let expected_violations: [(Vec<String>, String); 1] = [(
-                vec!["ethernet_interfaces".into(), "0".into(), "unknown".into()],
+                vec!["named_items".into(), "0".into(), "unknown".into()],
                 "Invalid key.".into(),
             )];
 
@@ -704,9 +712,9 @@ mod tests {
         setup();
         pyo3::Python::attach(|py| {
             let module = py.import("validation").unwrap();
-            // router_isis is a key from eos_config that should be ignored when validating avd_design
+            // config_only_setting is a key from eos_config that should be ignored when validating avd_design
             let data_as_json_str =
-                serde_json::json!({"fabric_name": "TEST-FABRIC", "router_isis": {"instance": "ISIS_TEST"}}).to_string();
+                serde_json::json!({"fabric_label": "TEST-FABRIC", "config_only_setting": {"instance": "TEST_INSTANCE"}}).to_string();
 
             // Create configuration with warn_eos_config_keys enabled
             let config = {
@@ -763,7 +771,7 @@ mod tests {
                 .cast_into_exact::<pyo3::types::PyString>()
                 .unwrap()
                 .to_string();
-            assert_eq!(path_item, "router_isis");
+            assert_eq!(path_item, "config_only_setting");
 
             let message = ignored_key
                 .getattr("message")

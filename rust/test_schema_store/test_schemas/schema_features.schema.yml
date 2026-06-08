@@ -1,0 +1,178 @@
+# Broad schema surface for schema, validation, LSP and generator tests. Keep the
+# model names generic so this store can be reused outside pyavd-utils.
+type: dict
+$version: "0.0.6"
+$id: schema_features
+$schema: avd-test-schema
+display_name: Schema feature coverage
+description: Exercises legal schema combinations supported by pyavd-utils.
+allow_other_keys: false
+relaxed_validation: false
+documentation_options:
+  table: feature coverage
+  hide_keys: false
+default:
+  bool_with_default: true
+keys:
+  bool_with_default:
+    type: bool
+    display_name: Boolean default
+    description: Boolean field with default and documentation options.
+    default: true
+    documentation_options:
+      table: primitives
+  bounded_int:
+    type: int
+    description: Integer with bounds, valid values and string coercion.
+    min: 1
+    max: 10
+    default: 5
+    valid_values:
+      - 1
+      - 5
+      - 10
+    convert_types:
+      - str
+    dynamic_valid_values:
+      - integer_choices
+    documentation_options:
+      table: primitives
+  formatted_string:
+    type: str
+    description: String with format, pattern, bounds, valid values and lower-case conversion.
+    min_length: 3
+    max_length: 17
+    default: abc
+    pattern: "[a-z0-9_-]+"
+    convert_to_lower_case: true
+    format: mac
+    valid_values:
+      - abc
+      - def
+    convert_types:
+      - int
+    dynamic_valid_values:
+      - string_choices
+    documentation_options:
+      table: primitives
+  deprecated_value:
+    type: str
+    description: Deprecated field that should emit a warning when configured.
+    deprecation:
+      warning: true
+      new_key: replacement_value
+      allow_with_new_key: false
+      remove_in_version: 9.9.9
+      remove_after_date: "2099-01-01"
+      url: https://example.invalid/schema/deprecated-value
+  removed_value:
+    type: str
+    description: Removed field that should emit an error when configured.
+    deprecation:
+      warning: true
+      removed: true
+      remove_in_version: 9.9.9
+  replacement_value:
+    type: str
+    description: Replacement field for deprecated_value.
+  integer_choices:
+    type: list
+    description: Source for integer dynamic valid values.
+    items:
+      type: int
+  string_choices:
+    type: list
+    description: Source for string dynamic valid values.
+    items:
+      type: str
+  record_list:
+    type: list
+    description: List of dict records with primary and unique keys.
+    min_length: 1
+    max_length: 5
+    primary_key: name
+    unique_keys:
+      - metadata.identifier
+    allow_duplicate_primary_key: false
+    default:
+      - name: default_record
+        metadata:
+          identifier: default_identifier
+    items:
+      type: dict
+      allow_other_keys: false
+      keys:
+        name:
+          type: str
+        value:
+          type: int
+          convert_types:
+            - str
+        metadata:
+          type: dict
+          keys:
+            identifier:
+              type: str
+              required: true
+  duplicate_allowed_records:
+    type: list
+    description: List where duplicate primary keys are intentionally legal.
+    primary_key: name
+    allow_duplicate_primary_key: true
+    items:
+      type: dict
+      keys:
+        name:
+          type: str
+  dynamic_key_sources:
+    type: list
+    description: Source records for dynamic key names.
+    default:
+      - key: default_dynamic_key
+    items:
+      type: dict
+      keys:
+        key:
+          type: str
+          required: true
+  dynamic_string_sources:
+    type: list
+    description: Source strings for dynamic key names.
+    default:
+      - default_string_dynamic_key
+    items:
+      type: str
+  nested_dict:
+    type: dict
+    description: Nested dict containing references and hidden documentation keys.
+    allow_other_keys: false
+    documentation_options:
+      table: nested
+      hide_keys: true
+    keys:
+      ref_to_def:
+        type: str
+        $ref: schema_features#/$defs/reusable_string
+      ref_to_other_schema:
+        type: str
+        $ref: eos_config#/keys/shared_setting
+dynamic_keys:
+  dynamic_key_sources.key:
+    type: int
+    description: Dynamic integer keys from a list of dicts.
+    min: 0
+    max: 100
+  dynamic_string_sources:
+    type: str
+    description: Dynamic string keys from a list of strings.
+  removed_dynamic_sources.key:
+    type: str
+    description: Removed dynamic key schema should be ignored by resolvers.
+    deprecation:
+      warning: true
+      removed: true
+$defs:
+  reusable_string:
+    type: str
+    description: Reusable definition referenced by nested_dict.ref_to_def.
+    min_length: 1

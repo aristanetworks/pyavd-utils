@@ -19,6 +19,47 @@ permissions:
 
 # For now only pyavd-utils
 jobs:
+  build-test-schema-store:
+    name: Build test schema store
+    runs-on: ubuntu-latest
+    if: |
+      github.repository == 'aristanetworks/pyavd-utils'
+      && (github.event_name == 'release' || github.event_name == 'workflow_dispatch')
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.release.tag_name || github.ref }}
+      - name: Build test-schemas.json.gz
+        run: |-
+          cargo run --locked -p test_schema_store --bin build_test_schemas -- --output dist/test-schemas.json.gz
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: test-schema-store
+          path: dist/test-schemas.json.gz
+          if-no-files-found: error
+
+  upload-test-schemas:
+    name: Upload test schema store
+    needs: [build-test-schema-store]
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'release'
+      && github.repository == 'aristanetworks/pyavd-utils'
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: test-schema-store
+          path: dist/
+      - name: Upload test-schemas.json.gz to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_EVENT_RELEASE_TAG_NAME: ${{ github.event.release.tag_name }}
+        run: |-
+          gh release upload "${GITHUB_EVENT_RELEASE_TAG_NAME}" dist/test-schemas.json.gz --clobber
+
   build-pyavd-utils-wheels:
     name: Build and test pyavd-utils wheel on ${{ matrix.os }}
     if: github.repository == 'aristanetworks/pyavd-utils'
@@ -93,7 +134,7 @@ jobs:
 
   test-pyavd-utils-from-test-pypi:
     name: Install from test-pypi and test on ${{ matrix.os }} for python ${{ matrix.python }}
-    needs: [target_version, publish-pyavd-utils-testpypi]
+    needs: [build-test-schema-store, target_version, publish-pyavd-utils-testpypi]
     runs-on: ${{ matrix.os }}
     if: |
       github.event_name == 'release'
@@ -124,13 +165,19 @@ jobs:
           TARGET_VERSION: ${{ needs.target_version.outputs.target_version }}
         run: |-
           pip install -i https://test.pypi.org/simple/ "pyavd-utils==${TARGET_VERSION}" --group pytest --extra-index-url https://pypi.org/simple
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: test-schema-store
+          path: dist/
       - name: Run tests
+        env:
+          TEST_SCHEMA_STORE_FILE: ${{ github.workspace }}/dist/test-schemas.json.gz
         run: |-
           pytest tests
 
   test-pyavd-utils-from-test-pypi-musl:
     name: Install from test-pypi and test on musl linux for python ${{ matrix.python }}
-    needs: [target_version, publish-pyavd-utils-testpypi]
+    needs: [build-test-schema-store, target_version, publish-pyavd-utils-testpypi]
     runs-on: ${{ matrix.os }}
     if: |
       github.event_name == 'release'
@@ -171,7 +218,13 @@ jobs:
         run: |-
           pip install --upgrade "pip>=25.1.0"
           pip install -i https://test.pypi.org/simple/ "pyavd-utils==${TARGET_VERSION}" --group pytest --extra-index-url https://pypi.org/simple
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: test-schema-store
+          path: dist/
       - name: Run tests
+        env:
+          TEST_SCHEMA_STORE_FILE: ${{ github.workspace }}/dist/test-schemas.json.gz
         run: |-
           pytest tests
 
