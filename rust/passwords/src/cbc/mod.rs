@@ -4,8 +4,8 @@
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as B64;
-use cbc::cipher::BlockDecryptMut as _;
-use cbc::cipher::BlockEncryptMut as _;
+use cbc::cipher::BlockModeDecrypt as _;
+use cbc::cipher::BlockModeEncrypt as _;
 use cbc::cipher::KeyIvInit as _;
 use cbc::cipher::block_padding::NoPadding;
 use cipher as _;
@@ -82,7 +82,7 @@ pub fn cbc_encrypt(key: &[u8], data: &[u8]) -> Result<Vec<u8>, CbcError> {
     let cipher = cbc::Encryptor::<TdesEde3>::new(&hashed_key.into(), &iv.into());
 
     let ct = cipher
-        .encrypt_padded_mut::<NoPadding>(&mut buf, buf_len)
+        .encrypt_padded::<NoPadding>(&mut buf, buf_len)
         .map_err(|_| CbcError::EncryptionFailed)?;
 
     Ok(B64.encode(ct).into_bytes())
@@ -98,7 +98,7 @@ pub fn cbc_decrypt(key: &[u8], b64_encrypted_data: &[u8]) -> Result<Vec<u8>, Cbc
     let cipher = cbc::Decryptor::<TdesEde3>::new(&hashed_key.into(), &iv.into());
 
     let pt = cipher
-        .decrypt_padded_mut::<NoPadding>(&mut ciphertext)
+        .decrypt_padded::<NoPadding>(&mut ciphertext)
         .map_err(|_| CbcError::DecryptionFailed)?;
 
     // Validate ENC SIGN
