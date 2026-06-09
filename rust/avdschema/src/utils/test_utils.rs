@@ -214,6 +214,23 @@ pub(crate) fn get_test_list_schema() -> AnySchema {
     .unwrap()
 }
 
+pub(crate) fn get_test_composite_primary_key_list_schema() -> AnySchema {
+    AnySchema::deserialize(json!(
+        {
+            "type": "list",
+            "primary_key": ["tenant", "vrf"],
+            "items": {
+                "type": "dict",
+                "keys": {
+                    "tenant": {"type": "str"},
+                    "vrf": {"type": "str"}
+                }
+            }
+        }
+    ))
+    .unwrap()
+}
+
 pub(crate) fn get_test_dict_schema() -> AnySchema {
     AnySchema::deserialize(json!(
         {

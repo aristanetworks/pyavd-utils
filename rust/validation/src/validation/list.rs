@@ -6,9 +6,11 @@ use std::collections::HashMap;
 
 use avdschema::any::AnySchema;
 use avdschema::list::List;
+use avdschema::list::PrimaryKey;
 use avdschema::resolve_ref;
 
 use crate::context::Context;
+use crate::feedback::CompositePrimaryKeyValue;
 use crate::feedback::Type;
 use crate::feedback::Violation;
 use crate::validatable::ValidatableSequence;
@@ -25,6 +27,7 @@ impl Validation for List {
             validate_min_length(self, value, &seq, ctx);
             validate_max_length(self, value, &seq, ctx);
             validate_unique_keys(self, &seq, ctx);
+            validate_primary_key_uniqueness(self, &seq, ctx);
             // Validate items and optionally collect coerced results
             let coerced_items = validate_items(self, &seq, ctx);
             coerced_items.map(|items| value.coerce_sequence(items))
@@ -148,15 +151,17 @@ fn validate_max_length<'a, V: ValidatableValue, S: ValidatableSequence<'a>>(
 }
 
 fn validate_item_primary_key<V: ValidatableValue>(schema: &List, item: &V, ctx: &mut Context) {
-    if let Some(primary_key) = &schema.primary_key
-        && item.get(primary_key).is_none_or(ValidatableValue::is_null)
-    {
-        ctx.add_error_for(
-            item,
-            Violation::MissingRequiredKey {
-                key: primary_key.to_owned(),
-            },
-        );
+    if let Some(primary_key) = &schema.primary_key {
+        for field in primary_key.fields() {
+            if item.get(field).is_none_or(ValidatableValue::is_null) {
+                ctx.add_error_for(
+                    item,
+                    Violation::MissingRequiredKey {
+                        key: field.to_owned(),
+                    },
+                );
+            }
+        }
     }
 }
 
@@ -165,47 +170,122 @@ fn validate_unique_keys<'a, S: ValidatableSequence<'a>>(
     items: &S,
     ctx: &mut Context,
 ) {
+    for unique_key in schema.unique_keys.iter().flatten() {
+        validate_unique_path(unique_key, items, ctx);
+    }
+}
+
+fn validate_primary_key_uniqueness<'a, S: ValidatableSequence<'a>>(
+    schema: &List,
+    items: &S,
+    ctx: &mut Context,
+) {
+    if schema.allow_duplicate_primary_key.unwrap_or_default() {
+        return;
+    }
+
+    match schema.primary_key.as_ref() {
+        Some(PrimaryKey::Single(primary_key)) => {
+            validate_unique_path(primary_key, items, ctx);
+        }
+        Some(primary_key @ PrimaryKey::Composite(_)) => {
+            validate_composite_primary_key_uniqueness(primary_key, items, ctx);
+        }
+        None => {}
+    }
+}
+
+fn validate_unique_path<'a, S: ValidatableSequence<'a>>(
+    unique_key: &str,
+    items: &S,
+    ctx: &mut Context,
+) {
     type SeenItem<'a, T> = (Vec<String>, &'a T);
 
-    let unique_keys = schema.unique_keys.iter().flatten().chain(
-        // the primary key is considered unique unless told otherwise
-        schema
-            .primary_key
-            .as_ref()
-            .filter(|_| !schema.allow_duplicate_primary_key.unwrap_or_default()),
-    );
+    // Map from stringified value to list of (trail, value) pairs.
+    let mut seen_items: HashMap<String, Vec<SeenItem<'a, S::Value>>> = HashMap::new();
 
-    for unique_key in unique_keys {
-        // Map from stringified value to list of (trail, value) pairs.
-        let mut seen_items: HashMap<String, Vec<SeenItem<'a, S::Value>>> = HashMap::new();
+    for (i, item) in items.iter().enumerate() {
+        for (trail_suffix, value) in item.walk_path(unique_key) {
+            // Build the full trail
+            let mut trail = vec![i.to_string()];
+            trail.extend(trail_suffix);
 
-        for (i, item) in items.iter().enumerate() {
-            for (trail_suffix, value) in item.walk_path(unique_key) {
-                // Build the full trail
-                let mut trail = vec![i.to_string()];
-                trail.extend(trail_suffix);
+            // Convert value to string for comparison
+            let value_str = value_to_string(value);
 
-                // Convert value to string for comparison
-                let value_str = value_to_string(value);
-
-                seen_items
-                    .entry(value_str)
-                    .and_modify(|seen_item_trails| {
-                        // We found at least one other item, so we know we have a duplicate
-                        // Add violations for all duplicates in both directions.
-                        for (seen_item_trail, seen_value) in seen_item_trails.iter() {
-                            ctx.add_duplicate_violation_pair_for(
-                                *seen_value,
-                                seen_item_trail,
-                                value,
-                                &trail,
-                            );
-                        }
-                    })
-                    .or_insert_with(|| vec![(trail, value)]);
-            }
+            seen_items
+                .entry(value_str)
+                .and_modify(|seen_item_trails| {
+                    // We found at least one other item, so we know we have a duplicate
+                    // Add violations for all duplicates in both directions.
+                    for (seen_item_trail, seen_value) in seen_item_trails.iter() {
+                        ctx.add_duplicate_violation_pair_for(
+                            *seen_value,
+                            seen_item_trail,
+                            value,
+                            &trail,
+                        );
+                    }
+                })
+                .or_insert_with(|| vec![(trail, value)]);
         }
     }
+}
+
+fn validate_composite_primary_key_uniqueness<'a, S: ValidatableSequence<'a>>(
+    primary_key: &PrimaryKey,
+    items: &S,
+    ctx: &mut Context,
+) {
+    type SeenItem<'a, T> = (Vec<String>, &'a T);
+
+    let mut seen_items: HashMap<Vec<String>, Vec<SeenItem<'a, S::Value>>> = HashMap::new();
+    for (i, item) in items.iter().enumerate() {
+        let Some(primary_key_item) = composite_primary_key_item(primary_key, item) else {
+            continue;
+        };
+        let trail = vec![i.to_string()];
+
+        seen_items
+            .entry(primary_key_item.comparison_value)
+            .and_modify(|seen_item_trails| {
+                for (seen_item_trail, seen_value) in seen_item_trails.iter() {
+                    ctx.add_composite_primary_key_duplicate_violation_pair_for(
+                        *seen_value,
+                        seen_item_trail,
+                        item,
+                        &trail,
+                        &primary_key_item.feedback_value,
+                    );
+                }
+            })
+            .or_insert_with(|| vec![(trail, item)]);
+    }
+}
+
+struct CompositePrimaryKeyItem {
+    comparison_value: Vec<String>,
+    feedback_value: CompositePrimaryKeyValue,
+}
+
+fn composite_primary_key_item<V: ValidatableValue>(
+    primary_key: &PrimaryKey,
+    item: &V,
+) -> Option<CompositePrimaryKeyItem> {
+    let mut comparison_value = Vec::with_capacity(primary_key.fields().len());
+    let mut feedback_value = ordermap::OrderMap::with_capacity(primary_key.fields().len());
+
+    for field in primary_key.fields() {
+        let value = item.get(field).filter(|value| !value.is_null())?;
+        comparison_value.push(value_to_string(value));
+        feedback_value.insert(field.to_owned(), value.to_feedback_value());
+    }
+
+    Some(CompositePrimaryKeyItem {
+        comparison_value,
+        feedback_value: feedback_value.into(),
+    })
 }
 
 /// Convert a `ValidatableValue` to a string for comparison purposes.
@@ -223,7 +303,9 @@ fn value_to_string<V: ValidatableValue>(value: &V) -> String {
 #[cfg(test)]
 mod tests {
     use avdschema::any::AnySchema;
+    use avdschema::boolean::Bool;
     use avdschema::dict::Dict;
+    use avdschema::int::Int;
     use avdschema::str::Str;
     use ordermap::OrderMap;
     use serde_json::Value;
@@ -232,6 +314,7 @@ mod tests {
     use crate::Configuration;
     use crate::feedback::CoercionNote;
     use crate::feedback::Feedback;
+    use crate::feedback::Value as FeedbackValue;
     use crate::validation::test_utils::get_test_store;
 
     #[test]
@@ -547,6 +630,181 @@ mod tests {
         let _ = schema.validate(&input, &mut ctx);
         assert!(ctx.result.infos.is_empty());
         assert!(ctx.result.errors.is_empty());
+    }
+
+    #[test]
+    fn validate_composite_primary_key_ok() {
+        let schema = List {
+            items: Some(Box::new(
+                Dict {
+                    keys: Some(OrderMap::from_iter([
+                        ("tenant".into(), Str::default().into()),
+                        ("vrf".into(), Str::default().into()),
+                    ])),
+                    ..Default::default()
+                }
+                .into(),
+            )),
+            primary_key: Some(PrimaryKey::Composite(vec!["tenant".into(), "vrf".into()])),
+            ..Default::default()
+        };
+        let input = serde_json::json!([
+            { "tenant": "t1", "vrf": "v1" },
+            { "tenant": "t1", "vrf": "v2" }
+        ]);
+        let store = get_test_store();
+        let mut ctx = Context::new(&store, None);
+        let _ = schema.validate(&input, &mut ctx);
+        assert!(ctx.result.errors.is_empty() && ctx.result.infos.is_empty());
+    }
+
+    #[test]
+    fn validate_composite_primary_key_not_unique_err() {
+        let schema = List {
+            items: Some(Box::new(
+                Dict {
+                    keys: Some(OrderMap::from_iter([
+                        ("tenant".into(), Str::default().into()),
+                        ("vrf".into(), Str::default().into()),
+                        ("id".into(), Int::default().into()),
+                        ("enabled".into(), Bool::default().into()),
+                    ])),
+                    ..Default::default()
+                }
+                .into(),
+            )),
+            primary_key: Some(PrimaryKey::Composite(vec![
+                "tenant".into(),
+                "vrf".into(),
+                "id".into(),
+                "enabled".into(),
+            ])),
+            ..Default::default()
+        };
+        let input = serde_json::json!([
+            { "tenant": "t1", "vrf": "v1", "id": 1, "enabled": true },
+            { "tenant": "t1", "vrf": "v2", "id": 1, "enabled": true },
+            { "tenant": "t1", "vrf": "v1", "id": 1, "enabled": true }
+        ]);
+        let store = get_test_store();
+        let mut ctx = Context::new(&store, None);
+        let _ = schema.validate(&input, &mut ctx);
+        assert!(ctx.result.infos.is_empty());
+        assert_eq!(
+            ctx.result.errors,
+            vec![
+                Feedback {
+                    path: vec!["0".into()].into(),
+                    span: None,
+                    issue: Violation::CompositePrimaryKeyNotUnique {
+                        value: CompositePrimaryKeyValue::from(OrderMap::from_iter([
+                            ("tenant".into(), FeedbackValue::Str("t1".into())),
+                            ("vrf".into(), FeedbackValue::Str("v1".into())),
+                            ("id".into(), FeedbackValue::Int(1)),
+                            ("enabled".into(), FeedbackValue::Bool(true)),
+                        ])),
+                        other_path: vec!["2".into()].into(),
+                        other_span: None,
+                    }
+                    .into()
+                },
+                Feedback {
+                    path: vec!["2".into()].into(),
+                    span: None,
+                    issue: Violation::CompositePrimaryKeyNotUnique {
+                        value: CompositePrimaryKeyValue::from(OrderMap::from_iter([
+                            ("tenant".into(), FeedbackValue::Str("t1".into())),
+                            ("vrf".into(), FeedbackValue::Str("v1".into())),
+                            ("id".into(), FeedbackValue::Int(1)),
+                            ("enabled".into(), FeedbackValue::Bool(true)),
+                        ])),
+                        other_path: vec!["0".into()].into(),
+                        other_span: None,
+                    }
+                    .into()
+                }
+            ]
+        );
+    }
+
+    #[test]
+    fn validate_composite_primary_key_required_err() {
+        let schema = List {
+            items: Some(Box::new(
+                Dict {
+                    keys: Some(OrderMap::from_iter([
+                        ("tenant".into(), Str::default().into()),
+                        ("vrf".into(), Str::default().into()),
+                    ])),
+                    ..Default::default()
+                }
+                .into(),
+            )),
+            primary_key: Some(PrimaryKey::Composite(vec!["tenant".into(), "vrf".into()])),
+            ..Default::default()
+        };
+        let input = serde_json::json!([
+            { "tenant": "t1", "vrf": null },
+            { "vrf": "v1" }
+        ]);
+        let store = get_test_store();
+        let mut ctx = Context::new(&store, None);
+        let _ = schema.validate(&input, &mut ctx);
+        assert!(ctx.result.infos.is_empty());
+        assert_eq!(
+            ctx.result.errors,
+            vec![
+                Feedback {
+                    path: vec!["0".into()].into(),
+                    span: None,
+                    issue: Violation::MissingRequiredKey { key: "vrf".into() }.into()
+                },
+                Feedback {
+                    path: vec!["1".into()].into(),
+                    span: None,
+                    issue: Violation::MissingRequiredKey {
+                        key: "tenant".into()
+                    }
+                    .into()
+                }
+            ]
+        );
+    }
+
+    #[test]
+    fn validate_allow_duplicate_composite_primary_key_still_requires_fields_err() {
+        let schema = List {
+            items: Some(Box::new(
+                Dict {
+                    keys: Some(OrderMap::from_iter([
+                        ("tenant".into(), Str::default().into()),
+                        ("vrf".into(), Str::default().into()),
+                    ])),
+                    ..Default::default()
+                }
+                .into(),
+            )),
+            primary_key: Some(PrimaryKey::Composite(vec!["tenant".into(), "vrf".into()])),
+            allow_duplicate_primary_key: Some(true),
+            ..Default::default()
+        };
+        let input = serde_json::json!([
+            { "tenant": "t1", "vrf": "v1" },
+            { "tenant": "t1", "vrf": "v1" },
+            { "tenant": "t1" }
+        ]);
+        let store = get_test_store();
+        let mut ctx = Context::new(&store, None);
+        let _ = schema.validate(&input, &mut ctx);
+        assert!(ctx.result.infos.is_empty());
+        assert_eq!(
+            ctx.result.errors,
+            vec![Feedback {
+                path: vec!["2".into()].into(),
+                span: None,
+                issue: Violation::MissingRequiredKey { key: "vrf".into() }.into()
+            }]
+        );
     }
 
     #[test]

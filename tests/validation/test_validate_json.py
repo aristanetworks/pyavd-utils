@@ -3,7 +3,7 @@
 # that can be found in the LICENSE file.
 import pytest
 
-from pyavd_utils.validation import validate_json
+from pyavd_utils.validation import validate_json, validate_json_with_adhoc_schema
 
 
 @pytest.mark.usefixtures("init_store")
@@ -21,6 +21,48 @@ def test_validate_json() -> None:
 
     assert len(validation_result.deprecations) == 0
     assert len(validation_result.ignored_eos_config_keys) == 0
+
+
+@pytest.mark.usefixtures("init_store")
+def test_validate_json_with_adhoc_schema_composite_primary_key() -> None:
+    schema = """
+    {
+      "type": "list",
+      "primary_key": ["tenant", "vrf", "id", "enabled"],
+      "items": {
+        "type": "dict",
+        "keys": {
+          "tenant": {"type": "str"},
+          "vrf": {"type": "str"},
+          "id": {"type": "int"},
+          "enabled": {"type": "bool"}
+        }
+      }
+    }
+    """
+    data = """
+    [
+      {"tenant": "t1", "vrf": "v1", "id": 1, "enabled": true},
+      {"tenant": "t1", "vrf": "v2", "id": 1, "enabled": true},
+      {"tenant": "t1", "vrf": "v1", "id": 1, "enabled": true}
+    ]
+    """
+
+    validation_result = validate_json_with_adhoc_schema(data, schema)
+
+    expected_violations: list[tuple[list[str], str]] = [
+        (
+            ["0"],
+            'The composite primary key {"tenant": "t1", "vrf": "v1", "id": 1, "enabled": true} is not unique among similar items. Conflicting item: [2]',
+        ),
+        (
+            ["2"],
+            'The composite primary key {"tenant": "t1", "vrf": "v1", "id": 1, "enabled": true} is not unique among similar items. Conflicting item: [0]',
+        ),
+    ]
+    assert len(validation_result.violations) == len(expected_violations)
+    for violation in validation_result.violations:
+        assert (violation.path, violation.message) in expected_violations, f"Error not expected: {violation.path}, {violation.message}"
 
 
 @pytest.mark.usefixtures("init_store")
