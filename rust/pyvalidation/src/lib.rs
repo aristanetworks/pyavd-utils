@@ -7,7 +7,6 @@
     missing_debug_implementations,
     clippy::fn_params_excessive_bools,
     clippy::manual_let_else,
-    clippy::map_err_ignore,
     clippy::needless_pass_by_value,
     clippy::module_name_repetitions,
     clippy::struct_excessive_bools,
@@ -220,7 +219,7 @@ pub mod validation {
         }?;
 
         // Insert the resolved store into the OnceLock.
-        STORE.set(store).map_err(|_| {
+        STORE.set(store).map_err(|_store| {
             PyRuntimeError::new_err(
                 "Unable to initialize the schema store. \
                  Initialization can only happen once, and must be done before running any validations.".to_owned(),
