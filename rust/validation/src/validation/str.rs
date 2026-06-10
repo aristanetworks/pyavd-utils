@@ -134,10 +134,10 @@ fn validate_pattern<V: ValidatableValue>(schema: &Str, value: &V, input: &str, c
                         found: input.into(),
                     },
                 ),
-                Err(error) => ctx.add_error_for(
+                Err(err) => ctx.add_error_for(
                     value,
                     ErrorIssue::InternalError {
-                        message: error.to_string(),
+                        message: err.to_string(),
                     },
                 ),
             },
