@@ -1,9 +1,16 @@
 // Copyright (c) 2025-2026 Arista Networks, Inc.
 // Use of this source code is governed by the Apache License 2.0
 // that can be found in the LICENSE file.
+pub mod dynamic_keys;
 
 use std::sync::OnceLock;
 
+use dynamic_keys::CachedDefaultDynamicKeys;
+pub use dynamic_keys::DefaultDynamicKeys;
+pub use dynamic_keys::DictKeyMatch;
+pub use dynamic_keys::DynamicKeyInfo;
+pub use dynamic_keys::DynamicKeyOverrides;
+use dynamic_keys::ResolvedDictKeys;
 use ordermap::OrderMap;
 use serde::Deserialize;
 use serde::Serialize;
@@ -19,17 +26,6 @@ use crate::any::Shortcuts;
 use crate::base::Deprecation;
 use crate::utils::schema_data::SchemaDataMapping;
 use crate::utils::schema_data::SchemaDataSequence as _;
-
-pub type DefaultDynamicKeys = OrderMap<String, Vec<String>>;
-
-/// Maps a concrete input key to the dynamic key schema path that should validate it.
-///
-/// Used when the dynamic key cannot be inferred from input/default schema data,
-/// for example when LSP comments identify the intended dynamic-key source.
-/// Callers resolving both static and dynamic schema keys should give static
-/// schema keys precedence over these overrides.
-pub type DynamicKeyOverrides = OrderMap<String, String>;
-type CachedDefaultDynamicKeys = Option<Box<DefaultDynamicKeys>>;
 
 /// AVD Schema for dictionary data.
 #[skip_serializing_none]
@@ -173,7 +169,7 @@ impl<'a> Dict {
         })
     }
 
-    pub(self) fn get_default_for_key(&self, key: &str) -> Option<Value> {
+    pub fn get_default_for_key(&self, key: &str) -> Option<Value> {
         self.keys
             .as_ref()
             .and_then(|keys| keys.get(key).and_then(Shortcuts::default_))
@@ -212,6 +208,20 @@ impl<'a> Dict {
                     .collect::<Vec<String>>()
             })
     }
+
+    pub fn resolve_dict_keys<'input, M>(
+        &'a self,
+        dict: M,
+        dynamic_keys_overrides: Option<&DynamicKeyOverrides>,
+    ) -> ResolvedDictKeys<'a>
+    where
+        M: SchemaDataMapping<'input>,
+    {
+        ResolvedDictKeys {
+            static_keys: self.keys.as_ref(),
+            dynamic_keys: self.get_dynamic_keys(dict, dynamic_keys_overrides),
+        }
+    }
 }
 
 impl Shortcuts for Dict {
@@ -241,14 +251,6 @@ impl<'x> TryFrom<&'x AnySchema> for &'x Dict {
     }
 }
 
-#[derive(Debug, PartialEq)]
-pub struct DynamicKeyInfo<'a> {
-    /// The dynamic key path defined in the schema that led to this dynamic key.
-    pub dynamic_key_path: String,
-    /// The schema for this dynamic key.
-    pub schema: &'a AnySchema,
-}
-
 #[cfg(test)]
 mod tests {
     use ordermap::OrderMap;
@@ -265,6 +267,7 @@ mod tests {
     use crate::boolean::Bool;
     use crate::int::Int;
     use crate::list::List;
+    use crate::str::Str;
     use crate::utils::test_utils::get_test_dict_schema;
 
     fn removed_bool_schema() -> AnySchema {
@@ -475,7 +478,7 @@ mod tests {
                     items: Some(Box::new(AnySchema::Dict(Dict {
                         keys: Some(OrderMap::from_iter([(
                             "name".to_owned(),
-                            crate::str::Str::default().into(),
+                            Str::default().into(),
                         )])),
                         ..Default::default()
                     }))),
