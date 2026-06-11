@@ -6,7 +6,6 @@
     missing_docs,
     missing_debug_implementations,
     clippy::fn_params_excessive_bools,
-    clippy::indexing_slicing,
     clippy::manual_let_else,
     clippy::map_err_ignore,
     clippy::needless_pass_by_value,

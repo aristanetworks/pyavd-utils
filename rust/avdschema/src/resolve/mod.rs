@@ -107,9 +107,9 @@ impl Resolve for AnySchema {
 }
 
 /// Returns bool indicating if the two given schemas are of the same type.
-fn is_same_schema(a: &AnySchema, b: &AnySchema) -> bool {
+fn is_same_schema(left: &AnySchema, right: &AnySchema) -> bool {
     matches!(
-        (a, b),
+        (left, right),
         (AnySchema::Bool(_), AnySchema::Bool(_))
             | (AnySchema::Dict(_), AnySchema::Dict(_))
             | (AnySchema::Int(_), AnySchema::Int(_))

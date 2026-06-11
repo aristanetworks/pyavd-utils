@@ -55,7 +55,10 @@ pub trait SchemaDataValue<'a>: Sized + Copy {
                 })
                 .unwrap_or_default()
         } else {
-            OrderMap::from_iter([(trail.map(|t| t.to_owned()).unwrap_or_default(), self)])
+            OrderMap::from_iter([(
+                trail.map(|trail| trail.to_owned()).unwrap_or_default(),
+                self,
+            )])
         }
     }
 }

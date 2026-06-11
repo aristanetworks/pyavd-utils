@@ -210,8 +210,8 @@ fn validate_unique_keys<'a, S: ValidatableSequence<'a>>(
 
 /// Convert a `ValidatableValue` to a string for comparison purposes.
 fn value_to_string<V: ValidatableValue>(value: &V) -> String {
-    if let Some(s) = value.as_str() {
-        return s.into_owned();
+    if let Some(string) = value.as_str() {
+        return string.into_owned();
     }
     if value.is_null() {
         return "__NULL__".to_owned();

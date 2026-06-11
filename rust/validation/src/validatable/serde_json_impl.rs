@@ -42,19 +42,19 @@ impl ValidatableValue for Value {
 
     fn as_str(&self) -> Option<Cow<'_, str>> {
         match self {
-            Value::String(s) => Some(Cow::Borrowed(s.as_str())),
-            Value::Number(n) => Some(Cow::Owned(n.to_string())),
+            Value::String(string) => Some(Cow::Borrowed(string.as_str())),
+            Value::Number(number) => Some(Cow::Owned(number.to_string())),
             // Using Title case to match Python behavior
-            Value::Bool(b) => Some(Cow::Borrowed(if *b { "True" } else { "False" })),
+            Value::Bool(boolean) => Some(Cow::Borrowed(if *boolean { "True" } else { "False" })),
             _ => None,
         }
     }
 
     fn as_i64(&self) -> Option<i64> {
         match self {
-            Value::Number(n) => number_as_i64(n),
-            Value::String(s) => s.parse().ok(),
-            Value::Bool(b) => Some(i64::from(*b)),
+            Value::Number(number) => number_as_i64(number),
+            Value::String(string) => string.parse().ok(),
+            Value::Bool(boolean) => Some(i64::from(*boolean)),
             _ => None,
         }
     }

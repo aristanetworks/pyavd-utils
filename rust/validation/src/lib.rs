@@ -13,12 +13,9 @@
     clippy::field_scoped_visibility_modifiers,
     clippy::float_cmp,
     clippy::from_iter_instead_of_collect,
-    clippy::indexing_slicing,
-    clippy::min_ident_chars,
     clippy::match_wildcard_for_single_variants,
     clippy::option_option,
     clippy::partial_pub_fields,
-    clippy::shadow_unrelated,
     clippy::struct_excessive_bools,
     clippy::trivially_copy_pass_by_ref,
     reason = "Existing validation models and tests predate workspace lint inheritance"

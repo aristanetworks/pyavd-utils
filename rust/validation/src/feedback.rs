@@ -32,10 +32,10 @@ impl From<serde_json::Value> for Value {
             serde_json::Value::Null => Self::Null(),
             serde_json::Value::Bool(value) => Self::Bool(value),
             serde_json::Value::Number(number) => {
-                if let Some(value) = number.as_i64() {
-                    Self::Int(value)
-                } else if let Some(value) = number.as_f64() {
-                    Self::Float(value)
+                if let Some(integer) = number.as_i64() {
+                    Self::Int(integer)
+                } else if let Some(float) = number.as_f64() {
+                    Self::Float(float)
                 } else {
                     // Falling back to str
                     Self::Str(number.as_str().to_owned())
@@ -45,7 +45,7 @@ impl From<serde_json::Value> for Value {
                 // By using hashmap we accept that keys may be reordered here.
                 value
                     .into_iter()
-                    .map(|(k, v)| (k, Value::from(v)))
+                    .map(|(key, value)| (key, Value::from(value)))
                     .collect::<HashMap<_, _>>(),
             ),
             serde_json::Value::String(value) => Self::Str(value),
@@ -549,64 +549,63 @@ mod tests {
 
     #[test]
     fn value_from_json_value() {
-        let value = Value::from(serde_json::json!(true));
-        assert_eq!(value, Value::Bool(true));
-        let value = Value::from(serde_json::json!(-123));
-        assert_eq!(value, Value::Int(-123));
-        let value = Value::from(serde_json::json!(123.45));
-        assert_eq!(value, Value::Float(123.45));
-        let value: Value = Value::from(serde_json::json!(null));
-        assert_eq!(value, Value::Null());
-        let value = Value::from(serde_json::json!("string"));
-        assert_eq!(value, Value::Str("string".to_owned()));
-        let value = Value::from(serde_json::json!({"key": "value"}));
+        assert_eq!(Value::from(serde_json::json!(true)), Value::Bool(true));
+        assert_eq!(Value::from(serde_json::json!(-123)), Value::Int(-123));
+        assert_eq!(Value::from(serde_json::json!(123.45)), Value::Float(123.45));
+        assert_eq!(Value::from(serde_json::json!(null)), Value::Null());
         assert_eq!(
-            value,
+            Value::from(serde_json::json!("string")),
+            Value::Str("string".to_owned())
+        );
+        assert_eq!(
+            Value::from(serde_json::json!({"key": "value"})),
             Value::Dict([("key".to_owned(), Value::Str("value".to_owned()))].into())
         );
-        let value = Value::from(serde_json::json!(["item", 123]));
         assert_eq!(
-            value,
+            Value::from(serde_json::json!(["item", 123])),
             Value::List([Value::Str("item".to_owned()), Value::Int(123)].into())
         );
     }
 
     #[test]
     fn type_from_json_value() {
-        let type_ = Type::from(&serde_json::json!(null));
-        assert_eq!(type_, Type::Null);
-        let type_ = Type::from(&serde_json::json!(true));
-        assert_eq!(type_, Type::Bool);
-        let type_ = Type::from(&serde_json::json!(-123));
-        assert_eq!(type_, Type::Int);
-        let type_ = Type::from(&serde_json::json!(123.45));
-        assert_eq!(type_, Type::Float);
-        let type_ = Type::from(&serde_json::json!("string"));
-        assert_eq!(type_, Type::Str);
-        let type_ = Type::from(&serde_json::json!({"key": "value"}));
-        assert_eq!(type_, Type::Dict);
-        let type_ = Type::from(&serde_json::json!(["item", 123]));
-        assert_eq!(type_, Type::List);
+        assert_eq!(Type::from(&serde_json::json!(null)), Type::Null);
+        assert_eq!(Type::from(&serde_json::json!(true)), Type::Bool);
+        assert_eq!(Type::from(&serde_json::json!(-123)), Type::Int);
+        assert_eq!(Type::from(&serde_json::json!(123.45)), Type::Float);
+        assert_eq!(Type::from(&serde_json::json!("string")), Type::Str);
+        assert_eq!(Type::from(&serde_json::json!({"key": "value"})), Type::Dict);
+        assert_eq!(Type::from(&serde_json::json!(["item", 123])), Type::List);
     }
 
     #[test]
     fn value_display() {
-        let value = Value::Bool(true);
-        assert_eq!(format!("{value}").as_str(), "true");
-        let value = Value::Int(-123);
-        assert_eq!(format!("{value}").as_str(), "-123");
-        let value = Value::Float(123.45);
-        assert_eq!(format!("{value}").as_str(), "123.45");
-        let value = Value::Null();
-        assert_eq!(format!("{value}").as_str(), "null");
-        let value = Value::Str("string".to_owned());
-        assert_eq!(format!("{value}").as_str(), "\"string\"");
-        let value = Value::Dict([("key".to_owned(), Value::Str("value".to_owned()))].into());
+        assert_eq!(format!("{}", Value::Bool(true)).as_str(), "true");
+        assert_eq!(format!("{}", Value::Int(-123)).as_str(), "-123");
+        assert_eq!(format!("{}", Value::Float(123.45)).as_str(), "123.45");
+        assert_eq!(format!("{}", Value::Null()).as_str(), "null");
+        assert_eq!(
+            format!("{}", Value::Str("string".to_owned())).as_str(),
+            "\"string\""
+        );
         // TODO: Improve the output format for dicts. Not really used currently.
-        assert_eq!(format!("{value}").as_str(), "{\"key\": Str(\"value\")}");
-        let value = Value::List([Value::Str("item".to_owned()), Value::Int(123)].into());
+        assert_eq!(
+            format!(
+                "{}",
+                Value::Dict([("key".to_owned(), Value::Str("value".to_owned()))].into())
+            )
+            .as_str(),
+            "{\"key\": Str(\"value\")}"
+        );
         // TODO: Improve the output format for lists. Not really used currently.
-        assert_eq!(format!("{value}").as_str(), "[Str(\"item\"), Int(123)]");
+        assert_eq!(
+            format!(
+                "{}",
+                Value::List([Value::Str("item".to_owned()), Value::Int(123)].into())
+            )
+            .as_str(),
+            "[Str(\"item\"), Int(123)]"
+        );
     }
     #[test]
     fn deprecated_display() {

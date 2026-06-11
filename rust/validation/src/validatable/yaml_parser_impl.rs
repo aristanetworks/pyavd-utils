@@ -51,10 +51,10 @@ impl<'input> ValidatableValue for Node<'input> {
     fn as_str(&self) -> Option<Cow<'_, str>> {
         match &self.value {
             Value::String(cow) => Some(Cow::Borrowed(cow.as_ref())),
-            Value::Int(i) => Some(i.to_decimal_string()),
-            Value::Float(f) => Some(Cow::Owned(f.to_string())),
+            Value::Int(integer) => Some(integer.to_decimal_string()),
+            Value::Float(float) => Some(Cow::Owned(float.to_string())),
             // Using Title case to match Python behavior
-            Value::Bool(b) => Some(Cow::Borrowed(if *b { "True" } else { "False" })),
+            Value::Bool(boolean) => Some(Cow::Borrowed(if *boolean { "True" } else { "False" })),
             _ => None,
         }
     }
@@ -63,15 +63,15 @@ impl<'input> ValidatableValue for Node<'input> {
         match &self.value {
             Value::Int(integer) => integer.as_i64(),
             Value::Float(float) => integral_float_to_i64(*float),
-            Value::String(s) => s.parse().ok(),
-            Value::Bool(b) => Some(i64::from(*b)),
+            Value::String(string) => string.parse().ok(),
+            Value::Bool(boolean) => Some(i64::from(*boolean)),
             _ => None,
         }
     }
 
     fn as_bool(&self) -> Option<bool> {
         match &self.value {
-            Value::Bool(b) => Some(*b),
+            Value::Bool(boolean) => Some(*boolean),
             _ => None,
         }
     }
@@ -164,10 +164,12 @@ impl<'input> ValidatableValue for Node<'input> {
         use crate::feedback::Value as FV;
         match &self.value {
             Value::Null => FV::Null(),
-            Value::Bool(b) => FV::Bool(*b),
-            Value::Int(i) => i.as_i64().map_or_else(|| FV::Str(i.to_string()), FV::Int),
-            Value::Float(f) => FV::Float(*f),
-            Value::String(s) => FV::Str(s.to_string()),
+            Value::Bool(boolean) => FV::Bool(*boolean),
+            Value::Int(integer) => integer
+                .as_i64()
+                .map_or_else(|| FV::Str(integer.to_string()), FV::Int),
+            Value::Float(float) => FV::Float(*float),
+            Value::String(string) => FV::Str(string.to_string()),
             Value::Sequence(seq) => FV::List(
                 seq.iter()
                     .map(|item| item.node.to_feedback_value())
@@ -212,17 +214,17 @@ pub struct NodeMapping<'a, 'input> {
 /// schema keys even if they have a scalar textual representation.
 fn schema_key_to_string<'a>(node: &'a Node<'_>) -> Option<Cow<'a, str>> {
     match &node.value {
-        Value::String(s) => Some(Cow::Borrowed(s.as_ref())),
+        Value::String(string) => Some(Cow::Borrowed(string.as_ref())),
         _ => None,
     }
 }
 
 fn scalar_key_to_string<'a>(node: &'a Node<'_>) -> Option<Cow<'a, str>> {
     match &node.value {
-        Value::String(s) => Some(Cow::Borrowed(s.as_ref())),
-        Value::Int(i) => Some(i.to_decimal_string()),
-        Value::Float(f) => Some(Cow::Owned(f.to_string())),
-        Value::Bool(b) => Some(Cow::Borrowed(if *b { "true" } else { "false" })),
+        Value::String(string) => Some(Cow::Borrowed(string.as_ref())),
+        Value::Int(integer) => Some(integer.to_decimal_string()),
+        Value::Float(float) => Some(Cow::Owned(float.to_string())),
+        Value::Bool(boolean) => Some(Cow::Borrowed(if *boolean { "true" } else { "false" })),
         _ => None,
     }
 }
@@ -307,10 +309,10 @@ impl<'a, 'input: 'a> ValidatableMappingPair<'a> for NodeMappingPair<'a, 'input> 
     /// null, and complex YAML keys can still produce a useful validation path.
     fn display_key(&self) -> Cow<'a, str> {
         match &self.pair.key.value {
-            Value::String(s) => Cow::Borrowed(s.as_ref()),
-            Value::Int(i) => i.to_decimal_string(),
-            Value::Float(f) => Cow::Owned(f.to_string()),
-            Value::Bool(b) => Cow::Borrowed(if *b { "true" } else { "false" }),
+            Value::String(string) => Cow::Borrowed(string.as_ref()),
+            Value::Int(integer) => integer.to_decimal_string(),
+            Value::Float(float) => Cow::Owned(float.to_string()),
+            Value::Bool(boolean) => Cow::Borrowed(if *boolean { "true" } else { "false" }),
             Value::Null => Cow::Borrowed("null"),
             Value::Sequence(_) | Value::Mapping(_) => Cow::Borrowed("<complex key>"),
         }
@@ -392,8 +394,8 @@ mod tests {
         yaml_parser::Span::new(0..1)
     }
 
-    fn string_node(s: &str) -> Node<'static> {
-        Node::new(Value::String(Cow::Owned(s.to_owned())), make_span())
+    fn string_node(string: &str) -> Node<'static> {
+        Node::new(Value::String(Cow::Owned(string.to_owned())), make_span())
     }
 
     fn int_node(i: i64) -> Node<'static> {
