@@ -7,6 +7,7 @@ use std::collections::HashMap;
 use avdschema::any::AnySchema;
 use avdschema::list::List;
 use avdschema::list::PrimaryKey;
+use avdschema::list::PrimaryKeyComponent;
 use avdschema::resolve_ref;
 
 use crate::context::Context;
@@ -151,17 +152,31 @@ fn validate_max_length<'a, V: ValidatableValue, S: ValidatableSequence<'a>>(
 }
 
 fn validate_item_primary_key<V: ValidatableValue>(schema: &List, item: &V, ctx: &mut Context) {
-    if let Some(primary_key) = &schema.primary_key {
-        for field in primary_key.fields() {
-            if item.get(field).is_none_or(ValidatableValue::is_null) {
-                ctx.add_error_for(
-                    item,
-                    Violation::MissingRequiredKey {
-                        key: field.to_owned(),
-                    },
-                );
+    match &schema.primary_key {
+        Some(PrimaryKey::Single(field)) => validate_required_primary_key_path(field, item, ctx),
+        Some(PrimaryKey::Composite(components)) => {
+            for component in components {
+                if component.default_value().is_none() {
+                    validate_required_primary_key_path(component.path(), item, ctx);
+                }
             }
         }
+        None => {}
+    }
+}
+
+fn validate_required_primary_key_path<V: ValidatableValue>(
+    path: &str,
+    item: &V,
+    ctx: &mut Context,
+) {
+    if get_path(item, path).is_none_or(ValidatableValue::is_null) {
+        ctx.add_error_for(
+            item,
+            Violation::MissingRequiredKey {
+                key: path.to_owned(),
+            },
+        );
     }
 }
 
@@ -186,12 +201,50 @@ fn validate_primary_key_uniqueness<'a, S: ValidatableSequence<'a>>(
 
     match schema.primary_key.as_ref() {
         Some(PrimaryKey::Single(primary_key)) => {
-            validate_unique_path(primary_key, items, ctx);
+            validate_primary_key_path_uniqueness(primary_key, items, ctx);
         }
         Some(primary_key @ PrimaryKey::Composite(_)) => {
             validate_composite_primary_key_uniqueness(primary_key, items, ctx);
         }
         None => {}
+    }
+}
+
+fn validate_primary_key_path_uniqueness<'a, S: ValidatableSequence<'a>>(
+    primary_key: &str,
+    items: &S,
+    ctx: &mut Context,
+) {
+    type SeenItem<'a, T> = (Vec<String>, &'a T);
+
+    let mut seen_items: HashMap<String, Vec<SeenItem<'a, S::Value>>> = HashMap::new();
+
+    for (i, item) in items.iter().enumerate() {
+        let Some((trail_suffix, value)) = get_path_with_trail(item, primary_key) else {
+            continue;
+        };
+        if value.is_null() {
+            continue;
+        }
+
+        let mut trail = vec![i.to_string()];
+        trail.extend(trail_suffix);
+        let value_str = value_to_string(value);
+
+        seen_items
+            .entry(value_str)
+            .and_modify(|seen_item_trails| {
+                for (seen_item_trail, seen_value) in seen_item_trails.iter() {
+                    ctx.add_duplicate_violation_pair_for(
+                        *seen_value,
+                        seen_item_trail,
+                        value,
+                        &trail,
+                    );
+                }
+                seen_item_trails.push((trail.clone(), value));
+            })
+            .or_insert_with(|| vec![(trail, value)]);
     }
 }
 
@@ -227,6 +280,7 @@ fn validate_unique_path<'a, S: ValidatableSequence<'a>>(
                             &trail,
                         );
                     }
+                    seen_item_trails.push((trail.clone(), value));
                 })
                 .or_insert_with(|| vec![(trail, value)]);
         }
@@ -259,6 +313,7 @@ fn validate_composite_primary_key_uniqueness<'a, S: ValidatableSequence<'a>>(
                         &primary_key_item.feedback_value,
                     );
                 }
+                seen_item_trails.push((trail.clone(), item));
             })
             .or_insert_with(|| vec![(trail, item)]);
     }
@@ -276,16 +331,63 @@ fn composite_primary_key_item<V: ValidatableValue>(
     let mut comparison_value = Vec::with_capacity(primary_key.fields().len());
     let mut feedback_value = ordermap::OrderMap::with_capacity(primary_key.fields().len());
 
-    for field in primary_key.fields() {
-        let value = item.get(field).filter(|value| !value.is_null())?;
-        comparison_value.push(value_to_string(value));
-        feedback_value.insert(field.to_owned(), value.to_feedback_value());
+    let PrimaryKey::Composite(components) = primary_key else {
+        return None;
+    };
+
+    for component in components {
+        let value = composite_primary_key_component_value(component, item)?;
+        comparison_value.push(value.comparison_value);
+        feedback_value.insert(component.path().to_owned(), value.feedback_value);
     }
 
     Some(CompositePrimaryKeyItem {
         comparison_value,
         feedback_value: feedback_value.into(),
     })
+}
+
+struct CompositePrimaryKeyComponentValue {
+    comparison_value: String,
+    feedback_value: crate::feedback::Value,
+}
+
+fn composite_primary_key_component_value<V: ValidatableValue>(
+    component: &PrimaryKeyComponent,
+    item: &V,
+) -> Option<CompositePrimaryKeyComponentValue> {
+    if let Some(value) = get_path(item, component.path()).filter(|value| !value.is_null()) {
+        return Some(CompositePrimaryKeyComponentValue {
+            comparison_value: value_to_string(value),
+            feedback_value: value.to_feedback_value(),
+        });
+    }
+
+    component
+        .default_value()
+        .map(|default_value| CompositePrimaryKeyComponentValue {
+            comparison_value: value_to_string(default_value),
+            feedback_value: default_value.clone().into(),
+        })
+}
+
+fn get_path<'a, V: ValidatableValue>(value: &'a V, path: &str) -> Option<&'a V> {
+    get_path_with_trail(value, path).map(|(_, value)| value)
+}
+
+fn get_path_with_trail<'a, V: ValidatableValue>(
+    value: &'a V,
+    path: &str,
+) -> Option<(Vec<String>, &'a V)> {
+    let mut current = value;
+    let mut trail = Vec::new();
+
+    for component in path.split('.') {
+        current = current.get(component)?;
+        trail.push(component.to_owned());
+    }
+
+    Some((trail, current))
 }
 
 /// Convert a `ValidatableValue` to a string for comparison purposes.
@@ -313,6 +415,7 @@ mod tests {
     use super::*;
     use crate::Configuration;
     use crate::feedback::CoercionNote;
+    use crate::feedback::ErrorIssue;
     use crate::feedback::Feedback;
     use crate::feedback::Value as FeedbackValue;
     use crate::validation::test_utils::get_test_store;
@@ -611,6 +714,37 @@ mod tests {
     }
 
     #[test]
+    fn validate_primary_key_three_duplicates_reports_all_pairs_err() {
+        let schema = List {
+            items: Some(Box::new(
+                Dict {
+                    keys: Some(OrderMap::from_iter([("foo".into(), Str::default().into())])),
+                    ..Default::default()
+                }
+                .into(),
+            )),
+            primary_key: Some("foo".into()),
+            ..Default::default()
+        };
+        let input = serde_json::json!([{ "foo": "111" }, { "foo": "111" }, { "foo": "111" }]);
+        let store = get_test_store();
+        let mut ctx = Context::new(&store, None);
+        let _ = schema.validate(&input, &mut ctx);
+        assert!(ctx.result.infos.is_empty());
+        assert_eq!(
+            ctx.result.errors,
+            vec![
+                value_not_unique_feedback(&["0", "foo"], &["1", "foo"]),
+                value_not_unique_feedback(&["1", "foo"], &["0", "foo"]),
+                value_not_unique_feedback(&["0", "foo"], &["2", "foo"]),
+                value_not_unique_feedback(&["2", "foo"], &["0", "foo"]),
+                value_not_unique_feedback(&["1", "foo"], &["2", "foo"]),
+                value_not_unique_feedback(&["2", "foo"], &["1", "foo"]),
+            ]
+        );
+    }
+
+    #[test]
     fn validate_allow_duplicate_primary_key_ok() {
         let schema = List {
             items: Some(Box::new(
@@ -656,6 +790,87 @@ mod tests {
         let mut ctx = Context::new(&store, None);
         let _ = schema.validate(&input, &mut ctx);
         assert!(ctx.result.errors.is_empty() && ctx.result.infos.is_empty());
+    }
+
+    #[test]
+    fn validate_composite_primary_key_nested_paths_with_default_ok() {
+        let schema = radius_server_schema();
+        let input = serde_json::json!([
+            { "host": "r1", "tls": { "enabled": true } },
+            { "host": "r1", "tls": { "enabled": true, "port": 2084 } },
+            { "host": "r2", "tls": { "enabled": true, "port": 2083 } }
+        ]);
+        let store = get_test_store();
+        let mut ctx = Context::new(&store, None);
+        let _ = schema.validate(&input, &mut ctx);
+        assert!(ctx.result.errors.is_empty() && ctx.result.infos.is_empty());
+    }
+
+    #[test]
+    fn validate_composite_primary_key_nested_paths_with_default_not_unique_err() {
+        let schema = radius_server_schema();
+        let input = serde_json::json!([
+            { "host": "r1", "tls": { "enabled": true } },
+            { "host": "r1", "tls": { "enabled": true, "port": 2083 } }
+        ]);
+        let store = get_test_store();
+        let mut ctx = Context::new(&store, None);
+        let _ = schema.validate(&input, &mut ctx);
+        assert!(ctx.result.infos.is_empty());
+        assert_eq!(
+            ctx.result.errors,
+            vec![
+                Feedback {
+                    path: vec!["0".into()].into(),
+                    span: None,
+                    issue: Violation::CompositePrimaryKeyNotUnique {
+                        value: CompositePrimaryKeyValue::from(OrderMap::from_iter([
+                            ("host".into(), FeedbackValue::Str("r1".into())),
+                            ("tls.enabled".into(), FeedbackValue::Bool(true)),
+                            ("tls.port".into(), FeedbackValue::Int(2083)),
+                        ])),
+                        other_path: vec!["1".into()].into(),
+                        other_span: None,
+                    }
+                    .into()
+                },
+                Feedback {
+                    path: vec!["1".into()].into(),
+                    span: None,
+                    issue: Violation::CompositePrimaryKeyNotUnique {
+                        value: CompositePrimaryKeyValue::from(OrderMap::from_iter([
+                            ("host".into(), FeedbackValue::Str("r1".into())),
+                            ("tls.enabled".into(), FeedbackValue::Bool(true)),
+                            ("tls.port".into(), FeedbackValue::Int(2083)),
+                        ])),
+                        other_path: vec!["0".into()].into(),
+                        other_span: None,
+                    }
+                    .into()
+                }
+            ]
+        );
+    }
+
+    #[test]
+    fn validate_composite_primary_key_nested_path_without_default_required_err() {
+        let schema = radius_server_schema();
+        let input = serde_json::json!([{ "host": "r1", "tls": { "port": 2083 } }]);
+        let store = get_test_store();
+        let mut ctx = Context::new(&store, None);
+        let _ = schema.validate(&input, &mut ctx);
+        assert!(ctx.result.infos.is_empty());
+        assert_eq!(
+            ctx.result.errors,
+            vec![Feedback {
+                path: vec!["0".into()].into(),
+                span: None,
+                issue: Violation::MissingRequiredKey {
+                    key: "tls.enabled".into()
+                }
+                .into()
+            }]
+        );
     }
 
     #[test]
@@ -725,6 +940,83 @@ mod tests {
                 }
             ]
         );
+    }
+
+    #[test]
+    fn validate_composite_primary_key_three_duplicates_reports_all_pairs_err() {
+        let schema = List {
+            items: Some(Box::new(
+                Dict {
+                    keys: Some(OrderMap::from_iter([
+                        ("tenant".into(), Str::default().into()),
+                        ("vrf".into(), Str::default().into()),
+                    ])),
+                    ..Default::default()
+                }
+                .into(),
+            )),
+            primary_key: Some(PrimaryKey::Composite(vec!["tenant".into(), "vrf".into()])),
+            ..Default::default()
+        };
+        let input = serde_json::json!([
+            { "tenant": "t1", "vrf": "v1" },
+            { "tenant": "t1", "vrf": "v1" },
+            { "tenant": "t1", "vrf": "v1" }
+        ]);
+        let store = get_test_store();
+        let mut ctx = Context::new(&store, None);
+        let _ = schema.validate(&input, &mut ctx);
+        assert!(ctx.result.infos.is_empty());
+        assert_eq!(
+            ctx.result.errors,
+            vec![
+                composite_primary_key_not_unique_feedback(&["0"], &["1"]),
+                composite_primary_key_not_unique_feedback(&["1"], &["0"]),
+                composite_primary_key_not_unique_feedback(&["0"], &["2"]),
+                composite_primary_key_not_unique_feedback(&["2"], &["0"]),
+                composite_primary_key_not_unique_feedback(&["1"], &["2"]),
+                composite_primary_key_not_unique_feedback(&["2"], &["1"]),
+            ]
+        );
+    }
+
+    fn radius_server_schema() -> List {
+        List {
+            items: Some(Box::new(
+                Dict {
+                    keys: Some(OrderMap::from_iter([
+                        ("host".into(), Str::default().into()),
+                        (
+                            "tls".into(),
+                            Dict {
+                                keys: Some(OrderMap::from_iter([
+                                    ("enabled".into(), Bool::default().into()),
+                                    ("port".into(), Int::default().into()),
+                                ])),
+                                ..Default::default()
+                            }
+                            .into(),
+                        ),
+                    ])),
+                    ..Default::default()
+                }
+                .into(),
+            )),
+            primary_key: Some(PrimaryKey::Composite(vec![
+                "host".into(),
+                avdschema::list::PrimaryKeyComponentDefinition {
+                    path: "tls.enabled".into(),
+                    default: None,
+                }
+                .into(),
+                avdschema::list::PrimaryKeyComponentDefinition {
+                    path: "tls.port".into(),
+                    default: Some(serde_json::json!(2083)),
+                }
+                .into(),
+            ])),
+            ..Default::default()
+        }
     }
 
     #[test]
@@ -869,5 +1161,74 @@ mod tests {
                 }
             ]
         );
+    }
+
+    #[test]
+    fn validate_unique_keys_three_duplicates_reports_all_pairs_err() {
+        let schema = List {
+            items: Some(Box::new(
+                Dict {
+                    keys: Some(OrderMap::from_iter([(
+                        "name".into(),
+                        Str::default().into(),
+                    )])),
+                    ..Default::default()
+                }
+                .into(),
+            )),
+            unique_keys: Some(vec!["name".into()]),
+            ..Default::default()
+        };
+        let input = serde_json::json!([
+            {"name": "dup"},
+            {"name": "dup"},
+            {"name": "dup"}
+        ]);
+        let store = get_test_store();
+        let mut ctx = Context::new(&store, None);
+        let _ = schema.validate(&input, &mut ctx);
+
+        assert_eq!(
+            ctx.result.errors,
+            vec![
+                value_not_unique_feedback(&["0", "name"], &["1", "name"]),
+                value_not_unique_feedback(&["1", "name"], &["0", "name"]),
+                value_not_unique_feedback(&["0", "name"], &["2", "name"]),
+                value_not_unique_feedback(&["2", "name"], &["0", "name"]),
+                value_not_unique_feedback(&["1", "name"], &["2", "name"]),
+                value_not_unique_feedback(&["2", "name"], &["1", "name"]),
+            ]
+        );
+    }
+
+    fn value_not_unique_feedback(path: &[&str], other_path: &[&str]) -> Feedback<ErrorIssue> {
+        Feedback {
+            path: path.iter().copied().collect(),
+            span: None,
+            issue: Violation::ValueNotUnique {
+                other_path: other_path.iter().copied().collect(),
+                other_span: None,
+            }
+            .into(),
+        }
+    }
+
+    fn composite_primary_key_not_unique_feedback(
+        path: &[&str],
+        other_path: &[&str],
+    ) -> Feedback<ErrorIssue> {
+        Feedback {
+            path: path.iter().copied().collect(),
+            span: None,
+            issue: Violation::CompositePrimaryKeyNotUnique {
+                value: CompositePrimaryKeyValue::from(OrderMap::from_iter([
+                    ("tenant".into(), FeedbackValue::Str("t1".into())),
+                    ("vrf".into(), FeedbackValue::Str("v1".into())),
+                ])),
+                other_path: other_path.iter().copied().collect(),
+                other_span: None,
+            }
+            .into(),
+        }
     }
 }

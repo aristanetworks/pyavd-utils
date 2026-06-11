@@ -66,6 +66,57 @@ def test_validate_json_with_adhoc_schema_composite_primary_key() -> None:
 
 
 @pytest.mark.usefixtures("init_store")
+def test_validate_json_with_adhoc_schema_composite_primary_key_paths_and_default() -> None:
+    schema = """
+    {
+      "type": "list",
+      "primary_key": [
+        "host",
+        {"path": "tls.enabled"},
+        {"path": "tls.port", "default": 2083}
+      ],
+      "items": {
+        "type": "dict",
+        "keys": {
+          "host": {"type": "str"},
+          "tls": {
+            "type": "dict",
+            "keys": {
+              "enabled": {"type": "bool"},
+              "port": {"type": "int"}
+            }
+          }
+        }
+      }
+    }
+    """
+    data = """
+    [
+      {"host": "r1", "tls": {"enabled": true}},
+      {"host": "r1", "tls": {"enabled": true, "port": 2083}},
+      {"host": "r2", "tls": {"port": 2083}}
+    ]
+    """
+
+    validation_result = validate_json_with_adhoc_schema(data, schema)
+
+    expected_violations: list[tuple[list[str], str]] = [
+        (
+            ["0"],
+            'The composite primary key {"host": "r1", "tls.enabled": true, "tls.port": 2083} is not unique among similar items. Conflicting item: [1]',
+        ),
+        (
+            ["1"],
+            'The composite primary key {"host": "r1", "tls.enabled": true, "tls.port": 2083} is not unique among similar items. Conflicting item: [0]',
+        ),
+        (["2"], "Missing the required key 'tls.enabled'."),
+    ]
+    assert len(validation_result.violations) == len(expected_violations)
+    for violation in validation_result.violations:
+        assert (violation.path, violation.message) in expected_violations, f"Error not expected: {violation.path}, {violation.message}"
+
+
+@pytest.mark.usefixtures("init_store")
 def test_validate_json_with_ignored_eos_config_key() -> None:
     """Test that eos_config keys are ignored when validating avd_design."""
     from pyavd_utils.validation import Configuration
