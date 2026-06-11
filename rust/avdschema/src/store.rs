@@ -25,6 +25,13 @@ pub struct Store {
 }
 
 impl Store {
+    /// Return the schema names present in this store.
+    pub fn schema_names(&self) -> Vec<&str> {
+        let mut schema_names: Vec<_> = self.schemas.keys().map(String::as_str).collect();
+        schema_names.sort_unstable();
+        schema_names
+    }
+
     pub fn get(&self, schema_name: &str) -> Result<&AnySchema, SchemaStoreError> {
         if let Some(schema) = self.schemas.get(schema_name) {
             return Ok(schema);
@@ -88,6 +95,7 @@ mod tests {
     use crate::Store;
     #[cfg(feature = "dump_load_files")]
     use crate::utils::test_utils::get_avd_store;
+    use crate::utils::test_utils::get_test_store;
     #[cfg(feature = "dump_load_files")]
     use crate::utils::test_utils::get_tmp_file;
 
@@ -168,5 +176,15 @@ mod tests {
         let file_path = get_tmp_file("test_dump_avd_store_resolved.xz2");
         let result = Store::from_file(Some(&file_path));
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn schema_names_returns_sorted_store_keys() {
+        let store = get_test_store();
+
+        assert_eq!(
+            store.schema_names(),
+            ["avd_design", "cv_deploy", "eos_config"]
+        );
     }
 }
