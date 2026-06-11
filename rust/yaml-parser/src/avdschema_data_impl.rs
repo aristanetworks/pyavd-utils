@@ -2,6 +2,8 @@
 // Use of this source code is governed by the Apache License 2.0
 // that can be found in the LICENSE file.
 
+use std::borrow::Cow;
+
 use avdschema::SchemaDataMapping;
 use avdschema::SchemaDataSequence;
 use avdschema::SchemaDataValue;
@@ -52,10 +54,33 @@ impl<'a, 'input: 'a> SchemaDataValue<'a> for &'a Value<'input> {
 
 impl<'a, 'input: 'a> SchemaDataMapping<'a> for YamlMapping<'a, 'input> {
     type Value = &'a Value<'input>;
+    type Keys = YamlMappingKeys<'a, 'input>;
 
     fn get(&self, key: &str) -> Option<Self::Value> {
         self.0.iter().find_map(|pair| match &pair.key.value {
             Value::String(text) if text.as_ref() == key => Some(&pair.value.value),
+            _ => None,
+        })
+    }
+
+    fn keys(&self) -> Self::Keys {
+        YamlMappingKeys {
+            inner: self.0.iter(),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct YamlMappingKeys<'a, 'input> {
+    inner: std::slice::Iter<'a, MappingPair<'input>>,
+}
+
+impl<'a, 'input: 'a> Iterator for YamlMappingKeys<'a, 'input> {
+    type Item = Cow<'a, str>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.inner.find_map(|pair| match &pair.key.value {
+            Value::String(text) => Some(Cow::Borrowed(text.as_ref())),
             _ => None,
         })
     }
