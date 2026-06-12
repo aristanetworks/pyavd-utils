@@ -83,13 +83,15 @@ impl SchemaKeys {
                 .unwrap_or_default(),
         };
 
-        schema_keys.keys.extend(
-            dict_schema
-                .get_dynamic_keys(dict, dynamic_key_overrides)
-                .unwrap_or_default()
-                .into_iter()
-                .map(|(key, dynamic_key_info)| (key.clone(), SchemaKey::from(&dynamic_key_info))),
-        );
+        for (key, dynamic_key_info) in dict_schema
+            .get_dynamic_keys(dict, dynamic_key_overrides)
+            .unwrap_or_default()
+        {
+            schema_keys
+                .keys
+                .entry(key)
+                .or_insert_with(|| SchemaKey::from(&dynamic_key_info));
+        }
 
         Ok(schema_keys)
     }
