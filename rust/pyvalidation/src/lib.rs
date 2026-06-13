@@ -73,14 +73,14 @@ pub mod validation {
         })
     }
 
-    #[pyclass(frozen, get_all)]
+    #[pyclass(from_py_object, frozen, get_all)]
     #[derive(Clone)]
     pub struct Violation {
         pub message: String,
         pub path: Vec<String>,
     }
 
-    #[pyclass(frozen, get_all)]
+    #[pyclass(from_py_object, frozen, get_all)]
     #[derive(Clone)]
     pub struct Deprecation {
         pub message: String,
@@ -91,14 +91,14 @@ pub mod validation {
         pub url: Option<String>,
     }
 
-    #[pyclass(frozen, get_all)]
+    #[pyclass(from_py_object, frozen, get_all)]
     #[derive(Clone)]
     pub struct IgnoredEosConfigKey {
         pub message: String,
         pub path: Vec<String>,
     }
 
-    #[pyclass(get_all, set_all)]
+    #[pyclass(from_py_object, get_all, set_all)]
     #[derive(Clone, Default)]
     pub struct Configuration {
         pub ignore_required_keys_on_root_dict: bool,
@@ -138,7 +138,7 @@ pub mod validation {
         }
     }
 
-    #[pyclass(frozen, get_all)]
+    #[pyclass(from_py_object, frozen, get_all)]
     #[derive(Clone, Default)]
     pub struct ValidationResult {
         pub violations: Vec<Violation>,
