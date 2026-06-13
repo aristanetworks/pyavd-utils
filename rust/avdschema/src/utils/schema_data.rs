@@ -107,11 +107,7 @@ impl<'a> SchemaDataMapping<'a> for &'a Map<String, Value> {
     }
 
     fn keys(&self) -> Self::Keys {
-        fn key_as_cow(key: &str) -> Cow<'_, str> {
-            Cow::Borrowed(key)
-        }
-
-        Map::keys(self).map(|key| key_as_cow(key))
+        Map::keys(self).map(|key| Cow::Borrowed(key.as_str()))
     }
 }
 
