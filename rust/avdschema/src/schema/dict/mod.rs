@@ -1,10 +1,19 @@
 // Copyright (c) 2025-2026 Arista Networks, Inc.
 // Use of this source code is governed by the Apache License 2.0
 // that can be found in the LICENSE file.
+pub mod dynamic_keys;
+pub mod prefix_keys;
 
 use std::sync::OnceLock;
 
+use dynamic_keys::CachedDefaultDynamicKeys;
+pub use dynamic_keys::DefaultDynamicKeys;
+pub use dynamic_keys::DictKeyMatch;
+pub use dynamic_keys::DynamicKeyInfo;
+pub use dynamic_keys::DynamicKeyOverrides;
+use dynamic_keys::ResolvedDictKeys;
 use ordermap::OrderMap;
+pub use prefix_keys::PrefixKeys;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Map;
@@ -19,17 +28,6 @@ use crate::any::Shortcuts;
 use crate::base::Deprecation;
 use crate::utils::schema_data::SchemaDataMapping;
 use crate::utils::schema_data::SchemaDataSequence as _;
-
-pub type DefaultDynamicKeys = OrderMap<String, Vec<String>>;
-
-/// Maps a concrete input key to the dynamic key schema path that should validate it.
-///
-/// Used when the dynamic key cannot be inferred from input/default schema data,
-/// for example when LSP comments identify the intended dynamic-key source.
-/// Callers resolving both static and dynamic schema keys should give static
-/// schema keys precedence over these overrides.
-pub type DynamicKeyOverrides = OrderMap<String, String>;
-type CachedDefaultDynamicKeys = Option<Box<DefaultDynamicKeys>>;
 
 /// AVD Schema for dictionary data.
 #[skip_serializing_none]
@@ -58,6 +56,7 @@ pub struct Dict {
     pub schema_schema: Option<String>,
     #[serde(rename = "$defs")]
     pub schema_defs: Option<OrderMap<String, AnySchema>>,
+    pub prefix_keys: Option<Vec<PrefixKeys>>,
     #[serde(flatten)]
     pub base: Base<OrderMap<String, Value>>,
     pub documentation_options: Option<DocumentationOptionsDict>,
@@ -173,7 +172,7 @@ impl<'a> Dict {
         })
     }
 
-    pub(self) fn get_default_for_key(&self, key: &str) -> Option<Value> {
+    pub fn get_default_for_key(&self, key: &str) -> Option<Value> {
         self.keys
             .as_ref()
             .and_then(|keys| keys.get(key).and_then(Shortcuts::default_))
@@ -212,6 +211,22 @@ impl<'a> Dict {
                     .collect::<Vec<String>>()
             })
     }
+
+    pub fn resolve_dict_keys<'input, M>(
+        &'a self,
+        dict: M,
+        store: &'a crate::Store,
+        dynamic_keys_overrides: Option<&DynamicKeyOverrides>,
+    ) -> ResolvedDictKeys<'a>
+    where
+        M: SchemaDataMapping<'input>,
+    {
+        ResolvedDictKeys {
+            static_keys: self.keys.as_ref(),
+            dynamic_keys: self.get_dynamic_keys(dict, dynamic_keys_overrides),
+            prefix_configs: self.get_resolved_prefix_configs(dict, store),
+        }
+    }
 }
 
 impl Shortcuts for Dict {
@@ -241,31 +256,28 @@ impl<'x> TryFrom<&'x AnySchema> for &'x Dict {
     }
 }
 
-#[derive(Debug, PartialEq)]
-pub struct DynamicKeyInfo<'a> {
-    /// The dynamic key path defined in the schema that led to this dynamic key.
-    pub dynamic_key_path: String,
-    /// The schema for this dynamic key.
-    pub schema: &'a AnySchema,
-}
-
 #[cfg(test)]
 mod tests {
     use ordermap::OrderMap;
+    use serde::Deserialize as _;
     use serde_json::Value;
     use serde_json::json;
 
     use super::DefaultDynamicKeys;
     use super::Dict;
+    use super::DictKeyMatch;
     use super::DynamicKeyInfo;
     use super::DynamicKeyOverrides;
+    use crate::Store;
     use crate::any::AnySchema;
     use crate::base::Base;
     use crate::base::Deprecation;
     use crate::boolean::Bool;
     use crate::int::Int;
     use crate::list::List;
+    use crate::str::Str;
     use crate::utils::test_utils::get_test_dict_schema;
+    use crate::utils::test_utils::get_test_store;
 
     fn removed_bool_schema() -> AnySchema {
         Bool {
@@ -475,7 +487,7 @@ mod tests {
                     items: Some(Box::new(AnySchema::Dict(Dict {
                         keys: Some(OrderMap::from_iter([(
                             "name".to_owned(),
-                            crate::str::Str::default().into(),
+                            Str::default().into(),
                         )])),
                         ..Default::default()
                     }))),
@@ -658,5 +670,183 @@ mod tests {
         let dict_schema = Dict::default();
         let result = dict_schema.default_dynamic_keys();
         assert_eq!(result, None);
+    }
+
+    #[test]
+    fn resolve_dict_keys_static_dynamic_prefix_and_none() {
+        let store = get_test_store();
+        let schema = AnySchema::Dict(Dict {
+            keys: Some(OrderMap::from_iter([
+                ("static".into(), Str::default().into()),
+                (
+                    "dynamic".into(),
+                    List {
+                        items: Some(Box::new(
+                            Dict {
+                                keys: Some(OrderMap::from_iter([(
+                                    "key".into(),
+                                    Str::default().into(),
+                                )])),
+                                ..Default::default()
+                            }
+                            .into(),
+                        )),
+                        ..Default::default()
+                    }
+                    .into(),
+                ),
+                (
+                    "custom_prefixes".into(),
+                    List {
+                        items: Some(Box::new(Str::default().into())),
+                        ..Default::default()
+                    }
+                    .into(),
+                ),
+                ("prefix_schema".into(), Int::default().into()),
+            ])),
+            dynamic_keys: Some(OrderMap::from_iter([(
+                "dynamic.key".into(),
+                Int::default().into(),
+            )])),
+            prefix_keys: Some(vec![crate::dict::PrefixKeys {
+                prefixes_key: Some("custom_prefixes".into()),
+                prefixes: None,
+                include_suffix_in_data: false,
+                schema_ref: "eos_config#/keys/key1".into(),
+            }]),
+            allow_other_keys: Some(true),
+            ..Default::default()
+        });
+        let dict_schema: &Dict = (&schema).try_into().unwrap();
+        let value = json!({
+            "static": "value",
+            "dynamic": [{"key": "dyn_1"}],
+            "custom_prefixes": ["custom_"],
+            "custom_foo": "prefix-value"
+        });
+
+        let resolved_dict_keys =
+            dict_schema.resolve_dict_keys(value.as_object().unwrap(), &store, None);
+
+        assert!(matches!(
+            resolved_dict_keys.resolve("static"),
+            DictKeyMatch::Static(_)
+        ));
+        assert!(matches!(
+            resolved_dict_keys.resolve("dyn_1"),
+            DictKeyMatch::Dynamic(dynamic_key_info)
+                if dynamic_key_info.dynamic_key_path == "dynamic.key"
+        ));
+        assert!(matches!(
+            resolved_dict_keys.resolve("custom_foo"),
+            DictKeyMatch::Prefix(prefix_key_match)
+                if prefix_key_match.prefixes_key.as_deref() == Some("custom_prefixes")
+        ));
+        assert_eq!(
+            resolved_dict_keys.resolve("missing"),
+            DictKeyMatch::UnknownKey
+        );
+        assert_eq!(
+            resolved_dict_keys.resolve("_ignored"),
+            DictKeyMatch::UnknownKey
+        );
+    }
+
+    #[test]
+    fn resolve_dict_keys_prefix_with_suffix_and_default_prefix() {
+        let store = Store::deserialize(json!({
+            "myschema": {
+                "type": "dict",
+                "keys": {
+                    "custom_prefixes": {
+                        "type": "list",
+                        "items": {
+                            "type": "str"
+                        },
+                        "default": ["custom_"]
+                    },
+                    "prefix_schema": {
+                        "type": "dict",
+                        "keys": {
+                            "foo": {"type": "str"},
+                            "bar": {"type": "int"}
+                        }
+                    }
+                },
+                "prefix_keys": [{
+                    "prefixes_key": "custom_prefixes",
+                    "include_suffix_in_data": true,
+                    "schema_ref": "myschema#/keys/prefix_schema"
+                }]
+            }
+        }))
+        .unwrap();
+        let schema = store.get("myschema").unwrap();
+        let dict_schema: &Dict = schema.try_into().unwrap();
+        let value = json!({
+            "custom_foo": "value"
+        });
+
+        let resolved_dict_keys =
+            dict_schema.resolve_dict_keys(value.as_object().unwrap(), &store, None);
+
+        assert!(matches!(
+            resolved_dict_keys.resolve("custom_foo"),
+            DictKeyMatch::Prefix(prefix_key_match)
+                if matches!(prefix_key_match.schema, AnySchema::Str(_))
+        ));
+        assert!(matches!(
+            resolved_dict_keys.resolve("custom_bar"),
+            DictKeyMatch::Prefix(prefix_key_match)
+                if matches!(prefix_key_match.schema, AnySchema::Int(_))
+        ));
+        assert!(matches!(
+            resolved_dict_keys.resolve("custom_baz"),
+            DictKeyMatch::PrefixInvalidSuffix
+        ));
+    }
+
+    #[test]
+    fn resolve_dict_keys_prefix_with_suffix_allows_other_suffixes_from_target_schema() {
+        let store = Store::deserialize(json!({
+            "myschema": {
+                "type": "dict",
+                "keys": {
+                    "custom_prefixes": {
+                        "type": "list",
+                        "items": {
+                            "type": "str"
+                        },
+                        "default": ["custom_"]
+                    },
+                    "prefix_schema": {
+                        "type": "dict",
+                        "keys": {
+                            "foo": {"type": "str"}
+                        },
+                        "allow_other_keys": true
+                    }
+                },
+                "prefix_keys": [{
+                    "prefixes_key": "custom_prefixes",
+                    "include_suffix_in_data": true,
+                    "schema_ref": "myschema#/keys/prefix_schema"
+                }],
+                "allow_other_keys": false
+            }
+        }))
+        .unwrap();
+        let schema = store.get("myschema").unwrap();
+        let dict_schema: &Dict = schema.try_into().unwrap();
+        let value = json!({});
+
+        let resolved_dict_keys =
+            dict_schema.resolve_dict_keys(value.as_object().unwrap(), &store, None);
+
+        assert!(matches!(
+            resolved_dict_keys.resolve("custom_bar"),
+            DictKeyMatch::PrefixAllowedOtherSuffix
+        ));
     }
 }

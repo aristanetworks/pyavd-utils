@@ -5,6 +5,7 @@
 use avdschema::any::AnySchema;
 use avdschema::any::Shortcuts as _;
 use avdschema::dict::Dict;
+use avdschema::dict::DictKeyMatch;
 use avdschema::resolve_ref;
 use ordermap::OrderMap;
 
@@ -91,7 +92,7 @@ fn validate_keys<'a, M: ValidatableMapping<'a>>(
 ) -> Option<Vec<<M::Value as ValidatableValue>::CoercedMappingItem>> {
     let mut coerced_items = ctx.configuration.return_coerced_data.then(Vec::new);
 
-    let Some(keys) = &schema.keys else {
+    if schema.keys.is_none() && schema.dynamic_keys.is_none() && schema.prefix_keys.is_none() {
         // No schema keys - preserve all input as-is when coercing
         if let Some(ref mut items) = coerced_items {
             for pair in input.iter() {
@@ -100,7 +101,7 @@ fn validate_keys<'a, M: ValidatableMapping<'a>>(
             }
         }
         return coerced_items;
-    };
+    }
 
     // When at the root level, if warn_eos_config_keys is enabled, get the keys from the eos_config schema.
     let eos_config_keys: Option<&OrderMap<String, AnySchema>> = {
@@ -113,8 +114,9 @@ fn validate_keys<'a, M: ValidatableMapping<'a>>(
             None
         }
     };
-    let dynamic_keys_infos = schema.get_dynamic_keys(
+    let resolved_dict_keys = schema.resolve_dict_keys(
         input.as_schema_data_mapping(),
+        ctx.store,
         ctx.configuration.dynamic_key_overrides.as_deref(),
     );
 
@@ -127,51 +129,66 @@ fn validate_keys<'a, M: ValidatableMapping<'a>>(
         let key_span = pair.key_span();
         ctx.state.path.push(path_key.to_owned());
 
-        // Determine what to do with this key. Only string keys participate in
-        // schema/dynamic lookups and string-key-specific exceptions.
-        let include_in_output = if let Some(input_schema_key) = schema_key.as_deref() {
-            // This is a string key
-            if let Some(key_schema) = keys.get(input_schema_key) {
-                if !check_deprecation(input_schema_key, key_schema, key_span, input, ctx) {
-                    if let Some(ref mut items) = coerced_items {
-                        let coerced = key_schema
-                            .validate(input_value, ctx)
-                            .unwrap_or_else(|| input_value.clone_to_coerced());
-                        items.push(pair.coerced_item(coerced));
-                    } else {
-                        let _ = key_schema.validate(input_value, ctx);
-                    }
-                } else if let Some(ref mut items) = coerced_items {
-                    // Deprecated key with error - still include with original value
-                    items.push(pair.coerced_item(input_value.clone_to_coerced()));
-                }
-                false // Already handled
-            } else if let Some(dynamic_keys_infos) = &dynamic_keys_infos
-                && let Some(dynamic_key_info) = dynamic_keys_infos.get(input_schema_key)
-            {
-                let key_schema = dynamic_key_info.schema;
-                if !check_deprecation(input_schema_key, key_schema, key_span, input, ctx) {
-                    if let Some(ref mut items) = coerced_items {
-                        let coerced = key_schema
-                            .validate(input_value, ctx)
-                            .unwrap_or_else(|| input_value.clone_to_coerced());
-                        items.push(pair.coerced_item(coerced));
-                    } else {
-                        let _ = key_schema.validate(input_value, ctx);
-                    }
-                } else if let Some(ref mut items) = coerced_items {
-                    items.push(pair.coerced_item(input_value.clone_to_coerced()));
-                }
-                false // Already handled
-            } else if input_schema_key.starts_with('_') {
-                // Key starts with underscore - skip validation but include in output
-                true
-            } else if !schema.allow_other_keys.unwrap_or_default() {
-                // Key is not part of the schema and does not start with underscore
+        // Only string keys participate in AVD schema key matching.
+        // YAML allows non-string mapping keys, so handle those separately:
+        // report them as unexpected when other keys are disallowed, but keep
+        // the original key shape and spans in coerced output.
+        let Some(input_schema_key) = schema_key.as_deref() else {
+            if !schema.allow_other_keys.unwrap_or_default() {
                 ctx.add_error_with_span(key_span, Violation::UnexpectedKey());
-                true // Include the value in output (error is recorded)
-            } else {
-                if let Some(eos_config_keys) = &eos_config_keys
+            }
+            if let Some(ref mut items) = coerced_items {
+                items.push(pair.coerced_item(input_value.clone_to_coerced()));
+            }
+            ctx.state.path.pop();
+            continue;
+        };
+
+        let dict_key_match = resolved_dict_keys.resolve(input_schema_key);
+        let coerced_value = match dict_key_match {
+            DictKeyMatch::Static(key_schema) => validate_matched_key(
+                input_schema_key,
+                key_schema,
+                input_value,
+                key_span,
+                input,
+                ctx,
+            ),
+            DictKeyMatch::Dynamic(dynamic_key_info) => validate_matched_key(
+                input_schema_key,
+                dynamic_key_info.schema,
+                input_value,
+                key_span,
+                input,
+                ctx,
+            ),
+            DictKeyMatch::Prefix(prefix_key_match) => validate_matched_key(
+                input_schema_key,
+                prefix_key_match.schema,
+                input_value,
+                key_span,
+                input,
+                ctx,
+            ),
+            // Prefix matched, but the suffix did not map to a key in the
+            // target schema and the target schema does not allow other keys.
+            DictKeyMatch::PrefixInvalidSuffix => {
+                ctx.add_error_with_span(key_span, Violation::UnexpectedKey());
+                None
+            }
+            // Prefix matched, and the target dict schema allows suffixes not
+            // listed under its keys. Preserve without falling back to the
+            // parent dict's allow_other_keys setting.
+            DictKeyMatch::PrefixAllowedOtherSuffix => None,
+            // Unmatched underscore keys are deliberately ignored by validation,
+            // but still preserved in coerced output.
+            DictKeyMatch::UnknownKey if input_schema_key.starts_with('_') => None,
+            // Unknown string keys are either errors or allowed passthrough.
+            // The EOS config warning only applies to allowed string keys.
+            DictKeyMatch::UnknownKey => {
+                if !schema.allow_other_keys.unwrap_or_default() {
+                    ctx.add_error_with_span(key_span, Violation::UnexpectedKey());
+                } else if let Some(eos_config_keys) = &eos_config_keys
                     && eos_config_keys.contains_key(input_schema_key)
                     && !EOS_CLI_CONFIG_GEN_ROLE_KEYS.contains(&input_schema_key)
                 {
@@ -179,26 +196,36 @@ fn validate_keys<'a, M: ValidatableMapping<'a>>(
                     // and allow_other_keys is true - emit a warning that it will be ignored
                     ctx.add_warning_with_span(key_span, IgnoredEosConfigKey {});
                 }
-                true // allow_other_keys is true - include as-is
+                None
             }
-        } else if !schema.allow_other_keys.unwrap_or_default() {
-            // Non-string YAML key and other keys are not allowed.
-            ctx.add_error_with_span(key_span, Violation::UnexpectedKey());
-            true // Include the value in output (error is recorded)
-        } else {
-            // Non-string YAML key under allow_other_keys: skip validation and
-            // warning logic, but preserve it in coerced output.
-            true
         };
 
-        if include_in_output && let Some(ref mut items) = coerced_items {
-            items.push(pair.coerced_item(input_value.clone_to_coerced()));
+        if let Some(ref mut items) = coerced_items {
+            items.push(
+                pair.coerced_item(coerced_value.unwrap_or_else(|| input_value.clone_to_coerced())),
+            );
         }
 
         ctx.state.path.pop();
     }
 
     coerced_items
+}
+
+fn validate_matched_key<'a, M: ValidatableMapping<'a>>(
+    input_schema_key: &str,
+    key_schema: &AnySchema,
+    input_value: &M::Value,
+    key_span: Option<crate::feedback::SourceSpan>,
+    input: &M,
+    ctx: &mut Context,
+) -> Option<<M::Value as ValidatableValue>::Coerced> {
+    if check_deprecation(input_schema_key, key_schema, key_span, input, ctx) {
+        // Removed keys skip further validation but preserve the original value in the coerced output.
+        None
+    } else {
+        key_schema.validate(input_value, ctx)
+    }
 }
 
 fn validate_required_keys<'a, M: ValidatableMapping<'a>>(
@@ -302,6 +329,7 @@ mod tests {
     use crate::feedback::Feedback;
     use crate::feedback::SourceSpan;
     use crate::feedback::WarningIssue;
+    use crate::validation::store::StoreValidate as _;
     use crate::validation::test_utils::get_test_store;
 
     #[test]
@@ -1591,6 +1619,398 @@ mod tests {
                     version: Some("1.2.3".into()).into(),
                     url: None.into(),
                 })
+            }]
+        );
+    }
+
+    #[test]
+    fn validate_prefix_keys_ok() {
+        // Create a store with a schema for prefix keys
+        let store = avdschema::Store::deserialize(serde_json::json!({
+            "myschema": {
+                "type": "dict",
+                "keys": {
+                    "custom_prefixes": {
+                        "type": "list",
+                        "items": {
+                            "type": "str"
+                        }
+                    },
+                    "prefix_schema": {
+                        "type": "int",
+                        "max": 100
+                    }
+                },
+                "prefix_keys": [{
+                    "prefixes_key": "custom_prefixes",
+                    "include_suffix_in_data": false,
+                    "schema_ref": "myschema#/keys/prefix_schema"
+                }],
+                "allow_other_keys": true
+            }
+        }))
+        .unwrap();
+
+        let input = serde_json::json!({
+            "custom_prefixes": ["custom_"],
+            "custom_foo": 50,
+            "custom_bar": 75,
+            "other_key": "ignored"
+        });
+        let result = store.validate_value(&input, "myschema", None).unwrap();
+        assert!(result.result.errors.is_empty());
+        assert!(result.result.infos.is_empty());
+    }
+
+    #[test]
+    fn validate_prefix_keys_static_ignores_input_override() {
+        let store = avdschema::Store::deserialize(serde_json::json!({
+            "myschema": {
+                "type": "dict",
+                "keys": {
+                    "custom_prefixes": {
+                        "type": "list",
+                        "items": {
+                            "type": "str"
+                        }
+                    },
+                    "prefix_schema": {
+                        "type": "int",
+                        "max": 100
+                    }
+                },
+                "prefix_keys": [{
+                    "prefixes": ["custom_"],
+                    "include_suffix_in_data": false,
+                    "schema_ref": "myschema#/keys/prefix_schema"
+                }],
+                "allow_other_keys": false
+            }
+        }))
+        .unwrap();
+
+        let input = serde_json::json!({
+            "custom_prefixes": ["wrong_"],
+            "custom_foo": 50,
+            "wrong_bar": 75
+        });
+        let result = store.validate_value(&input, "myschema", None).unwrap();
+        assert!(result.result.infos.is_empty());
+        assert_eq!(
+            result.result.errors,
+            vec![Feedback {
+                path: vec!["wrong_bar".into()].into(),
+                span: None,
+                issue: Violation::UnexpectedKey().into()
+            }]
+        );
+    }
+
+    #[test]
+    fn validate_prefix_keys_err() {
+        // Create a store with a schema for prefix keys
+        let store = avdschema::Store::deserialize(serde_json::json!({
+            "myschema": {
+                "type": "dict",
+                "keys": {
+                    "custom_prefixes": {
+                        "type": "list",
+                        "items": {
+                            "type": "str"
+                        }
+                    },
+                    "prefix_schema": {
+                        "type": "int",
+                        "max": 100
+                    }
+                },
+                "prefix_keys": [{
+                    "prefixes_key": "custom_prefixes",
+                    "include_suffix_in_data": false,
+                    "schema_ref": "myschema#/keys/prefix_schema"
+                }],
+                "allow_other_keys": true
+            }
+        }))
+        .unwrap();
+
+        let input = serde_json::json!({
+            "custom_prefixes": ["custom_"],
+            "custom_foo": 150,  // Above max
+            "custom_bar": "wrong",  // Wrong type
+            "other_key": "ignored"
+        });
+        let result = store.validate_value(&input, "myschema", None).unwrap();
+        assert!(result.result.infos.is_empty());
+        assert_eq!(
+            result.result.errors,
+            vec![
+                Feedback {
+                    path: vec!["custom_foo".into()].into(),
+                    span: None,
+                    issue: Violation::ValueAboveMaximum {
+                        maximum: 100,
+                        found: 150
+                    }
+                    .into()
+                },
+                Feedback {
+                    path: vec!["custom_bar".into()].into(),
+                    span: None,
+                    issue: Violation::InvalidType {
+                        expected: Type::Int,
+                        found: Type::Str
+                    }
+                    .into()
+                }
+            ]
+        );
+    }
+
+    #[test]
+    fn validate_prefix_keys_invalid_suffix_err() {
+        // Create a store with a schema for prefix keys with include_suffix_in_data
+        let store = avdschema::Store::deserialize(serde_json::json!({
+            "myschema": {
+                "type": "dict",
+                "keys": {
+                    "custom_prefixes": {
+                        "type": "list",
+                        "items": {
+                            "type": "str"
+                        }
+                    },
+                    "prefix_schema": {
+                        "type": "dict",
+                        "keys": {
+                            "valid_suffix": {
+                                "type": "str"
+                            }
+                        }
+                    }
+                },
+                "prefix_keys": [{
+                    "prefixes_key": "custom_prefixes",
+                    "include_suffix_in_data": true,
+                    "schema_ref": "myschema#/keys/prefix_schema"
+                }],
+                "allow_other_keys": false
+            }
+        }))
+        .unwrap();
+
+        let input = serde_json::json!({
+            "custom_prefixes": ["custom_"],
+            "custom_valid_suffix": "this is ok",
+            "custom_invalid_suffix": "this should trigger UnexpectedKey"
+        });
+        let result = store.validate_value(&input, "myschema", None).unwrap();
+        assert!(result.result.infos.is_empty());
+        assert_eq!(
+            result.result.errors,
+            vec![Feedback {
+                path: vec!["custom_invalid_suffix".into()].into(),
+                span: None,
+                issue: Violation::UnexpectedKey().into()
+            }]
+        );
+    }
+
+    #[test]
+    fn validate_prefix_keys_invalid_suffix_err_even_when_parent_allows_other_keys() {
+        let store = avdschema::Store::deserialize(serde_json::json!({
+            "myschema": {
+                "type": "dict",
+                "keys": {
+                    "custom_prefixes": {
+                        "type": "list",
+                        "items": {
+                            "type": "str"
+                        }
+                    },
+                    "prefix_schema": {
+                        "type": "dict",
+                        "keys": {
+                            "valid_suffix": {
+                                "type": "str"
+                            }
+                        }
+                    }
+                },
+                "prefix_keys": [{
+                    "prefixes_key": "custom_prefixes",
+                    "include_suffix_in_data": true,
+                    "schema_ref": "myschema#/keys/prefix_schema"
+                }],
+                "allow_other_keys": true
+            }
+        }))
+        .unwrap();
+
+        let input = serde_json::json!({
+            "custom_prefixes": ["custom_"],
+            "custom_invalid_suffix": "this should still trigger UnexpectedKey"
+        });
+        let result = store.validate_value(&input, "myschema", None).unwrap();
+
+        assert!(result.result.infos.is_empty());
+        assert_eq!(
+            result.result.errors,
+            vec![Feedback {
+                path: vec!["custom_invalid_suffix".into()].into(),
+                span: None,
+                issue: Violation::UnexpectedKey().into()
+            }]
+        );
+    }
+
+    #[test]
+    fn validate_prefix_keys_allowed_other_suffix_ok() {
+        let store = avdschema::Store::deserialize(serde_json::json!({
+            "myschema": {
+                "type": "dict",
+                "keys": {
+                    "custom_prefixes": {
+                        "type": "list",
+                        "items": {
+                            "type": "str"
+                        }
+                    },
+                    "prefix_schema": {
+                        "type": "dict",
+                        "keys": {
+                            "valid_suffix": {
+                                "type": "str"
+                            }
+                        },
+                        "allow_other_keys": true
+                    }
+                },
+                "prefix_keys": [{
+                    "prefixes_key": "custom_prefixes",
+                    "include_suffix_in_data": true,
+                    "schema_ref": "myschema#/keys/prefix_schema"
+                }],
+                "allow_other_keys": false
+            }
+        }))
+        .unwrap();
+
+        let input = serde_json::json!({
+            "custom_prefixes": ["custom_"],
+            "custom_unknown_suffix": "this should be accepted by the target schema"
+        });
+        let result = store.validate_value(&input, "myschema", None).unwrap();
+
+        assert!(result.result.errors.is_empty());
+        assert!(result.result.infos.is_empty());
+    }
+
+    #[test]
+    fn validate_prefix_keys_valid_suffix_negative_err() {
+        let store = avdschema::Store::deserialize(serde_json::json!({
+            "myschema": {
+                "type": "dict",
+                "keys": {
+                    "custom_prefixes": {
+                        "type": "list",
+                        "items": {
+                            "type": "str"
+                        }
+                    },
+                    "prefix_schema": {
+                        "type": "dict",
+                        "keys": {
+                            "valid_suffix": {
+                                "type": "str"
+                            }
+                        }
+                    }
+                },
+                "prefix_keys": [{
+                    "prefixes_key": "custom_prefixes",
+                    "include_suffix_in_data": true,
+                    "schema_ref": "myschema#/keys/prefix_schema"
+                }],
+                "allow_other_keys": false
+            }
+        }))
+        .unwrap();
+
+        let input = serde_json::json!({
+            "custom_prefixes": ["custom_"],
+            "custom_valid_suffix": []
+        });
+        let result = store.validate_value(&input, "myschema", None).unwrap();
+        assert!(result.result.infos.is_empty());
+        assert_eq!(
+            result.result.errors,
+            vec![Feedback {
+                path: vec!["custom_valid_suffix".into()].into(),
+                span: None,
+                issue: Violation::InvalidType {
+                    expected: Type::Str,
+                    found: Type::List
+                }
+                .into()
+            }]
+        );
+    }
+
+    #[test]
+    fn validate_prefix_keys_matches_schema_from_path() {
+        let store = avdschema::Store::deserialize(serde_json::json!({
+            "myschema": {
+                "type": "dict",
+                "keys": {
+                    "custom_prefixes": {
+                        "type": "list",
+                        "items": {
+                            "type": "str"
+                        }
+                    },
+                    "prefix_schema": {
+                        "type": "int",
+                        "max": 100
+                    }
+                },
+                "prefix_keys": [{
+                    "prefixes_key": "custom_prefixes",
+                    "include_suffix_in_data": false,
+                    "schema_ref": "myschema#/keys/prefix_schema"
+                }],
+                "allow_other_keys": true
+            }
+        }))
+        .unwrap();
+
+        let input = serde_json::json!({
+            "custom_prefixes": ["custom_"],
+            "custom_foo": "wrong"
+        });
+        let schema_from_path = avdschema::get_schema_from_path(
+            "myschema",
+            &store,
+            &["custom_foo".into()],
+            &input,
+            None,
+        )
+        .unwrap()
+        .unwrap();
+
+        assert!(matches!(schema_from_path, AnySchema::Int(_)));
+
+        let result = store.validate_value(&input, "myschema", None).unwrap();
+        assert_eq!(
+            result.result.errors,
+            vec![Feedback {
+                path: vec!["custom_foo".into()].into(),
+                span: None,
+                issue: Violation::InvalidType {
+                    expected: Type::Int,
+                    found: Type::Str
+                }
+                .into()
             }]
         );
     }
