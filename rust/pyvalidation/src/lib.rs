@@ -466,21 +466,21 @@ pub mod validation {
             }
             debug!("pyvalidation::get_validated_data Validation Done");
             let validated_data = if output.document.result.errors.is_empty() {
-            let validated_data = if output.document.result.errors.is_empty() {
-                output
-                    .document
-                    .coerced
-                    .map(|coerced| {
-                        serde_json::to_string(&coerced).map_err(|err| {
+                let validated_data = if output.document.result.errors.is_empty() {
+                    output
+                        .document
+                        .coerced
+                        .map(|coerced| {
+                            serde_json::to_string(&coerced).map_err(|err| {
                             ValidationInvalidCoercedDataJsonError::new_err(format!(
                                 "Coerced validation output could not be serialized as JSON: {err}."
                             ))
                         })
-                    })
-                    .transpose()?
-            } else {
-                None
-            };
+                        })
+                        .transpose()?
+                } else {
+                    None
+                };
             } else {
                 None
             };
