@@ -12,8 +12,8 @@ pub enum Sha512CryptError {
     // The errors from sha_crypt library should never happen in our case.
     #[display("SHA crypt library error: {_0:?}")]
     ShaCrypt(sha_crypt::Error),
-    #[display("SHA crypt base64 encoding error: {_0:?}")]
-    Base64(base64ct::InvalidLengthError),
+    #[display("SHA crypt base64 invalid length error: {_0:?}")]
+    Base64InvalidLength(base64ct::InvalidLengthError),
     #[display("Invalid Salt: {_0}")]
     InvalidSalt(InvalidSaltError),
 }

@@ -23,11 +23,11 @@ mod passwords {
         passwords::sha512_crypt(password, salt).map_err(|err| {
             // Mapping our crates error to Python errors.
             match err {
-                passwords::Sha512CryptError::InvalidSalt(_) => {
+                passwords::Sha512CryptError::InvalidSalt(_)
+                | passwords::Sha512CryptError::Base64InvalidLength(_) => {
                     PyValueError::new_err(err.to_string())
                 }
-                passwords::Sha512CryptError::Base64(_)
-                | passwords::Sha512CryptError::ShaCrypt(_) => {
+                passwords::Sha512CryptError::ShaCrypt(_) => {
                     PyRuntimeError::new_err(err.to_string())
                 }
             }
