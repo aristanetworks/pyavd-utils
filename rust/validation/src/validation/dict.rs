@@ -16,7 +16,7 @@ use crate::feedback::Removed;
 use crate::feedback::Type;
 use crate::feedback::Violation;
 use crate::validatable::ValidatableMapping;
-use crate::validatable::ValidatableMappingPair;
+use crate::validatable::ValidatableMappingPair as _;
 use crate::validatable::ValidatableValue;
 
 // This must be kept up to date when adding role keys in eos_config schema.
@@ -61,7 +61,7 @@ impl Validation for Dict {
 
 /// Validation of ref which will not merge in the schema, so it only works as expected
 /// when there are no local variables set. In practice this is only used for
-/// structured_config, where we $ref in the full eos_config schema.
+/// `structured_config`, where we $ref in the full `eos_config` schema.
 fn validate_ref<V: ValidatableValue>(
     schema: &Dict,
     value: &V,
@@ -73,7 +73,7 @@ fn validate_ref<V: ValidatableValue>(
         // Handle relaxed validation here, since the places we use it is also where we skip resolving the $ref before validation.
         let previous_relaxed_validation = ctx.state.relaxed_validation;
         if schema.relaxed_validation.unwrap_or_default() {
-            ctx.state.relaxed_validation = true
+            ctx.state.relaxed_validation = true;
         }
         let result = ref_schema.validate(value, ctx);
         ctx.state.relaxed_validation = previous_relaxed_validation;
@@ -83,7 +83,7 @@ fn validate_ref<V: ValidatableValue>(
 }
 
 /// Validate and optionally coerce mapping keys.
-/// Returns Some(coerced_items) when coercion is enabled, None otherwise.
+/// Returns `Some(coerced_items)` when coercion is enabled, None otherwise.
 fn validate_keys<'a, M: ValidatableMapping<'a>>(
     schema: &Dict,
     input: &M,
@@ -113,7 +113,10 @@ fn validate_keys<'a, M: ValidatableMapping<'a>>(
             None
         }
     };
-    let dynamic_keys_infos = schema.get_dynamic_keys(input.as_schema_data_mapping());
+    let dynamic_keys_infos = schema.get_dynamic_keys(
+        input.as_schema_data_mapping(),
+        ctx.configuration.dynamic_key_overrides.as_deref(),
+    );
 
     for pair in input.iter() {
         // We fall back to display key for path in case of non-string keys.
@@ -160,7 +163,7 @@ fn validate_keys<'a, M: ValidatableMapping<'a>>(
                     items.push(pair.coerced_item(input_value.clone_to_coerced()));
                 }
                 false // Already handled
-            } else if input_schema_key.starts_with("_") {
+            } else if input_schema_key.starts_with('_') {
                 // Key starts with underscore - skip validation but include in output
                 true
             } else if !schema.allow_other_keys.unwrap_or_default() {
@@ -213,12 +216,7 @@ fn validate_required_keys<'a, M: ValidatableMapping<'a>>(
     if let Some(keys) = &schema.keys {
         for (key, key_schema) in keys {
             if key_schema.is_required() && !input.contains_key(key) {
-                ctx.add_error_for(
-                    value,
-                    Violation::MissingRequiredKey {
-                        key: key.to_string(),
-                    },
-                );
+                ctx.add_error_for(value, Violation::MissingRequiredKey { key: key.clone() });
             }
         }
     }
@@ -269,7 +267,7 @@ fn check_deprecation<'a, M: ValidatableMapping<'a>>(
                                 key_span.clone(),
                                 Violation::DeprecatedConflict {
                                     other_path: new_key.into(),
-                                    url: deprecation.url.to_owned().into(),
+                                    url: deprecation.url.clone().into(),
                                 },
                             );
                         }
@@ -286,7 +284,10 @@ fn check_deprecation<'a, M: ValidatableMapping<'a>>(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use avdschema::base::Base;
+    use avdschema::dict::DynamicKeyOverrides;
     use avdschema::int::Int;
     use avdschema::list::List;
     use avdschema::str::Str;
@@ -387,7 +388,7 @@ mod tests {
                     .into()
                 }
             ]
-        )
+        );
     }
 
     #[test]
@@ -572,7 +573,70 @@ mod tests {
                     .into()
                 }
             ]
-        )
+        );
+    }
+
+    #[test]
+    fn validate_dynamic_keys_from_overrides_ok() {
+        let schema = Dict {
+            dynamic_keys: Some(OrderMap::from_iter([(
+                "my_dynamic_keys.key".into(),
+                Int {
+                    max: Some(10),
+                    ..Default::default()
+                }
+                .into(),
+            )])),
+            allow_other_keys: Some(true),
+            keys: Some(Default::default()),
+            ..Default::default()
+        };
+        let input = serde_json::json!({ "dynkey1": 5 });
+        let store = get_test_store();
+        let configuration = Configuration {
+            dynamic_key_overrides: Some(Arc::new(DynamicKeyOverrides::from_iter([(
+                "dynkey1".into(),
+                "my_dynamic_keys.key".into(),
+            )]))),
+            ..Default::default()
+        };
+        let mut ctx = Context::new(&store, Some(&configuration));
+        let _ = schema.validate(&input, &mut ctx);
+        assert!(ctx.result.errors.is_empty());
+        assert!(ctx.result.infos.is_empty());
+    }
+
+    #[test]
+    fn validate_static_key_beats_dynamic_key_override_collision() {
+        let schema = Dict {
+            keys: Some(OrderMap::from_iter([(
+                "dynkey1".into(),
+                Str::default().into(),
+            )])),
+            dynamic_keys: Some(OrderMap::from_iter([(
+                "my_dynamic_keys.key".into(),
+                Int {
+                    max: Some(10),
+                    ..Default::default()
+                }
+                .into(),
+            )])),
+            allow_other_keys: Some(true),
+            ..Default::default()
+        };
+        let input = serde_json::json!({ "dynkey1": "static schema value" });
+        let store = get_test_store();
+        let configuration = Configuration {
+            dynamic_key_overrides: Some(Arc::new(DynamicKeyOverrides::from_iter([(
+                "dynkey1".into(),
+                "my_dynamic_keys.key".into(),
+            )]))),
+            ..Default::default()
+        };
+        let mut ctx = Context::new(&store, Some(&configuration));
+        let _ = schema.validate(&input, &mut ctx);
+        assert!(ctx.result.errors.is_empty());
+        assert!(ctx.result.infos.is_empty());
     }
 
     #[test]
@@ -675,7 +739,7 @@ mod tests {
                     .into()
                 }
             ]
-        )
+        );
     }
 
     #[test]
@@ -710,7 +774,7 @@ mod tests {
                 span: None,
                 issue: Violation::UnexpectedKey().into()
             }]
-        )
+        );
     }
 
     #[test]
@@ -871,7 +935,7 @@ mod tests {
                 }
                 .into()
             }]
-        )
+        );
     }
 
     #[test]
@@ -951,7 +1015,7 @@ mod tests {
                 })
                 .into()
             }]
-        )
+        );
     }
 
     // Tests a key that is marked as deprecated but where warning is disabled
@@ -1264,7 +1328,7 @@ mod tests {
                 span: None,
                 issue: Violation::MissingRequiredKey { key: "foo".into() }.into()
             }]
-        )
+        );
     }
 
     #[test]
@@ -1329,7 +1393,7 @@ mod tests {
                 span: None,
                 issue: Violation::MissingRequiredKey { key: "foo".into() }.into()
             }]
-        )
+        );
     }
 
     #[test]

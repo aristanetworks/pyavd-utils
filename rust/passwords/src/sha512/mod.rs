@@ -37,14 +37,14 @@ pub fn sha512_crypt(password: &str, salt: &str) -> Result<String, Sha512CryptErr
 }
 
 /// Verify that the salt is only composed of valid characters: [a-zA-Z0-9/.]
-fn validate_salt_characters(s: &str) -> Result<(), InvalidSaltError> {
-    if s.is_empty() {
+fn validate_salt_characters(salt: &str) -> Result<(), InvalidSaltError> {
+    if salt.is_empty() {
         return Err(InvalidSaltError::IsEmpty);
     }
 
-    for c in s.chars() {
-        if !(c.is_ascii_alphanumeric() || c == '/' || c == '.') {
-            return Err(InvalidSaltError::InvalidCharacter(c));
+    for character in salt.chars() {
+        if !(character.is_ascii_alphanumeric() || character == '/' || character == '.') {
+            return Err(InvalidSaltError::InvalidCharacter(character));
         }
     }
 

@@ -2,7 +2,10 @@
 // Use of this source code is governed by the Apache License 2.0
 // that can be found in the LICENSE file.
 
+use std::sync::Arc;
+
 use avdschema::Store;
+use avdschema::dict::DynamicKeyOverrides;
 
 use crate::feedback::CoercionNote;
 use crate::feedback::ErrorIssue;
@@ -49,7 +52,7 @@ impl<'a> Context<'a> {
         error: impl Into<ErrorIssue>,
     ) {
         self.result.errors.push(Feedback {
-            path: self.state.path.to_owned(),
+            path: self.state.path.clone(),
             span,
             issue: error.into(),
         });
@@ -61,7 +64,7 @@ impl<'a> Context<'a> {
         warning: impl Into<WarningIssue>,
     ) {
         self.result.warnings.push(Feedback {
-            path: self.state.path.to_owned(),
+            path: self.state.path.clone(),
             span,
             issue: warning.into(),
         });
@@ -73,7 +76,7 @@ impl<'a> Context<'a> {
         info: impl Into<InfoIssue>,
     ) {
         self.result.infos.push(Feedback {
-            path: self.state.path.to_owned(),
+            path: self.state.path.clone(),
             span: value.source_span(),
             issue: info.into(),
         });
@@ -149,7 +152,7 @@ impl<'a> Context<'a> {
 #[derive(Clone, Debug, Default)]
 pub(crate) struct State {
     /// Don't validate required keys.
-    /// Used for structured_config where we overload other config, and only the final result should be validated for required keys.
+    /// Used for `structured_config` where we overload other config, and only the final result should be validated for required keys.
     pub(crate) relaxed_validation: bool,
     pub(crate) path: Path,
 }
@@ -157,6 +160,11 @@ pub(crate) struct State {
 /// Configuration to use during validation.
 #[derive(Clone, Debug, Default)]
 pub struct Configuration {
+    /// Optional caller-supplied dynamic key overrides keyed by concrete input key.
+    /// The override value is the schema dynamic-key path that should be used for that key.
+    /// This is used by the LSP when interpreting # comments on keys.
+    /// Stored behind Arc so cloning Configuration for each new Context stays cheap.
+    pub dynamic_key_overrides: Option<Arc<DynamicKeyOverrides>>,
     pub ignore_required_keys_on_root_dict: bool,
     /// By default Null/None values are ignored no matter which data type is expected.
     /// Setting this will instead emit type errors for Null values.
@@ -167,8 +175,8 @@ pub struct Configuration {
     /// Set to true when you need the coerced output (e.g., for data transformation).
     /// Set to false for validation-only use cases (e.g., LSP diagnostics).
     pub return_coercion_infos: bool,
-    /// When validating avd_design, emit warnings for top-level keys that exist in eos_config
-    /// but not in avd_design.
+    /// When validating `avd_design`, emit warnings for top-level keys that exist in `eos_config`
+    /// but not in `avd_design`.
     pub warn_eos_config_keys: bool,
 }
 

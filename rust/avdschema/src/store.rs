@@ -25,6 +25,13 @@ pub struct Store {
 }
 
 impl Store {
+    /// Return the schema names present in this store.
+    pub fn schema_names(&self) -> Vec<&str> {
+        let mut schema_names: Vec<_> = self.schemas.keys().map(String::as_str).collect();
+        schema_names.sort_unstable();
+        schema_names
+    }
+
     pub fn get(&self, schema_name: &str) -> Result<&AnySchema, SchemaStoreError> {
         if let Some(schema) = self.schemas.get(schema_name) {
             return Ok(schema);
@@ -40,7 +47,7 @@ impl Store {
         };
         self.schemas
             .get(schema_alias)
-            .ok_or_else(|| SchemaStoreError::InvalidSchemaName(schema_name.to_string()))
+            .ok_or_else(|| SchemaStoreError::InvalidSchemaName(schema_name.to_owned()))
     }
     pub fn as_resolved(mut self) -> Result<Self, SchemaResolverError> {
         // Clone each schema so we can resolve them while still being able to resolve $refs between them.
@@ -81,13 +88,14 @@ pub enum SchemaStoreError {
 mod tests {
 
     #[cfg(feature = "dump_load_files")]
-    use super::Load;
+    use super::Load as _;
     #[cfg(feature = "dump_load_files")]
     use crate::Dump as _;
     #[cfg(feature = "dump_load_files")]
     use crate::Store;
     #[cfg(feature = "dump_load_files")]
     use crate::utils::test_utils::get_avd_store;
+    use crate::utils::test_utils::get_test_store;
     #[cfg(feature = "dump_load_files")]
     use crate::utils::test_utils::get_tmp_file;
 
@@ -97,20 +105,20 @@ mod tests {
         // Dumping uncompressed and compressed schema.
         let store = get_avd_store();
 
-        let file_path = get_tmp_file("test_dump_avd_store_resolved.json");
-        let result = store.to_file(Some(&file_path));
-        assert!(result.is_ok());
+        let json_file_path = get_tmp_file("test_dump_avd_store_resolved.json");
+        let json_result = store.to_file(Some(&json_file_path));
+        assert!(json_result.is_ok());
 
         // Now dump as compressed file to see the size difference
-        let file_path = get_tmp_file("test_dump_avd_store_resolved.gz");
-        let result = store.to_file(Some(&file_path));
-        assert!(result.is_ok());
+        let gzip_file_path = get_tmp_file("test_dump_avd_store_resolved.gz");
+        let gzip_result = store.to_file(Some(&gzip_file_path));
+        assert!(gzip_result.is_ok());
 
         #[cfg(feature = "xz2")]
         {
-            let file_path = get_tmp_file("test_dump_avd_store_resolved.xz2");
-            let result = store.to_file(Some(&file_path));
-            assert!(result.is_ok());
+            let xz_file_path = get_tmp_file("test_dump_avd_store_resolved.xz2");
+            let xz_result = store.to_file(Some(&xz_file_path));
+            assert!(xz_result.is_ok());
         }
     }
 
@@ -121,22 +129,22 @@ mod tests {
         let store = get_avd_store();
 
         // Now load the previously dumped files and compare
-        let file_path = get_tmp_file("test_dump_avd_store_resolved.json");
-        let result = Store::from_file(Some(&file_path));
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), *store);
+        let json_file_path = get_tmp_file("test_dump_avd_store_resolved.json");
+        let json_result = Store::from_file(Some(&json_file_path));
+        assert!(json_result.is_ok());
+        assert_eq!(json_result.unwrap(), *store);
 
-        let file_path = get_tmp_file("test_dump_avd_store_resolved.gz");
-        let result = Store::from_file(Some(&file_path));
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), *store);
+        let gzip_file_path = get_tmp_file("test_dump_avd_store_resolved.gz");
+        let gzip_result = Store::from_file(Some(&gzip_file_path));
+        assert!(gzip_result.is_ok());
+        assert_eq!(gzip_result.unwrap(), *store);
 
         #[cfg(feature = "xz2")]
         {
-            let file_path = get_tmp_file("test_dump_avd_store_resolved.xz2");
-            let result = Store::from_file(Some(&file_path));
-            assert!(result.is_ok());
-            assert_eq!(result.unwrap(), *store);
+            let xz_file_path = get_tmp_file("test_dump_avd_store_resolved.xz2");
+            let xz_result = Store::from_file(Some(&xz_file_path));
+            assert!(xz_result.is_ok());
+            assert_eq!(xz_result.unwrap(), *store);
         }
     }
 
@@ -168,5 +176,15 @@ mod tests {
         let file_path = get_tmp_file("test_dump_avd_store_resolved.xz2");
         let result = Store::from_file(Some(&file_path));
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn schema_names_returns_sorted_store_keys() {
+        let store = get_test_store();
+
+        assert_eq!(
+            store.schema_names(),
+            ["avd_design", "cv_deploy", "eos_config"]
+        );
     }
 }

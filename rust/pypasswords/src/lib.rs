@@ -1,6 +1,8 @@
 // Copyright (c) 2025-2026 Arista Networks, Inc.
 // Use of this source code is governed by the Apache License 2.0
 // that can be found in the LICENSE file.
+//! Python bindings for password helpers.
+
 #![deny(unused_crate_dependencies)]
 
 use pyo3::create_exception;
@@ -118,39 +120,39 @@ mod passwords {
     use pyo3::pyfunction;
 
     #[pymodule_export]
-    pub use super::CBCDecryptionFailedError;
+    pub(crate) use super::CBCDecryptionFailedError;
     #[pymodule_export]
-    pub use super::CBCEncryptionFailedError;
+    pub(crate) use super::CBCEncryptionFailedError;
     #[pymodule_export]
-    pub use super::CBCInvalidBase64Error;
+    pub(crate) use super::CBCInvalidBase64Error;
     #[pymodule_export]
-    pub use super::CBCInvalidBase64Utf8Error;
+    pub(crate) use super::CBCInvalidBase64Utf8Error;
     #[pymodule_export]
-    pub use super::CBCInvalidSignatureError;
+    pub(crate) use super::CBCInvalidSignatureError;
     #[pymodule_export]
-    pub use super::CBCInvalidUtf8Error;
+    pub(crate) use super::CBCInvalidUtf8Error;
     #[pymodule_export]
-    pub use super::PasswordError;
+    pub(crate) use super::PasswordError;
     #[pymodule_export]
-    pub use super::Sha512CryptInvalidSaltCharacterError;
+    pub(crate) use super::Sha512CryptInvalidSaltCharacterError;
     #[pymodule_export]
-    pub use super::Sha512CryptInvalidSaltEmptyError;
+    pub(crate) use super::Sha512CryptInvalidSaltEmptyError;
     #[pymodule_export]
-    pub use super::Sha512CryptLibraryError;
+    pub(crate) use super::Sha512CryptLibraryError;
     #[pymodule_export]
-    pub use super::Simple7DataTooShortError;
+    pub(crate) use super::Simple7DataTooShortError;
     #[pymodule_export]
-    pub use super::Simple7EmptyPasswordError;
+    pub(crate) use super::Simple7EmptyPasswordError;
     #[pymodule_export]
-    pub use super::Simple7InvalidHexEncodingError;
+    pub(crate) use super::Simple7InvalidHexEncodingError;
     #[pymodule_export]
-    pub use super::Simple7InvalidSaltFormatError;
+    pub(crate) use super::Simple7InvalidSaltFormatError;
     #[pymodule_export]
-    pub use super::Simple7InvalidSaltValueError;
+    pub(crate) use super::Simple7InvalidSaltValueError;
     #[pymodule_export]
-    pub use super::Simple7InvalidUtf8Error;
+    pub(crate) use super::Simple7InvalidUtf8Error;
     #[pymodule_export]
-    pub use super::Simple7RandomSourceUnavailableError;
+    pub(crate) use super::Simple7RandomSourceUnavailableError;
 
     pub(crate) trait ToPythonError {
         fn to_python_error(self) -> pyo3::PyErr;
@@ -219,14 +221,14 @@ mod passwords {
     #[cfg(feature = "sha512")]
     #[pyfunction]
     /// Computes the SHA512 crypt value for the password given the salt
-    pub fn sha512_crypt(password: String, salt: String) -> PyResult<String> {
-        passwords::sha512_crypt(&password, &salt).map_err(ToPythonError::to_python_error)
+    pub(crate) fn sha512_crypt(password: &str, salt: &str) -> PyResult<String> {
+        passwords::sha512_crypt(password, salt).map_err(ToPythonError::to_python_error)
     }
 
     #[cfg(feature = "cbc")]
     #[pyfunction]
-    /// Encrypt the data with CBC TripleDES
-    pub fn cbc_encrypt(password: String, data: String) -> PyResult<String> {
+    /// Encrypt the data with CBC `TripleDES`
+    pub(crate) fn cbc_encrypt(password: &str, data: &str) -> PyResult<String> {
         let result_bytes = passwords::cbc_encrypt(password.as_bytes(), data.as_bytes())
             .map_err(ToPythonError::to_python_error)?;
         Ok(String::from_utf8(result_bytes).expect("Base64 output should only contain ASCII"))
@@ -234,8 +236,8 @@ mod passwords {
 
     #[cfg(feature = "cbc")]
     #[pyfunction]
-    /// Decrypt the encrypted_data with CBC TripleDES
-    pub fn cbc_decrypt(password: String, encrypted_data: String) -> PyResult<String> {
+    /// Decrypt the `encrypted_data` with CBC `TripleDES`
+    pub(crate) fn cbc_decrypt(password: &str, encrypted_data: &str) -> PyResult<String> {
         let decrypted_bytes =
             passwords::cbc_decrypt(password.as_bytes(), encrypted_data.as_bytes())
                 .map_err(ToPythonError::to_python_error)?;
@@ -247,7 +249,7 @@ mod passwords {
     #[cfg(feature = "cbc")]
     #[pyfunction]
     /// Verify if the encrypted data matches the given password
-    pub fn cbc_verify(password: String, encrypted_data: String) -> bool {
+    pub(crate) fn cbc_verify(password: &str, encrypted_data: &str) -> bool {
         passwords::cbc_check_password(password.as_bytes(), encrypted_data.as_bytes())
     }
 
@@ -256,18 +258,18 @@ mod passwords {
     /// Encrypt (obfuscate) a password with insecure type-7.
     ///
     /// If salt is None, a random salt in the range 0-15 will be used.
-    /// Raises ValueError if the password is empty or the salt is out of range.
-    pub fn simple_7_encrypt(data: String, salt: Option<u8>) -> PyResult<String> {
-        passwords::simple_7_encrypt(&data, salt).map_err(ToPythonError::to_python_error)
+    /// Raises `ValueError` if the password is empty or the salt is out of range.
+    pub(crate) fn simple_7_encrypt(data: &str, salt: Option<u8>) -> PyResult<String> {
+        passwords::simple_7_encrypt(data, salt).map_err(ToPythonError::to_python_error)
     }
 
     #[cfg(feature = "simple-7")]
     #[pyfunction]
     /// Decrypt (deobfuscate) a password from insecure type-7.
     ///
-    /// Raises ValueError if the password is empty or decryption fails.
-    pub fn simple_7_decrypt(data: String) -> PyResult<String> {
-        passwords::simple_7_decrypt(&data).map_err(ToPythonError::to_python_error)
+    /// Raises `ValueError` if the password is empty or decryption fails.
+    pub(crate) fn simple_7_decrypt(data: &str) -> PyResult<String> {
+        passwords::simple_7_decrypt(data).map_err(ToPythonError::to_python_error)
     }
 }
 

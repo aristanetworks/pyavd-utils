@@ -1,6 +1,19 @@
 // Copyright (c) 2025-2026 Arista Networks, Inc.
 // Use of this source code is governed by the Apache License 2.0
 // that can be found in the LICENSE file.
+// TODO: Reevaluate the allow
+#![allow(
+    missing_docs,
+    missing_debug_implementations,
+    clippy::fn_params_excessive_bools,
+    clippy::manual_let_else,
+    clippy::needless_pass_by_value,
+    clippy::module_name_repetitions,
+    clippy::struct_excessive_bools,
+    clippy::unnecessary_trailing_comma,
+    clippy::unnecessary_wraps,
+    reason = "PyO3-facing API names and test assertions mirror the exported Python module contract"
+)]
 
 // When running from Python we wish to cache Store inside Rust,
 // to avoid sending the huge object back and forth.
@@ -142,39 +155,39 @@ pub mod validation {
 
     use super::STORE;
     #[pymodule_export]
-    pub use super::ValidationError;
+    pub(crate) use super::ValidationError;
     #[pymodule_export]
-    pub use super::ValidationInternalError;
+    pub(crate) use super::ValidationInternalError;
     #[pymodule_export]
-    pub use super::ValidationInvalidAdhocSchemaJsonError;
+    pub(crate) use super::ValidationInvalidAdhocSchemaJsonError;
     #[pymodule_export]
-    pub use super::ValidationInvalidCoercedDataJsonError;
+    pub(crate) use super::ValidationInvalidCoercedDataJsonError;
     #[pymodule_export]
-    pub use super::ValidationInvalidJsonDataError;
+    pub(crate) use super::ValidationInvalidJsonDataError;
     #[pymodule_export]
-    pub use super::ValidationInvalidSchemaNameError;
+    pub(crate) use super::ValidationInvalidSchemaNameError;
     #[pymodule_export]
-    pub use super::ValidationRefSyntaxError;
+    pub(crate) use super::ValidationRefSyntaxError;
     #[pymodule_export]
-    pub use super::ValidationSchemaPathError;
+    pub(crate) use super::ValidationSchemaPathError;
     #[pymodule_export]
-    pub use super::ValidationSchemaTypeError;
+    pub(crate) use super::ValidationSchemaTypeError;
     #[pymodule_export]
-    pub use super::ValidationSchemaWalkError;
+    pub(crate) use super::ValidationSchemaWalkError;
     #[pymodule_export]
-    pub use super::ValidationStoreAlreadyInitializedError;
+    pub(crate) use super::ValidationStoreAlreadyInitializedError;
     #[pymodule_export]
-    pub use super::ValidationStoreInvalidExtensionError;
+    pub(crate) use super::ValidationStoreInvalidExtensionError;
     #[pymodule_export]
-    pub use super::ValidationStoreLoadIoError;
+    pub(crate) use super::ValidationStoreLoadIoError;
     #[pymodule_export]
-    pub use super::ValidationStoreLoadJsonError;
+    pub(crate) use super::ValidationStoreLoadJsonError;
     #[pymodule_export]
-    pub use super::ValidationStoreLoadYamlError;
+    pub(crate) use super::ValidationStoreLoadYamlError;
     #[pymodule_export]
-    pub use super::ValidationStoreNoFilesFoundError;
+    pub(crate) use super::ValidationStoreNoFilesFoundError;
     #[pymodule_export]
-    pub use super::ValidationStoreNotInitializedError;
+    pub(crate) use super::ValidationStoreNotInitializedError;
 
     pub(crate) trait ToPythonError {
         fn to_python_error(self) -> pyo3::PyErr;
@@ -261,19 +274,19 @@ pub mod validation {
             ValidationStoreNotInitializedError::new_err(
                 "The schema store was not initialized. \
              Initialization can only happen once, and must be done before running any validations."
-                    .to_string(),
+                    .to_owned(),
             )
         })
     }
 
-    #[pyclass(frozen, get_all)]
+    #[pyclass(from_py_object, frozen, get_all)]
     #[derive(Clone)]
     pub struct Violation {
         pub message: String,
         pub path: Vec<String>,
     }
 
-    #[pyclass(frozen, get_all)]
+    #[pyclass(from_py_object, frozen, get_all)]
     #[derive(Clone)]
     pub struct Deprecation {
         pub message: String,
@@ -284,14 +297,14 @@ pub mod validation {
         pub url: Option<String>,
     }
 
-    #[pyclass(frozen, get_all)]
+    #[pyclass(from_py_object, frozen, get_all)]
     #[derive(Clone)]
     pub struct IgnoredEosConfigKey {
         pub message: String,
         pub path: Vec<String>,
     }
 
-    #[pyclass(get_all, set_all)]
+    #[pyclass(from_py_object, get_all, set_all)]
     #[derive(Clone, Default)]
     pub struct Configuration {
         pub ignore_required_keys_on_root_dict: bool,
@@ -331,7 +344,7 @@ pub mod validation {
         }
     }
 
-    #[pyclass(frozen, get_all)]
+    #[pyclass(from_py_object, frozen, get_all)]
     #[derive(Clone, Default)]
     pub struct ValidationResult {
         pub violations: Vec<Violation>,
@@ -368,13 +381,13 @@ pub mod validation {
                             version: deprecated.version.into(),
                             replacement: deprecated.replacement.into(),
                             url: deprecated.url.into(),
-                        })
+                        });
                     }
                     validation::feedback::WarningIssue::IgnoredEosConfigKey(ignored) => {
                         result.ignored_eos_config_keys.push(IgnoredEosConfigKey {
                             message: ignored.to_string(),
                             path: feedback.path.into(),
-                        })
+                        });
                     }
                 }
             }
@@ -409,10 +422,9 @@ pub mod validation {
         STORE.set(store).map_err(|_| {
             ValidationStoreAlreadyInitializedError::new_err(
                 "Unable to initialize the schema store. \
-                 Initialization can only happen once, and must be done before running any validations."
-                    .to_string(),
+                 Initialization can only happen once, and must be done before running any validations.".to_owned(),
             )
-            }).inspect(|_| info!("Initialized the schema store from file."))
+            }).inspect(|()| info!("Initialized the schema store from file."))
     }
 
     #[pyfunction]
@@ -537,9 +549,7 @@ mod tests {
     // Initialize the store and ignoring errors for duplicate initialization.
     // This avoids false negatives when multiple tests are executed at once.
     fn init_test_store(py: pyo3::Python<'_>) {
-        if STORE.get().is_some() {
-            panic!("Already set")
-        }
+        assert!(STORE.get().is_none(), "Already set");
         let module = py.import("validation").unwrap();
         {
             let args = ();
@@ -550,8 +560,8 @@ mod tests {
         };
     }
 
-    fn get_path_and_message_from_py_violation<'py>(
-        violation: pyo3::Bound<'py, pyo3::PyAny>,
+    fn get_path_and_message_from_py_violation(
+        violation: pyo3::Bound<'_, pyo3::PyAny>,
     ) -> (Vec<String>, String) {
         let path: Vec<String> = violation
             .getattr("path")
@@ -804,7 +814,7 @@ mod tests {
                 assert!(
                     expected_violations.contains(&expected_violation),
                     "violation was not found in expected violations: {expected_violation:?}"
-                )
+                );
             }
         });
     }
@@ -830,7 +840,7 @@ mod tests {
                  Initialization can only happen once, and must be done before running any validations."
             );
             assert!(err.is_instance_of::<validation::ValidationStoreAlreadyInitializedError>(py));
-        })
+        });
     }
 
     #[test]
@@ -890,7 +900,7 @@ mod tests {
                 assert!(
                     expected_violations.contains(&expected_violation),
                     "violation was not found in expected violations: {expected_violation:?}"
-                )
+                );
             }
         });
     }
@@ -1015,7 +1025,7 @@ mod tests {
                 assert!(
                     expected_violations.contains(&expected_violation),
                     "violation was not found in expected violations: {expected_violation:?}"
-                )
+                );
             }
         });
     }

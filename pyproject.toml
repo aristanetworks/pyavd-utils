@@ -67,7 +67,7 @@ pytest = [
     "pytest>=8.2.0",
 ]
 coverage = [
-    "coverage[toml]==7.14.0",
+    "coverage[toml]==7.14.1",
 ]
 # group used to build cross platform wheels
 build_wheel = [
@@ -221,7 +221,7 @@ exclude_also = [
 
 [tool.bumpversion]
 
-current_version = "0.0.5"
+current_version = "0.0.6"
 
 allow_dirty = true
 commit = false

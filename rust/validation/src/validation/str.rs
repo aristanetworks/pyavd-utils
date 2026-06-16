@@ -21,23 +21,21 @@ impl Validation for Str {
         }
 
         // Lenient type check - accept anything coercible to string
-        if let Some(v) = value.as_str() {
-            let s = v.into_owned();
+        if let Some(string) = value.as_str() {
+            let input = string.into_owned();
             // Emit coercion info if original was not a string
             if !value.is_str() {
-                ctx.add_coercion_for(value, s.as_str());
+                ctx.add_coercion_for(value, input.as_str());
             }
             // Apply convert_to_lower_case if specified
-            let s = convert_to_lower_case(self, value, s, ctx);
-            self.valid_values.validate(value, &s, ctx);
-            validate_min_length(self, value, &s, ctx);
-            validate_max_length(self, value, &s, ctx);
-            validate_pattern(self, value, &s, ctx);
-            if ctx.configuration.return_coerced_data {
-                Some(value.coerce_str(s))
-            } else {
-                None
-            }
+            let input = convert_to_lower_case(self, value, input, ctx);
+            self.valid_values.validate(value, &input, ctx);
+            validate_min_length(self, value, &input, ctx);
+            validate_max_length(self, value, &input, ctx);
+            validate_pattern(self, value, &input, ctx);
+            ctx.configuration
+                .return_coerced_data
+                .then(|| value.coerce_str(input))
         } else {
             Self::handle_invalid_type(value, ctx, Type::Str)
         }
@@ -47,18 +45,18 @@ impl Validation for Str {
 fn convert_to_lower_case<V: ValidatableValue>(
     schema: &Str,
     value: &V,
-    s: String,
+    input: String,
     ctx: &mut Context,
 ) -> String {
     if !schema.convert_to_lower_case.unwrap_or_default() {
-        return s;
+        return input;
     }
-    let lower = s.to_lowercase();
-    if lower != s {
-        ctx.add_string_lowered_for(value, &s, &lower);
-        lower
+    let lower = input.to_lowercase();
+    if lower == input {
+        input
     } else {
-        s
+        ctx.add_string_lowered_for(value, &input, &lower);
+        lower
     }
 }
 
@@ -119,13 +117,10 @@ fn validate_max_length<V: ValidatableValue>(
 fn validate_pattern<V: ValidatableValue>(schema: &Str, value: &V, input: &str, ctx: &mut Context) {
     if let Some(pattern) = &schema.pattern {
         match pattern.get_compiled_pattern() {
-            Err(e) => ctx.add_error_for(
+            Err(err) => ctx.add_error_for(
                 value,
                 ErrorIssue::InternalError {
-                    message: format!(
-                        "Schema contains an invalid regex pattern '{}': {e}",
-                        pattern
-                    ),
+                    message: format!("Schema contains an invalid regex pattern '{pattern}': {err}"),
                 },
             ),
             Ok(regex_pattern) => match regex_pattern.is_match(input) {
@@ -137,10 +132,10 @@ fn validate_pattern<V: ValidatableValue>(schema: &Str, value: &V, input: &str, c
                         found: input.into(),
                     },
                 ),
-                Err(e) => ctx.add_error_for(
+                Err(err) => ctx.add_error_for(
                     value,
                     ErrorIssue::InternalError {
-                        message: e.to_string(),
+                        message: err.to_string(),
                     },
                 ),
             },
@@ -228,7 +223,7 @@ mod tests {
                 path: vec![].into(),
                 span: None,
                 issue: Violation::InvalidValue {
-                    expected: vec!["foo".to_string()].into(),
+                    expected: vec!["foo".to_owned()].into(),
                     found: "FOO".into()
                 }
                 .into()

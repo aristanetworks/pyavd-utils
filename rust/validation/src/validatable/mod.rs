@@ -128,7 +128,7 @@ pub trait ValidatableValue: Sized {
     /// Get the type of this value for error reporting.
     fn value_type(&self) -> Type;
 
-    /// Convert to feedback::Value for use in CoercionNote.
+    /// Convert to `feedback::Value` for use in `CoercionNote`.
     /// This is used to record what value was coerced from.
     fn to_feedback_value(&self) -> crate::feedback::Value;
 
@@ -189,7 +189,7 @@ pub trait ValidatableValue: Sized {
         };
 
         if let Some(child) = self.get(component) {
-            trail.push((*component).to_string());
+            trail.push((*component).to_owned());
             child.walk(rest, trail, results);
             trail.pop();
         }

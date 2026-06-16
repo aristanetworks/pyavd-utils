@@ -8,7 +8,7 @@ use std::fmt::Display;
 
 use serde::Serialize;
 
-/// Value Wrapper of serde_json::Value to allow us to apply conversion traits on these.
+/// Value Wrapper of `serde_json::Value` to allow us to apply conversion traits on these.
 #[derive(Clone, Debug, PartialEq, Serialize, derive_more::From, derive_more::Display)]
 pub enum Value {
     #[display("null")]
@@ -32,21 +32,21 @@ impl From<serde_json::Value> for Value {
             serde_json::Value::Null => Self::Null(),
             serde_json::Value::Bool(value) => Self::Bool(value),
             serde_json::Value::Number(number) => {
-                if let Some(value) = number.as_i64() {
-                    Self::Int(value)
-                } else if let Some(value) = number.as_f64() {
-                    Self::Float(value)
+                if let Some(integer) = number.as_i64() {
+                    Self::Int(integer)
+                } else if let Some(float) = number.as_f64() {
+                    Self::Float(float)
                 } else {
                     // Falling back to str
-                    Self::Str(number.as_str().to_string())
+                    Self::Str(number.as_str().to_owned())
                 }
             }
             serde_json::Value::Object(value) => Self::Dict(
                 // By using hashmap we accept that keys may be reordered here.
                 value
                     .into_iter()
-                    .map(|(k, v)| (k, Value::from(v)))
-                    .collect::<std::collections::HashMap<_, _>>(),
+                    .map(|(key, value)| (key, Value::from(value)))
+                    .collect::<HashMap<_, _>>(),
             ),
             serde_json::Value::String(value) => Self::Str(value),
         }
@@ -54,7 +54,7 @@ impl From<serde_json::Value> for Value {
 }
 impl From<&str> for Value {
     fn from(value: &str) -> Self {
-        Self::Str(value.to_string())
+        Self::Str(value.to_owned())
     }
 }
 
@@ -62,7 +62,7 @@ impl From<&str> for Value {
 pub struct Path(Vec<String>);
 impl Path {
     pub(crate) fn push(&mut self, step: String) {
-        self.0.push(step)
+        self.0.push(step);
     }
     pub(crate) fn pop(&mut self) -> Option<String> {
         self.0.pop()
@@ -78,12 +78,12 @@ impl Path {
 }
 impl From<&str> for Path {
     fn from(value: &str) -> Self {
-        Self(value.split(".").map(|step| step.to_string()).collect())
+        Self(value.split('.').map(ToOwned::to_owned).collect())
     }
 }
 
 /// Display the path as a json path string like outer[1].inner.lst[23]
-impl std::fmt::Display for Path {
+impl Display for Path {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut string = String::default();
         for (index, element) in self.0.iter().enumerate() {
@@ -108,9 +108,7 @@ impl From<Path> for Vec<String> {
 }
 impl<'a> FromIterator<&'a str> for Path {
     fn from_iter<T: IntoIterator<Item = &'a str>>(iter: T) -> Self {
-        Self(Vec::from_iter(
-            iter.into_iter().map(|item| item.to_string()),
-        ))
+        Self(Vec::from_iter(iter.into_iter().map(ToOwned::to_owned)))
     }
 }
 
@@ -130,7 +128,7 @@ pub enum InputDiagnostic {
     ParseDiagnostic(ParseDiagnostic),
 }
 
-/// ErrorIssue is wrapped in Feedback and added to the Context during validation.
+/// `ErrorIssue` is wrapped in Feedback and added to the Context during validation.
 #[derive(Clone, Debug, PartialEq, Serialize, derive_more::From, derive_more::Display)]
 pub enum ErrorIssue {
     /// Violation found during validation.
@@ -140,16 +138,16 @@ pub enum ErrorIssue {
     InternalError { message: String },
 }
 
-/// WarningIssue is wrapped in Feedback and added to the Context during validation.
+/// `WarningIssue` is wrapped in Feedback and added to the Context during validation.
 #[derive(Clone, Debug, PartialEq, Serialize, derive_more::From, derive_more::Display)]
 pub enum WarningIssue {
     /// Deprecation of data model.
     Deprecated(Deprecated),
-    /// Ignore EOSConfig keys
+    /// Ignore `EOSConfig` keys
     IgnoredEosConfigKey(IgnoredEosConfigKey),
 }
 
-/// InfoIssue is wrapped in Feedback and added to the Context during validation.
+/// `InfoIssue` is wrapped in Feedback and added to the Context during validation.
 #[derive(Clone, Debug, PartialEq, Serialize, derive_more::From, derive_more::Display)]
 pub enum InfoIssue {
     /// Coercion performed during validation.
@@ -327,7 +325,7 @@ impl ParseDiagnosticSource for yaml_parser::ParseError {
     }
 
     fn diagnostic_suggestion(&self) -> Option<String> {
-        self.suggestion().map(str::to_string)
+        self.suggestion().map(str::to_owned)
     }
 
     fn as_diagnostic_location(&self) -> DiagnosticLocation {
@@ -516,9 +514,9 @@ impl Deprecated {
     pub(crate) fn from_schema(path: &Path, deprecation: &avdschema::base::Deprecation) -> Self {
         Self {
             path: path.to_owned(),
-            replacement: deprecation.new_key.to_owned().into(),
-            version: deprecation.remove_in_version.to_owned().into(),
-            url: deprecation.url.to_owned().into(),
+            replacement: deprecation.new_key.clone().into(),
+            version: deprecation.remove_in_version.clone().into(),
+            url: deprecation.url.clone().into(),
         }
     }
 }
@@ -535,9 +533,9 @@ impl Removed {
     pub(crate) fn from_schema(path: &Path, deprecation: &avdschema::base::Deprecation) -> Self {
         Self {
             path: path.to_owned(),
-            replacement: deprecation.new_key.to_owned().into(),
-            version: deprecation.remove_in_version.to_owned().into(),
-            url: deprecation.url.to_owned().into(),
+            replacement: deprecation.new_key.clone().into(),
+            version: deprecation.remove_in_version.clone().into(),
+            url: deprecation.url.clone().into(),
         }
     }
 }
@@ -551,79 +549,74 @@ mod tests {
 
     #[test]
     fn value_from_json_value() {
-        let value = Value::from(serde_json::json!(true));
-        assert_eq!(value, Value::Bool(true));
-        let value = Value::from(serde_json::json!(-123));
-        assert_eq!(value, Value::Int(-123));
-        let value = Value::from(serde_json::json!(123.45));
-        assert_eq!(value, Value::Float(123.45));
-        let value: Value = Value::from(serde_json::json!(null));
-        assert_eq!(value, Value::Null());
-        let value = Value::from(serde_json::json!("string"));
-        assert_eq!(value, Value::Str("string".to_string()));
-        let value = Value::from(serde_json::json!({"key": "value"}));
+        assert_eq!(Value::from(serde_json::json!(true)), Value::Bool(true));
+        assert_eq!(Value::from(serde_json::json!(-123)), Value::Int(-123));
+        assert_eq!(Value::from(serde_json::json!(123.45)), Value::Float(123.45));
+        assert_eq!(Value::from(serde_json::json!(null)), Value::Null());
         assert_eq!(
-            value,
-            Value::Dict([("key".to_string(), Value::Str("value".to_string()))].into())
+            Value::from(serde_json::json!("string")),
+            Value::Str("string".to_owned())
         );
-        let value = Value::from(serde_json::json!(["item", 123]));
         assert_eq!(
-            value,
-            Value::List([Value::Str("item".to_string()), Value::Int(123)].into())
+            Value::from(serde_json::json!({"key": "value"})),
+            Value::Dict([("key".to_owned(), Value::Str("value".to_owned()))].into())
+        );
+        assert_eq!(
+            Value::from(serde_json::json!(["item", 123])),
+            Value::List([Value::Str("item".to_owned()), Value::Int(123)].into())
         );
     }
 
     #[test]
     fn type_from_json_value() {
-        let type_ = Type::from(&serde_json::json!(null));
-        assert_eq!(type_, Type::Null);
-        let type_ = Type::from(&serde_json::json!(true));
-        assert_eq!(type_, Type::Bool);
-        let type_ = Type::from(&serde_json::json!(-123));
-        assert_eq!(type_, Type::Int);
-        let type_ = Type::from(&serde_json::json!(123.45));
-        assert_eq!(type_, Type::Float);
-        let type_ = Type::from(&serde_json::json!("string"));
-        assert_eq!(type_, Type::Str);
-        let type_ = Type::from(&serde_json::json!({"key": "value"}));
-        assert_eq!(type_, Type::Dict);
-        let type_ = Type::from(&serde_json::json!(["item", 123]));
-        assert_eq!(type_, Type::List);
+        assert_eq!(Type::from(&serde_json::json!(null)), Type::Null);
+        assert_eq!(Type::from(&serde_json::json!(true)), Type::Bool);
+        assert_eq!(Type::from(&serde_json::json!(-123)), Type::Int);
+        assert_eq!(Type::from(&serde_json::json!(123.45)), Type::Float);
+        assert_eq!(Type::from(&serde_json::json!("string")), Type::Str);
+        assert_eq!(Type::from(&serde_json::json!({"key": "value"})), Type::Dict);
+        assert_eq!(Type::from(&serde_json::json!(["item", 123])), Type::List);
     }
 
     #[test]
     fn value_display() {
-        let value = Value::Bool(true);
-        assert_eq!(format!("{}", value).as_str(), "true");
-        let value = Value::Int(-123);
-        assert_eq!(format!("{}", value).as_str(), "-123");
-        let value = Value::Float(123.45);
-        assert_eq!(format!("{}", value).as_str(), "123.45");
-        let value = Value::Null();
-        assert_eq!(format!("{}", value).as_str(), "null");
-        let value = Value::Str("string".to_string());
-        assert_eq!(format!("{}", value).as_str(), "\"string\"");
-        let value = Value::Dict([("key".to_string(), Value::Str("value".to_string()))].into());
+        assert_eq!(format!("{}", Value::Bool(true)).as_str(), "true");
+        assert_eq!(format!("{}", Value::Int(-123)).as_str(), "-123");
+        assert_eq!(format!("{}", Value::Float(123.45)).as_str(), "123.45");
+        assert_eq!(format!("{}", Value::Null()).as_str(), "null");
+        assert_eq!(
+            format!("{}", Value::Str("string".to_owned())).as_str(),
+            "\"string\""
+        );
         // TODO: Improve the output format for dicts. Not really used currently.
-        assert_eq!(format!("{}", value).as_str(), "{\"key\": Str(\"value\")}");
-        let value = Value::List([Value::Str("item".to_string()), Value::Int(123)].into());
+        assert_eq!(
+            format!(
+                "{}",
+                Value::Dict([("key".to_owned(), Value::Str("value".to_owned()))].into())
+            )
+            .as_str(),
+            "{\"key\": Str(\"value\")}"
+        );
         // TODO: Improve the output format for lists. Not really used currently.
-        assert_eq!(format!("{}", value).as_str(), "[Str(\"item\"), Int(123)]");
+        assert_eq!(
+            format!(
+                "{}",
+                Value::List([Value::Str("item".to_owned()), Value::Int(123)].into())
+            )
+            .as_str(),
+            "[Str(\"item\"), Int(123)]"
+        );
     }
     #[test]
     fn deprecated_display() {
         let deprecated = Deprecated {
-            path: Path::from(vec![
-                "key".to_string(),
-                "1".to_string(),
-                "subkey".to_string(),
-            ]),
-            replacement: Some("another_key".to_string()).into(),
-            version: Some("6.0.0".to_string()).into(),
-            url: Some("foo.bar".to_string()).into(),
+            path: Path::from(vec!["key".to_owned(), "1".to_owned(), "subkey".to_owned()]),
+            replacement: Some("another_key".to_owned()).into(),
+            version: Some("6.0.0".to_owned()).into(),
+            url: Some("foo.bar".to_owned()).into(),
         };
         assert_eq!(
-            format!("{}", deprecated).as_str(),
+            format!("{deprecated}").as_str(),
             "The input data model 'key[1].subkey' is deprecated and will be removed in AVD version 6.0.0. Use 'another_key' instead. See 'foo.bar' for details."
         );
     }
@@ -631,17 +624,13 @@ mod tests {
     #[test]
     fn removed_display() {
         let removed = Removed {
-            path: Path::from(vec![
-                "key".to_string(),
-                "1".to_string(),
-                "subkey".to_string(),
-            ]),
-            replacement: Some("another_key".to_string()).into(),
-            version: Some("6.0.0".to_string()).into(),
-            url: Some("foo.bar".to_string()).into(),
+            path: Path::from(vec!["key".to_owned(), "1".to_owned(), "subkey".to_owned()]),
+            replacement: Some("another_key".to_owned()).into(),
+            version: Some("6.0.0".to_owned()).into(),
+            url: Some("foo.bar".to_owned()).into(),
         };
         assert_eq!(
-            format!("{}", removed).as_str(),
+            format!("{removed}").as_str(),
             "The input data model 'key[1].subkey' was removed in AVD version 6.0.0. Use 'another_key' instead. See 'foo.bar' for details."
         );
     }
@@ -649,10 +638,10 @@ mod tests {
     fn get_deprecation_test_schema() -> avdschema::base::Deprecation {
         avdschema::base::Deprecation {
             warning: true,
-            new_key: Some("new_key".to_string()),
+            new_key: Some("new_key".to_owned()),
             removed: Some(true),
-            remove_in_version: Some("6.0.0".to_string()),
-            url: Some("my.url".to_string()),
+            remove_in_version: Some("6.0.0".to_owned()),
+            url: Some("my.url".to_owned()),
             ..Default::default()
         }
     }
@@ -662,10 +651,10 @@ mod tests {
         let deprecated =
             Deprecated::from_schema(&Path::from_iter(["foo"]), &get_deprecation_test_schema());
         let expected_deprecated = Deprecated {
-            path: Path::from(vec!["foo".to_string()]),
-            replacement: Some("new_key".to_string()).into(),
-            version: Some("6.0.0".to_string()).into(),
-            url: Some("my.url".to_string()).into(),
+            path: Path::from(vec!["foo".to_owned()]),
+            replacement: Some("new_key".to_owned()).into(),
+            version: Some("6.0.0".to_owned()).into(),
+            url: Some("my.url".to_owned()).into(),
         };
         assert_eq!(deprecated, expected_deprecated);
     }
@@ -675,10 +664,10 @@ mod tests {
         let removed =
             Removed::from_schema(&Path::from_iter(["foo"]), &get_deprecation_test_schema());
         let expected_removed = Removed {
-            path: Path::from(vec!["foo".to_string()]),
-            replacement: Some("new_key".to_string()).into(),
-            version: Some("6.0.0".to_string()).into(),
-            url: Some("my.url".to_string()).into(),
+            path: Path::from(vec!["foo".to_owned()]),
+            replacement: Some("new_key".to_owned()).into(),
+            version: Some("6.0.0".to_owned()).into(),
+            url: Some("my.url".to_owned()).into(),
         };
         assert_eq!(removed, expected_removed);
     }
@@ -694,7 +683,7 @@ mod tests {
         assert_eq!(diagnostic.message, "missing colon after mapping key");
         assert_eq!(
             diagnostic.suggestion,
-            Some("add a colon after the mapping key".to_string())
+            Some("add a colon after the mapping key".to_owned())
         );
         assert_eq!(
             diagnostic.location,

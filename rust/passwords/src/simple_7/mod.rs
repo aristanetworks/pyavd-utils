@@ -40,8 +40,8 @@ pub fn simple_7_decrypt(data: &str) -> Result<String, Simple7Error> {
 
     let decrypted: Vec<u8> = secret
         .iter()
-        .enumerate()
-        .map(|(i, &byte)| byte ^ SIMPLE_7_SEED[(salt + i) % 53])
+        .zip(SIMPLE_7_SEED.iter().cycle().skip(salt))
+        .map(|(&byte, &seed_byte)| byte ^ seed_byte)
         .collect();
 
     Ok(String::from_utf8(decrypted)?)
@@ -56,8 +56,8 @@ pub fn simple_7_encrypt(data: &str, salt: Option<u8>) -> Result<String, Simple7E
         return Err(Simple7Error::EmptyPassword);
     }
     let salt = match salt {
-        Some(s) if s > 15 => return Err(Simple7Error::InvalidSaltValue(s)),
-        Some(s) => s,
+        Some(salt) if salt > 15 => return Err(Simple7Error::InvalidSaltValue(salt)),
+        Some(salt) => salt,
         None => {
             let mut random_byte = [0_u8; 1];
             getrandom::fill(&mut random_byte)?;
@@ -69,8 +69,8 @@ pub fn simple_7_encrypt(data: &str, salt: Option<u8>) -> Result<String, Simple7E
 
     let encrypted: Vec<u8> = cleartext
         .iter()
-        .enumerate()
-        .map(|(i, &byte)| byte ^ SIMPLE_7_SEED[(salt as usize + i) % 53])
+        .zip(SIMPLE_7_SEED.iter().cycle().skip(usize::from(salt)))
+        .map(|(&byte, &seed_byte)| byte ^ seed_byte)
         .collect();
 
     Ok(format!("{:02}{}", salt, hex::encode_upper(encrypted)))
@@ -100,7 +100,7 @@ mod tests {
     fn test_simple_7_encrypt_ok() {
         for (salt, expected) in VALID_ENCRYPT_DECRYPT_PAIRS {
             let result = simple_7_encrypt(TEST_PASSWORD, Some(salt)).expect("Encryption failed");
-            assert_eq!(result, expected, "Failed for salt {}", salt);
+            assert_eq!(result, expected, "Failed for salt {salt}");
         }
     }
 
@@ -108,7 +108,7 @@ mod tests {
     fn test_simple_7_decrypt_ok() {
         for (salt, encrypted) in VALID_ENCRYPT_DECRYPT_PAIRS {
             let result = simple_7_decrypt(encrypted).expect("Decryption failed");
-            assert_eq!(result, TEST_PASSWORD, "Failed for salt {}", salt);
+            assert_eq!(result, TEST_PASSWORD, "Failed for salt {salt}");
         }
     }
 
@@ -135,11 +135,10 @@ mod tests {
     fn test_simple_7_encrypt_invalid_salt() {
         for salt in INVALID_SALT_VALUES {
             let result = simple_7_encrypt(TEST_PASSWORD, Some(salt));
-            assert!(result.is_err(), "Expected error for salt {}", salt);
+            assert!(result.is_err(), "Expected error for salt {salt}");
             assert!(
                 matches!(result.unwrap_err(), Simple7Error::InvalidSaltValue(_)),
-                "Expected InvalidSaltValue error for salt {}",
-                salt
+                "Expected InvalidSaltValue error for salt {salt}"
             );
         }
     }
@@ -152,11 +151,17 @@ mod tests {
 
     #[test]
     fn test_simple_7_decrypt_data_too_short() {
-        let result = simple_7_decrypt("");
-        assert!(matches!(result.unwrap_err(), Simple7Error::DataTooShort));
+        let empty_result = simple_7_decrypt("");
+        assert!(matches!(
+            empty_result.unwrap_err(),
+            Simple7Error::DataTooShort
+        ));
 
-        let result = simple_7_decrypt("0");
-        assert!(matches!(result.unwrap_err(), Simple7Error::DataTooShort));
+        let short_result = simple_7_decrypt("0");
+        assert!(matches!(
+            short_result.unwrap_err(),
+            Simple7Error::DataTooShort
+        ));
     }
 
     #[test]
@@ -171,22 +176,22 @@ mod tests {
     #[test]
     fn test_simple_7_decrypt_invalid_salt() {
         // Invalid salt format (not a number)
-        let result = simple_7_decrypt("XX1234");
+        let invalid_format_result = simple_7_decrypt("XX1234");
         assert!(matches!(
-            result.unwrap_err(),
+            invalid_format_result.unwrap_err(),
             Simple7Error::InvalidSaltFormat(_)
         ));
 
         // Salt out of range (0-15)
-        let result = simple_7_decrypt("161234");
+        let salt_16_result = simple_7_decrypt("161234");
         assert!(matches!(
-            result.unwrap_err(),
+            salt_16_result.unwrap_err(),
             Simple7Error::InvalidSaltValue(16)
         ));
 
-        let result = simple_7_decrypt("991234");
+        let salt_99_result = simple_7_decrypt("991234");
         assert!(matches!(
-            result.unwrap_err(),
+            salt_99_result.unwrap_err(),
             Simple7Error::InvalidSaltValue(99)
         ));
     }

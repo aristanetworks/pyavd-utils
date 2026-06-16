@@ -12,7 +12,7 @@ use serde::Serialize;
 use serde_json::Value;
 use serde_with::skip_serializing_none;
 
-/// DataValue marks the allowed types to be used as generics in Base, ValidValues and default values.
+/// `DataValue` marks the allowed types to be used as generics in Base, `ValidValues` and default values.
 pub trait DataValue {}
 impl DataValue for bool {}
 impl DataValue for i64 {}

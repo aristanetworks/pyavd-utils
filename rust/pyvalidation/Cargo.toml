@@ -4,11 +4,14 @@ version.workspace = true
 edition = "2024"
 license.workspace = true
 
+[lints]
+workspace = true
+
 [build-dependencies]
 pyo3-build-config = { workspace = true }
 
 [dev-dependencies]
-criterion = { version = "0.7.0" }
+criterion = { version = "0.8.2" }
 serde_yaml = { workspace = true }
 test_schema_store = { path = "../test_schema_store" }
 

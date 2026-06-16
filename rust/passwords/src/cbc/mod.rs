@@ -4,9 +4,9 @@
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as B64;
-use cbc::cipher::BlockDecryptMut;
-use cbc::cipher::BlockEncryptMut;
-use cbc::cipher::KeyIvInit;
+use cbc::cipher::BlockModeDecrypt as _;
+use cbc::cipher::BlockModeEncrypt as _;
+use cbc::cipher::KeyIvInit as _;
 use cbc::cipher::block_padding::NoPadding;
 use cipher as _;
 use des::TdesEde3;
@@ -43,16 +43,23 @@ impl std::error::Error for CbcError {}
 /// Convert the key to the proper format to give to CBC Encryptor and Decryptor.
 fn derive_key(pw: &[u8]) -> [u8; 24] {
     let mut result = SEED;
-    for (idx, &b) in pw.iter().enumerate() {
-        result[idx & 7] ^= b;
+    let mut key_index = 0;
+    for &password_byte in pw {
+        if let Some(result_byte) = result.get_mut(key_index) {
+            *result_byte ^= password_byte;
+        }
+        key_index = (key_index + 1) & 7;
     }
 
-    let mut k8 = [0u8; 8];
-    for i in 0..8 {
-        k8[i] = PARITY_BITS[(result[i] & 0x7F) as usize];
+    let mut k8 = [0_u8; 8];
+    for (result_byte, key_byte) in result.into_iter().zip(&mut k8) {
+        let parity_index = usize::from(result_byte & 0x7F);
+        if let Some(parity_byte) = PARITY_BITS.get(parity_index) {
+            *key_byte = *parity_byte;
+        }
     }
 
-    let mut key_24 = [0u8; 24];
+    let mut key_24 = [0_u8; 24];
     key_24[0..8].copy_from_slice(&k8);
     key_24[8..16].copy_from_slice(&k8);
     key_24[16..24].copy_from_slice(&k8);
@@ -61,7 +68,7 @@ fn derive_key(pw: &[u8]) -> [u8; 24] {
 
 pub fn cbc_encrypt(key: &[u8], data: &[u8]) -> Result<Vec<u8>, CbcError> {
     let hashed_key = derive_key(key);
-    let iv = [0u8; 8];
+    let iv = [0_u8; 8];
     let padding_len = (8 - ((data.len() + 4) % 8)) % 8;
 
     // ciphertext = ENC_SIG + bytes([padding * 16 + 0xE]) + data + bytes(padding)
@@ -75,44 +82,47 @@ pub fn cbc_encrypt(key: &[u8], data: &[u8]) -> Result<Vec<u8>, CbcError> {
     let cipher = cbc::Encryptor::<TdesEde3>::new(&hashed_key.into(), &iv.into());
 
     let ct = cipher
-        .encrypt_padded_mut::<NoPadding>(&mut buf, buf_len)
-        .map_err(|_| CbcError::EncryptionFailed)?;
+        .encrypt_padded::<NoPadding>(&mut buf, buf_len)
+        .map_err(|_err| CbcError::EncryptionFailed)?;
 
     Ok(B64.encode(ct).into_bytes())
 }
 
 pub fn cbc_decrypt(key: &[u8], b64_encrypted_data: &[u8]) -> Result<Vec<u8>, CbcError> {
     let hashed_key = derive_key(key);
-    let iv = [0u8; 8];
+    let iv = [0_u8; 8];
     let mut ciphertext = B64
         .decode(b64_encrypted_data)
-        .map_err(|_| CbcError::InvalidBase64)?;
+        .map_err(|_err| CbcError::InvalidBase64)?;
 
     let cipher = cbc::Decryptor::<TdesEde3>::new(&hashed_key.into(), &iv.into());
 
     let pt = cipher
-        .decrypt_padded_mut::<NoPadding>(&mut ciphertext)
-        .map_err(|_| CbcError::DecryptionFailed)?;
+        .decrypt_padded::<NoPadding>(&mut ciphertext)
+        .map_err(|_err| CbcError::DecryptionFailed)?;
 
     // Validate ENC SIGN
-    if pt.len() < 4 || &pt[0..3] != ENC_SIG {
+    let Some(pt_without_signature) = pt.strip_prefix(ENC_SIG) else {
         return Err(CbcError::InvalidSignature);
-    }
+    };
 
     // Parse the Metadata byte (4th byte)
-    let meta_byte = pt[3];
-    if meta_byte < 0xE {
+    let Some((&meta_byte, data_with_padding)) = pt_without_signature.split_first() else {
+        return Err(CbcError::InvalidSignature);
+    };
+    if !(0x0E..=0x7E).contains(&meta_byte) || (meta_byte & 0x0F) != 0x0E {
         return Err(CbcError::InvalidSignature);
     }
     let padding_len = ((meta_byte as usize) - 0xE) / 16;
+    let end_idx = data_with_padding
+        .len()
+        .checked_sub(padding_len)
+        .ok_or(CbcError::InvalidSignature)?;
 
-    // Layout: [SIG (3)] [META (1)] [DATA (len - 4 - padding)] [NULLS (padding)]
-    let end_idx = pt.len() - padding_len;
-    if end_idx < 4 {
-        return Err(CbcError::InvalidSignature);
-    }
-
-    Ok(pt[4..end_idx].to_vec())
+    data_with_padding
+        .get(..end_idx)
+        .map(<[u8]>::to_vec)
+        .ok_or(CbcError::InvalidSignature)
 }
 
 pub fn cbc_check_password(key: &[u8], ciphertext: &[u8]) -> bool {
@@ -163,6 +173,25 @@ mod tests {
     }
 
     #[test]
+    fn test_cbc_decrypt_rejects_invalid_meta_byte() {
+        let key: &[u8] = b"42.42.42.42_passwd";
+        let hashed_key = derive_key(key);
+        let iv = [0_u8; 8];
+        let mut buf = [ENC_SIG.as_slice(), &[0x1F], TEST_PASSWORD].concat();
+        buf.resize(16, 0);
+
+        let cipher = cbc::Encryptor::<TdesEde3>::new(&hashed_key.into(), &iv.into());
+        let ct = cipher
+            .encrypt_padded::<NoPadding>(&mut buf, 16)
+            .expect("Encryption failed");
+        let encrypted = B64.encode(ct);
+
+        let result = cbc_decrypt(key, encrypted.as_bytes());
+
+        assert!(matches!(result, Err(CbcError::InvalidSignature)));
+    }
+
+    #[test]
     fn test_cbc_check_password_ok() {
         for (key, ciphertext) in VALID_PAIRS {
             assert!(cbc_check_password(key, ciphertext));
@@ -172,7 +201,7 @@ mod tests {
     #[test]
     fn test_cbc_check_password_failure() {
         for (key, ciphertext) in INVALID_PAIRS {
-            assert!(!cbc_check_password(key, ciphertext))
+            assert!(!cbc_check_password(key, ciphertext));
         }
     }
 }

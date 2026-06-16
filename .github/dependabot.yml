@@ -18,6 +18,8 @@ updates:
     commit-message:
       prefix: "Bump(requirements): "
       prefix-development: "CI(requirements):"
+    cooldown:
+      default-days: 7
   # Maintain dependencies for GitHub Actions
   - package-ecosystem: "github-actions"
     directory: "/"
@@ -26,6 +28,8 @@ updates:
       day: "monday"
     commit-message:
       prefix: "CI: "
+    cooldown:
+      default-days: 7
   # Maintain dependencies for Rust crates
   - package-ecosystem: "cargo"
     directory: "/"
@@ -34,6 +38,8 @@ updates:
       day: "monday"
     commit-message:
       prefix: "Bump(rust): "
+    cooldown:
+      default-days: 7
   # Maintain the pinned Rust toolchain
   - package-ecosystem: "rust-toolchain"
     directory: "/"
@@ -42,3 +48,5 @@ updates:
       day: "monday"
     commit-message:
       prefix: "Bump(rust): "
+    cooldown:
+      default-days: 7

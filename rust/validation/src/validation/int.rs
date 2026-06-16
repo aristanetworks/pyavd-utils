@@ -7,7 +7,7 @@ use avdschema::int::Int;
 use avdschema::resolve_ref;
 
 use super::Validation;
-use super::valid_values::ValidateValidValues;
+use super::valid_values::ValidateValidValues as _;
 use crate::context::Context;
 use crate::feedback::Type;
 use crate::feedback::Violation;
@@ -20,27 +20,25 @@ impl Validation for Int {
         }
 
         // Lenient type check - accept anything coercible to int (e.g., "123" -> 123)
-        if let Some(v) = value.as_i64() {
+        if let Some(integer) = value.as_i64() {
             // Emit coercion info if the original value was not an int
             if !value.is_int() {
-                ctx.add_coercion_for(value, v)
+                ctx.add_coercion_for(value, integer);
             }
-            self.valid_values.validate(value, &v, ctx);
-            validate_min(self, value, &v, ctx);
-            validate_max(self, value, &v, ctx);
-            if ctx.configuration.return_coerced_data {
-                Some(value.coerce_int(v))
-            } else {
-                None
-            }
+            self.valid_values.validate(value, &integer, ctx);
+            validate_min(self, value, &integer, ctx);
+            validate_max(self, value, &integer, ctx);
+            ctx.configuration
+                .return_coerced_data
+                .then(|| value.coerce_int(integer))
         } else if value.is_int() {
             ctx.add_error_for(
                 value,
                 Violation::IntegerOutOfRange {
-                    found: value
-                        .as_str()
-                        .map(|found| found.into_owned())
-                        .unwrap_or_else(|| value.to_feedback_value().to_string()),
+                    found: value.as_str().map_or_else(
+                        || value.to_feedback_value().to_string(),
+                        std::borrow::Cow::into_owned,
+                    ),
                 },
             );
             None
@@ -256,11 +254,11 @@ mod tests {
 
         // Test true -> 1
         let input_true: Value = true.into();
-        let mut ctx = Context::new(&store, Some(&configuration));
-        let coerced = schema.validate(&input_true, &mut ctx);
-        assert!(ctx.result.errors.is_empty());
+        let mut true_ctx = Context::new(&store, Some(&configuration));
+        let true_coerced = schema.validate(&input_true, &mut true_ctx);
+        assert!(true_ctx.result.errors.is_empty());
         assert_eq!(
-            ctx.result.infos,
+            true_ctx.result.infos,
             vec![Feedback {
                 path: vec![].into(),
                 span: None,
@@ -271,15 +269,15 @@ mod tests {
                 .into()
             }]
         );
-        assert_eq!(coerced, Some(Value::Number(1.into())));
+        assert_eq!(true_coerced, Some(Value::Number(1.into())));
 
         // Test false -> 0
         let input_false: Value = false.into();
-        let mut ctx = Context::new(&store, Some(&configuration));
-        let coerced = schema.validate(&input_false, &mut ctx);
-        assert!(ctx.result.errors.is_empty());
+        let mut false_ctx = Context::new(&store, Some(&configuration));
+        let false_coerced = schema.validate(&input_false, &mut false_ctx);
+        assert!(false_ctx.result.errors.is_empty());
         assert_eq!(
-            ctx.result.infos,
+            false_ctx.result.infos,
             vec![Feedback {
                 path: vec![].into(),
                 span: None,
@@ -290,7 +288,7 @@ mod tests {
                 .into()
             }]
         );
-        assert_eq!(coerced, Some(Value::Number(0.into())));
+        assert_eq!(false_coerced, Some(Value::Number(0.into())));
     }
 
     #[test]

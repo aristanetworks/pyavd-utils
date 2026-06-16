@@ -60,7 +60,7 @@ fn validate_ref<V: ValidatableValue>(
 }
 
 /// Validate and optionally coerce sequence items.
-/// Returns Some(coerced_items) when coercion is enabled, None otherwise.
+/// Returns `Some(coerced_items)` when coercion is enabled, None otherwise.
 fn validate_items<'a, S: ValidatableSequence<'a>>(
     schema: &List,
     input: &S,
@@ -149,7 +149,7 @@ fn validate_max_length<'a, V: ValidatableValue, S: ValidatableSequence<'a>>(
 
 fn validate_item_primary_key<V: ValidatableValue>(schema: &List, item: &V, ctx: &mut Context) {
     if let Some(primary_key) = &schema.primary_key
-        && item.get(primary_key).is_none_or(|value| value.is_null())
+        && item.get(primary_key).is_none_or(ValidatableValue::is_null)
     {
         ctx.add_error_for(
             item,
@@ -208,16 +208,16 @@ fn validate_unique_keys<'a, S: ValidatableSequence<'a>>(
     }
 }
 
-/// Convert a ValidatableValue to a string for comparison purposes.
+/// Convert a `ValidatableValue` to a string for comparison purposes.
 fn value_to_string<V: ValidatableValue>(value: &V) -> String {
-    if let Some(s) = value.as_str() {
-        return s.into_owned();
+    if let Some(string) = value.as_str() {
+        return string.into_owned();
     }
     if value.is_null() {
-        return "__NULL__".to_string();
+        return "__NULL__".to_owned();
     }
     // For complex types, we can't easily compare
-    "__COMPLEX__".to_string()
+    "__COMPLEX__".to_owned()
 }
 
 #[cfg(test)]
