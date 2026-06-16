@@ -10,13 +10,14 @@ workspace = true
 [features]
 default = ["cbc", "sha512", "simple-7"]
 cbc = ["dep:cbc", "dep:cipher", "dep:des", "dep:base64"]
-sha512 = ["dep:sha-crypt"]
+sha512 = ["dep:base64ct", "dep:sha-crypt"]
 simple-7 = ["dep:getrandom", "dep:hex"]
 
 [dependencies]
 derive_more = { workspace = true, features = ["display", "from"]}
 # sha512 feature
 sha-crypt = { version = "0.6.0", default-features = false , optional = true}
+base64ct = { version = "1.8.3", default-features = false , optional = true}
 # cbc feature
 cbc = { version = "0.2.1", default-features = false , optional = true}
 cipher = { version = "0.5.2", default-features = false, features = ["block-padding"] , optional = true}

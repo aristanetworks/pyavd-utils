@@ -1205,6 +1205,7 @@ name = "passwords"
 version = "0.0.6"
 dependencies = [
  "base64",
+ "base64ct",
  "cbc",
  "cipher",
  "derive_more",
