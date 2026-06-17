@@ -20,15 +20,15 @@ pub(super) type CachedDefaultDynamicKeys = Option<Box<DefaultDynamicKeys>>;
 #[derive(Debug, Clone, PartialEq)]
 pub struct DynamicKeyInfo<'a> {
     /// The dynamic key path defined in the schema that led to this dynamic key.
-    pub dynamic_key_path: String,
+    pub dynamic_key_path: &'a str,
     /// The schema for this dynamic key.
     pub schema: &'a AnySchema,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum DictKeyMatch<'a> {
+pub enum DictKeyMatch<'a, 'b> {
     Static(&'a AnySchema),
-    Dynamic(DynamicKeyInfo<'a>),
+    Dynamic(&'b DynamicKeyInfo<'a>),
     UnknownKey,
 }
 
@@ -39,7 +39,7 @@ pub struct ResolvedDictKeys<'a> {
 }
 
 impl<'a> ResolvedDictKeys<'a> {
-    pub fn resolve(&self, key: &str) -> DictKeyMatch<'a> {
+    pub fn resolve<'b>(&'b self, key: &str) -> DictKeyMatch<'a, 'b> {
         if let Some(static_keys) = self.static_keys
             && let Some(schema) = static_keys.get(key)
         {
@@ -49,7 +49,7 @@ impl<'a> ResolvedDictKeys<'a> {
         if let Some(dynamic_keys) = &self.dynamic_keys
             && let Some(dynamic_key_info) = dynamic_keys.get(key)
         {
-            return DictKeyMatch::Dynamic(dynamic_key_info.clone());
+            return DictKeyMatch::Dynamic(dynamic_key_info);
         }
 
         DictKeyMatch::UnknownKey

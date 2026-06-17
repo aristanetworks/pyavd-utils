@@ -2,6 +2,8 @@
 // Use of this source code is governed by the Apache License 2.0
 // that can be found in the LICENSE file.
 
+use std::borrow::Cow;
+
 use ordermap::OrderMap;
 
 use crate::SchemaDataValue;
@@ -16,11 +18,12 @@ use crate::store::SchemaStoreError;
 
 // Keys that are accepted by the schema from keys or dynamic keys.
 #[derive(Debug, PartialEq)]
-pub enum SchemaKey {
+pub enum SchemaKey<'a> {
     Static,
-    Dynamic { dynamic_key_path: String },
+    Dynamic { dynamic_key_path: Cow<'a, str> },
 }
-impl SchemaKey {
+
+impl SchemaKey<'_> {
     /// Return a schema $ref like
     /// `eos_config#/keys/somekey/items/` or
     /// `avd_design#/dynamic_keys/connected_endpoint_keys.key`
@@ -55,17 +58,17 @@ impl SchemaKey {
 
 // TODO: Consider removing SchemaKeys since it is no longer used internally.
 #[derive(Debug, PartialEq)]
-pub struct SchemaKeys {
-    pub keys: OrderMap<String, SchemaKey>,
+pub struct SchemaKeys<'a> {
+    pub keys: OrderMap<String, SchemaKey<'a>>,
 }
-impl SchemaKeys {
-    pub fn try_from_schema_with_value<'a, V>(
-        schema: &AnySchema,
+impl<'schema> SchemaKeys<'schema> {
+    pub fn try_from_schema_with_value<'value, V>(
+        schema: &'schema AnySchema,
         value: V,
         dynamic_key_overrides: Option<&DynamicKeyOverrides>,
     ) -> Result<Self, SchemaKeysError>
     where
-        V: SchemaDataValue<'a>,
+        V: SchemaDataValue<'value>,
     {
         let dict_schema: &Dict = schema
             .try_into()
@@ -96,10 +99,10 @@ impl SchemaKeys {
         Ok(schema_keys)
     }
 }
-impl From<&crate::dict::DynamicKeyInfo<'_>> for SchemaKey {
-    fn from(value: &crate::dict::DynamicKeyInfo) -> Self {
+impl<'a> From<&crate::dict::DynamicKeyInfo<'a>> for SchemaKey<'a> {
+    fn from(value: &crate::dict::DynamicKeyInfo<'a>) -> Self {
         Self::Dynamic {
-            dynamic_key_path: value.dynamic_key_path.clone(),
+            dynamic_key_path: Cow::Borrowed(value.dynamic_key_path),
         }
     }
 }
@@ -146,7 +149,7 @@ pub fn get_schema_from_path<'store, 'value>(
                 }
                 DictKeyMatch::Dynamic(dynamic_key_info) => {
                     let schema_ref = SchemaKey::Dynamic {
-                        dynamic_key_path: dynamic_key_info.dynamic_key_path,
+                        dynamic_key_path: Cow::Borrowed(dynamic_key_info.dynamic_key_path),
                     }
                     .get_schema_ref_from_path(schema_name, data_path);
                     Ok(Some(resolve_ref(&schema_ref, store)?))

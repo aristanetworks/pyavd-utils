@@ -92,7 +92,7 @@ impl<'a> Dict {
                             (
                                 key,
                                 DynamicKeyInfo {
-                                    dynamic_key_path: dynamic_key_path.clone(),
+                                    dynamic_key_path,
                                     schema: dynamic_key_schema,
                                 },
                             )
@@ -102,7 +102,9 @@ impl<'a> Dict {
 
             if let Some(overrides) = overrides {
                 for (concrete_key, dynamic_key_path) in overrides {
-                    let Some(dynamic_key_schema) = dynamic_keys.get(dynamic_key_path) else {
+                    let Some((schema_dynamic_key_path, dynamic_key_schema)) =
+                        dynamic_keys.get_key_value(dynamic_key_path)
+                    else {
                         continue;
                     };
                     if dynamic_key_schema.is_removed() {
@@ -111,7 +113,7 @@ impl<'a> Dict {
                     resolved_dynamic_keys.insert(
                         concrete_key.clone(),
                         DynamicKeyInfo {
-                            dynamic_key_path: dynamic_key_path.clone(),
+                            dynamic_key_path: schema_dynamic_key_path,
                             schema: dynamic_key_schema,
                         },
                     );
@@ -316,21 +318,21 @@ mod tests {
                 (
                     "one".to_owned(),
                     DynamicKeyInfo {
-                        dynamic_key_path: "outer.inner".to_owned(),
+                        dynamic_key_path: "outer.inner",
                         schema: &dynamic_key_schema,
                     }
                 ),
                 (
                     "two".to_owned(),
                     DynamicKeyInfo {
-                        dynamic_key_path: "outer.inner".to_owned(),
+                        dynamic_key_path: "outer.inner",
                         schema: &dynamic_key_schema,
                     }
                 ),
                 (
                     "three".to_owned(),
                     DynamicKeyInfo {
-                        dynamic_key_path: "outer.inner".to_owned(),
+                        dynamic_key_path: "outer.inner",
                         schema: &dynamic_key_schema,
                     }
                 ),
@@ -355,21 +357,21 @@ mod tests {
                 (
                     "one".to_owned(),
                     DynamicKeyInfo {
-                        dynamic_key_path: "list".to_owned(),
+                        dynamic_key_path: "list",
                         schema: &dynamic_key_schema,
                     }
                 ),
                 (
                     "two".to_owned(),
                     DynamicKeyInfo {
-                        dynamic_key_path: "list".to_owned(),
+                        dynamic_key_path: "list",
                         schema: &dynamic_key_schema,
                     }
                 ),
                 (
                     "three".to_owned(),
                     DynamicKeyInfo {
-                        dynamic_key_path: "list".to_owned(),
+                        dynamic_key_path: "list",
                         schema: &dynamic_key_schema,
                     }
                 ),
@@ -394,14 +396,14 @@ mod tests {
                 (
                     "one".to_owned(),
                     DynamicKeyInfo {
-                        dynamic_key_path: "outer.inner".to_owned(),
+                        dynamic_key_path: "outer.inner",
                         schema: dynamic_key_schema,
                     }
                 ),
                 (
                     "two".to_owned(),
                     DynamicKeyInfo {
-                        dynamic_key_path: "outer.inner".to_owned(),
+                        dynamic_key_path: "outer.inner",
                         schema: dynamic_key_schema,
                     }
                 ),
@@ -426,7 +428,7 @@ mod tests {
             Some(OrderMap::from_iter([(
                 "dyn_key1_int".to_owned(),
                 DynamicKeyInfo {
-                    dynamic_key_path: "outer.inner".to_owned(),
+                    dynamic_key_path: "outer.inner",
                     schema: dynamic_key_schema,
                 }
             ),]))
@@ -452,14 +454,14 @@ mod tests {
                 (
                     "one".to_owned(),
                     DynamicKeyInfo {
-                        dynamic_key_path: "list".to_owned(),
+                        dynamic_key_path: "list",
                         schema: &dynamic_key_schema,
                     }
                 ),
                 (
                     "two".to_owned(),
                     DynamicKeyInfo {
-                        dynamic_key_path: "list".to_owned(),
+                        dynamic_key_path: "list",
                         schema: &dynamic_key_schema,
                     }
                 ),
@@ -510,7 +512,7 @@ mod tests {
             Some(OrderMap::from_iter([(
                 "l3spine".to_owned(),
                 DynamicKeyInfo {
-                    dynamic_key_path: "network_services_keys.name".to_owned(),
+                    dynamic_key_path: "network_services_keys.name",
                     schema: &override_dynamic_key_schema,
                 }
             )]))
@@ -546,14 +548,14 @@ mod tests {
                 (
                     "kept".to_owned(),
                     DynamicKeyInfo {
-                        dynamic_key_path: "kept_list".to_owned(),
+                        dynamic_key_path: "kept_list",
                         schema: &kept_dynamic_key_schema,
                     }
                 ),
                 (
                     "later".to_owned(),
                     DynamicKeyInfo {
-                        dynamic_key_path: "later_list".to_owned(),
+                        dynamic_key_path: "later_list",
                         schema: &later_dynamic_key_schema,
                     }
                 ),
