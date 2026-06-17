@@ -1373,6 +1373,7 @@ dependencies = [
 name = "pypasswords"
 version = "0.0.6"
 dependencies = [
+ "base64ct",
  "getrandom",
  "passwords",
  "pyo3",

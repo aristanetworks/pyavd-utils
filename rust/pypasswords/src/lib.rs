@@ -35,6 +35,12 @@ create_exception!(
 );
 create_exception!(
     passwords,
+    Sha512CryptBase64Error,
+    PasswordError,
+    "SHA512 crypt Base64 encoding error."
+);
+create_exception!(
+    passwords,
     CBCInvalidBase64Error,
     PasswordError,
     "CBC encrypted data is not valid Base64."
@@ -134,6 +140,8 @@ mod passwords {
     #[pymodule_export]
     pub(crate) use super::PasswordError;
     #[pymodule_export]
+    pub(crate) use super::Sha512CryptBase64Error;
+    #[pymodule_export]
     pub(crate) use super::Sha512CryptInvalidSaltCharacterError;
     #[pymodule_export]
     pub(crate) use super::Sha512CryptInvalidSaltEmptyError;
@@ -169,9 +177,11 @@ mod passwords {
                 passwords::Sha512CryptError::InvalidSalt(
                     passwords::InvalidSaltError::InvalidCharacter(_),
                 ) => Sha512CryptInvalidSaltCharacterError::new_err(message),
-                passwords::Sha512CryptError::ShaCrypt(_)
-                | passwords::Sha512CryptError::Base64InvalidLength(_) => {
+                passwords::Sha512CryptError::ShaCrypt(_) => {
                     Sha512CryptLibraryError::new_err(message)
+                }
+                passwords::Sha512CryptError::Base64InvalidLength(_) => {
+                    Sha512CryptBase64Error::new_err(message)
                 }
             }
         }

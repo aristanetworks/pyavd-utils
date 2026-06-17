@@ -89,3 +89,19 @@ fn sha512_crypt_library_error_maps_to_specific_pyerr() {
         );
     });
 }
+
+#[test]
+fn sha512_crypt_base64_error_maps_to_specific_pyerr() {
+    with_passwords_module(|py, _module| {
+        let err = ::passwords::Sha512CryptError::Base64InvalidLength(base64ct::InvalidLengthError)
+            .to_python_error();
+
+        assert!(err.is_instance_of::<passwords::Sha512CryptBase64Error>(py));
+        assert!(err.is_instance_of::<passwords::PasswordError>(py));
+        assert!(
+            err.value(py)
+                .to_string()
+                .contains("SHA crypt base64 invalid length error")
+        );
+    });
+}

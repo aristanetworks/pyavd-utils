@@ -11,6 +11,7 @@ workspace = true
 pyo3-build-config = { workspace = true }
 
 [dev-dependencies]
+base64ct = { version = "1.8.3", default-features = false }
 getrandom = { version = "0.4", default-features = false }
 sha-crypt = { version = "0.6.0", default-features = false }
 
