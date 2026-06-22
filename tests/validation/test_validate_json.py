@@ -1,6 +1,8 @@
 # Copyright (c) 2025-2026 Arista Networks, Inc.
 # Use of this source code is governed by the Apache License 2.0
 # that can be found in the LICENSE file.
+import pickle
+
 import pytest
 
 from pyavd_utils.validation import (
@@ -15,6 +17,14 @@ def test_validation_error_hierarchy() -> None:
     """Test that validation errors inherit from the validation base error."""
     assert issubclass(ValidationInvalidSchemaNameError, ValidationError)
     assert issubclass(ValidationInvalidJsonDataError, ValidationError)
+
+
+def test_validation_error_module_and_pickle() -> None:
+    """Test that validation errors have the public Python module path and can be pickled."""
+    err = ValidationInvalidJsonDataError("boom")
+
+    assert ValidationInvalidJsonDataError.__module__ == "pyavd_utils.validation"
+    assert type(pickle.loads(pickle.dumps(err))) is ValidationInvalidJsonDataError
 
 
 @pytest.mark.usefixtures("init_store")

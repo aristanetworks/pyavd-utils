@@ -24,114 +24,11 @@
 use std::sync::OnceLock;
 
 use avdschema::Store;
-use pyo3::create_exception;
-use pyo3::exceptions::PyException;
 use pyo3::pymodule;
 
-static STORE: OnceLock<Store> = OnceLock::new();
+mod exceptions;
 
-create_exception!(
-    validation,
-    ValidationError,
-    PyException,
-    "Base exception for pyavd_utils.validation."
-);
-create_exception!(
-    validation,
-    ValidationStoreNotInitializedError,
-    ValidationError,
-    "Schema store was not initialized."
-);
-create_exception!(
-    validation,
-    ValidationStoreAlreadyInitializedError,
-    ValidationError,
-    "Schema store was already initialized."
-);
-create_exception!(
-    validation,
-    ValidationStoreLoadJsonError,
-    ValidationError,
-    "Schema store JSON load error."
-);
-create_exception!(
-    validation,
-    ValidationStoreLoadYamlError,
-    ValidationError,
-    "Schema store YAML load error."
-);
-create_exception!(
-    validation,
-    ValidationStoreLoadIoError,
-    ValidationError,
-    "Schema store I/O load error."
-);
-create_exception!(
-    validation,
-    ValidationStoreInvalidExtensionError,
-    ValidationError,
-    "Schema store input file has an invalid extension."
-);
-create_exception!(
-    validation,
-    ValidationStoreNoFilesFoundError,
-    ValidationError,
-    "Schema store input directory has no matching files."
-);
-create_exception!(
-    validation,
-    ValidationSchemaTypeError,
-    ValidationError,
-    "Schema reference resolved to an invalid schema type."
-);
-create_exception!(
-    validation,
-    ValidationRefSyntaxError,
-    ValidationError,
-    "Schema reference has invalid syntax."
-);
-create_exception!(
-    validation,
-    ValidationSchemaPathError,
-    ValidationError,
-    "Schema reference path was not found."
-);
-create_exception!(
-    validation,
-    ValidationInvalidSchemaNameError,
-    ValidationError,
-    "Schema name was not found in the schema store."
-);
-create_exception!(
-    validation,
-    ValidationSchemaWalkError,
-    ValidationError,
-    "Schema reference walk failed."
-);
-create_exception!(
-    validation,
-    ValidationInvalidJsonDataError,
-    ValidationError,
-    "Input data is not valid JSON."
-);
-create_exception!(
-    validation,
-    ValidationInvalidAdhocSchemaJsonError,
-    ValidationError,
-    "Ad hoc schema is not valid JSON."
-);
-create_exception!(
-    validation,
-    ValidationInvalidCoercedDataJsonError,
-    ValidationError,
-    "Coerced validation output could not be serialized as JSON."
-);
-create_exception!(
-    validation,
-    ValidationInternalError,
-    ValidationError,
-    "Internal validation error."
-);
+static STORE: OnceLock<Store> = OnceLock::new();
 
 #[pymodule(gil_used = false)]
 pub mod validation {
@@ -155,39 +52,39 @@ pub mod validation {
 
     use super::STORE;
     #[pymodule_export]
-    pub(crate) use super::ValidationError;
+    pub(crate) use crate::exceptions::ValidationError;
     #[pymodule_export]
-    pub(crate) use super::ValidationInternalError;
+    pub(crate) use crate::exceptions::ValidationInternalError;
     #[pymodule_export]
-    pub(crate) use super::ValidationInvalidAdhocSchemaJsonError;
+    pub(crate) use crate::exceptions::ValidationInvalidAdhocSchemaJsonError;
     #[pymodule_export]
-    pub(crate) use super::ValidationInvalidCoercedDataJsonError;
+    pub(crate) use crate::exceptions::ValidationInvalidCoercedDataJsonError;
     #[pymodule_export]
-    pub(crate) use super::ValidationInvalidJsonDataError;
+    pub(crate) use crate::exceptions::ValidationInvalidJsonDataError;
     #[pymodule_export]
-    pub(crate) use super::ValidationInvalidSchemaNameError;
+    pub(crate) use crate::exceptions::ValidationInvalidSchemaNameError;
     #[pymodule_export]
-    pub(crate) use super::ValidationRefSyntaxError;
+    pub(crate) use crate::exceptions::ValidationRefSyntaxError;
     #[pymodule_export]
-    pub(crate) use super::ValidationSchemaPathError;
+    pub(crate) use crate::exceptions::ValidationSchemaPathError;
     #[pymodule_export]
-    pub(crate) use super::ValidationSchemaTypeError;
+    pub(crate) use crate::exceptions::ValidationSchemaTypeError;
     #[pymodule_export]
-    pub(crate) use super::ValidationSchemaWalkError;
+    pub(crate) use crate::exceptions::ValidationSchemaWalkError;
     #[pymodule_export]
-    pub(crate) use super::ValidationStoreAlreadyInitializedError;
+    pub(crate) use crate::exceptions::ValidationStoreAlreadyInitializedError;
     #[pymodule_export]
-    pub(crate) use super::ValidationStoreInvalidExtensionError;
+    pub(crate) use crate::exceptions::ValidationStoreInvalidExtensionError;
     #[pymodule_export]
-    pub(crate) use super::ValidationStoreLoadIoError;
+    pub(crate) use crate::exceptions::ValidationStoreLoadIoError;
     #[pymodule_export]
-    pub(crate) use super::ValidationStoreLoadJsonError;
+    pub(crate) use crate::exceptions::ValidationStoreLoadJsonError;
     #[pymodule_export]
-    pub(crate) use super::ValidationStoreLoadYamlError;
+    pub(crate) use crate::exceptions::ValidationStoreLoadYamlError;
     #[pymodule_export]
-    pub(crate) use super::ValidationStoreNoFilesFoundError;
+    pub(crate) use crate::exceptions::ValidationStoreNoFilesFoundError;
     #[pymodule_export]
-    pub(crate) use super::ValidationStoreNotInitializedError;
+    pub(crate) use crate::exceptions::ValidationStoreNotInitializedError;
 
     pub(crate) trait ToPythonError {
         fn to_python_error(self) -> pyo3::PyErr;
@@ -466,21 +363,17 @@ pub mod validation {
             }
             debug!("pyvalidation::get_validated_data Validation Done");
             let validated_data = if output.document.result.errors.is_empty() {
-                let validated_data = if output.document.result.errors.is_empty() {
-                    output
-                        .document
-                        .coerced
-                        .map(|coerced| {
-                            serde_json::to_string(&coerced).map_err(|err| {
+                output
+                    .document
+                    .coerced
+                    .map(|coerced| {
+                        serde_json::to_string(&coerced).map_err(|err| {
                             ValidationInvalidCoercedDataJsonError::new_err(format!(
                                 "Coerced validation output could not be serialized as JSON: {err}."
                             ))
                         })
-                        })
-                        .transpose()?
-                } else {
-                    None
-                };
+                    })
+                    .transpose()?
             } else {
                 None
             };
@@ -669,6 +562,21 @@ mod tests {
             );
             assert!(err.is_instance_of::<validation::ValidationInvalidJsonDataError>(py));
             assert!(err.is_instance_of::<validation::ValidationError>(py));
+        });
+    }
+
+    #[test]
+    fn validation_invalid_json_data_error_uses_public_module_path() {
+        setup_py();
+        pyo3::Python::attach(|py| {
+            let module_name: String = py
+                .get_type::<validation::ValidationInvalidJsonDataError>()
+                .getattr("__module__")
+                .unwrap()
+                .extract()
+                .unwrap();
+
+            assert_eq!(module_name, "pyavd_utils.validation");
         });
     }
 

@@ -2,6 +2,7 @@
 # Use of this source code is governed by the Apache License 2.0
 # that can be found in the LICENSE file.
 
+import pickle
 from contextlib import AbstractContextManager
 from contextlib import nullcontext as does_not_raise
 
@@ -23,6 +24,14 @@ def test_cbc_error_hierarchy() -> None:
     """Test that CBC errors inherit from the passwords base error."""
     assert issubclass(CBCInvalidBase64Error, PasswordError)
     assert issubclass(CBCDecryptionFailedError, PasswordError)
+
+
+def test_cbc_error_module_and_pickle() -> None:
+    """Test that CBC errors have the public Python module path and can be pickled."""
+    err = CBCInvalidBase64Error("boom")
+
+    assert CBCInvalidBase64Error.__module__ == "pyavd_utils.passwords"
+    assert type(pickle.loads(pickle.dumps(err))) is CBCInvalidBase64Error
 
 
 CBC_ENCRYPT_TEST_DATA = [

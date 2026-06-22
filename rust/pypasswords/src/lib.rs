@@ -5,118 +5,9 @@
 
 #![deny(unused_crate_dependencies)]
 
-use pyo3::create_exception;
-use pyo3::exceptions::PyException;
 use pyo3::pymodule;
 
-create_exception!(
-    passwords,
-    PasswordError,
-    PyException,
-    "Base exception for pyavd_utils.passwords."
-);
-create_exception!(
-    passwords,
-    Sha512CryptInvalidSaltEmptyError,
-    PasswordError,
-    "SHA512 crypt salt is empty."
-);
-create_exception!(
-    passwords,
-    Sha512CryptInvalidSaltCharacterError,
-    PasswordError,
-    "SHA512 crypt salt contains an invalid character."
-);
-create_exception!(
-    passwords,
-    Sha512CryptLibraryError,
-    PasswordError,
-    "SHA512 crypt library error."
-);
-create_exception!(
-    passwords,
-    Sha512CryptBase64Error,
-    PasswordError,
-    "SHA512 crypt Base64 encoding error."
-);
-create_exception!(
-    passwords,
-    CBCInvalidBase64Error,
-    PasswordError,
-    "CBC encrypted data is not valid Base64."
-);
-create_exception!(
-    passwords,
-    CBCDecryptionFailedError,
-    PasswordError,
-    "CBC decryption failed."
-);
-create_exception!(
-    passwords,
-    CBCInvalidSignatureError,
-    PasswordError,
-    "CBC decrypted data has an invalid Arista signature."
-);
-create_exception!(
-    passwords,
-    CBCInvalidUtf8Error,
-    PasswordError,
-    "CBC decrypted data is not valid UTF-8."
-);
-create_exception!(
-    passwords,
-    CBCEncryptionFailedError,
-    PasswordError,
-    "CBC encryption failed."
-);
-create_exception!(
-    passwords,
-    CBCInvalidBase64Utf8Error,
-    PasswordError,
-    "CBC Base64 output is not valid UTF-8."
-);
-create_exception!(
-    passwords,
-    Simple7InvalidSaltFormatError,
-    PasswordError,
-    "Type-7 encrypted data has an invalid salt format."
-);
-create_exception!(
-    passwords,
-    Simple7InvalidHexEncodingError,
-    PasswordError,
-    "Type-7 encrypted data has invalid hex encoding."
-);
-create_exception!(
-    passwords,
-    Simple7RandomSourceUnavailableError,
-    PasswordError,
-    "Type-7 random salt source is unavailable."
-);
-create_exception!(
-    passwords,
-    Simple7InvalidUtf8Error,
-    PasswordError,
-    "Type-7 decrypted data is not valid UTF-8."
-);
-create_exception!(
-    passwords,
-    Simple7InvalidSaltValueError,
-    PasswordError,
-    "Type-7 salt value is outside the supported range."
-);
-create_exception!(
-    passwords,
-    Simple7DataTooShortError,
-    PasswordError,
-    "Type-7 encrypted data is too short."
-);
-create_exception!(
-    passwords,
-    Simple7EmptyPasswordError,
-    PasswordError,
-    "Type-7 password is empty."
-);
+mod exceptions;
 
 #[pymodule]
 #[pyo3(name = "passwords")]
@@ -126,41 +17,41 @@ mod passwords {
     use pyo3::pyfunction;
 
     #[pymodule_export]
-    pub(crate) use super::CBCDecryptionFailedError;
+    pub(crate) use crate::exceptions::CBCDecryptionFailedError;
     #[pymodule_export]
-    pub(crate) use super::CBCEncryptionFailedError;
+    pub(crate) use crate::exceptions::CBCEncryptionFailedError;
     #[pymodule_export]
-    pub(crate) use super::CBCInvalidBase64Error;
+    pub(crate) use crate::exceptions::CBCInvalidBase64Error;
     #[pymodule_export]
-    pub(crate) use super::CBCInvalidBase64Utf8Error;
+    pub(crate) use crate::exceptions::CBCInvalidBase64Utf8Error;
     #[pymodule_export]
-    pub(crate) use super::CBCInvalidSignatureError;
+    pub(crate) use crate::exceptions::CBCInvalidSignatureError;
     #[pymodule_export]
-    pub(crate) use super::CBCInvalidUtf8Error;
+    pub(crate) use crate::exceptions::CBCInvalidUtf8Error;
     #[pymodule_export]
-    pub(crate) use super::PasswordError;
+    pub(crate) use crate::exceptions::PasswordError;
     #[pymodule_export]
-    pub(crate) use super::Sha512CryptBase64Error;
+    pub(crate) use crate::exceptions::Sha512CryptBase64Error;
     #[pymodule_export]
-    pub(crate) use super::Sha512CryptInvalidSaltCharacterError;
+    pub(crate) use crate::exceptions::Sha512CryptInvalidSaltCharacterError;
     #[pymodule_export]
-    pub(crate) use super::Sha512CryptInvalidSaltEmptyError;
+    pub(crate) use crate::exceptions::Sha512CryptInvalidSaltEmptyError;
     #[pymodule_export]
-    pub(crate) use super::Sha512CryptLibraryError;
+    pub(crate) use crate::exceptions::Sha512CryptLibraryError;
     #[pymodule_export]
-    pub(crate) use super::Simple7DataTooShortError;
+    pub(crate) use crate::exceptions::Simple7DataTooShortError;
     #[pymodule_export]
-    pub(crate) use super::Simple7EmptyPasswordError;
+    pub(crate) use crate::exceptions::Simple7EmptyPasswordError;
     #[pymodule_export]
-    pub(crate) use super::Simple7InvalidHexEncodingError;
+    pub(crate) use crate::exceptions::Simple7InvalidHexEncodingError;
     #[pymodule_export]
-    pub(crate) use super::Simple7InvalidSaltFormatError;
+    pub(crate) use crate::exceptions::Simple7InvalidSaltFormatError;
     #[pymodule_export]
-    pub(crate) use super::Simple7InvalidSaltValueError;
+    pub(crate) use crate::exceptions::Simple7InvalidSaltValueError;
     #[pymodule_export]
-    pub(crate) use super::Simple7InvalidUtf8Error;
+    pub(crate) use crate::exceptions::Simple7InvalidUtf8Error;
     #[pymodule_export]
-    pub(crate) use super::Simple7RandomSourceUnavailableError;
+    pub(crate) use crate::exceptions::Simple7RandomSourceUnavailableError;
 
     pub(crate) trait ToPythonError {
         fn to_python_error(self) -> pyo3::PyErr;
@@ -242,7 +133,9 @@ mod passwords {
     pub(crate) fn cbc_encrypt(password: &str, data: &str) -> PyResult<String> {
         let result_bytes = passwords::cbc_encrypt(password.as_bytes(), data.as_bytes())
             .map_err(ToPythonError::to_python_error)?;
-        Ok(String::from_utf8(result_bytes).expect("Base64 output should only contain ASCII"))
+        String::from_utf8(result_bytes).map_err(|_| {
+            CBCInvalidBase64Utf8Error::new_err("Base64 output contained invalid UTF-8")
+        })
     }
 
     #[cfg(feature = "cbc")]
@@ -269,7 +162,7 @@ mod passwords {
     /// Encrypt (obfuscate) a password with insecure type-7.
     ///
     /// If salt is None, a random salt in the range 0-15 will be used.
-    /// Raises `ValueError` if the password is empty or the salt is out of range.
+    /// Raises a specific `PasswordError` subclass if the password is empty or the salt is out of range.
     pub(crate) fn simple_7_encrypt(data: &str, salt: Option<u8>) -> PyResult<String> {
         passwords::simple_7_encrypt(data, salt).map_err(ToPythonError::to_python_error)
     }
@@ -278,7 +171,7 @@ mod passwords {
     #[pyfunction]
     /// Decrypt (deobfuscate) a password from insecure type-7.
     ///
-    /// Raises `ValueError` if the password is empty or decryption fails.
+    /// Raises a specific `PasswordError` subclass if decryption fails.
     pub(crate) fn simple_7_decrypt(data: &str) -> PyResult<String> {
         passwords::simple_7_decrypt(data).map_err(ToPythonError::to_python_error)
     }

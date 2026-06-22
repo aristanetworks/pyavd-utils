@@ -21,6 +21,20 @@ fn cbc_decrypt_invalid_base64_err() {
 }
 
 #[test]
+fn cbc_invalid_base64_error_uses_public_module_path() {
+    with_passwords_module(|py, _module| {
+        let module_name: String = py
+            .get_type::<passwords::CBCInvalidBase64Error>()
+            .getattr("__module__")
+            .unwrap()
+            .extract()
+            .unwrap();
+
+        assert_eq!(module_name, "pyavd_utils.passwords");
+    });
+}
+
+#[test]
 fn cbc_decrypt_failed_err() {
     with_passwords_module(|py, module| {
         // "YWJjZA==" is "abcd" (4 bytes).
