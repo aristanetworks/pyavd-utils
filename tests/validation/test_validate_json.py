@@ -24,7 +24,8 @@ def test_validation_error_module_and_pickle() -> None:
     err = ValidationInvalidJsonDataError("boom")
 
     assert ValidationInvalidJsonDataError.__module__ == "pyavd_utils.validation"
-    assert type(pickle.loads(pickle.dumps(err))) is ValidationInvalidJsonDataError
+    # Trusted local round-trip: this verifies PyO3 exception pickling metadata.
+    assert type(pickle.loads(pickle.dumps(err))) is ValidationInvalidJsonDataError  # noqa: S301
 
 
 @pytest.mark.usefixtures("init_store")

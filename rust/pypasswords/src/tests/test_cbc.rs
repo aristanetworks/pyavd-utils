@@ -107,10 +107,10 @@ fn cbc_internal_errors_map_to_specific_pyerrs() {
             "Decrypted data is not valid UTF-8."
         );
 
-        let err = ::passwords::CbcError::EncryptionFailed.to_python_error();
-        assert!(err.is_instance_of::<passwords::CBCEncryptionFailedError>(py));
+        let encryption_err = ::passwords::CbcError::EncryptionFailed.to_python_error();
+        assert!(encryption_err.is_instance_of::<passwords::CBCEncryptionFailedError>(py));
         assert_eq!(
-            err.value(py).to_string(),
+            encryption_err.value(py).to_string(),
             "Encryption failed: internal block alignment error."
         );
     });

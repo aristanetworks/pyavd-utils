@@ -133,7 +133,7 @@ mod passwords {
     pub(crate) fn cbc_encrypt(password: &str, data: &str) -> PyResult<String> {
         let result_bytes = passwords::cbc_encrypt(password.as_bytes(), data.as_bytes())
             .map_err(ToPythonError::to_python_error)?;
-        String::from_utf8(result_bytes).map_err(|_| {
+        String::from_utf8(result_bytes).map_err(|_err| {
             CBCInvalidBase64Utf8Error::new_err("Base64 output contained invalid UTF-8")
         })
     }
@@ -147,7 +147,7 @@ mod passwords {
                 .map_err(ToPythonError::to_python_error)?;
 
         String::from_utf8(decrypted_bytes)
-            .map_err(|_| passwords::CbcError::InvalidUtf8.to_python_error())
+            .map_err(|_err| passwords::CbcError::InvalidUtf8.to_python_error())
     }
 
     #[cfg(feature = "cbc")]

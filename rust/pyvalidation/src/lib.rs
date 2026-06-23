@@ -316,7 +316,7 @@ pub mod validation {
         }?;
 
         // Insert the resolved store into the OnceLock.
-        STORE.set(store).map_err(|_| {
+        STORE.set(store).map_err(|_store| {
             ValidationStoreAlreadyInitializedError::new_err(
                 "Unable to initialize the schema store. \
                  Initialization can only happen once, and must be done before running any validations.".to_owned(),
@@ -584,44 +584,64 @@ mod tests {
     fn schema_resolver_errors_map_to_specific_pyerrs() {
         setup_py();
         pyo3::Python::attach(|py| {
-            let err = avdschema::SchemaResolverError::SchemaType(avdschema::SchemaType::new(
-                "schema_ref".into(),
-                "dict".into(),
-                "list".into(),
-            ))
+            let schema_type_err = avdschema::SchemaResolverError::SchemaType(
+                avdschema::SchemaType::new("schema_ref".into(), "dict".into(), "list".into()),
+            )
             .to_python_error();
-            assert!(err.is_instance_of::<validation::ValidationSchemaTypeError>(py));
-            assert!(err.value(py).to_string().contains("Invalid schema type"));
+            assert!(schema_type_err.is_instance_of::<validation::ValidationSchemaTypeError>(py));
+            assert!(
+                schema_type_err
+                    .value(py)
+                    .to_string()
+                    .contains("Invalid schema type")
+            );
 
-            let err = avdschema::SchemaResolverError::RefSyntax(avdschema::RefSyntax::new(
-                "bad_ref".into(),
-            ))
+            let ref_syntax_err = avdschema::SchemaResolverError::RefSyntax(
+                avdschema::RefSyntax::new("bad_ref".into()),
+            )
             .to_python_error();
-            assert!(err.is_instance_of::<validation::ValidationRefSyntaxError>(py));
-            assert!(err.value(py).to_string().contains("Invalid syntax"));
+            assert!(ref_syntax_err.is_instance_of::<validation::ValidationRefSyntaxError>(py));
+            assert!(
+                ref_syntax_err
+                    .value(py)
+                    .to_string()
+                    .contains("Invalid syntax")
+            );
 
-            let err = avdschema::SchemaResolverError::SchemaPath(avdschema::SchemaPath::new(
-                "missing.path".into(),
-            ))
+            let schema_path_err = avdschema::SchemaResolverError::SchemaPath(
+                avdschema::SchemaPath::new("missing.path".into()),
+            )
             .to_python_error();
-            assert!(err.is_instance_of::<validation::ValidationSchemaPathError>(py));
-            assert!(err.value(py).to_string().contains("was not found"));
+            assert!(schema_path_err.is_instance_of::<validation::ValidationSchemaPathError>(py));
+            assert!(
+                schema_path_err
+                    .value(py)
+                    .to_string()
+                    .contains("was not found")
+            );
 
-            let err = avdschema::SchemaResolverError::SchemaStoreError(
+            let schema_store_err = avdschema::SchemaResolverError::SchemaStoreError(
                 avdschema::SchemaStoreError::InvalidSchemaName("missing_schema".into()),
             )
             .to_python_error();
-            assert!(err.is_instance_of::<validation::ValidationInvalidSchemaNameError>(py));
+            assert!(
+                schema_store_err.is_instance_of::<validation::ValidationInvalidSchemaNameError>(py)
+            );
 
-            let err =
+            let schema_walk_err =
                 avdschema::SchemaResolverError::SchemaWalkError(
                     avdschema::SchemaWalkError::InternalError(
                         avdschema::SchemaWalkInternalError::new(),
                     ),
                 )
                 .to_python_error();
-            assert!(err.is_instance_of::<validation::ValidationSchemaWalkError>(py));
-            assert!(err.value(py).to_string().contains("Internal error"));
+            assert!(schema_walk_err.is_instance_of::<validation::ValidationSchemaWalkError>(py));
+            assert!(
+                schema_walk_err
+                    .value(py)
+                    .to_string()
+                    .contains("Internal error")
+            );
         });
     }
 
@@ -629,30 +649,36 @@ mod tests {
     fn load_errors_map_to_specific_pyerrs() {
         setup_py();
         pyo3::Python::attach(|py| {
-            let err = avdschema::LoadError::JsonError(
+            let json_err = avdschema::LoadError::JsonError(
                 serde_json::from_str::<serde_json::Value>("invalid").unwrap_err(),
             )
             .to_python_error();
-            assert!(err.is_instance_of::<validation::ValidationStoreLoadJsonError>(py));
+            assert!(json_err.is_instance_of::<validation::ValidationStoreLoadJsonError>(py));
 
-            let err = avdschema::LoadError::YamlError(
+            let yaml_err = avdschema::LoadError::YamlError(
                 serde_yaml::from_str::<serde_yaml::Value>(":").unwrap_err(),
             )
             .to_python_error();
-            assert!(err.is_instance_of::<validation::ValidationStoreLoadYamlError>(py));
+            assert!(yaml_err.is_instance_of::<validation::ValidationStoreLoadYamlError>(py));
 
-            let err = avdschema::LoadError::IoError(std::io::Error::new(
+            let io_err = avdschema::LoadError::IoError(std::io::Error::new(
                 std::io::ErrorKind::NotFound,
                 "missing",
             ))
             .to_python_error();
-            assert!(err.is_instance_of::<validation::ValidationStoreLoadIoError>(py));
+            assert!(io_err.is_instance_of::<validation::ValidationStoreLoadIoError>(py));
 
-            let err = avdschema::LoadError::InvalidExtension {}.to_python_error();
-            assert!(err.is_instance_of::<validation::ValidationStoreInvalidExtensionError>(py));
+            let invalid_extension_err = avdschema::LoadError::InvalidExtension {}.to_python_error();
+            assert!(
+                invalid_extension_err
+                    .is_instance_of::<validation::ValidationStoreInvalidExtensionError>(py)
+            );
 
-            let err = avdschema::LoadError::NoFilesFound {}.to_python_error();
-            assert!(err.is_instance_of::<validation::ValidationStoreNoFilesFoundError>(py));
+            let no_files_found_err = avdschema::LoadError::NoFilesFound {}.to_python_error();
+            assert!(
+                no_files_found_err
+                    .is_instance_of::<validation::ValidationStoreNoFilesFoundError>(py)
+            );
         });
     }
 
@@ -679,9 +705,9 @@ mod tests {
                 issue: ::validation::feedback::WarningIssue::Deprecated(
                     ::validation::feedback::Deprecated {
                         path: vec!["old_key".into()].into(),
-                        replacement: Some("new_key".to_string()).into(),
-                        version: Some("5.0.0".to_string()).into(),
-                        url: Some("https://example.invalid".to_string()).into(),
+                        replacement: Some("new_key".to_owned()).into(),
+                        version: Some("5.0.0".to_owned()).into(),
+                        url: Some("https://example.invalid".to_owned()).into(),
                     },
                 ),
             }],

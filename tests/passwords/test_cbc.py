@@ -31,7 +31,8 @@ def test_cbc_error_module_and_pickle() -> None:
     err = CBCInvalidBase64Error("boom")
 
     assert CBCInvalidBase64Error.__module__ == "pyavd_utils.passwords"
-    assert type(pickle.loads(pickle.dumps(err))) is CBCInvalidBase64Error
+    # Trusted local round-trip: this verifies PyO3 exception pickling metadata.
+    assert type(pickle.loads(pickle.dumps(err))) is CBCInvalidBase64Error  # noqa: S301
 
 
 CBC_ENCRYPT_TEST_DATA = [
