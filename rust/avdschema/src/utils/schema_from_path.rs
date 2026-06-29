@@ -40,17 +40,14 @@ impl SchemaKey<'_> {
             },
             None => return schema_ref,
         }
-        let mut append_path = |steps: &mut dyn Iterator<Item = &String>| {
-            for step in steps {
-                if step.parse::<usize>().is_ok() {
-                    schema_ref.push_str("/items");
-                } else {
-                    schema_ref.push_str("/keys/");
-                    schema_ref.push_str(step);
-                }
+        for step in path {
+            if step.parse::<usize>().is_ok() {
+                schema_ref.push_str("/items");
+            } else {
+                schema_ref.push_str("/keys/");
+                schema_ref.push_str(step);
             }
-        };
-        append_path(&mut path);
+        }
 
         schema_ref
     }
