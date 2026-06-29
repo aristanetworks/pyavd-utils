@@ -54,21 +54,27 @@ mod passwords {
     #[pyfunction]
     /// Computes the SHA512 crypt value for the password given the salt
     pub(crate) fn sha512_crypt(password: &str, salt: &str) -> PyResult<String> {
-        Ok(sha512_crypt_impl(password, salt)?)
+        Ok(passwords::sha512_crypt(password, salt).map_err(Into::<Sha512CryptPyError>::into)?)
     }
 
     #[cfg(feature = "cbc")]
     #[pyfunction]
     /// Encrypt the data with CBC `TripleDES`
     pub(crate) fn cbc_encrypt(password: &str, data: &str) -> PyResult<String> {
-        Ok(cbc_encrypt_impl(password, data)?)
+        let result_bytes = passwords::cbc_encrypt(password.as_bytes(), data.as_bytes())
+            .map_err(Into::<CbcEncryptPyError>::into)?;
+        Ok(String::from_utf8(result_bytes).map_err(|_err| CbcEncryptPyError::InvalidBase64Utf8)?)
     }
 
     #[cfg(feature = "cbc")]
     #[pyfunction]
     /// Decrypt the `encrypted_data` with CBC `TripleDES`
     pub(crate) fn cbc_decrypt(password: &str, encrypted_data: &str) -> PyResult<String> {
-        Ok(cbc_decrypt_impl(password, encrypted_data)?)
+        let decrypted_bytes =
+            passwords::cbc_decrypt(password.as_bytes(), encrypted_data.as_bytes())
+                .map_err(Into::<CbcDecryptPyError>::into)?;
+
+        Ok(String::from_utf8(decrypted_bytes).map_err(|_err| CbcDecryptPyError::InvalidUtf8)?)
     }
 
     #[cfg(feature = "cbc")]
@@ -85,7 +91,7 @@ mod passwords {
     /// If salt is None, a random salt in the range 0-15 will be used.
     /// Raises a specific `PasswordError` subclass if the password is empty or the salt is out of range.
     pub(crate) fn simple_7_encrypt(data: &str, salt: Option<u8>) -> PyResult<String> {
-        Ok(simple_7_encrypt_impl(data, salt)?)
+        Ok(passwords::simple_7_encrypt(data, salt).map_err(Into::<Simple7EncryptPyError>::into)?)
     }
 
     #[cfg(feature = "simple-7")]
@@ -94,39 +100,7 @@ mod passwords {
     ///
     /// Raises a specific `PasswordError` subclass if decryption fails.
     pub(crate) fn simple_7_decrypt(data: &str) -> PyResult<String> {
-        Ok(simple_7_decrypt_impl(data)?)
-    }
-
-    #[cfg(feature = "sha512")]
-    fn sha512_crypt_impl(password: &str, salt: &str) -> Result<String, Sha512CryptPyError> {
-        Ok(passwords::sha512_crypt(password, salt)?)
-    }
-
-    #[cfg(feature = "cbc")]
-    fn cbc_encrypt_impl(password: &str, data: &str) -> Result<String, CbcEncryptPyError> {
-        let result_bytes = passwords::cbc_encrypt(password.as_bytes(), data.as_bytes())?;
-        String::from_utf8(result_bytes).map_err(|_err| CbcEncryptPyError::InvalidBase64Utf8)
-    }
-
-    #[cfg(feature = "cbc")]
-    fn cbc_decrypt_impl(password: &str, encrypted_data: &str) -> Result<String, CbcDecryptPyError> {
-        let decrypted_bytes =
-            passwords::cbc_decrypt(password.as_bytes(), encrypted_data.as_bytes())?;
-
-        String::from_utf8(decrypted_bytes).map_err(|_err| CbcDecryptPyError::InvalidUtf8)
-    }
-
-    #[cfg(feature = "simple-7")]
-    fn simple_7_encrypt_impl(
-        data: &str,
-        salt: Option<u8>,
-    ) -> Result<String, Simple7EncryptPyError> {
-        Ok(passwords::simple_7_encrypt(data, salt)?)
-    }
-
-    #[cfg(feature = "simple-7")]
-    fn simple_7_decrypt_impl(data: &str) -> Result<String, Simple7DecryptPyError> {
-        Ok(passwords::simple_7_decrypt(data)?)
+        Ok(passwords::simple_7_decrypt(data).map_err(Into::<Simple7DecryptPyError>::into)?)
     }
 }
 

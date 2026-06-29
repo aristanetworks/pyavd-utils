@@ -8,16 +8,13 @@ use crate::exceptions;
 
 #[cfg(feature = "sha512")]
 #[derive(Debug, derive_more::From)]
-pub(crate) enum Sha512CryptPyError {
-    Sha512Crypt(passwords::Sha512CryptError),
-}
+pub(crate) struct Sha512CryptPyError(passwords::Sha512CryptError);
 
 #[cfg(feature = "sha512")]
 impl From<Sha512CryptPyError> for PyErr {
     fn from(err: Sha512CryptPyError) -> Self {
-        match err {
-            Sha512CryptPyError::Sha512Crypt(err) => sha512_crypt_error_to_pyerr(&err),
-        }
+        let Sha512CryptPyError(err) = err;
+        sha512_crypt_error_to_pyerr(&err)
     }
 }
 
@@ -59,31 +56,25 @@ impl From<CbcDecryptPyError> for PyErr {
 
 #[cfg(feature = "simple-7")]
 #[derive(Debug, derive_more::From)]
-pub(crate) enum Simple7EncryptPyError {
-    Simple7(passwords::Simple7Error),
-}
+pub(crate) struct Simple7EncryptPyError(passwords::Simple7Error);
 
 #[cfg(feature = "simple-7")]
 impl From<Simple7EncryptPyError> for PyErr {
     fn from(err: Simple7EncryptPyError) -> Self {
-        match err {
-            Simple7EncryptPyError::Simple7(err) => simple_7_error_to_pyerr(&err),
-        }
+        let Simple7EncryptPyError(err) = err;
+        simple_7_error_to_pyerr(&err)
     }
 }
 
 #[cfg(feature = "simple-7")]
 #[derive(Debug, derive_more::From)]
-pub(crate) enum Simple7DecryptPyError {
-    Simple7(passwords::Simple7Error),
-}
+pub(crate) struct Simple7DecryptPyError(passwords::Simple7Error);
 
 #[cfg(feature = "simple-7")]
 impl From<Simple7DecryptPyError> for PyErr {
     fn from(err: Simple7DecryptPyError) -> Self {
-        match err {
-            Simple7DecryptPyError::Simple7(err) => simple_7_error_to_pyerr(&err),
-        }
+        let Simple7DecryptPyError(err) = err;
+        simple_7_error_to_pyerr(&err)
     }
 }
 

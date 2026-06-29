@@ -220,26 +220,25 @@ pub mod validation {
     #[pyfunction]
     pub fn init_store_from_file(file: PathBuf) -> PyResult<()> {
         info!("Initialize the schema store from file.");
-        init_store_from_file_impl(file)
-            .inspect(|()| info!("Initialized the schema store from file."))?;
-        Ok(())
-    }
-
-    fn init_store_from_file_impl(file: PathBuf) -> Result<(), InitStoreFromFilePyError> {
         if STORE.get().is_some() {
-            return Err(InitStoreFromFilePyError::StoreAlreadyInitialized);
+            return Err(InitStoreFromFilePyError::StoreAlreadyInitialized.into());
         }
 
         // Load the store from path including resolving the $refs where applicable.
         let store = {
-            let store = Store::from_file(Some(&file))?;
-            store.as_resolved()?
+            let store =
+                Store::from_file(Some(&file)).map_err(Into::<InitStoreFromFilePyError>::into)?;
+            store
+                .as_resolved()
+                .map_err(Into::<InitStoreFromFilePyError>::into)?
         };
 
         // Insert the resolved store into the OnceLock.
         STORE
             .set(store)
-            .map_err(|_store| InitStoreFromFilePyError::StoreAlreadyInitialized)
+            .map_err(|_store| InitStoreFromFilePyError::StoreAlreadyInitialized)?;
+        info!("Initialized the schema store from file.");
+        Ok(())
     }
 
     #[pyfunction]
@@ -249,28 +248,15 @@ pub mod validation {
         schema_name: &str,
         configuration: Option<Configuration>,
     ) -> PyResult<ValidationResult> {
-        Ok(validate_json_impl(
-            data_as_json,
-            schema_name,
-            configuration,
-        )?)
-    }
-
-    fn validate_json_impl(
-        data_as_json: &str,
-        schema_name: &str,
-        configuration: Option<Configuration>,
-    ) -> Result<ValidationResult, ValidateJsonPyError> {
         let config = configuration.map(Into::into);
         let output = get_store()
             .ok_or(ValidateJsonPyError::StoreNotInitialized)?
-            .validate_json(data_as_json, schema_name, config.as_ref())?;
+            .validate_json(data_as_json, schema_name, config.as_ref())
+            .map_err(Into::<ValidateJsonPyError>::into)?;
         if let Some(message) = first_input_diagnostic_message(output.input_diagnostics.first()) {
-            return Err(ValidateJsonPyError::InvalidJsonData(message.to_owned()));
+            return Err(ValidateJsonPyError::InvalidJsonData(message.to_owned()).into());
         }
-        Ok(ValidationResult::from_validation_result(
-            output.document.result,
-        )?)
+        ValidationResult::from_validation_result(output.document.result)
     }
 
     #[pyfunction]
@@ -322,18 +308,6 @@ pub mod validation {
         schema_as_json: &str,
         configuration: Option<Configuration>,
     ) -> PyResult<ValidationResult> {
-        Ok(validate_json_with_adhoc_schema_impl(
-            data_as_json,
-            schema_as_json,
-            configuration,
-        )?)
-    }
-
-    fn validate_json_with_adhoc_schema_impl(
-        data_as_json: &str,
-        schema_as_json: &str,
-        configuration: Option<Configuration>,
-    ) -> Result<ValidationResult, ValidateJsonWithAdhocSchemaPyError> {
         // Parse schema JSON
         let schema: AnySchema = serde_json::from_str(schema_as_json)
             .map_err(ValidateJsonWithAdhocSchemaPyError::InvalidAdhocSchemaJson)?;
@@ -351,7 +325,7 @@ pub mod validation {
         let _ = schema.validate(&data, &mut ctx);
 
         let validation_result: validation::ValidationResult = ctx.result;
-        Ok(ValidationResult::from_validation_result(validation_result)?)
+        ValidationResult::from_validation_result(validation_result)
     }
 }
 
