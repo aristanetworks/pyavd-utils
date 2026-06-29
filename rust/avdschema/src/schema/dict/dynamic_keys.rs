@@ -1,0 +1,82 @@
+// Copyright (c) 2025-2026 Arista Networks, Inc.
+// Use of this source code is governed by the Apache License 2.0
+// that can be found in the LICENSE file.
+
+use ordermap::OrderMap;
+
+use super::prefix_keys::PrefixKeyMatch;
+use super::prefix_keys::PrefixMatchResult;
+use super::prefix_keys::ResolvedPrefixConfig;
+use crate::any::AnySchema;
+
+pub type DefaultDynamicKeys = OrderMap<String, Vec<String>>;
+
+/// Maps a concrete input key to the dynamic key schema path that should validate it.
+///
+/// Used when the dynamic key cannot be inferred from input/default schema data,
+/// for example when LSP comments identify the intended dynamic-key source.
+/// Callers resolving both static and dynamic schema keys should give static
+/// schema keys precedence over these overrides.
+pub type DynamicKeyOverrides = OrderMap<String, String>;
+pub(super) type CachedDefaultDynamicKeys = Option<Box<DefaultDynamicKeys>>;
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct DynamicKeyInfo<'a> {
+    /// The dynamic key path defined in the schema that led to this dynamic key.
+    pub dynamic_key_path: String,
+    /// The schema for this dynamic key.
+    pub schema: &'a AnySchema,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum DictKeyMatch<'a> {
+    Static(&'a AnySchema),
+    Dynamic(DynamicKeyInfo<'a>),
+    Prefix(PrefixKeyMatch<'a>),
+    PrefixInvalidSuffix,
+    PrefixAllowedOtherSuffix,
+    UnknownKey,
+}
+
+#[derive(Debug)]
+pub struct ResolvedDictKeys<'a> {
+    pub static_keys: Option<&'a OrderMap<String, AnySchema>>,
+    pub dynamic_keys: Option<OrderMap<String, DynamicKeyInfo<'a>>>,
+    pub prefix_configs: Option<Vec<ResolvedPrefixConfig<'a>>>,
+}
+
+impl<'a> ResolvedDictKeys<'a> {
+    pub fn resolve(&self, key: &str) -> DictKeyMatch<'a> {
+        if let Some(static_keys) = self.static_keys
+            && let Some(schema) = static_keys.get(key)
+        {
+            return DictKeyMatch::Static(schema);
+        }
+
+        if let Some(dynamic_keys) = &self.dynamic_keys
+            && let Some(dynamic_key_info) = dynamic_keys.get(key)
+        {
+            return DictKeyMatch::Dynamic(dynamic_key_info.clone());
+        }
+
+        self.prefix_configs
+            .as_ref()
+            .and_then(|prefix_configs| {
+                prefix_configs
+                    .iter()
+                    .find_map(|config| match config.resolve_match(key) {
+                        Some(PrefixMatchResult::Valid(prefix_key_match)) => {
+                            Some(DictKeyMatch::Prefix(prefix_key_match))
+                        }
+                        Some(PrefixMatchResult::InvalidSuffix) => {
+                            Some(DictKeyMatch::PrefixInvalidSuffix)
+                        }
+                        Some(PrefixMatchResult::AllowedOtherSuffix) => {
+                            Some(DictKeyMatch::PrefixAllowedOtherSuffix)
+                        }
+                        None => None,
+                    })
+            })
+            .unwrap_or(DictKeyMatch::UnknownKey)
+    }
+}
