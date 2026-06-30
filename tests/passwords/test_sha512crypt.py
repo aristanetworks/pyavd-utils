@@ -7,7 +7,23 @@ from contextlib import nullcontext as does_not_raise
 
 import pytest
 
-from pyavd_utils.passwords import sha512_crypt
+from pyavd_utils.passwords import (
+    PasswordError,
+    Sha512CryptBase64Error,
+    Sha512CryptInvalidSaltCharacterError,
+    Sha512CryptInvalidSaltEmptyError,
+    Sha512CryptLibraryError,
+    sha512_crypt,
+)
+
+
+def test_sha512_crypt_error_hierarchy() -> None:
+    """Test that SHA512 crypt errors inherit from the passwords base error."""
+    assert issubclass(Sha512CryptInvalidSaltEmptyError, PasswordError)
+    assert issubclass(Sha512CryptInvalidSaltCharacterError, PasswordError)
+    assert issubclass(Sha512CryptLibraryError, PasswordError)
+    assert issubclass(Sha512CryptBase64Error, PasswordError)
+
 
 SHA512_CRYPT_TEST_DATA = [
     pytest.param(
@@ -21,14 +37,14 @@ SHA512_CRYPT_TEST_DATA = [
         "arista",
         "",
         "",
-        pytest.raises(ValueError, match=r"Invalid Salt: Salt cannot be empty."),
+        pytest.raises(Sha512CryptInvalidSaltEmptyError, match=r"Invalid Salt: Salt cannot be empty."),
         id="Empty salt",
     ),
     pytest.param(
         "arista",
         "🐍",
         "",
-        pytest.raises(ValueError, match="Invalid Salt: Salt contains an invalid character"),
+        pytest.raises(Sha512CryptInvalidSaltCharacterError, match="Invalid Salt: Salt contains an invalid character"),
         id="Invalid character in salt",
     ),
 ]

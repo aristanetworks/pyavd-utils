@@ -3,6 +3,7 @@
 // that can be found in the LICENSE file.
 
 use super::*;
+use crate::errors::Sha512CryptPyError;
 #[test]
 fn sha512_crypt_valid_hash_with_salt_ok() {
     with_passwords_module(|py, module| {
@@ -45,6 +46,8 @@ fn sha512_crypt_empty_salt_err() {
             err.value(py).to_string(),
             "Invalid Salt: Salt cannot be empty."
         );
+        assert!(err.is_instance_of::<passwords::Sha512CryptInvalidSaltEmptyError>(py));
+        assert!(err.is_instance_of::<passwords::PasswordError>(py));
     });
 }
 
@@ -65,7 +68,42 @@ fn sha512_crypt_invalid_character_in_salt_err() {
 
         assert_eq!(
             err.value(py).to_string(),
-            "Invalid Salt: Salt contains an invalid character: '🐍'"
+            "Invalid Salt: Salt contains an invalid character: '🐍'."
+        );
+        assert!(err.is_instance_of::<passwords::Sha512CryptInvalidSaltCharacterError>(py));
+    });
+}
+
+#[test]
+fn sha512_crypt_library_error_maps_to_specific_pyerr() {
+    with_passwords_module(|py, _module| {
+        let err = pyo3::PyErr::from(Sha512CryptPyError::from(
+            ::passwords::Sha512CryptError::ShaCrypt(sha_crypt::Error::RoundsInvalid),
+        ));
+
+        assert!(err.is_instance_of::<passwords::Sha512CryptLibraryError>(py));
+        assert!(err.is_instance_of::<passwords::PasswordError>(py));
+        assert!(
+            err.value(py)
+                .to_string()
+                .contains("SHA crypt library error")
+        );
+    });
+}
+
+#[test]
+fn sha512_crypt_base64_error_maps_to_specific_pyerr() {
+    with_passwords_module(|py, _module| {
+        let err = pyo3::PyErr::from(Sha512CryptPyError::from(
+            ::passwords::Sha512CryptError::Base64InvalidLength(base64ct::InvalidLengthError),
+        ));
+
+        assert!(err.is_instance_of::<passwords::Sha512CryptBase64Error>(py));
+        assert!(err.is_instance_of::<passwords::PasswordError>(py));
+        assert!(
+            err.value(py)
+                .to_string()
+                .contains("SHA crypt base64 invalid length error")
         );
     });
 }

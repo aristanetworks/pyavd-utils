@@ -4,6 +4,25 @@
 # For now we allow docstrings in stubs
 # ruff: noqa: PYI021
 
+class PasswordError(Exception): ...
+class Sha512CryptInvalidSaltEmptyError(PasswordError): ...
+class Sha512CryptInvalidSaltCharacterError(PasswordError): ...
+class Sha512CryptLibraryError(PasswordError): ...
+class Sha512CryptBase64Error(PasswordError): ...
+class CBCInvalidBase64Error(PasswordError): ...
+class CBCDecryptionFailedError(PasswordError): ...
+class CBCInvalidSignatureError(PasswordError): ...
+class CBCInvalidUtf8Error(PasswordError): ...
+class CBCEncryptionFailedError(PasswordError): ...
+class CBCInvalidBase64Utf8Error(PasswordError): ...
+class Simple7InvalidSaltFormatError(PasswordError): ...
+class Simple7InvalidHexEncodingError(PasswordError): ...
+class Simple7RandomSourceUnavailableError(PasswordError): ...
+class Simple7InvalidUtf8Error(PasswordError): ...
+class Simple7InvalidSaltValueError(PasswordError): ...
+class Simple7DataTooShortError(PasswordError): ...
+class Simple7EmptyPasswordError(PasswordError): ...
+
 def sha512_crypt(password: str, salt: str) -> str:
     """
     Computes the SHA512 crypt value for the password given the salt.
@@ -18,7 +37,10 @@ def sha512_crypt(password: str, salt: str) -> str:
       The sha512 crypt value.
 
     Raises:
-      ValueError: If the salt is empty or contain invalid characters.
+      Sha512CryptInvalidSaltEmptyError: If the salt is empty.
+      Sha512CryptInvalidSaltCharacterError: If the salt contains invalid characters.
+      Sha512CryptLibraryError: If the underlying SHA crypt library returns an error.
+      Sha512CryptBase64Error: If SHA512 crypt Base64 encoding fails.
     """
 
 def cbc_encrypt(key: str, data: str) -> str:
@@ -33,7 +55,8 @@ def cbc_encrypt(key: str, data: str) -> str:
         str: The encrypted data, encoded in base64.
 
     Raises:
-      RunTimeError: If anything fails during encryption.
+      CBCEncryptionFailedError: If encryption fails.
+      CBCInvalidBase64Utf8Error: If base64 output contains invalid UTF-8.
     """
 
 def cbc_decrypt(key: str, encrypted_data: str) -> str:
@@ -48,8 +71,10 @@ def cbc_decrypt(key: str, encrypted_data: str) -> str:
         str: The decrypted data.
 
     Raises:
-      ValueError: If encrypted_data is not a valid base64 string.
-      RunTimeError: If anything fails during decryption.
+      CBCInvalidBase64Error: If encrypted_data is not a valid base64 string.
+      CBCDecryptionFailedError: If decryption fails.
+      CBCInvalidSignatureError: If the decrypted Arista signature is invalid.
+      CBCInvalidUtf8Error: If decrypted data is not valid UTF-8.
     """
 
 def cbc_verify(key: str, encrypted_data: str) -> str:
@@ -81,7 +106,9 @@ def simple_7_encrypt(data: str, salt: int | None) -> str:
         str: The encrypted password in type-7 format.
 
     Raises:
-        ValueError: If the salt is not in the range 0-15.
+        Simple7InvalidSaltValueError: If the salt is not in the range 0-15.
+        Simple7EmptyPasswordError: If the password is empty.
+        Simple7RandomSourceUnavailableError: If random salt generation fails.
     """
 
 def simple_7_decrypt(data: str) -> str:
@@ -98,6 +125,9 @@ def simple_7_decrypt(data: str) -> str:
         str: The decrypted password.
 
     Raises:
-        ValueError: If the encrypted data is invalid (too short, invalid format, invalid hex, or salt out of range).
-        RuntimeError: If the decrypted data is not valid UTF-8.
+        Simple7DataTooShortError: If the encrypted data is too short.
+        Simple7InvalidSaltFormatError: If the encrypted data has an invalid salt format.
+        Simple7InvalidHexEncodingError: If the encrypted data has invalid hex encoding.
+        Simple7InvalidSaltValueError: If the salt is out of range.
+        Simple7InvalidUtf8Error: If the decrypted data is not valid UTF-8.
     """

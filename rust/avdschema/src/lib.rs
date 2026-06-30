@@ -31,6 +31,12 @@ mod store;
 mod utils;
 
 pub use self::inherit::Inherit;
+pub use self::resolve::SchemaWalkError;
+pub use self::resolve::SchemaWalkInternalError;
+pub use self::resolve::errors::RefSyntax;
+pub use self::resolve::errors::SchemaPath;
+pub use self::resolve::errors::SchemaResolverError;
+pub use self::resolve::errors::SchemaType;
 pub use self::resolve::resolve_ref::resolve_ref;
 pub use self::resolve::resolve_schema;
 pub use self::schema::any;
@@ -45,6 +51,7 @@ pub use self::store::SchemaStoreError;
 pub use self::store::Store;
 pub use self::utils::dump::Dump;
 pub use self::utils::load::Load;
+pub use self::utils::load::LoadError;
 #[cfg(feature = "dump_load_files")]
 pub use self::utils::load::LoadFromFragments;
 pub use self::utils::schema_data::SchemaDataMapping;

@@ -23,7 +23,7 @@ impl std::error::Error for Sha512CryptError {}
 pub enum InvalidSaltError {
     #[display("Salt cannot be empty.")]
     IsEmpty,
-    #[display("Salt contains an invalid character: '{_0}'")]
+    #[display("Salt contains an invalid character: '{_0}'.")]
     InvalidCharacter(char),
 }
 impl std::error::Error for InvalidSaltError {}

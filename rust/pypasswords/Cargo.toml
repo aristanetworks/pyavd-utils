@@ -10,7 +10,13 @@ workspace = true
 [build-dependencies]
 pyo3-build-config = { workspace = true }
 
+[dev-dependencies]
+base64ct = { version = "1.8.3", default-features = false }
+getrandom = { version = "0.4", default-features = false }
+sha-crypt = { version = "0.6.0", default-features = false }
+
 [dependencies]
+derive_more = { workspace = true, features = ["from"] }
 pyo3 = { workspace = true, "features" = ["abi3-py310"] }
 passwords = { path = "../passwords", default-features = false }
 

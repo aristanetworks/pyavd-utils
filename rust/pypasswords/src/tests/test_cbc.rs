@@ -3,6 +3,8 @@
 // that can be found in the LICENSE file.
 
 use super::*;
+use crate::errors::CbcDecryptPyError;
+use crate::errors::CbcEncryptPyError;
 
 #[test]
 fn cbc_decrypt_invalid_base64_err() {
@@ -13,9 +15,23 @@ fn cbc_decrypt_invalid_base64_err() {
 
         let err = module.call_method1("cbc_decrypt", args).unwrap_err();
 
-        // Maps CbcError::InvalidBase64 -> PyValueError
-        assert!(err.is_instance_of::<pyo3::exceptions::PyValueError>(py));
-        assert_eq!(err.value(py).to_string(), "Invalid Base64 encoding");
+        assert!(err.is_instance_of::<passwords::CBCInvalidBase64Error>(py));
+        assert!(err.is_instance_of::<passwords::PasswordError>(py));
+        assert_eq!(err.value(py).to_string(), "Invalid Base64 encoding.");
+    });
+}
+
+#[test]
+fn cbc_invalid_base64_error_uses_public_module_path() {
+    with_passwords_module(|py, _module| {
+        let module_name: String = py
+            .get_type::<passwords::CBCInvalidBase64Error>()
+            .getattr("__module__")
+            .unwrap()
+            .extract()
+            .unwrap();
+
+        assert_eq!(module_name, "pyavd_utils.passwords");
     });
 }
 
@@ -29,10 +45,10 @@ fn cbc_decrypt_failed_err() {
 
         let err = module.call_method1("cbc_decrypt", args).unwrap_err();
 
-        assert!(err.is_instance_of::<pyo3::exceptions::PyRuntimeError>(py));
+        assert!(err.is_instance_of::<passwords::CBCDecryptionFailedError>(py));
         assert_eq!(
             err.value(py).to_string(),
-            "Decryption failed (check password)"
+            "Decryption failed (check password)."
         );
     });
 }
@@ -44,10 +60,10 @@ fn cbc_decrypt_invalid_signature_err() {
         let args = ("some_key", "YWFhYWFhYWFhYWFhYWFhYQ==");
         let err = module.call_method1("cbc_decrypt", args).unwrap_err();
 
-        assert!(err.is_instance_of::<pyo3::exceptions::PyRuntimeError>(py));
+        assert!(err.is_instance_of::<passwords::CBCInvalidSignatureError>(py));
         assert_eq!(
             err.value(py).to_string(),
-            "Invalid Arista signature in decrypted data"
+            "Invalid Arista signature in decrypted data."
         );
     });
 }
@@ -79,5 +95,44 @@ fn cbc_verify_returns_bool() {
             .extract()
             .unwrap();
         assert!(!is_invalid);
+    });
+}
+
+#[test]
+fn cbc_internal_errors_map_to_specific_pyerrs() {
+    with_passwords_module(|py, _module| {
+        let err = pyo3::PyErr::from(CbcDecryptPyError::from(::passwords::CbcError::InvalidUtf8));
+        assert!(err.is_instance_of::<passwords::CBCInvalidUtf8Error>(py));
+        assert_eq!(
+            err.value(py).to_string(),
+            "Decrypted data is not valid UTF-8."
+        );
+
+        let from_utf8_err_0 = String::from_utf8(Vec::from([255])).unwrap_err();
+        let wrapper_err = pyo3::PyErr::from(CbcDecryptPyError::InvalidUtf8(from_utf8_err_0));
+        assert!(wrapper_err.is_instance_of::<passwords::CBCInvalidUtf8Error>(py));
+        assert_eq!(
+            wrapper_err.value(py).to_string(),
+            // TODO: Align errors so they are lower case and don't contain punctuation.
+            "Decrypted data is not valid UTF-8.: invalid utf-8 sequence of 1 bytes from index 0"
+        );
+
+        let encryption_err = pyo3::PyErr::from(CbcEncryptPyError::from(
+            ::passwords::CbcError::EncryptionFailed,
+        ));
+        assert!(encryption_err.is_instance_of::<passwords::CBCEncryptionFailedError>(py));
+        assert_eq!(
+            encryption_err.value(py).to_string(),
+            "Encryption failed: internal block alignment error."
+        );
+
+        let from_utf8_err_1 = String::from_utf8(Vec::from([255])).unwrap_err();
+        let wrapper_encryption_err =
+            pyo3::PyErr::from(CbcEncryptPyError::InvalidBase64Utf8(from_utf8_err_1));
+        assert!(wrapper_encryption_err.is_instance_of::<passwords::CBCInvalidBase64Utf8Error>(py));
+        assert_eq!(
+            wrapper_encryption_err.value(py).to_string(),
+            "Base64 output contained invalid UTF-8: invalid utf-8 sequence of 1 bytes from index 0"
+        );
     });
 }

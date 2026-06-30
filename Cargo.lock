@@ -1343,9 +1343,13 @@ dependencies = [
 name = "pypasswords"
 version = "0.0.6"
 dependencies = [
+ "base64ct",
+ "derive_more",
+ "getrandom",
  "passwords",
  "pyo3",
  "pyo3-build-config",
+ "sha-crypt",
 ]
 
 [[package]]
@@ -1354,11 +1358,13 @@ version = "0.0.6"
 dependencies = [
  "avdschema",
  "criterion",
+ "derive_more",
  "log",
  "pyo3",
  "pyo3-build-config",
  "pyo3-log",
  "serde_json",
+ "serde_yaml",
  "test_schema_store",
  "validation",
 ]
