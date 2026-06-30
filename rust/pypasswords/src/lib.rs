@@ -53,28 +53,29 @@ mod passwords {
     #[cfg(feature = "sha512")]
     #[pyfunction]
     /// Computes the SHA512 crypt value for the password given the salt
-    pub(crate) fn sha512_crypt(password: &str, salt: &str) -> PyResult<String> {
-        Ok(passwords::sha512_crypt(password, salt).map_err(Into::<Sha512CryptPyError>::into)?)
+    pub(crate) fn sha512_crypt(password: &str, salt: &str) -> Result<String, Sha512CryptPyError> {
+        Ok(passwords::sha512_crypt(password, salt)?)
     }
 
     #[cfg(feature = "cbc")]
     #[pyfunction]
     /// Encrypt the data with CBC `TripleDES`
-    pub(crate) fn cbc_encrypt(password: &str, data: &str) -> PyResult<String> {
-        let result_bytes = passwords::cbc_encrypt(password.as_bytes(), data.as_bytes())
-            .map_err(Into::<CbcEncryptPyError>::into)?;
-        Ok(String::from_utf8(result_bytes).map_err(|_err| CbcEncryptPyError::InvalidBase64Utf8)?)
+    pub(crate) fn cbc_encrypt(password: &str, data: &str) -> Result<String, CbcEncryptPyError> {
+        let result_bytes = passwords::cbc_encrypt(password.as_bytes(), data.as_bytes())?;
+        Ok(String::from_utf8(result_bytes)?)
     }
 
     #[cfg(feature = "cbc")]
     #[pyfunction]
     /// Decrypt the `encrypted_data` with CBC `TripleDES`
-    pub(crate) fn cbc_decrypt(password: &str, encrypted_data: &str) -> PyResult<String> {
+    pub(crate) fn cbc_decrypt(
+        password: &str,
+        encrypted_data: &str,
+    ) -> Result<String, CbcDecryptPyError> {
         let decrypted_bytes =
-            passwords::cbc_decrypt(password.as_bytes(), encrypted_data.as_bytes())
-                .map_err(Into::<CbcDecryptPyError>::into)?;
+            passwords::cbc_decrypt(password.as_bytes(), encrypted_data.as_bytes())?;
 
-        Ok(String::from_utf8(decrypted_bytes).map_err(|_err| CbcDecryptPyError::InvalidUtf8)?)
+        Ok(String::from_utf8(decrypted_bytes)?)
     }
 
     #[cfg(feature = "cbc")]

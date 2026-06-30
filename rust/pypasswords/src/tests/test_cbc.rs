@@ -108,11 +108,13 @@ fn cbc_internal_errors_map_to_specific_pyerrs() {
             "Decrypted data is not valid UTF-8."
         );
 
-        let wrapper_err = pyo3::PyErr::from(CbcDecryptPyError::InvalidUtf8);
+        let from_utf8_err_0 = String::from_utf8(Vec::from([255])).unwrap_err();
+        let wrapper_err = pyo3::PyErr::from(CbcDecryptPyError::InvalidUtf8(from_utf8_err_0));
         assert!(wrapper_err.is_instance_of::<passwords::CBCInvalidUtf8Error>(py));
         assert_eq!(
             wrapper_err.value(py).to_string(),
-            "Decrypted data is not valid UTF-8."
+            // TODO: Align errors so they are lower case and don't contain punctuation.
+            "Decrypted data is not valid UTF-8.: invalid utf-8 sequence of 1 bytes from index 0"
         );
 
         let encryption_err = pyo3::PyErr::from(CbcEncryptPyError::from(
@@ -124,11 +126,13 @@ fn cbc_internal_errors_map_to_specific_pyerrs() {
             "Encryption failed: internal block alignment error."
         );
 
-        let wrapper_encryption_err = pyo3::PyErr::from(CbcEncryptPyError::InvalidBase64Utf8);
+        let from_utf8_err_1 = String::from_utf8(Vec::from([255])).unwrap_err();
+        let wrapper_encryption_err =
+            pyo3::PyErr::from(CbcEncryptPyError::InvalidBase64Utf8(from_utf8_err_1));
         assert!(wrapper_encryption_err.is_instance_of::<passwords::CBCInvalidBase64Utf8Error>(py));
         assert_eq!(
             wrapper_encryption_err.value(py).to_string(),
-            "Base64 output contained invalid UTF-8"
+            "Base64 output contained invalid UTF-8: invalid utf-8 sequence of 1 bytes from index 0"
         );
     });
 }
