@@ -8,7 +8,7 @@ Fixes #<ISSUE ID>
 
 ## Component(s) name
 
-<!-- Indicate one of `rust`, `pyavd-utils`, `requirements` -->
+<!-- Indicate one or more of `validation`, `passwords`, `rust`, `requirements` -->
 
 ## Proposed changes
 <!--- Describe your changes in detail -->

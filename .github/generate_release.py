@@ -9,6 +9,7 @@ This script is used to generate the release.yml file as per
 https://docs.github.com/en/repositories/releasing-projects-on-github/automatically-generated-release-notes
 """
 
+from itertools import permutations
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +21,9 @@ SCOPES = [
     "passwords",
     "rust",
 ]
+
+MULTI_SCOPES = ["|".join(scope_permutation) for scope_count in range(2, len(SCOPES) + 1) for scope_permutation in permutations(SCOPES, scope_count)]
+ALL_SCOPES = [*SCOPES, *MULTI_SCOPES]
 
 # CI and Test are excluded from Release Notes
 CATEGORIES = {
@@ -53,7 +57,7 @@ if __name__ == "__main__":
     categories_list: list[dict[str, str | list[str]]] = []
 
     # First add exclude labels
-    for scope in SCOPES:
+    for scope in ALL_SCOPES:
         exclude_list.append(f"rn: Test({scope})")
         exclude_list.append(f"rn: CI({scope})")
     exclude_list.extend(["rn: Test", "rn: CI"])
@@ -61,7 +65,7 @@ if __name__ == "__main__":
     # Then add the categories
 
     breaking_label_categories = ["Feat", "Fix", "Cut", "Revert", "Refactor", "Bump"]
-    breaking_labels = [f"rn: {cc_type}({scope})!" for cc_type in breaking_label_categories for scope in SCOPES]
+    breaking_labels = [f"rn: {cc_type}({scope})!" for cc_type in breaking_label_categories for scope in ALL_SCOPES]
     breaking_labels.extend(f"rn: {cc_type}!" for cc_type in breaking_label_categories)
 
     categories_list.append(
@@ -80,6 +84,14 @@ if __name__ == "__main__":
         for scope in SCOPES
     )
 
+    # Add fixes spanning multiple scopes
+    categories_list.append(
+        {
+            "title": "Fixed issues in multiple scopes",
+            "labels": [f"rn: Fix({scope})" for scope in MULTI_SCOPES],
+        },
+    )
+
     # Add other fixes
     categories_list.append(
         {
@@ -92,9 +104,17 @@ if __name__ == "__main__":
     categories_list.extend(
         {
             "title": f"New features and enhancements in {scope}",
-            "labels": [f"rn: Fix({scope})"],
+            "labels": [f"rn: Feat({scope})"],
         }
         for scope in SCOPES
+    )
+
+    # Add features spanning multiple scopes
+    categories_list.append(
+        {
+            "title": "New features and enhancements in multiple scopes",
+            "labels": [f"rn: Feat({scope})" for scope in MULTI_SCOPES],
+        },
     )
 
     # Add other features
@@ -105,7 +125,7 @@ if __name__ == "__main__":
         },
     )
 
-    doc_labels = [f"rn: Doc({scope})" for scope in SCOPES]
+    doc_labels = [f"rn: Doc({scope})" for scope in ALL_SCOPES]
     doc_labels.append("rn: Doc")
 
     categories_list.append(
