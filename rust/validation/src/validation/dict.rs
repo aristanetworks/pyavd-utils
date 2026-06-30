@@ -40,6 +40,7 @@ impl Validation for Dict {
         }
 
         if let Some(mapping) = value.as_mapping() {
+            validate_duplicate_keys(&mapping, ctx);
             let coerced_items = validate_keys(self, &mapping, ctx);
             validate_required_keys(self, value, &mapping, ctx);
             coerced_items.map(|items| value.coerce_mapping(items))
@@ -57,6 +58,18 @@ impl Validation for Dict {
             );
             None
         }
+    }
+}
+
+fn validate_duplicate_keys<'a, M: ValidatableMapping<'a>>(input: &M, ctx: &mut Context) {
+    for duplicate_key in input.duplicate_keys() {
+        ctx.state.path.push(duplicate_key.key.to_owned());
+        ctx.add_error_with_span(
+            duplicate_key.span,
+            Violation::DuplicateKey {
+                other_span: duplicate_key.other_span,
+            },
+        );
     }
 }
 
@@ -806,6 +819,90 @@ mod tests {
                 span: Some(SourceSpan { start: 0, end: 3 }),
                 issue: Violation::UnexpectedKey().into()
             }]
+        );
+    }
+
+    #[test]
+    fn validate_yaml_duplicate_key_err() {
+        let schema = Dict {
+            keys: Some(OrderMap::from_iter([("foo".into(), Str::default().into())])),
+            ..Default::default()
+        };
+        let (docs, errors) = parse("foo: one\nfoo: two\n");
+        assert!(errors.is_empty());
+        let input = docs.first().expect("expected a parsed document");
+
+        let store = get_test_store();
+        let mut ctx = Context::new(&store, None);
+        let _ = schema.validate(input, &mut ctx);
+
+        assert_eq!(
+            ctx.result.errors,
+            vec![
+                Feedback {
+                    path: vec!["foo".into()].into(),
+                    span: Some(SourceSpan { start: 0, end: 3 }),
+                    issue: Violation::DuplicateKey {
+                        other_span: Some(SourceSpan { start: 9, end: 12 }),
+                    }
+                    .into()
+                },
+                Feedback {
+                    path: vec!["foo".into()].into(),
+                    span: Some(SourceSpan { start: 9, end: 12 }),
+                    issue: Violation::DuplicateKey {
+                        other_span: Some(SourceSpan { start: 0, end: 3 }),
+                    }
+                    .into()
+                }
+            ]
+        );
+    }
+
+    #[test]
+    fn validate_yaml_duplicate_key_err_on_schema_validated_nested_dict() {
+        let schema = Dict {
+            keys: Some(OrderMap::from_iter([(
+                "outer".into(),
+                Dict {
+                    keys: Some(OrderMap::from_iter([(
+                        "inner".into(),
+                        Str::default().into(),
+                    )])),
+                    ..Default::default()
+                }
+                .into(),
+            )])),
+            ..Default::default()
+        };
+        let (docs, errors) = parse("outer:\n  inner: one\n  inner: two\n");
+        assert!(errors.is_empty());
+        let input = docs.first().expect("expected a parsed document");
+
+        let store = get_test_store();
+        let mut ctx = Context::new(&store, None);
+        let _ = schema.validate(input, &mut ctx);
+
+        assert_eq!(
+            ctx.result.errors,
+            vec![
+                Feedback {
+                    path: vec!["outer".into(), "inner".into()].into(),
+                    span: Some(SourceSpan { start: 9, end: 14 }),
+                    issue: Violation::DuplicateKey {
+                        other_span: Some(SourceSpan { start: 22, end: 27 }),
+                    }
+                    .into()
+                },
+                Feedback {
+                    path: vec!["outer".into(), "inner".into()].into(),
+                    span: Some(SourceSpan { start: 22, end: 27 }),
+                    issue: Violation::DuplicateKey {
+                        other_span: Some(SourceSpan { start: 9, end: 14 }),
+                    }
+                    .into()
+                }
+            ]
         );
     }
 

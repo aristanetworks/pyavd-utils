@@ -5,6 +5,7 @@
 //! Implementation of `ValidatableValue` traits for `yaml_parser` types.
 
 use std::borrow::Cow;
+use std::collections::HashMap;
 
 use yaml_parser::Integer;
 use yaml_parser::MappingPair;
@@ -12,11 +13,13 @@ use yaml_parser::Node;
 use yaml_parser::SequenceItem;
 use yaml_parser::Value;
 
+use super::MappingDuplicateKey;
 use super::ValidatableMapping;
 use super::ValidatableMappingPair;
 use super::ValidatableSequence;
 use super::ValidatableValue;
 use super::integral_float_to_i64;
+use crate::feedback::SourceSpan;
 
 // === ValidatableValue for yaml_parser::Node ===
 
@@ -190,8 +193,8 @@ impl<'input> ValidatableValue for Node<'input> {
         matches!(self.value, Value::Float(_))
     }
 
-    fn source_span(&self) -> Option<crate::feedback::SourceSpan> {
-        Some(crate::feedback::SourceSpan {
+    fn source_span(&self) -> Option<SourceSpan> {
+        Some(SourceSpan {
             start: self.span.start_usize(),
             end: self.span.end_usize(),
         })
@@ -249,6 +252,36 @@ impl<'a, 'input: 'a> ValidatableMapping<'a> for NodeMapping<'a, 'input> {
             }
         }
         None
+    }
+
+    fn duplicate_keys(&self) -> Vec<MappingDuplicateKey<'a>> {
+        if self.pairs.len() <= 1 {
+            return Vec::new();
+        }
+
+        let mut duplicate_keys = Vec::new();
+        let mut seen_keys: HashMap<&str, SourceSpan> = HashMap::with_capacity(self.pairs.len());
+        for pair in self.pairs {
+            let Value::String(key) = &pair.key.value else {
+                continue;
+            };
+            let key = key.as_ref();
+            let span = SourceSpan {
+                start: pair.key.span.start_usize(),
+                end: pair.key.span.end_usize(),
+            };
+
+            if let Some(other_span) = seen_keys.get(key) {
+                duplicate_keys.push(MappingDuplicateKey {
+                    key,
+                    span: Some(span),
+                    other_span: Some(other_span.clone()),
+                });
+            } else {
+                seen_keys.insert(key, span);
+            }
+        }
+        duplicate_keys
     }
 
     fn as_schema_data_mapping(&self) -> Self::SchemaDataMapping<'_> {
@@ -336,8 +369,8 @@ impl<'a, 'input: 'a> ValidatableMappingPair<'a> for NodeMappingPair<'a, 'input> 
     }
 
     /// Return the span for the original YAML key node.
-    fn key_span(&self) -> Option<crate::feedback::SourceSpan> {
-        Some(crate::feedback::SourceSpan {
+    fn key_span(&self) -> Option<SourceSpan> {
+        Some(SourceSpan {
             start: self.pair.key.span.start_usize(),
             end: self.pair.key.span.end_usize(),
         })
@@ -385,6 +418,7 @@ mod tests {
     use yaml_parser::SequenceItem;
     use yaml_parser::Value;
 
+    use crate::feedback::SourceSpan;
     use crate::validatable::ValidatableMapping;
     use crate::validatable::ValidatableMappingPair as _;
     use crate::validatable::ValidatableSequence;
@@ -408,6 +442,13 @@ mod tests {
 
     fn float_node(value: f64) -> Node<'static> {
         Node::new(Value::Float(value), make_span())
+    }
+
+    fn string_node_with_span(string: &str, span: std::ops::Range<u32>) -> Node<'static> {
+        Node::new(
+            Value::String(Cow::Owned(string.to_owned())),
+            yaml_parser::Span::new(span),
+        )
     }
 
     #[test]
@@ -553,6 +594,58 @@ mod tests {
             .collect();
         assert!(keys.contains(&"name".to_owned()));
         assert!(keys.contains(&"age".to_owned()));
+    }
+
+    #[test]
+    fn test_yaml_mapping_reports_each_duplicate_string_key() {
+        let node = Node::new(
+            Value::Mapping(vec![
+                MappingPair::new(
+                    make_span(),
+                    string_node_with_span("name", 0..4),
+                    string_node("Alice"),
+                ),
+                MappingPair::new(
+                    make_span(),
+                    string_node_with_span("age", 12..15),
+                    int_node(30),
+                ),
+                MappingPair::new(
+                    make_span(),
+                    string_node_with_span("name", 20..24),
+                    string_node("Bob"),
+                ),
+                MappingPair::new(
+                    make_span(),
+                    string_node_with_span("name", 30..34),
+                    string_node("Carol"),
+                ),
+            ]),
+            make_span(),
+        );
+        let mapping = node.as_mapping().expect("should be a mapping");
+
+        let duplicate_keys = mapping.duplicate_keys();
+
+        assert_eq!(duplicate_keys.len(), 2);
+        assert_eq!(duplicate_keys[0].key, "name");
+        assert_eq!(
+            duplicate_keys[0].span,
+            Some(SourceSpan { start: 20, end: 24 })
+        );
+        assert_eq!(
+            duplicate_keys[0].other_span,
+            Some(SourceSpan { start: 0, end: 4 })
+        );
+        assert_eq!(duplicate_keys[1].key, "name");
+        assert_eq!(
+            duplicate_keys[1].span,
+            Some(SourceSpan { start: 30, end: 34 })
+        );
+        assert_eq!(
+            duplicate_keys[1].other_span,
+            Some(SourceSpan { start: 0, end: 4 })
+        );
     }
 
     #[test]

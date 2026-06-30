@@ -380,6 +380,9 @@ pub enum Violation {
     /// The dictionary key is not allowed by the schema.
     #[display("Invalid key.")]
     UnexpectedKey(),
+    /// The dictionary key is repeated in the same mapping.
+    #[display("Duplicate key.")]
+    DuplicateKey { other_span: Option<SourceSpan> },
     /// The integer value is outside the supported range.
     #[display(
         "The integer value '{found}' is outside the supported range '{min}' to '{max}'.",

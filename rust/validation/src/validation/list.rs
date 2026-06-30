@@ -194,7 +194,7 @@ fn validate_unique_keys<'a, S: ValidatableSequence<'a>>(
                         // We found at least one other item, so we know we have a duplicate
                         // Add violations for all duplicates in both directions.
                         for (seen_item_trail, seen_value) in seen_item_trails.iter() {
-                            ctx.add_duplicate_violation_pair_for(
+                            ctx.add_duplicate_value_violation_pair_for(
                                 *seen_value,
                                 seen_item_trail,
                                 value,
