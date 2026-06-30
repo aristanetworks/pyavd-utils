@@ -242,6 +242,11 @@ pub trait ValidatableMapping<'a> {
     /// Get a value by key.
     fn get(&self, key: &str) -> Option<&<Self as ValidatableMapping<'a>>::Value>;
 
+    /// Return duplicate keys found in this mapping.
+    fn duplicate_keys(&self) -> Vec<MappingDuplicateKey<'a>> {
+        Vec::new()
+    }
+
     /// Expose this mapping as a schema-data mapping view.
     fn as_schema_data_mapping(&self) -> Self::SchemaDataMapping<'_>;
 
@@ -264,6 +269,17 @@ pub trait ValidatableMapping<'a> {
     fn is_empty(&self) -> bool {
         self.len() == 0
     }
+}
+
+/// A duplicate mapping key reported by a backend-specific mapping adapter.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MappingDuplicateKey<'a> {
+    /// Duplicate key text used for validation paths.
+    pub key: &'a str,
+    /// Span of the duplicate key token, if available.
+    pub span: Option<SourceSpan>,
+    /// Span of the key token this key duplicates, if available.
+    pub other_span: Option<SourceSpan>,
 }
 
 /// A single mapping key/value pair.

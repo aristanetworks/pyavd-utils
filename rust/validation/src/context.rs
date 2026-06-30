@@ -12,6 +12,7 @@ use crate::feedback::ErrorIssue;
 use crate::feedback::Feedback;
 use crate::feedback::InfoIssue;
 use crate::feedback::Path;
+use crate::feedback::SourceSpan;
 use crate::feedback::StringLoweredNote;
 use crate::feedback::Value;
 use crate::feedback::Violation;
@@ -48,7 +49,7 @@ impl<'a> Context<'a> {
 
     pub(crate) fn add_error_with_span(
         &mut self,
-        span: Option<crate::feedback::SourceSpan>,
+        span: Option<SourceSpan>,
         error: impl Into<ErrorIssue>,
     ) {
         self.result.errors.push(Feedback {
@@ -60,7 +61,7 @@ impl<'a> Context<'a> {
 
     pub(crate) fn add_warning_with_span(
         &mut self,
-        span: Option<crate::feedback::SourceSpan>,
+        span: Option<SourceSpan>,
         warning: impl Into<WarningIssue>,
     ) {
         self.result.warnings.push(Feedback {
@@ -115,7 +116,10 @@ impl<'a> Context<'a> {
         }
     }
 
-    pub(crate) fn add_duplicate_violation_pair_for<A: ValidatableValue, B: ValidatableValue>(
+    pub(crate) fn add_duplicate_value_violation_pair_for<
+        A: ValidatableValue,
+        B: ValidatableValue,
+    >(
         &mut self,
         value_a: &A,
         trail_a: &[String],
