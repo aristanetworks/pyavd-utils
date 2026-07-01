@@ -1,0 +1,62 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended"
+  ],
+  "schedule": [
+    "* 0-7 * * 1"
+  ],
+  "timezone": "UTC",
+  "packageRules": [
+    {
+      "description": "Maintain production and build dependencies for Python",
+      "matchManagers": [
+        "pep621",
+        "pip_requirements",
+        "pipenv",
+        "poetry"
+      ],
+      "matchDepTypes": [
+        "build-system.requires",
+        "project.dependencies",
+        "project.optional-dependencies",
+        "production"
+      ],
+      "semanticCommitType": "chore",
+      "commitMessagePrefix": "Bump(requirements): "
+    },
+    {
+      "description": "Maintain development dependencies for Python",
+      "matchManagers": [
+        "pep621",
+        "pip_requirements",
+        "pipenv",
+        "poetry"
+      ],
+      "matchDepTypes": [
+        "dependency-groups",
+        "tool.pdm.dev-dependencies",
+        "tool.uv.dev-dependencies",
+        "development"
+      ],
+      "semanticCommitType": "ci",
+      "commitMessagePrefix": "CI(requirements): "
+    },
+    {
+      "description": "Maintain dependencies for GitHub Actions",
+      "matchManagers": [
+        "github-actions"
+      ],
+      "semanticCommitType": "ci",
+      "commitMessagePrefix": "CI: "
+    },
+    {
+      "description": "Maintain dependencies for Rust crates",
+      "matchManagers": [
+        "cargo"
+      ],
+      "semanticCommitType": "chore",
+      "commitMessagePrefix": "Bump(rust): "
+    }
+  ]
+}
