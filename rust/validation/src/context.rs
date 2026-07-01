@@ -8,6 +8,7 @@ use avdschema::Store;
 use avdschema::dict::DynamicKeyOverrides;
 
 use crate::feedback::CoercionNote;
+use crate::feedback::CompositePrimaryKeyValue;
 use crate::feedback::ErrorIssue;
 use crate::feedback::Feedback;
 use crate::feedback::InfoIssue;
@@ -138,6 +139,44 @@ impl<'a> Context<'a> {
             path: self.state.path.clone_with_slice(trail_b),
             span: value_b.source_span(),
             issue: Violation::ValueNotUnique {
+                other_path: self.state.path.clone_with_slice(trail_a),
+                other_span: value_a.source_span(),
+            }
+            .into(),
+        };
+
+        self.result.errors.extend([violation_a, violation_b]);
+    }
+
+    pub(crate) fn add_composite_primary_key_duplicate_violation_pair_for<
+        A: ValidatableValue,
+        B: ValidatableValue,
+    >(
+        &mut self,
+        value_a: &A,
+        trail_a: &[String],
+        value_b: &B,
+        trail_b: &[String],
+        primary_key_value: &CompositePrimaryKeyValue,
+    ) {
+        // Violation from A's perspective (A sees B as duplicate)
+        let violation_a = Feedback {
+            path: self.state.path.clone_with_slice(trail_a),
+            span: value_a.source_span(),
+            issue: Violation::CompositePrimaryKeyNotUnique {
+                value: primary_key_value.clone(),
+                other_path: self.state.path.clone_with_slice(trail_b),
+                other_span: value_b.source_span(),
+            }
+            .into(),
+        };
+
+        // Violation from B's perspective (B sees A as duplicate)
+        let violation_b = Feedback {
+            path: self.state.path.clone_with_slice(trail_b),
+            span: value_b.source_span(),
+            issue: Violation::CompositePrimaryKeyNotUnique {
+                value: primary_key_value.clone(),
                 other_path: self.state.path.clone_with_slice(trail_a),
                 other_span: value_a.source_span(),
             }
