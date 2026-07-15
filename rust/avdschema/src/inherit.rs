@@ -17,6 +17,7 @@ use crate::boolean::Bool;
 use crate::dict::Dict;
 use crate::int::Int;
 use crate::list::List;
+use crate::list::PrimaryKey;
 use crate::str::Format;
 use crate::str::Pattern;
 use crate::str::Str;
@@ -35,6 +36,7 @@ impl InheritableWithClone for OrderMap<String, Value> {}
 impl InheritableWithClone for Format {}
 impl InheritableWithClone for Box<AnySchema> {}
 impl InheritableWithClone for Pattern {}
+impl InheritableWithClone for PrimaryKey {}
 
 pub trait Inherit {
     /// Inherit schema data from another schema.
@@ -211,6 +213,7 @@ mod tests {
     use crate::list::List;
     use crate::str::Str;
     use crate::utils::test_utils::get_test_bool_schema;
+    use crate::utils::test_utils::get_test_composite_primary_key_list_schema;
     use crate::utils::test_utils::get_test_dict_schema;
     use crate::utils::test_utils::get_test_int_schema;
     use crate::utils::test_utils::get_test_list_schema;
@@ -282,6 +285,19 @@ mod tests {
         // Perform the inheritance
         schema_a.inherit(&schema_b);
         // Since we have no conflicts we can just check the the serialized versions of both schemas are the same
+        assert_eq!(
+            serde_json::to_string(&schema_a).unwrap(),
+            serde_json::to_string(&schema_b).unwrap()
+        );
+    }
+
+    #[test]
+    fn inherit_composite_primary_key() {
+        let mut schema_a = AnySchema::List(List::default());
+        let schema_b = get_test_composite_primary_key_list_schema();
+
+        schema_a.inherit(&schema_b);
+
         assert_eq!(
             serde_json::to_string(&schema_a).unwrap(),
             serde_json::to_string(&schema_b).unwrap()

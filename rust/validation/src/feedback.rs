@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use std::fmt::Debug;
 use std::fmt::Display;
 
+use ordermap::OrderMap;
 use serde::Serialize;
 
 /// Value Wrapper of `serde_json::Value` to allow us to apply conversion traits on these.
@@ -399,6 +400,15 @@ pub enum Violation {
         other_path: Path,
         other_span: Option<SourceSpan>,
     },
+    /// The composite primary-key field values are not unique as a combination.
+    #[display(
+        "The composite primary key {value} is not unique among similar items. Conflicting item: {other_path}"
+    )]
+    CompositePrimaryKeyNotUnique {
+        value: CompositePrimaryKeyValue,
+        other_path: Path,
+        other_span: Option<SourceSpan>,
+    },
     /// The input data model is deprecated and cannot be used in conjunction with the new data model.
     #[display(
         "The input data model is deprecated and cannot be used in conjunction with the new data model '{other_path}'.{url}"
@@ -406,6 +416,23 @@ pub enum Violation {
     DeprecatedConflict { other_path: Path, url: UrlField },
     /// Removed after deprecation of data model.
     Removed(Removed),
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, derive_more::From)]
+pub struct CompositePrimaryKeyValue(OrderMap<String, Value>);
+
+impl Display for CompositePrimaryKeyValue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("{")?;
+        for (index, (key, value)) in self.0.iter().enumerate() {
+            if index > 0 {
+                f.write_str(", ")?;
+            }
+            let key = serde_json::to_string(key).map_err(|_err| std::fmt::Error)?;
+            write!(f, "{key}: {value}")?;
+        }
+        f.write_str("}")
+    }
 }
 
 /// Data Type used in Violation.
