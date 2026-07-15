@@ -99,7 +99,7 @@ repos:
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
     # Ruff version.
-    rev: c59bba8fb259db0fec2bbb77ad8ba51ea7341b56  # frozen: v0.15.20
+    rev: 01a675ea018f2fb714478a5ffb83fcea8374bb06  # frozen: v0.15.21
     hooks:
       # Run the linter.
       - id: ruff
@@ -138,7 +138,7 @@ repos:
           - '--ignore-words=.github/ignore-codespell-words'  # Ignore words listed in this file
 
   - repo: https://github.com/DavidAnson/markdownlint-cli2
-    rev: 996abf60411a8d954288ac9856aae7602b80cbda  # frozen: v0.22.1
+    rev: 534166213006ec869b773b7ed8c6ebeaad1165d0  # frozen: v0.23.0
     hooks:
       - id: markdownlint-cli2
         name: Check for Linting errors on Markdown files with settings defined in `.markdownlint-cli2.yaml`.
