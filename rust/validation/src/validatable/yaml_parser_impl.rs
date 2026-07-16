@@ -259,8 +259,8 @@ impl<'a, 'input: 'a> ValidatableMapping<'a> for NodeMapping<'a, 'input> {
             return Vec::new();
         }
 
-        let mut duplicate_keys = Vec::new();
-        let mut seen_keys: HashMap<&str, SourceSpan> = HashMap::with_capacity(self.pairs.len());
+        let mut duplicate_keys: Vec<MappingDuplicateKey<'a>> = Vec::new();
+        let mut seen_keys: HashMap<&str, usize> = HashMap::with_capacity(self.pairs.len());
         for pair in self.pairs {
             let Value::String(key) = &pair.key.value else {
                 continue;
@@ -271,16 +271,19 @@ impl<'a, 'input: 'a> ValidatableMapping<'a> for NodeMapping<'a, 'input> {
                 end: pair.key.span.end_usize(),
             };
 
-            if let Some(other_span) = seen_keys.get(key) {
+            if let Some(index) = seen_keys.get(key) {
+                if let Some(duplicate_key) = duplicate_keys.get_mut(*index) {
+                    duplicate_key.spans.push(Some(span));
+                }
+            } else {
+                seen_keys.insert(key, duplicate_keys.len());
                 duplicate_keys.push(MappingDuplicateKey {
                     key,
-                    span: Some(span),
-                    other_span: Some(other_span.clone()),
+                    spans: vec![Some(span)],
                 });
-            } else {
-                seen_keys.insert(key, span);
             }
         }
+        duplicate_keys.retain(|duplicate_key| duplicate_key.spans.len() > 1);
         duplicate_keys
     }
 
@@ -627,24 +630,15 @@ mod tests {
 
         let duplicate_keys = mapping.duplicate_keys();
 
-        assert_eq!(duplicate_keys.len(), 2);
+        assert_eq!(duplicate_keys.len(), 1);
         assert_eq!(duplicate_keys[0].key, "name");
         assert_eq!(
-            duplicate_keys[0].span,
-            Some(SourceSpan { start: 20, end: 24 })
-        );
-        assert_eq!(
-            duplicate_keys[0].other_span,
-            Some(SourceSpan { start: 0, end: 4 })
-        );
-        assert_eq!(duplicate_keys[1].key, "name");
-        assert_eq!(
-            duplicate_keys[1].span,
-            Some(SourceSpan { start: 30, end: 34 })
-        );
-        assert_eq!(
-            duplicate_keys[1].other_span,
-            Some(SourceSpan { start: 0, end: 4 })
+            duplicate_keys[0].spans,
+            vec![
+                Some(SourceSpan { start: 0, end: 4 }),
+                Some(SourceSpan { start: 20, end: 24 }),
+                Some(SourceSpan { start: 30, end: 34 }),
+            ]
         );
     }
 

@@ -276,10 +276,8 @@ pub trait ValidatableMapping<'a> {
 pub struct MappingDuplicateKey<'a> {
     /// Duplicate key text used for validation paths.
     pub key: &'a str,
-    /// Span of the duplicate key token, if available.
-    pub span: Option<SourceSpan>,
-    /// Span of the key token this key duplicates, if available.
-    pub other_span: Option<SourceSpan>,
+    /// Spans of all matching key tokens, if available.
+    pub spans: Vec<Option<SourceSpan>>,
 }
 
 /// A single mapping key/value pair.

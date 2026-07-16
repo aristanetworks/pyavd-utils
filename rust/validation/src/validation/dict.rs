@@ -64,12 +64,11 @@ impl Validation for Dict {
 fn validate_duplicate_keys<'a, M: ValidatableMapping<'a>>(input: &M, ctx: &mut Context) {
     for duplicate_key in input.duplicate_keys() {
         ctx.state.path.push(duplicate_key.key.to_owned());
-        ctx.add_error_with_span(
-            duplicate_key.span,
-            Violation::DuplicateKey {
-                other_span: duplicate_key.other_span,
-            },
-        );
+        let occurrences = duplicate_key.spans.len();
+        for span in duplicate_key.spans {
+            ctx.add_error_with_span(span, Violation::DuplicateKey { occurrences });
+        }
+        ctx.state.path.pop();
     }
 }
 
@@ -842,18 +841,12 @@ mod tests {
                 Feedback {
                     path: vec!["foo".into()].into(),
                     span: Some(SourceSpan { start: 0, end: 3 }),
-                    issue: Violation::DuplicateKey {
-                        other_span: Some(SourceSpan { start: 9, end: 12 }),
-                    }
-                    .into()
+                    issue: Violation::DuplicateKey { occurrences: 2 }.into()
                 },
                 Feedback {
                     path: vec!["foo".into()].into(),
                     span: Some(SourceSpan { start: 9, end: 12 }),
-                    issue: Violation::DuplicateKey {
-                        other_span: Some(SourceSpan { start: 0, end: 3 }),
-                    }
-                    .into()
+                    issue: Violation::DuplicateKey { occurrences: 2 }.into()
                 }
             ]
         );
@@ -889,19 +882,62 @@ mod tests {
                 Feedback {
                     path: vec!["outer".into(), "inner".into()].into(),
                     span: Some(SourceSpan { start: 9, end: 14 }),
-                    issue: Violation::DuplicateKey {
-                        other_span: Some(SourceSpan { start: 22, end: 27 }),
-                    }
-                    .into()
+                    issue: Violation::DuplicateKey { occurrences: 2 }.into()
                 },
                 Feedback {
                     path: vec!["outer".into(), "inner".into()].into(),
                     span: Some(SourceSpan { start: 22, end: 27 }),
-                    issue: Violation::DuplicateKey {
-                        other_span: Some(SourceSpan { start: 9, end: 14 }),
-                    }
-                    .into()
+                    issue: Violation::DuplicateKey { occurrences: 2 }.into()
                 }
+            ]
+        );
+    }
+
+    #[test]
+    fn validate_yaml_duplicate_key_restores_path_before_later_errors() {
+        let schema = Dict {
+            keys: Some(OrderMap::from_iter([
+                ("foo".into(), Str::default().into()),
+                ("baz".into(), Str::default().into()),
+            ])),
+            ..Default::default()
+        };
+        let (docs, errors) = parse("foo: one\nfoo: two\nbaz: one\nbaz: two\nbar: one\n");
+        assert!(errors.is_empty());
+        let input = docs.first().expect("expected a parsed document");
+
+        let store = get_test_store();
+        let mut ctx = Context::new(&store, None);
+        let _ = schema.validate(input, &mut ctx);
+
+        assert_eq!(
+            ctx.result.errors,
+            vec![
+                Feedback {
+                    path: vec!["foo".into()].into(),
+                    span: Some(SourceSpan { start: 0, end: 3 }),
+                    issue: Violation::DuplicateKey { occurrences: 2 }.into()
+                },
+                Feedback {
+                    path: vec!["foo".into()].into(),
+                    span: Some(SourceSpan { start: 9, end: 12 }),
+                    issue: Violation::DuplicateKey { occurrences: 2 }.into()
+                },
+                Feedback {
+                    path: vec!["baz".into()].into(),
+                    span: Some(SourceSpan { start: 18, end: 21 }),
+                    issue: Violation::DuplicateKey { occurrences: 2 }.into()
+                },
+                Feedback {
+                    path: vec!["baz".into()].into(),
+                    span: Some(SourceSpan { start: 27, end: 30 }),
+                    issue: Violation::DuplicateKey { occurrences: 2 }.into()
+                },
+                Feedback {
+                    path: vec!["bar".into()].into(),
+                    span: Some(SourceSpan { start: 36, end: 39 }),
+                    issue: Violation::UnexpectedKey().into()
+                },
             ]
         );
     }
