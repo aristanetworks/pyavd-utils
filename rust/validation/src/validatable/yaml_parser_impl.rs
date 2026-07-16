@@ -643,6 +643,39 @@ mod tests {
     }
 
     #[test]
+    fn test_yaml_mapping_duplicate_keys_ignores_non_string_keys() {
+        let node = Node::new(
+            Value::Mapping(vec![
+                MappingPair::new(make_span(), int_node(123), string_node("not a key")),
+                MappingPair::new(
+                    make_span(),
+                    string_node_with_span("name", 10..14),
+                    string_node("Alice"),
+                ),
+                MappingPair::new(
+                    make_span(),
+                    string_node_with_span("name", 20..24),
+                    string_node("Bob"),
+                ),
+            ]),
+            make_span(),
+        );
+        let mapping = node.as_mapping().expect("should be a mapping");
+
+        let duplicate_keys = mapping.duplicate_keys();
+
+        assert_eq!(duplicate_keys.len(), 1);
+        assert_eq!(duplicate_keys[0].key, "name");
+        assert_eq!(
+            duplicate_keys[0].spans,
+            vec![
+                Some(SourceSpan { start: 10, end: 14 }),
+                Some(SourceSpan { start: 20, end: 24 }),
+            ]
+        );
+    }
+
+    #[test]
     fn test_yaml_sequence() {
         let node = Node::new(
             Value::Sequence(vec![
