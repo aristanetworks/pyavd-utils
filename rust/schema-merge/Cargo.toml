@@ -1,0 +1,23 @@
+[package]
+name = "schema-merge"
+version.workspace = true
+edition = "2024"
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+avdschema = { path = "../avdschema" }
+derive_more = { workspace = true, features = ["display"] }
+serde_json = { workspace = true, features = [
+    "arbitrary_precision",
+    "preserve_order",
+] }
+
+[dev-dependencies]
+criterion = "0.8.2"
+
+[[bench]]
+name = "performance"
+harness = false

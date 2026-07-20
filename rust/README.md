@@ -12,9 +12,12 @@ graph LR
 validation["crate validation"]
 avdschema["crate avdschema"]
 validation --->|depends on| avdschema
+schema_merge["crate schema-merge"]
+schema_merge --->|depends on| avdschema
 passwords["crate passwords"]
 python_bindings["crate python-bindings"]
 python_bindings --->|depends on| avdschema
 python_bindings --->|depends on| validation
+python_bindings --->|depends on| schema_merge
 python_bindings --->|depends on| passwords
 ```
