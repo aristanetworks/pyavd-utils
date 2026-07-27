@@ -13,7 +13,7 @@ fn simple_7_encrypt_py_ok() {
         let module = py
             .import("_bindings")
             .unwrap()
-            .getattr("passwords")
+            .getattr("_passwords")
             .unwrap();
         let encrypted = {
             let args = ();
@@ -35,7 +35,7 @@ fn simple_7_encrypt_decrypt_roundtrip() {
         let module = py
             .import("_bindings")
             .unwrap()
-            .getattr("passwords")
+            .getattr("_passwords")
             .unwrap();
         let password = "test_password";
         let encrypted: String = module
@@ -60,7 +60,7 @@ fn simple_7_encrypt_with_random_salt() {
         let module = py
             .import("_bindings")
             .unwrap()
-            .getattr("passwords")
+            .getattr("_passwords")
             .unwrap();
         let password = "test_password";
         let encrypted: String = module
@@ -85,7 +85,7 @@ fn simple_7_encrypt_empty_password_err() {
         let module = py
             .import("_bindings")
             .unwrap()
-            .getattr("passwords")
+            .getattr("_passwords")
             .unwrap();
         let err = module
             .call_method1("simple_7_encrypt", ("", Some(5_u8)))
@@ -103,7 +103,7 @@ fn simple_7_encrypt_invalid_salt_err() {
         let module = py
             .import("_bindings")
             .unwrap()
-            .getattr("passwords")
+            .getattr("_passwords")
             .unwrap();
         let err = module
             .call_method1("simple_7_encrypt", ("test_password", Some(16_u8)))
@@ -124,7 +124,7 @@ fn simple_7_decrypt_data_too_short_err() {
         let module = py
             .import("_bindings")
             .unwrap()
-            .getattr("passwords")
+            .getattr("_passwords")
             .unwrap();
         let err = module.call_method1("simple_7_decrypt", ("0",)).unwrap_err();
 
@@ -143,7 +143,7 @@ fn simple_7_decrypt_invalid_hex_err() {
         let module = py
             .import("_bindings")
             .unwrap()
-            .getattr("passwords")
+            .getattr("_passwords")
             .unwrap();
         let err = module
             .call_method1("simple_7_decrypt", ("01GGGG",))
@@ -161,7 +161,7 @@ fn simple_7_decrypt_invalid_salt_format_err() {
         let module = py
             .import("_bindings")
             .unwrap()
-            .getattr("passwords")
+            .getattr("_passwords")
             .unwrap();
         let err = module
             .call_method1("simple_7_decrypt", ("XX1234",))
@@ -179,7 +179,7 @@ fn simple_7_decrypt_salt_out_of_range_err() {
         let module = py
             .import("_bindings")
             .unwrap()
-            .getattr("passwords")
+            .getattr("_passwords")
             .unwrap();
         let err = module
             .call_method1("simple_7_decrypt", ("161234",))
@@ -200,7 +200,7 @@ fn simple_7_known_values() {
         let module = py
             .import("_bindings")
             .unwrap()
-            .getattr("passwords")
+            .getattr("_passwords")
             .unwrap();
         let test_cases: [(u8, &str, &str); 4] = [
             (1, "foo", "0115090B"),

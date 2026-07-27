@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-from ._bindings import passwords as _passwords
+from ._bindings import _passwords
 
 cbc_decrypt = _passwords.cbc_decrypt
 cbc_encrypt = _passwords.cbc_encrypt

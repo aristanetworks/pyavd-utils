@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-from ._bindings import schema_store as _schema_store
+from ._bindings import _schema_store
 
 init_store_from_file = _schema_store.init_store_from_file
 

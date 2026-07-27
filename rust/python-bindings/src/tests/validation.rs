@@ -89,7 +89,7 @@ fn init_store_py_twice_err() {
         let module = py
             .import("_bindings")
             .unwrap()
-            .getattr("schema_store")
+            .getattr("_schema_store")
             .unwrap();
         let err = {
             let args = ();
@@ -116,7 +116,7 @@ fn validate_json_py_ok() {
         let module = py
             .import("_bindings")
             .unwrap()
-            .getattr("validation")
+            .getattr("_validation")
             .unwrap();
         let data_as_json_str = serde_json::json!({"ethernet_interfaces": [{"name": "Ethernet1", "description": 12345}, {"name": "Ethernet1"}, {}]}).to_string();
         let validation_result = {
@@ -154,7 +154,7 @@ fn validate_json_py_invalid_json_err() {
         let module = py
             .import("_bindings")
             .unwrap()
-            .getattr("validation")
+            .getattr("_validation")
             .unwrap();
         let err = {
             let args = ();
@@ -180,7 +180,7 @@ fn validate_json_with_adhoc_schema_py_ok() {
         let module = py
             .import("_bindings")
             .unwrap()
-            .getattr("validation")
+            .getattr("_validation")
             .unwrap();
         let validation_result = {
             let args = ();
@@ -223,7 +223,7 @@ fn validate_json_with_adhoc_schema_py_invalid_json_err() {
         let module = py
             .import("_bindings")
             .unwrap()
-            .getattr("validation")
+            .getattr("_validation")
             .unwrap();
         let err = {
             let args = ();
@@ -254,7 +254,7 @@ fn validate_json_with_adhoc_schema_py_invalid_schema_err() {
         let module = py
             .import("_bindings")
             .unwrap()
-            .getattr("validation")
+            .getattr("_validation")
             .unwrap();
         let err = {
             let args = ();
@@ -285,7 +285,7 @@ fn get_validated_data_ok() {
         let module = py
             .import("_bindings")
             .unwrap()
-            .getattr("validation")
+            .getattr("_validation")
             .unwrap();
         let data_as_json_str =
             serde_json::json!({"ethernet_interfaces": [{"name": "Ethernet1", "description": 12345}]}).to_string();
@@ -317,7 +317,7 @@ fn get_validated_data_not_ok() {
         let module = py
             .import("_bindings")
             .unwrap()
-            .getattr("validation")
+            .getattr("_validation")
             .unwrap();
         let data_as_json_str =
             serde_json::json!({"ethernet_interfaces": [{"name": "Ethernet1", "unknown": 12345}]})
@@ -365,7 +365,7 @@ fn validate_avd_design_with_ignored_eos_config_key() {
         let module = py
             .import("_bindings")
             .unwrap()
-            .getattr("validation")
+            .getattr("_validation")
             .unwrap();
         let data_as_json_str =
             serde_json::json!({"fabric_name": "TEST-FABRIC", "router_isis": {"instance": "ISIS_TEST"}}).to_string();

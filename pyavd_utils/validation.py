@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-from ._bindings import validation as _validation
+from ._bindings import _validation
 
 Configuration = _validation.Configuration
 Deprecation = _validation.Deprecation

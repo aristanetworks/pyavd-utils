@@ -35,11 +35,11 @@ pub mod _bindings {
     }
 
     #[pymodule_export]
-    use crate::passwords::passwords_mod as passwords;
+    use crate::passwords::_passwords;
     #[pymodule_export]
-    use crate::schema_store::schema_store_mod as schema_store;
+    use crate::schema_store::_schema_store;
     #[pymodule_export]
-    use crate::validation::validation_mod as validation;
+    use crate::validation::_validation;
 }
 
 #[cfg(test)]

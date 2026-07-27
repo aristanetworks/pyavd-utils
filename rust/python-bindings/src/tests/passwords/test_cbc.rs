@@ -13,7 +13,7 @@ fn cbc_decrypt_invalid_base64_err() {
         let module = py
             .import("_bindings")
             .unwrap()
-            .getattr("passwords")
+            .getattr("_passwords")
             .unwrap();
         let err = module
             .call_method1("cbc_decrypt", ("passwd", "ThisIsNotBase64!!!"))
@@ -31,7 +31,7 @@ fn cbc_decrypt_failed_err() {
         let module = py
             .import("_bindings")
             .unwrap()
-            .getattr("passwords")
+            .getattr("_passwords")
             .unwrap();
         let err = module
             .call_method1("cbc_decrypt", ("any_key", "YWJjZA=="))
@@ -52,7 +52,7 @@ fn cbc_decrypt_invalid_signature_err() {
         let module = py
             .import("_bindings")
             .unwrap()
-            .getattr("passwords")
+            .getattr("_passwords")
             .unwrap();
         let err = module
             .call_method1("cbc_decrypt", ("some_key", "YWFhYWFhYWFhYWFhYWFhYQ=="))
@@ -73,7 +73,7 @@ fn cbc_verify_returns_bool() {
         let module = py
             .import("_bindings")
             .unwrap()
-            .getattr("passwords")
+            .getattr("_passwords")
             .unwrap();
         let key = "42.42.42.42";
         let data = "arista";

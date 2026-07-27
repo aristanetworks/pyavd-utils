@@ -13,7 +13,7 @@ fn sha512_crypt_valid_hash_with_salt_ok() {
         let module = py
             .import("_bindings")
             .unwrap()
-            .getattr("passwords")
+            .getattr("_passwords")
             .unwrap();
         let result = {
             let args = ();
@@ -39,7 +39,7 @@ fn sha512_crypt_empty_salt_err() {
         let module = py
             .import("_bindings")
             .unwrap()
-            .getattr("passwords")
+            .getattr("_passwords")
             .unwrap();
         let err = module
             .call_method1("sha512_crypt", ("arista", ""))
@@ -60,7 +60,7 @@ fn sha512_crypt_invalid_character_in_salt_err() {
         let module = py
             .import("_bindings")
             .unwrap()
-            .getattr("passwords")
+            .getattr("_passwords")
             .unwrap();
         let err = module
             .call_method1("sha512_crypt", ("arista", "#"))

@@ -29,7 +29,7 @@ fn setup() {
             let module = py
                 .import("_bindings")
                 .unwrap()
-                .getattr("schema_store")
+                .getattr("_schema_store")
                 .unwrap();
             let kwargs = PyDict::new(py);
             let file = py.detach(test_schema_store::get_store_gz_path);
