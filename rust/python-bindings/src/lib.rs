@@ -34,12 +34,14 @@ pub mod _bindings {
         Ok(())
     }
 
+    /// Shared schema store helpers.
     #[pyo3::pymodule]
     mod schema_store {
         #[pymodule_export]
         use crate::schema_store::init_store_from_file;
     }
 
+    /// Schema validation helpers.
     #[pyo3::pymodule]
     mod validation {
         #[pymodule_export]
@@ -62,6 +64,7 @@ pub mod _bindings {
         use crate::validation::validate_json_with_adhoc_schema;
     }
 
+    /// Password hashing and encryption helpers.
     #[pyo3::pymodule]
     mod passwords {
         #[cfg(feature = "cbc")]

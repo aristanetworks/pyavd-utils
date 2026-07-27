@@ -48,7 +48,7 @@ version = {attr = "pyavd_utils.__version__"}
 include = ["pyavd_utils"]
 
 [tool.setuptools.package-data]
-"pyavd_utils" = ["*.pyi", "THIRD_PARTY_LICENSES.txt"]
+"pyavd_utils" = ["py.typed", "_bindings/*.pyi", "THIRD_PARTY_LICENSES.txt"]
 
 [[tool.setuptools-rust.ext-modules]]
 target = "pyavd_utils._bindings"
