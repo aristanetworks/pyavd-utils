@@ -18,6 +18,6 @@ def init_store() -> None:
 
     filename = Path(ADV_SCHEMA_URL).name
     tmp_file = Path(__file__).parent.joinpath("tmp", filename)
-    urlretrieve(ADV_SCHEMA_URL, tmp_file)  # noqa: S310
+    urlretrieve(ADV_SCHEMA_URL, tmp_file)
 
     init_store_from_file(tmp_file)
