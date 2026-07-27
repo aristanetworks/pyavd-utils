@@ -35,7 +35,7 @@ fn setup_python_with_store() {
             let module = py
                 .import("_bindings")
                 .unwrap()
-                .getattr("schema_store")
+                .getattr("_schema_store")
                 .unwrap();
             let kwargs = PyDict::new(py);
             let file = py.detach(get_store_gz_path);
@@ -67,7 +67,7 @@ fn benchmark_get_validated_data(criterion: &mut Criterion) {
             let module = py
                 .import("_bindings")
                 .unwrap()
-                .getattr("validation")
+                .getattr("_validation")
                 .unwrap();
             bencher.iter(|| {
                 let kwargs = PyDict::new(py);
