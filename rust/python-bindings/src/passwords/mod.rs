@@ -74,3 +74,26 @@ pub(crate) fn simple_7_decrypt(data: &str) -> PyResult<String> {
         _ => PyValueError::new_err(err.to_string()),
     })
 }
+
+/// Password hashing and encryption helpers.
+#[pyo3::pymodule(name = "passwords")]
+pub(crate) mod passwords_mod {
+    #[cfg(feature = "cbc")]
+    #[pymodule_export]
+    use super::cbc_decrypt;
+    #[cfg(feature = "cbc")]
+    #[pymodule_export]
+    use super::cbc_encrypt;
+    #[cfg(feature = "cbc")]
+    #[pymodule_export]
+    use super::cbc_verify;
+    #[cfg(feature = "sha512")]
+    #[pymodule_export]
+    use super::sha512_crypt;
+    #[cfg(feature = "simple-7")]
+    #[pymodule_export]
+    use super::simple_7_decrypt;
+    #[cfg(feature = "simple-7")]
+    #[pymodule_export]
+    use super::simple_7_encrypt;
+}

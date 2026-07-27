@@ -47,3 +47,10 @@ pub(crate) fn init_store_from_file(file: PathBuf) -> PyResult<()> {
         )
     }).inspect(|()| info!("Initialized the schema store from file."))
 }
+
+/// Shared schema store helpers.
+#[pyo3::pymodule(name = "schema_store")]
+pub(crate) mod schema_store_mod {
+    #[pymodule_export]
+    use super::init_store_from_file;
+}

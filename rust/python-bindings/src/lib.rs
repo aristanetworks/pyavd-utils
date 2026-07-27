@@ -34,58 +34,12 @@ pub mod _bindings {
         Ok(())
     }
 
-    /// Shared schema store helpers.
-    #[pyo3::pymodule]
-    mod schema_store {
-        #[pymodule_export]
-        use crate::schema_store::init_store_from_file;
-    }
-
-    /// Schema validation helpers.
-    #[pyo3::pymodule]
-    mod validation {
-        #[pymodule_export]
-        use crate::validation::Configuration;
-        #[pymodule_export]
-        use crate::validation::Deprecation;
-        #[pymodule_export]
-        use crate::validation::IgnoredEosConfigKey;
-        #[pymodule_export]
-        use crate::validation::ValidatedDataResult;
-        #[pymodule_export]
-        use crate::validation::ValidationResult;
-        #[pymodule_export]
-        use crate::validation::Violation;
-        #[pymodule_export]
-        use crate::validation::get_validated_data;
-        #[pymodule_export]
-        use crate::validation::validate_json;
-        #[pymodule_export]
-        use crate::validation::validate_json_with_adhoc_schema;
-    }
-
-    /// Password hashing and encryption helpers.
-    #[pyo3::pymodule]
-    mod passwords {
-        #[cfg(feature = "cbc")]
-        #[pymodule_export]
-        use crate::passwords::cbc_decrypt;
-        #[cfg(feature = "cbc")]
-        #[pymodule_export]
-        use crate::passwords::cbc_encrypt;
-        #[cfg(feature = "cbc")]
-        #[pymodule_export]
-        use crate::passwords::cbc_verify;
-        #[cfg(feature = "sha512")]
-        #[pymodule_export]
-        use crate::passwords::sha512_crypt;
-        #[cfg(feature = "simple-7")]
-        #[pymodule_export]
-        use crate::passwords::simple_7_decrypt;
-        #[cfg(feature = "simple-7")]
-        #[pymodule_export]
-        use crate::passwords::simple_7_encrypt;
-    }
+    #[pymodule_export]
+    use crate::passwords::passwords_mod as passwords;
+    #[pymodule_export]
+    use crate::schema_store::schema_store_mod as schema_store;
+    #[pymodule_export]
+    use crate::validation::validation_mod as validation;
 }
 
 #[cfg(test)]

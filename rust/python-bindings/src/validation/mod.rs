@@ -232,3 +232,26 @@ pub(crate) fn validate_json_with_adhoc_schema(
 
     ValidationResult::from_validation_result(ctx.result)
 }
+
+/// Schema validation helpers.
+#[pyo3::pymodule(name = "validation")]
+pub(crate) mod validation_mod {
+    #[pymodule_export]
+    use super::Configuration;
+    #[pymodule_export]
+    use super::Deprecation;
+    #[pymodule_export]
+    use super::IgnoredEosConfigKey;
+    #[pymodule_export]
+    use super::ValidatedDataResult;
+    #[pymodule_export]
+    use super::ValidationResult;
+    #[pymodule_export]
+    use super::Violation;
+    #[pymodule_export]
+    use super::get_validated_data;
+    #[pymodule_export]
+    use super::validate_json;
+    #[pymodule_export]
+    use super::validate_json_with_adhoc_schema;
+}
