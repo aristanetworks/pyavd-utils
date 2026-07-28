@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from ._bindings import _schema_store
 
+get_list_primary_key = _schema_store.get_list_primary_key
 init_store_from_file = _schema_store.init_store_from_file
 
-__all__ = ["init_store_from_file"]
+__all__ = ["get_list_primary_key", "init_store_from_file"]

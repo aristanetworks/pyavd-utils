@@ -31,6 +31,7 @@ mod store;
 mod utils;
 
 pub use self::inherit::Inherit;
+pub use self::resolve::errors::SchemaResolverError;
 pub use self::resolve::resolve_ref::resolve_ref;
 pub use self::resolve::resolve_schema;
 pub use self::schema::any;
@@ -50,5 +51,6 @@ pub use self::utils::load::LoadFromFragments;
 pub use self::utils::schema_data::SchemaDataMapping;
 pub use self::utils::schema_data::SchemaDataSequence;
 pub use self::utils::schema_data::SchemaDataValue;
+pub use self::utils::schema_from_path::GetSchemaFromPathError;
 pub use self::utils::schema_from_path::SchemaKeys;
 pub use self::utils::schema_from_path::get_schema_from_path;

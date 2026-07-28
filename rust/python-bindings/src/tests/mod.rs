@@ -10,6 +10,7 @@ use pyo3::types::PyDict;
 use crate::_bindings;
 
 mod passwords;
+mod schema_store;
 mod validation;
 
 static INIT_PY: OnceLock<()> = OnceLock::new();

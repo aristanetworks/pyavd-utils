@@ -5,8 +5,12 @@
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
+use avdschema::GetSchemaFromPathError;
 use avdschema::Load as _;
+use avdschema::SchemaResolverError;
 use avdschema::Store;
+use avdschema::get_schema_from_path;
+use avdschema::list::List;
 use log::info;
 use pyo3::PyResult;
 use pyo3::exceptions::PyRuntimeError;
@@ -51,5 +55,37 @@ pub(crate) mod _schema_store {
                     .to_owned(),
             )
         }).inspect(|()| info!("Initialized the schema store from file."))
+    }
+
+    #[pyfunction]
+    /// Return the primary key for a list schema at the given data path.
+    ///
+    /// Limitation: this only resolves static schema paths and dynamic root keys
+    /// that can be inferred from schema defaults. User-defined dynamic root keys
+    /// are not resolved because this helper does not accept input data or
+    /// dynamic-key overrides.
+    pub(crate) fn get_list_primary_key(
+        schema_name: &str,
+        data_path: Vec<String>,
+    ) -> PyResult<Option<String>> {
+        let data_value = serde_json::Value::Object(serde_json::Map::new());
+        let schema =
+            match get_schema_from_path(schema_name, get_store()?, &data_path, &data_value, None) {
+                Ok(Some(schema)) => schema,
+                Ok(None)
+                | Err(GetSchemaFromPathError::Resolve(SchemaResolverError::SchemaWalkError(_))) => {
+                    return Ok(None);
+                }
+                Err(err) => {
+                    return Err(PyRuntimeError::new_err(format!(
+                        "Error while resolving schema path: {err:?}"
+                    )));
+                }
+            };
+        let Ok(list_schema) = <&List>::try_from(schema) else {
+            return Ok(None);
+        };
+
+        Ok(list_schema.primary_key.clone())
     }
 }

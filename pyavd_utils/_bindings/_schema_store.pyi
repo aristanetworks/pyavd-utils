@@ -5,6 +5,24 @@
 # ruff: noqa: PYI021
 from pathlib import Path
 
+def get_list_primary_key(schema_name: str, data_path: list[str]) -> str | None:
+    """
+    Return the primary key for a list schema at the given data path.
+
+    Limitation:
+        This only resolves static schema paths and dynamic root keys that can be
+        inferred from schema defaults. User-defined dynamic root keys are not
+        resolved because this helper does not accept input data or dynamic-key
+        overrides.
+
+    Args:
+        schema_name: The name of the schema to inspect.
+        data_path: Path to the data model list.
+
+    Raises:
+        RuntimeError: If the shared schema store has not been initialized.
+    """
+
 def init_store_from_file(file: Path) -> None:
     """
     Initialize the shared Schema store from a file containing the full schema store.
