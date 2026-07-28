@@ -18,6 +18,6 @@ def init_store(tmp_path_factory: pytest.TempPathFactory) -> None:
 
     filename = Path(ADV_SCHEMA_URL).name
     tmp_file = tmp_path_factory.mktemp("schema_store") / filename
-    urlretrieve(ADV_SCHEMA_URL, tmp_file)  # noqa: S310
+    urlretrieve(ADV_SCHEMA_URL, tmp_file)
 
     init_store_from_file(tmp_file)
