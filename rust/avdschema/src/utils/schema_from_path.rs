@@ -157,9 +157,37 @@ pub fn get_schema_from_path<'store, 'value>(
     }
 }
 
+/// Return the primary key for a list schema at the given data path.
+///
+/// Limitation: this only resolves static schema paths and dynamic root keys
+/// that can be inferred from schema defaults. User-defined dynamic root keys are
+/// not resolved because this helper does not accept input data or dynamic-key
+/// overrides.
+pub fn get_list_primary_key(
+    schema_name: &str,
+    store: &Store,
+    data_path: &[String],
+) -> Result<Option<String>, GetSchemaFromPathError> {
+    let data_value = serde_json::Value::Object(serde_json::Map::new());
+    let schema = match get_schema_from_path(schema_name, store, data_path, &data_value, None) {
+        Ok(Some(schema)) => schema,
+        Ok(None)
+        | Err(GetSchemaFromPathError::Resolve(SchemaResolverError::SchemaWalkError(_))) => {
+            return Ok(None);
+        }
+        Err(err) => return Err(err),
+    };
+    let Ok(list_schema) = <&crate::list::List>::try_from(schema) else {
+        return Ok(None);
+    };
+
+    Ok(list_schema.primary_key.clone())
+}
+
 #[cfg(test)]
 mod tests {
     use ordermap::OrderMap;
+    use serde::Deserialize as _;
     use serde_json::json;
 
     use super::*;
@@ -168,6 +196,48 @@ mod tests {
     use crate::list::List;
     use crate::str::Str;
     use crate::utils::test_utils::get_test_store;
+
+    fn get_list_primary_key_test_store() -> Store {
+        Store::deserialize(json!({
+            "eos_config": {
+                "type": "dict",
+                "keys": {
+                    "top_level": {
+                        "type": "list",
+                        "primary_key": "name",
+                        "items": {
+                            "type": "dict",
+                            "keys": {
+                                "name": {"type": "str"}
+                            }
+                        }
+                    },
+                    "outer": {
+                        "type": "list",
+                        "primary_key": "name",
+                        "items": {
+                            "type": "dict",
+                            "keys": {
+                                "name": {"type": "str"},
+                                "inner": {
+                                    "type": "list",
+                                    "primary_key": "id",
+                                    "items": {
+                                        "type": "dict",
+                                        "keys": {
+                                            "id": {"type": "str"}
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "leaf": {"type": "str"}
+                }
+            }
+        }))
+        .unwrap()
+    }
 
     #[test]
     fn schema_keys_try_from_schema_with_value_ok() {
@@ -413,5 +483,49 @@ mod tests {
                 dynamic_key_path: "network_services_keys.name".into()
             })
         );
+    }
+
+    #[test]
+    fn get_list_primary_key_ok() {
+        let store = get_list_primary_key_test_store();
+        let result = get_list_primary_key("eos_config", &store, &["top_level".into()]);
+
+        assert_eq!(result.unwrap(), Some("name".into()));
+    }
+
+    #[test]
+    fn get_list_primary_key_nested_list_ok() {
+        let store = get_list_primary_key_test_store();
+        let result = get_list_primary_key(
+            "eos_config",
+            &store,
+            &["outer".into(), "0".into(), "inner".into()],
+        );
+
+        assert_eq!(result.unwrap(), Some("id".into()));
+    }
+
+    #[test]
+    fn get_list_primary_key_non_list_path_is_none() {
+        let store = get_list_primary_key_test_store();
+        let result = get_list_primary_key("eos_config", &store, &["leaf".into()]);
+
+        assert_eq!(result.unwrap(), None);
+    }
+
+    #[test]
+    fn get_list_primary_key_unknown_path_is_none() {
+        let store = get_list_primary_key_test_store();
+        let result = get_list_primary_key("eos_config", &store, &["unknown_key".into()]);
+
+        assert_eq!(result.unwrap(), None);
+    }
+
+    #[test]
+    fn get_list_primary_key_invalid_schema_name_errors() {
+        let store = get_list_primary_key_test_store();
+        let result = get_list_primary_key("not_a_schema", &store, &[]);
+
+        assert!(matches!(result, Err(GetSchemaFromPathError::StoreError(_))));
     }
 }
