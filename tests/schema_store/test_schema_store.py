@@ -35,3 +35,9 @@ def test_schema_store_init_store_from_file_twice_errors(tmp_path: Path) -> None:
 )
 def test_schema_store_get_list_primary_key(data_path: list[str], expected_primary_key: str | None) -> None:
     assert get_list_primary_key("eos_config", data_path) == expected_primary_key
+
+
+@pytest.mark.usefixtures("init_store")
+def test_schema_store_get_list_primary_key_invalid_schema_name_errors() -> None:
+    with pytest.raises(RuntimeError, match="Error while resolving schema path"):
+        get_list_primary_key("not_a_schema", [])
