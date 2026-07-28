@@ -66,3 +66,4 @@ licenses.html
 # Codex bug causing these empty files to be left behind.
 # Adding here to avoid them being checked in accidentally.
 .codex
+.agent

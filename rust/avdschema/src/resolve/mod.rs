@@ -10,6 +10,8 @@ use errors::SchemaResolverError;
 use errors::SchemaType;
 use resolve_ref::resolve_ref;
 
+pub use self::walker::InternalError as SchemaWalkInternalError;
+pub use self::walker::SchemaWalkError;
 use crate::any::AnySchema;
 use crate::inherit::Inherit;
 use crate::store::Store;

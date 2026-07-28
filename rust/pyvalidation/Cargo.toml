@@ -12,10 +12,12 @@ pyo3-build-config = { workspace = true }
 
 [dev-dependencies]
 criterion = { version = "0.8.2" }
+serde_yaml = { workspace = true }
 test_schema_store = { path = "../test_schema_store" }
 
 [dependencies]
 avdschema = { path = "../avdschema", features = ["dump_load_files"] }
+derive_more = { workspace = true, features = ["from"] }
 validation = { path = "../validation" }
 log = { workspace = true }
 pyo3 = { workspace = true, "features" = ["abi3-py310"] }
