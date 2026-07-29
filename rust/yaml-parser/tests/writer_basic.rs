@@ -120,12 +120,13 @@ fn roundtrip_value(input: &str) {
     );
 
     let mut buf = Vec::new();
-    let Ok(()) = writer::write_yaml_from_events(&mut buf, &events) else {
-        panic!("writing YAML from events should succeed");
-    };
+    if let Err(error) = writer::write_yaml_from_events(&mut buf, &events) {
+        panic!("writing YAML from events should succeed: {error:?}");
+    }
 
-    let Ok(output) = String::from_utf8(buf) else {
-        panic!("writer must produce valid UTF-8");
+    let output = match String::from_utf8(buf) {
+        Ok(output) => output,
+        Err(error) => panic!("writer must produce valid UTF-8: {error:?}"),
     };
 
     let (docs_after, errors_after) = parse(&output);
