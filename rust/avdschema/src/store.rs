@@ -32,23 +32,41 @@ impl Store {
         schema_names
     }
 
-    pub fn get(&self, schema_name: &str) -> Result<&AnySchema, SchemaStoreError> {
+    fn fetch<'a, 'b>(
+        &'a self,
+        schema_name: &'b str,
+    ) -> Result<(&'b str, &'a AnySchema), SchemaStoreError> {
         if let Some(schema) = self.schemas.get(schema_name) {
-            return Ok(schema);
+            return Ok((schema_name, schema));
         }
-        // Either we have an invalid schema or we may be using an old schema name,
-        // or tests using new schema names towards and old schema store.
-        let schema_alias = match schema_name {
+
+        let alias = match schema_name {
             "eos_designs" => "avd_design",
             "eos_cli_config_gen" => "eos_config",
             "avd_design" => "eos_designs",
             "eos_config" => "eos_cli_config_gen",
-            _ => schema_name,
+            _ => return Err(SchemaStoreError::InvalidSchemaName(schema_name.to_owned())),
         };
-        self.schemas
-            .get(schema_alias)
-            .ok_or_else(|| SchemaStoreError::InvalidSchemaName(schema_name.to_owned()))
+
+        let schema = self
+            .schemas
+            .get(alias)
+            .ok_or_else(|| SchemaStoreError::InvalidSchemaName(schema_name.to_owned()))?;
+
+        Ok((alias, schema))
     }
+
+    pub fn get(&self, schema_name: &str) -> Result<&AnySchema, SchemaStoreError> {
+        self.fetch(schema_name).map(|(_, schema)| schema)
+    }
+
+    pub fn canonical_schema_name<'a>(
+        &self,
+        schema_name: &'a str,
+    ) -> Result<&'a str, SchemaStoreError> {
+        self.fetch(schema_name).map(|(name, _)| name)
+    }
+
     pub fn as_resolved(mut self) -> Result<Self, SchemaResolverError> {
         // Clone each schema so we can resolve them while still being able to resolve $refs between them.
         let cloned_schemas = self.schemas.clone();
@@ -186,5 +204,43 @@ mod tests {
             store.schema_names(),
             ["avd_design", "cv_deploy", "eos_config"]
         );
+    }
+
+    #[test]
+    fn canonical_schema_name_returns_existing_schema_name() {
+        let store = get_test_store();
+
+        assert_eq!(
+            store.canonical_schema_name("eos_config").unwrap(),
+            "eos_config"
+        );
+        assert_eq!(
+            store.canonical_schema_name("cv_deploy").unwrap(),
+            "cv_deploy"
+        );
+    }
+
+    #[test]
+    fn canonical_schema_name_returns_alias_target() {
+        let store = get_test_store();
+
+        assert_eq!(
+            store.canonical_schema_name("eos_cli_config_gen").unwrap(),
+            "eos_config"
+        );
+        assert_eq!(
+            store.canonical_schema_name("eos_designs").unwrap(),
+            "avd_design"
+        );
+    }
+
+    #[test]
+    fn canonical_schema_name_invalid_schema_name_errors() {
+        let store = get_test_store();
+
+        assert!(matches!(
+            store.canonical_schema_name("not_a_schema"),
+            Err(super::SchemaStoreError::InvalidSchemaName(schema_name)) if schema_name == "not_a_schema"
+        ));
     }
 }

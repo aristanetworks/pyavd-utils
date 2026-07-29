@@ -5,6 +5,7 @@
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
+use avdschema::GetSchemaFromPathError;
 use avdschema::Load as _;
 use avdschema::Store;
 use avdschema::get_list_primary_key as get_avdschema_list_primary_key;
@@ -57,16 +58,17 @@ pub(crate) mod _schema_store {
     #[pyfunction]
     /// Return the primary key for a list schema at the given data path.
     ///
-    /// Limitation: this only resolves static schema paths and dynamic root keys
-    /// that can be inferred from schema defaults. User-defined dynamic root keys
-    /// are not resolved because this helper does not accept input data or
-    /// dynamic-key overrides.
+    /// This helper only supports the EOS config schema for now, since other AVD
+    /// schemas can use dynamic keys which are not supported here.
     pub(crate) fn get_list_primary_key(
         schema_name: &str,
         data_path: Vec<String>,
     ) -> PyResult<Option<String>> {
-        get_avdschema_list_primary_key(schema_name, get_store()?, &data_path).map_err(|err| {
-            PyRuntimeError::new_err(format!("Error while resolving schema path: {err:?}"))
+        get_avdschema_list_primary_key(schema_name, get_store()?, &data_path).map_err(|err| match err {
+            GetSchemaFromPathError::UnsupportedSchemaName(name) => PyRuntimeError::new_err(format!(
+                "Schema name '{name}' is not supported by get_list_primary_key. Supported schema names are 'eos_config' and 'eos_cli_config_gen'."
+            )),
+            err => PyRuntimeError::new_err(format!("Error while resolving schema path: {err:?}")),
         })
     }
 }

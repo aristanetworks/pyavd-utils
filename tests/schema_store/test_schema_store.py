@@ -38,6 +38,11 @@ def test_schema_store_get_list_primary_key(data_path: list[str], expected_primar
 
 
 @pytest.mark.usefixtures("init_store")
-def test_schema_store_get_list_primary_key_invalid_schema_name_errors() -> None:
-    with pytest.raises(RuntimeError, match="Error while resolving schema path"):
-        get_list_primary_key("not_a_schema", [])
+def test_schema_store_get_list_primary_key_eos_cli_config_gen_alias() -> None:
+    assert get_list_primary_key("eos_cli_config_gen", ["ethernet_interfaces"]) == "name"
+
+
+@pytest.mark.usefixtures("init_store")
+def test_schema_store_get_list_primary_key_unsupported_schema_name_errors() -> None:
+    with pytest.raises(RuntimeError, match="not supported"):
+        get_list_primary_key("eos_designs", [])

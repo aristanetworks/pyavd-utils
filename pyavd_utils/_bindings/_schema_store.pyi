@@ -10,17 +10,17 @@ def get_list_primary_key(schema_name: str, data_path: list[str]) -> str | None:
     Return the primary key for a list schema at the given data path.
 
     Limitation:
-        This only resolves static schema paths and dynamic root keys that can be
-        inferred from schema defaults. User-defined dynamic root keys are not
-        resolved because this helper does not accept input data or dynamic-key
-        overrides.
+        This only supports the EOS config schema for now, since other AVD schemas can use
+        dynamic keys which are not supported by this helper yet. Supported schema names are
+        "eos_config" and the "eos_cli_config_gen" alias.
 
     Args:
         schema_name: The name of the schema to inspect.
         data_path: Path to the data model list.
 
     Raises:
-        RuntimeError: If the shared schema store has not been initialized.
+        RuntimeError: If the shared schema store has not been initialized, if the schema name is
+            not supported, or if schema resolution fails.
     """
 
 def init_store_from_file(file: Path) -> None:

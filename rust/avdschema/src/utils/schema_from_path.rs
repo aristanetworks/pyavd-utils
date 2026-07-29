@@ -115,6 +115,7 @@ pub enum GetSchemaFromPathError {
     StoreError(SchemaStoreError),
     Keys(SchemaKeysError),
     Resolve(SchemaResolverError),
+    UnsupportedSchemaName(String),
 }
 /// Given a data path return the schema covering this.
 /// Assumes that dynamic keys can only exist at the root level.
@@ -159,15 +160,20 @@ pub fn get_schema_from_path<'store, 'value>(
 
 /// Return the primary key for a list schema at the given data path.
 ///
-/// Limitation: this only resolves static schema paths and dynamic root keys
-/// that can be inferred from schema defaults. User-defined dynamic root keys are
-/// not resolved because this helper does not accept input data or dynamic-key
-/// overrides.
+/// This helper only supports the `eos_config` schema for now, since other
+/// schemas can use dynamic keys which are not supported here.
 pub fn get_list_primary_key(
     schema_name: &str,
     store: &Store,
     data_path: &[String],
 ) -> Result<Option<String>, GetSchemaFromPathError> {
+    if store.canonical_schema_name(schema_name)? != "eos_config" {
+        return Err(GetSchemaFromPathError::UnsupportedSchemaName(
+            schema_name.to_owned(),
+        ));
+    }
+
+    // Empty value to pass to get_schema_from_path.
     let data_value = serde_json::Value::Object(serde_json::Map::new());
     let schema = match get_schema_from_path(schema_name, store, data_path, &data_value, None) {
         Ok(Some(schema)) => schema,
@@ -199,6 +205,10 @@ mod tests {
 
     fn get_list_primary_key_test_store() -> Store {
         Store::deserialize(json!({
+            "avd_design": {
+                "type": "dict",
+                "keys": {}
+            },
             "eos_config": {
                 "type": "dict",
                 "keys": {
@@ -494,6 +504,14 @@ mod tests {
     }
 
     #[test]
+    fn get_list_primary_key_eos_cli_config_gen_alias_ok() {
+        let store = get_list_primary_key_test_store();
+        let result = get_list_primary_key("eos_cli_config_gen", &store, &["top_level".into()]);
+
+        assert_eq!(result.unwrap(), Some("name".into()));
+    }
+
+    #[test]
     fn get_list_primary_key_nested_list_ok() {
         let store = get_list_primary_key_test_store();
         let result = get_list_primary_key(
@@ -522,10 +540,13 @@ mod tests {
     }
 
     #[test]
-    fn get_list_primary_key_invalid_schema_name_errors() {
+    fn get_list_primary_key_unsupported_schema_name_errors() {
         let store = get_list_primary_key_test_store();
-        let result = get_list_primary_key("not_a_schema", &store, &[]);
+        let result = get_list_primary_key("eos_designs", &store, &[]);
 
-        assert!(matches!(result, Err(GetSchemaFromPathError::StoreError(_))));
+        assert!(matches!(
+            result,
+            Err(GetSchemaFromPathError::UnsupportedSchemaName(name)) if name == "eos_designs"
+        ));
     }
 }
