@@ -40,7 +40,7 @@ pub(crate) mod _schema_store {
                 ))
             })?;
             store.as_resolved().map_err(|err| {
-                PyRuntimeError::new_err(format!("Error while resolving the Schema Store: {err}",))
+                PyRuntimeError::new_err(format!("Error while resolving the Schema Store: {err}"))
             })
         }?;
 

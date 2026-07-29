@@ -45,9 +45,8 @@ fn validation_result_from_validation_result_internal_error_returns_pyerr() {
         infos: vec![],
     };
 
-    let err = match ValidationResult::from_validation_result(result) {
-        Ok(_) => panic!("expected internal error to convert into PyErr"),
-        Err(err) => err,
+    let Err(err) = ValidationResult::from_validation_result(result) else {
+        panic!("expected internal error to convert into PyErr");
     };
 
     pyo3::Python::attach(|py| {
