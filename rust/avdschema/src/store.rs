@@ -110,6 +110,8 @@ pub enum SchemaStoreError {
 #[cfg(test)]
 mod tests {
 
+    use serde::Deserialize as _;
+
     #[cfg(feature = "dump_load_files")]
     use super::Load as _;
     #[cfg(feature = "dump_load_files")]
@@ -121,7 +123,6 @@ mod tests {
     use crate::utils::test_utils::get_test_store;
     #[cfg(feature = "dump_load_files")]
     use crate::utils::test_utils::get_tmp_file;
-    use serde::Deserialize as _;
 
     #[test]
     #[cfg(feature = "dump_load_files")]
