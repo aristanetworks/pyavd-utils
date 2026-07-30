@@ -119,6 +119,7 @@ impl From<&str> for Pattern {
 
 #[cfg(test)]
 mod tests {
+    use super::Pattern;
     use super::Str;
     use crate::any::AnySchema;
     use crate::boolean::Bool;
@@ -134,5 +135,29 @@ mod tests {
         let anyschema = &AnySchema::Bool(Bool::default());
         let result: Result<&Str, _> = anyschema.try_into();
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn unicode_perl_classes_compile() {
+        assert!(Pattern::from(r"\d+\s+\d+").get_compiled_pattern().is_ok());
+    }
+
+    #[test]
+    fn lookahead_compiles() {
+        assert!(
+            Pattern::from("(?=[a-z])(?=.*[0-9])[a-z0-9]+")
+                .get_compiled_pattern()
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn variable_lookbehind_compiles() {
+        assert!(Pattern::from("(?<=a+)b").get_compiled_pattern().is_ok());
+    }
+
+    #[test]
+    fn broad_unicode_property_is_rejected() {
+        assert!(Pattern::from(r"\p{Greek}+").get_compiled_pattern().is_err());
     }
 }

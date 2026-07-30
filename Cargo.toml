@@ -13,7 +13,9 @@ ordermap = { version = "1.2.0" }
 pyo3 = { version = "0.29.0" }
 pyo3-build-config = { version = "0.29.0" }
 pyo3-log = { version = "0.13.4" }
-fancy-regex = { version = "0.18" }
+fancy-regex = { version = "0.18", default-features = false }
+regex-automata = { version = "0.4", default-features = false }
+regex-syntax = { version = "0.8", default-features = false }
 serde = { version = "1.0.217" }
 serde_json = { version = "1.0.150" }
 serde_yaml = { version = "0.9.33" }

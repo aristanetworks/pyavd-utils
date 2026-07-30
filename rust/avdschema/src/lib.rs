@@ -21,6 +21,8 @@
 )]
 #![deny(unused_crate_dependencies)]
 
+use regex_automata as _;
+use regex_syntax as _;
 #[cfg(test)]
 use test_schema_store as _;
 

@@ -8,7 +8,7 @@ license.workspace = true
 workspace = true
 
 [dependencies]
-avdschema = { path = "../avdschema" }
+avdschema = { path = "../avdschema", default-features = false }
 derive_more = { workspace = true, features = ["display", "from"] }
 log = { workspace = true }
 ordermap = { workspace = true, features = ["serde"] }
@@ -17,7 +17,13 @@ serde_json = { workspace = true, features = [
     "arbitrary_precision", # To support very big numbers
     "preserve_order",
 ] }
-yaml-parser = { path = "../yaml-parser", features = ["avdschema"] }
+yaml-parser = { path = "../yaml-parser", default-features = false, features = ["avdschema-core"] }
+
+[features]
+default = ["gzip", "regex-perf", "yaml"]
+gzip = ["avdschema/gzip"]
+regex-perf = ["avdschema/regex-perf"]
+yaml = ["avdschema/yaml"]
 
 [lib]
 crate-type = ["cdylib", "lib"]

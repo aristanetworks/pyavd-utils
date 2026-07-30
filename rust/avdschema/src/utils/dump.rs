@@ -72,6 +72,7 @@ where
 #[derive(Debug, derive_more::Display, derive_more::From)]
 pub enum DumpError {
     JsonError(serde_json::Error),
+    #[cfg(feature = "yaml")]
     YamlError(serde_yaml::Error),
     #[cfg(feature = "dump_load_files")]
     IoError(std::io::Error),
