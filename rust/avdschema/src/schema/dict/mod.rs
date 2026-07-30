@@ -32,12 +32,8 @@ use crate::utils::schema_data::SchemaDataSequence as _;
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Dict {
-    #[allow(
-        clippy::doc_markdown,
-        reason = "snake_case describes the required casing style"
-    )]
     /// Dictionary of dictionary-keys in the format `{<keyname>: {<schema>}}`.
-    /// `keyname` must use snake_case.
+    /// `keyname` must use snake case.
     /// `schema` is the schema for each key. This is a recursive schema, so the value must conform to AVD Schema
     pub keys: Option<OrderMap<String, AnySchema>>,
     /// Dictionary of dynamic dictionary-keys in the format `{<variable.path>: {<schema>}}`.

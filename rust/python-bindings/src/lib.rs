@@ -7,11 +7,9 @@
     missing_docs,
     missing_debug_implementations,
     clippy::fn_params_excessive_bools,
-    clippy::manual_let_else,
     clippy::module_name_repetitions,
     clippy::needless_pass_by_value,
     clippy::struct_excessive_bools,
-    clippy::unnecessary_trailing_comma,
     clippy::unnecessary_wraps,
     reason = "PyO3-facing API names and test assertions mirror the exported Python module contract"
 )]
