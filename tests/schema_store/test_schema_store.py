@@ -38,11 +38,7 @@ def test_schema_store_get_list_primary_key(data_path: list[str], expected_primar
 
 
 @pytest.mark.usefixtures("init_store")
-def test_schema_store_get_list_primary_key_eos_cli_config_gen_alias() -> None:
-    assert get_list_primary_key("eos_cli_config_gen", ["ethernet_interfaces"]) == "name"
-
-
-@pytest.mark.usefixtures("init_store")
-def test_schema_store_get_list_primary_key_unsupported_schema_name_errors() -> None:
+@pytest.mark.parametrize("schema_name", ["eos_cli_config_gen", "eos_designs"])
+def test_schema_store_get_list_primary_key_unsupported_schema_name_errors(schema_name: str) -> None:
     with pytest.raises(RuntimeError, match="not supported"):
-        get_list_primary_key("eos_designs", [])
+        get_list_primary_key(schema_name, [])

@@ -115,7 +115,6 @@ pub enum GetSchemaFromPathError {
     StoreError(SchemaStoreError),
     Keys(SchemaKeysError),
     Resolve(SchemaResolverError),
-    UnsupportedSchemaName(String),
 }
 /// Given a data path return the schema covering this.
 /// Assumes that dynamic keys can only exist at the root level.
@@ -167,16 +166,13 @@ pub fn get_list_primary_key(
     store: &Store,
     data_path: &[String],
 ) -> Result<Option<String>, GetSchemaFromPathError> {
-    let canonical_schema_name = store.canonical_schema_name(schema_name)?;
-    if !matches!(canonical_schema_name, "eos_config" | "eos_cli_config_gen") {
-        return Err(GetSchemaFromPathError::UnsupportedSchemaName(
-            schema_name.to_owned(),
-        ));
+    if schema_name != "eos_config" {
+        return Err(SchemaStoreError::InvalidSchemaName(schema_name.to_owned()).into());
     }
 
     // Empty value to pass to get_schema_from_path.
     let data_value = serde_json::Value::Object(serde_json::Map::new());
-    let schema = match get_schema_from_path(schema_name, store, data_path, &data_value, None) {
+    let schema = match get_schema_from_path("eos_config", store, data_path, &data_value, None) {
         Ok(Some(schema)) => schema,
         Ok(None)
         | Err(GetSchemaFromPathError::Resolve(SchemaResolverError::SchemaWalkError(_))) => {
@@ -194,7 +190,6 @@ pub fn get_list_primary_key(
 #[cfg(test)]
 mod tests {
     use ordermap::OrderMap;
-    use serde::Deserialize as _;
     use serde_json::json;
 
     use super::*;
@@ -203,52 +198,6 @@ mod tests {
     use crate::list::List;
     use crate::str::Str;
     use crate::utils::test_utils::get_test_store;
-
-    fn get_list_primary_key_test_store() -> Store {
-        Store::deserialize(json!({
-            "avd_design": {
-                "type": "dict",
-                "keys": {}
-            },
-            "eos_config": {
-                "type": "dict",
-                "keys": {
-                    "top_level": {
-                        "type": "list",
-                        "primary_key": "name",
-                        "items": {
-                            "type": "dict",
-                            "keys": {
-                                "name": {"type": "str"}
-                            }
-                        }
-                    },
-                    "outer": {
-                        "type": "list",
-                        "primary_key": "name",
-                        "items": {
-                            "type": "dict",
-                            "keys": {
-                                "name": {"type": "str"},
-                                "inner": {
-                                    "type": "list",
-                                    "primary_key": "id",
-                                    "items": {
-                                        "type": "dict",
-                                        "keys": {
-                                            "id": {"type": "str"}
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    },
-                    "leaf": {"type": "str"}
-                }
-            }
-        }))
-        .unwrap()
-    }
 
     #[test]
     fn schema_keys_try_from_schema_with_value_ok() {
@@ -498,40 +447,7 @@ mod tests {
 
     #[test]
     fn get_list_primary_key_ok() {
-        let store = get_list_primary_key_test_store();
-        let result = get_list_primary_key("eos_config", &store, &["top_level".into()]);
-
-        assert_eq!(result.unwrap(), Some("name".into()));
-    }
-
-    #[test]
-    fn get_list_primary_key_eos_cli_config_gen_alias_ok() {
-        let store = get_list_primary_key_test_store();
-        let result = get_list_primary_key("eos_cli_config_gen", &store, &["top_level".into()]);
-
-        assert_eq!(result.unwrap(), Some("name".into()));
-    }
-
-    #[test]
-    fn get_list_primary_key_eos_config_alias_ok() {
-        let store = Store::deserialize(json!({
-            "eos_cli_config_gen": {
-                "type": "dict",
-                "keys": {
-                    "top_level": {
-                        "type": "list",
-                        "primary_key": "name",
-                        "items": {
-                            "type": "dict",
-                            "keys": {
-                                "name": {"type": "str"}
-                            }
-                        }
-                    }
-                }
-            }
-        }))
-        .unwrap();
+        let store = get_test_store();
         let result = get_list_primary_key("eos_config", &store, &["top_level".into()]);
 
         assert_eq!(result.unwrap(), Some("name".into()));
@@ -539,7 +455,7 @@ mod tests {
 
     #[test]
     fn get_list_primary_key_nested_list_ok() {
-        let store = get_list_primary_key_test_store();
+        let store = get_test_store();
         let result = get_list_primary_key(
             "eos_config",
             &store,
@@ -551,15 +467,15 @@ mod tests {
 
     #[test]
     fn get_list_primary_key_non_list_path_is_none() {
-        let store = get_list_primary_key_test_store();
-        let result = get_list_primary_key("eos_config", &store, &["leaf".into()]);
+        let store = get_test_store();
+        let result = get_list_primary_key("eos_config", &store, &["key2".into()]);
 
         assert_eq!(result.unwrap(), None);
     }
 
     #[test]
     fn get_list_primary_key_unknown_path_is_none() {
-        let store = get_list_primary_key_test_store();
+        let store = get_test_store();
         let result = get_list_primary_key("eos_config", &store, &["unknown_key".into()]);
 
         assert_eq!(result.unwrap(), None);
@@ -567,12 +483,14 @@ mod tests {
 
     #[test]
     fn get_list_primary_key_unsupported_schema_name_errors() {
-        let store = get_list_primary_key_test_store();
-        let result = get_list_primary_key("eos_designs", &store, &[]);
+        let store = get_test_store();
+        for schema_name in ["eos_cli_config_gen", "eos_designs"] {
+            let result = get_list_primary_key(schema_name, &store, &[]);
 
-        assert!(matches!(
-            result,
-            Err(GetSchemaFromPathError::UnsupportedSchemaName(name)) if name == "eos_designs"
-        ));
+            assert!(matches!(
+                result,
+                Err(GetSchemaFromPathError::StoreError(SchemaStoreError::InvalidSchemaName(name))) if name == schema_name
+            ));
+        }
     }
 }
