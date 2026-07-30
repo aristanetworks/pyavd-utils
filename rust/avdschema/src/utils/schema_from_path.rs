@@ -167,7 +167,8 @@ pub fn get_list_primary_key(
     store: &Store,
     data_path: &[String],
 ) -> Result<Option<String>, GetSchemaFromPathError> {
-    if store.canonical_schema_name(schema_name)? != "eos_config" {
+    let canonical_schema_name = store.canonical_schema_name(schema_name)?;
+    if !matches!(canonical_schema_name, "eos_config" | "eos_cli_config_gen") {
         return Err(GetSchemaFromPathError::UnsupportedSchemaName(
             schema_name.to_owned(),
         ));
@@ -507,6 +508,31 @@ mod tests {
     fn get_list_primary_key_eos_cli_config_gen_alias_ok() {
         let store = get_list_primary_key_test_store();
         let result = get_list_primary_key("eos_cli_config_gen", &store, &["top_level".into()]);
+
+        assert_eq!(result.unwrap(), Some("name".into()));
+    }
+
+    #[test]
+    fn get_list_primary_key_eos_config_alias_ok() {
+        let store = Store::deserialize(json!({
+            "eos_cli_config_gen": {
+                "type": "dict",
+                "keys": {
+                    "top_level": {
+                        "type": "list",
+                        "primary_key": "name",
+                        "items": {
+                            "type": "dict",
+                            "keys": {
+                                "name": {"type": "str"}
+                            }
+                        }
+                    }
+                }
+            }
+        }))
+        .unwrap();
+        let result = get_list_primary_key("eos_config", &store, &["top_level".into()]);
 
         assert_eq!(result.unwrap(), Some("name".into()));
     }

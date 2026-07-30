@@ -45,7 +45,7 @@ impl Store {
             "eos_cli_config_gen" => "eos_config",
             "avd_design" => "eos_designs",
             "eos_config" => "eos_cli_config_gen",
-            _ => return Err(SchemaStoreError::InvalidSchemaName(schema_name.to_owned())),
+            _ => schema_name,
         };
 
         let schema = self
@@ -64,7 +64,12 @@ impl Store {
         &self,
         schema_name: &'a str,
     ) -> Result<&'a str, SchemaStoreError> {
-        self.fetch(schema_name).map(|(name, _)| name)
+        self.fetch(schema_name)?;
+        match schema_name {
+            "eos_cli_config_gen" | "eos_config" => Ok("eos_config"),
+            "eos_designs" | "avd_design" => Ok("avd_design"),
+            _ => Ok(schema_name),
+        }
     }
 
     pub fn as_resolved(mut self) -> Result<Self, SchemaResolverError> {
@@ -116,6 +121,7 @@ mod tests {
     use crate::utils::test_utils::get_test_store;
     #[cfg(feature = "dump_load_files")]
     use crate::utils::test_utils::get_tmp_file;
+    use serde::Deserialize as _;
 
     #[test]
     #[cfg(feature = "dump_load_files")]
@@ -232,6 +238,27 @@ mod tests {
             store.canonical_schema_name("eos_designs").unwrap(),
             "avd_design"
         );
+    }
+
+    #[test]
+    fn canonical_schema_name_returns_canonical_name_for_old_store_key() {
+        let store = Store::deserialize(serde_json::json!({
+            "eos_cli_config_gen": {
+                "type": "dict",
+                "keys": {}
+            }
+        }))
+        .unwrap();
+
+        assert_eq!(
+            store.canonical_schema_name("eos_cli_config_gen").unwrap(),
+            "eos_config"
+        );
+        assert_eq!(
+            store.canonical_schema_name("eos_config").unwrap(),
+            "eos_config"
+        );
+        assert!(store.get("eos_config").is_ok());
     }
 
     #[test]
