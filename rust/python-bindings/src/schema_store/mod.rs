@@ -67,7 +67,9 @@ pub(crate) mod _schema_store {
     ) -> PyResult<Option<String>> {
         get_avdschema_list_primary_key(schema_name, get_store()?, &data_path).map_err(
             |err| match err {
-                GetSchemaFromPathError::StoreError(SchemaStoreError::InvalidSchemaName(name)) => {
+                GetSchemaFromPathError::StoreError(SchemaStoreError::InvalidSchemaName(name))
+                    if name == schema_name =>
+                {
                     PyRuntimeError::new_err(format!(
                         "Schema name '{name}' is not supported by get_list_primary_key. Supported schema names are 'eos_config'."
                     ))
