@@ -5,7 +5,9 @@
 # ruff: noqa: PYI021
 from pathlib import Path
 
-def get_list_primary_key(schema_name: str, data_path: list[str]) -> str | None:
+from typing import Literal
+
+def get_list_primary_key(schema_name: Literal["eos_config"], data_path: list[str]) -> str | None:
     """
     Return the primary key for a list schema at the given data path.
 
