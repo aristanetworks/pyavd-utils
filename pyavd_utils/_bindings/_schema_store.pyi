@@ -4,7 +4,6 @@
 # Including docstrings since that is why we want this.
 # ruff: noqa: PYI021
 from pathlib import Path
-
 from typing import Literal
 
 def get_list_primary_key(schema_name: Literal["eos_config"], data_path: list[str]) -> str | None:
