@@ -5,7 +5,8 @@
 
 from __future__ import annotations
 
-from ._bindings import _passwords
+# The native Rust module is not built in CI, so this suppression is required there.
+from ._bindings import _passwords  # pyright: ignore[reportMissingModuleSource]
 
 cbc_decrypt = _passwords.cbc_decrypt
 cbc_encrypt = _passwords.cbc_encrypt

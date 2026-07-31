@@ -68,7 +68,8 @@ build_wheel = [
     "cibuildwheel==3.3.0; python_version >= '3.11'",
 ]
 dev = [
-  "bump-my-version>=1.3.0",
+    "bump-my-version>=1.3.0",
+    "pyright>=1.1.411",
 ]
 
 # -------------------------------------- #

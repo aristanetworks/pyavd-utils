@@ -5,7 +5,8 @@
 
 from __future__ import annotations
 
-from ._bindings import _validation
+# The native Rust module is not built in CI, so this suppression is required there.
+from ._bindings import _validation  # pyright: ignore[reportMissingModuleSource]
 
 Configuration = _validation.Configuration
 Deprecation = _validation.Deprecation
