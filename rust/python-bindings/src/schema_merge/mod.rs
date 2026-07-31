@@ -25,6 +25,8 @@ pub(crate) mod _schema_merge {
     /// by primary key. Replace/keep retain their full-list semantics.
     /// Keep-merge deep-merges matching primary-key items while keeping the
     /// existing list.
+    /// Items with a missing or null primary key follow the ordinary list
+    /// strategy, including full-value deduplication for unique strategies.
     pub(crate) fn merge_json(
         py: pyo3::Python<'_>,
         base_as_json: &str,

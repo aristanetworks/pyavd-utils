@@ -41,6 +41,8 @@ pub trait StoreSchemaMerge {
     /// For lists with schema primary keys, append/prepend strategies deep-merge
     /// by primary key. Replace/keep retain their full-list semantics. Keep-merge
     /// deep-merges matching primary-key items while keeping the existing list.
+    /// Items with a missing or null primary key follow the ordinary list strategy,
+    /// including full-value deduplication for the unique strategies.
     fn merge_json<I, S>(
         &self,
         base: &str,
@@ -61,6 +63,8 @@ pub trait StoreSchemaMerge {
     /// For lists with schema primary keys, append/prepend strategies deep-merge
     /// by primary key. Replace/keep retain their full-list semantics. Keep-merge
     /// deep-merges matching primary-key items while keeping the existing list.
+    /// Items with a missing or null primary key follow the ordinary list strategy,
+    /// including full-value deduplication for the unique strategies.
     fn merge_value<I>(
         &self,
         base: Value,
@@ -107,6 +111,9 @@ impl StoreSchemaMerge for Store {
     where
         I: IntoIterator<Item = Value>,
     {
+        self.get(schema_name).map_err(|err| {
+            SchemaMergeError::SchemaPath(avdschema::GetSchemaFromPathError::StoreError(err))
+        })?;
         for next in nexts {
             let root = values_contain_mergeable_sequences(&base, &next).then(|| base.clone());
             let context = MergeContext {
@@ -181,6 +188,9 @@ trait MergeableValue: Clone + Sized {
     /// JSON currently uses the full value. A YAML implementation may choose a normalized semantic
     /// key so comments, spans, or node properties do not affect uniqueness.
     fn dedup_key(&self) -> Self::DedupKey;
+
+    /// Return whether this value represents null/missing data.
+    fn is_null(&self) -> bool;
 }
 
 /// Mutable mapping operations required by schema merge.
@@ -307,6 +317,10 @@ impl MergeableValue for Value {
 
     fn dedup_key(&self) -> Self::DedupKey {
         self.clone()
+    }
+
+    fn is_null(&self) -> bool {
+        Value::is_null(self)
     }
 }
 
@@ -597,8 +611,21 @@ fn merge_primary_key_sequence_items<V: MergeableValue>(
                     is_prepend: prepend,
                 },
             );
-        } else if context.list_merge == ListMerge::KeepMerge {
-            continue;
+        } else {
+            if context.list_merge == ListMerge::KeepMerge {
+                continue;
+            }
+            if matches!(
+                context.list_merge,
+                ListMerge::AppendUnique | ListMerge::PrependUnique
+            ) {
+                let dedup_key = next_value.dedup_key();
+                if sequence_contains_dedup_key::<V>(base, &dedup_key)
+                    || sequence_contains_dedup_key::<V>(&prepend_items, &dedup_key)
+                {
+                    continue;
+                }
+            }
         }
         if prepend {
             prepend_items.push(next_value);
@@ -639,7 +666,16 @@ fn item_index_by_primary_value<V: MergeableValue>(
 }
 
 fn item_primary_value<'a, V: MergeableValue>(item: &'a V, primary_key: &str) -> Option<&'a V> {
-    item.as_mapping()?.get(primary_key)
+    item.as_mapping()?
+        .get(primary_key)
+        .filter(|value| !value.is_null())
+}
+
+fn sequence_contains_dedup_key<V: MergeableValue>(
+    sequence: &V::Sequence,
+    dedup_key: &V::DedupKey,
+) -> bool {
+    sequence.iter().any(|item| item.dedup_key().eq(dedup_key))
 }
 
 fn merge_remaining_sequence_items<V: MergeableValue>(
@@ -1188,6 +1224,57 @@ mod tests {
     }
 
     #[test]
+    fn null_primary_key_items_follow_append_prepend_and_keep_merge_semantics() {
+        let base = json!({"ethernet_interfaces": [{"name": null, "description": "base"}]});
+        let next = json!({"ethernet_interfaces": [{"name": null, "description": "next"}]});
+
+        assert_eq!(
+            merge(base.clone(), next.clone(), ListMerge::Append),
+            json!({"ethernet_interfaces": [
+                {"name": null, "description": "base"},
+                {"name": null, "description": "next"}
+            ]})
+        );
+        assert_eq!(
+            merge(base.clone(), next.clone(), ListMerge::Prepend),
+            json!({"ethernet_interfaces": [
+                {"name": null, "description": "next"},
+                {"name": null, "description": "base"}
+            ]})
+        );
+        assert_eq!(merge(base.clone(), next, ListMerge::KeepMerge), base);
+    }
+
+    #[test]
+    fn unique_strategies_deduplicate_primary_key_items_without_usable_keys() {
+        let base = json!({"ethernet_interfaces": [{"description": "same"}]});
+        let next = json!({"ethernet_interfaces": [
+            {"description": "same"},
+            {"description": "new"},
+            {"description": "new"},
+            {"name": null, "description": "null"},
+            {"name": null, "description": "null"}
+        ]});
+
+        assert_eq!(
+            merge(base.clone(), next.clone(), ListMerge::AppendUnique),
+            json!({"ethernet_interfaces": [
+                {"description": "same"},
+                {"description": "new"},
+                {"name": null, "description": "null"}
+            ]})
+        );
+        assert_eq!(
+            merge(base, next, ListMerge::PrependUnique),
+            json!({"ethernet_interfaces": [
+                {"description": "new"},
+                {"name": null, "description": "null"},
+                {"description": "same"}
+            ]})
+        );
+    }
+
+    #[test]
     fn append_unique_deduplicates_unmerged_object_values() {
         let result = merge(
             json!({"unknown_list": [{"id": 1}]}),
@@ -1249,14 +1336,19 @@ mod tests {
 
     #[test]
     fn invalid_schema_name_is_reported() {
-        let result = test_store().merge_value(
-            json!({"servers": ["one"]}),
-            vec![json!({"servers": ["two"]})],
-            "invalid",
-            ListMerge::AppendUnique,
-        );
+        for (base, next, list_merge) in [
+            (
+                json!({"router_bgp": {"as": "65000"}}),
+                json!({"router_bgp": {"as": "65001"}}),
+                ListMerge::AppendUnique,
+            ),
+            (json!(["one"]), json!(["two"]), ListMerge::Replace),
+            (json!(["one"]), json!(["two"]), ListMerge::Keep),
+        ] {
+            let result = test_store().merge_value(base, [next], "invalid", list_merge);
 
-        assert!(matches!(result, Err(SchemaMergeError::SchemaPath(_))));
+            assert!(matches!(result, Err(SchemaMergeError::SchemaPath(_))));
+        }
     }
 
     #[test]

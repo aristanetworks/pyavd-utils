@@ -39,6 +39,34 @@ def test_schema_merge_invalid_strategy() -> None:
 
 
 @pytest.mark.usefixtures("init_store")
+def test_schema_merge_invalid_schema_name_is_always_reported() -> None:
+    with pytest.raises(RuntimeError, match="Unable to look up schema path"):
+        merge_json(
+            '{"hostname": "base"}',
+            ['{"hostname": "next"}'],
+            cast("Any", "invalid"),
+        )
+
+
+@pytest.mark.usefixtures("init_store")
+def test_schema_merge_unique_strategy_deduplicates_items_without_primary_keys() -> None:
+    merged = merge_json(
+        '{"ethernet_interfaces": [{"description": "same"}]}',
+        [
+            ('{"ethernet_interfaces": [{"description": "same"},{"description": "new"},{"description": "new"}]}'),
+        ],
+        "eos_config",
+    )
+
+    assert json.loads(merged) == {
+        "ethernet_interfaces": [
+            {"description": "same"},
+            {"description": "new"},
+        ],
+    }
+
+
+@pytest.mark.usefixtures("init_store")
 def test_schema_merge_accepts_nexts_keyword() -> None:
     merged = merge_json(
         base_as_json='{"hostname": "base"}',
@@ -53,18 +81,10 @@ def test_schema_merge_accepts_nexts_keyword() -> None:
 def test_schema_merge_keep_merge_merges_primary_key_matches_only() -> None:
     merged = merge_json(
         base_as_json=(
-            '{"ethernet_interfaces": ['
-            '{"name": "Ethernet1", "description": "base", "shutdown": false},'
-            '{"name": "Ethernet2", "description": "base only"}'
-            "]}"
+            '{"ethernet_interfaces": [{"name": "Ethernet1", "description": "base", "shutdown": false},{"name": "Ethernet2", "description": "base only"}]}'
         ),
         nexts_as_json=[
-            (
-                '{"ethernet_interfaces": ['
-                '{"name": "Ethernet1", "shutdown": true},'
-                '{"name": "Ethernet3", "description": "next only"}'
-                "]}"
-            ),
+            ('{"ethernet_interfaces": [{"name": "Ethernet1", "shutdown": true},{"name": "Ethernet3", "description": "next only"}]}'),
         ],
         schema_name="eos_config",
         list_merge="keep_merge",

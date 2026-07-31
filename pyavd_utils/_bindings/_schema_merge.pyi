@@ -20,6 +20,7 @@ def merge_json(
 
     For lists with schema primary keys, append/prepend strategies deep-merge by primary key. Replace/keep retain their full-list semantics.
     Keep-merge deep-merges matching primary-key items while keeping the existing list.
+    Items with a missing or null primary key follow the ordinary list strategy, including full-value deduplication for unique strategies.
 
     Args:
         base_as_json: Base structured data dumped as JSON.
