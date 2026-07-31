@@ -5,6 +5,7 @@
 use std::sync::OnceLock;
 
 use fancy_regex::Regex;
+use fancy_regex::RegexBuilder;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value;
@@ -102,7 +103,11 @@ impl Pattern {
     }
     pub fn get_compiled_pattern(&self) -> Result<&Regex, &fancy_regex::Error> {
         self.compiled_pattern
-            .get_or_init(|| Regex::new(format!("^{}$", &self.pattern).as_str()))
+            .get_or_init(|| {
+                RegexBuilder::new(format!("^{}$", &self.pattern).as_str())
+                    .unicode_mode(false)
+                    .build()
+            })
             .as_ref()
     }
 }
@@ -138,7 +143,7 @@ mod tests {
     }
 
     #[test]
-    fn unicode_perl_classes_compile() {
+    fn perl_classes_compile() {
         assert!(Pattern::from(r"\d+\s+\d+").get_compiled_pattern().is_ok());
     }
 
