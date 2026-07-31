@@ -241,3 +241,21 @@ impl Emitter<'_> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::Emitter;
+    use crate::span::Span;
+
+    #[test]
+    fn multiline_key_checks_ignore_spans_without_utf8_boundaries() {
+        let mut block_emitter = Emitter::new("é:");
+        block_emitter.check_multiline_implicit_key(Span::new(1..2));
+        assert!(block_emitter.take_errors().is_empty());
+
+        let mut flow_emitter = Emitter::new(": é");
+        flow_emitter.pos = 1;
+        flow_emitter.check_multiline_flow_key(Span::new(2..2), Span::new(3..3));
+        assert!(flow_emitter.take_errors().is_empty());
+    }
+}

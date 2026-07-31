@@ -702,7 +702,11 @@ mod tests {
     }
 
     #[test]
-    fn negative_prefixed_int_min_i128_resolves_to_concrete_i128() {
+    fn negative_prefixed_ints_resolve_to_concrete_integers() {
+        assert_eq!(
+            resolve_untagged_scalar(Cow::Borrowed("-0o52"), ScalarStyle::Plain),
+            ResolvedScalar::Int(Integer::I64(-42))
+        );
         assert_eq!(
             resolve_untagged_scalar(
                 Cow::Borrowed("-0x80000000000000000000000000000000"),
