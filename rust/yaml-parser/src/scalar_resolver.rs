@@ -182,15 +182,14 @@ fn resolve_plain_numeric<'a>(text: Cow<'a, str>, first: &'_ u8) -> Option<Resolv
 
 /// Unsigned plain-scalar fast path: cheap prefix handling before decimal
 /// classification.
-#[allow(clippy::indexing_slicing, reason = "bytes length tracked")]
 #[allow(clippy::inline_always, reason = "Proven performance gain")]
 #[inline(always)]
 fn resolve_unsigned_numeric(text: Cow<'_, str>) -> Option<ResolvedScalar<'_>> {
     let input = text.as_ref();
     let bytes = input.as_bytes();
-    if bytes.len() > 2 && bytes[0] == b'0' {
+    if let [b'0', prefix, _, ..] = bytes {
         let sign = Sign::Positive;
-        match bytes[1] {
+        match prefix {
             b'o' => {
                 return input
                     .strip_prefix("0o")
@@ -218,7 +217,6 @@ fn resolve_unsigned_numeric(text: Cow<'_, str>) -> Option<ResolvedScalar<'_>> {
 
 /// Signed plain-scalar fast path: cheap reject/prefix handling before decimal
 /// classification.
-#[allow(clippy::string_slice, reason = "We matched the previous characters")]
 #[allow(clippy::inline_always, reason = "Proven performance gain")]
 #[inline(always)]
 fn resolve_signed_numeric(text: Cow<'_, str>) -> Option<ResolvedScalar<'_>> {
@@ -229,10 +227,16 @@ fn resolve_signed_numeric(text: Cow<'_, str>) -> Option<ResolvedScalar<'_>> {
     match bytes.first()? {
         b'0' => match bytes.get(1) {
             Some(b'o') => {
-                return parse_prefixed_int(sign, &unsigned[2..], 8).map(ResolvedScalar::Int);
+                return unsigned
+                    .get(2..)
+                    .and_then(|digits| parse_prefixed_int(sign, digits, 8))
+                    .map(ResolvedScalar::Int);
             }
             Some(b'x') => {
-                return parse_prefixed_int(sign, &unsigned[2..], 16).map(ResolvedScalar::Int);
+                return unsigned
+                    .get(2..)
+                    .and_then(|digits| parse_prefixed_int(sign, digits, 16))
+                    .map(ResolvedScalar::Int);
             }
             _ => {}
         },

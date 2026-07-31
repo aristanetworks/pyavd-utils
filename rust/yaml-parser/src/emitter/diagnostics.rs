@@ -31,8 +31,9 @@ impl Emitter<'_> {
         if start >= end {
             return;
         }
-        #[allow(clippy::string_slice, reason = "Span positions are UTF-8 boundaries")]
-        let key_text = &self.input[start..end];
+        let Some(key_text) = self.input.get(start..end) else {
+            return;
+        };
 
         if key_text.contains('\n') {
             let colon_span = (0..10)
@@ -68,8 +69,9 @@ impl Emitter<'_> {
         if start >= end {
             return;
         }
-        #[allow(clippy::string_slice, reason = "Span positions are UTF-8 boundaries")]
-        let key_text = &self.input[start..end];
+        let Some(key_text) = self.input.get(start..end) else {
+            return;
+        };
 
         if key_text.contains('\n') {
             self.error(ErrorKind::MultilineImplicitKey, colon_span);
