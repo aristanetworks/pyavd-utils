@@ -99,12 +99,26 @@ repos:
           - --all-targets
           - --all-features
         files: ^rust/
-      # Check licenses of Rust dependencies
+      # Check security and source policy for all Rust dependencies, including dev dependencies.
       - id: cargo-deny
+        name: Check Rust dependency advisories, bans, and sources
         args:
           - --locked
           - --all-features
           - check
+          - advisories
+          - bans
+          - sources
+        files: ^rust/
+      # Check licenses for dependencies included in the release product.
+      - id: cargo-deny
+        name: Check release Rust dependency licenses
+        args:
+          - --locked
+          - --all-features
+          - check
+          - --exclude-dev
+          - licenses
         files: ^rust/
       - id: cargo-about
         name: Generate third-party Rust licenses
