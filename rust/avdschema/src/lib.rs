@@ -50,5 +50,7 @@ pub use self::utils::load::LoadFromFragments;
 pub use self::utils::schema_data::SchemaDataMapping;
 pub use self::utils::schema_data::SchemaDataSequence;
 pub use self::utils::schema_data::SchemaDataValue;
+pub use self::utils::schema_from_path::GetSchemaFromPathError;
 pub use self::utils::schema_from_path::SchemaKeys;
+pub use self::utils::schema_from_path::get_list_primary_key;
 pub use self::utils::schema_from_path::get_schema_from_path;

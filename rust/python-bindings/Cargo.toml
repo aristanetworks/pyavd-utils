@@ -1,5 +1,5 @@
 [package]
-name = "pyvalidation"
+name = "python-bindings"
 version.workspace = true
 edition = "2024"
 license.workspace = true
@@ -16,14 +16,21 @@ test_schema_store = { path = "../test_schema_store" }
 
 [dependencies]
 avdschema = { path = "../avdschema", features = ["dump_load_files"] }
-validation = { path = "../validation" }
 log = { workspace = true }
-pyo3 = { workspace = true, "features" = ["abi3-py310"] }
+passwords = { path = "../passwords", default-features = false, optional = true }
+pyo3 = { workspace = true, features = ["abi3-py310"] }
 pyo3-log = { workspace = true }
 serde_json = { workspace = true, features = [
-    "arbitrary_precision", # To support very big numbers
+    "arbitrary_precision",
     "preserve_order",
 ] }
+validation = { path = "../validation" }
+
+[features]
+default = ["cbc", "sha512", "simple-7"]
+cbc = ["dep:passwords", "passwords/cbc"]
+sha512 = ["dep:passwords", "passwords/sha512"]
+simple-7 = ["dep:passwords", "passwords/simple-7"]
 
 [lib]
 crate-type = ["cdylib", "lib"]

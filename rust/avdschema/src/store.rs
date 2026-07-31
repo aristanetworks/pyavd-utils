@@ -49,6 +49,7 @@ impl Store {
             .get(schema_alias)
             .ok_or_else(|| SchemaStoreError::InvalidSchemaName(schema_name.to_owned()))
     }
+
     pub fn as_resolved(mut self) -> Result<Self, SchemaResolverError> {
         // Clone each schema so we can resolve them while still being able to resolve $refs between them.
         let cloned_schemas = self.schemas.clone();

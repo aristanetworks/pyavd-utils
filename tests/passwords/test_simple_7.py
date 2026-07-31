@@ -46,6 +46,13 @@ SIMPLE_7_ENCRYPT_TEST_DATA = [
         id="Invalid salt value (16)",
     ),
     pytest.param(
+        "",
+        5,
+        "",
+        pytest.raises(ValueError, match="Password must not be empty"),
+        id="Empty password",
+    ),
+    pytest.param(
         "test_password",
         99,
         "",

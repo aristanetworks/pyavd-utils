@@ -1,9 +1,8 @@
-# Copyright (c) 2025-2026 Arista Networks, Inc.
+# Copyright (c) 2026 Arista Networks, Inc.
 # Use of this source code is governed by the Apache License 2.0
 # that can be found in the LICENSE file.
 # Including docstrings since that is why we want this. Also allowing bad name style to match pyo3 output.
 # ruff: noqa: PYI021
-from pathlib import Path
 from typing import Literal
 
 class Configuration:
@@ -74,20 +73,6 @@ class ValidatedDataResult:
 
     validation_result: ValidationResult
     validated_data: str | None
-
-def init_store_from_file(file: Path) -> None:
-    """
-    Initialize the Schema store from a file containing the full schema store.
-
-    Usually this is the schema.json.gz file built with pyavd.
-    This must be called before running any validations, since the store is a write-once static.
-
-    Args:
-        file: Path to the json, yml or json.gz file holding the schema store.
-
-    Raises:
-        RuntimeError: For any issue hit during loading, deserializing, combining and resolving schemas.
-    """
 
 def validate_json(
     data_as_json: str,

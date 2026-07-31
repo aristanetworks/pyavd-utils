@@ -46,10 +46,10 @@ jobs:
     outputs:
       target_version: ${{ steps.target_version.outputs.TARGET_VERSION }}
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
       - name: Install `bump-my-version`
@@ -86,7 +86,7 @@ jobs:
           merge-multiple: true
           pattern: pyavd-utils-wheels-*
       - name: Publish distribution to PyPI
-        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # v1.14.0
+        uses: pypa/gh-action-pypi-publish@ba38be9e461d3875417946c167d0b5f3d385a247 # v1.14.1
         with:
           repository-url: https://test.pypi.org/legacy/
           skip-existing: true
@@ -110,13 +110,13 @@ jobs:
         python: ["3.10", "3.11", "3.12", "3.13", "3.14"]
     steps:
       - name: Checkout only the tests
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           sparse-checkout: |-
             tests
             pyproject.toml
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: ${{ matrix.python }}
       - name: Install `pyavd-utils` from test Pypi
@@ -160,7 +160,7 @@ jobs:
           mkdir /opt/bin
           ln -s /usr/bin/node /opt/bin/node
       - name: Checkout only the tests
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           sparse-checkout: |-
@@ -196,4 +196,4 @@ jobs:
           merge-multiple: true
           pattern: pyavd-utils-wheels-*
       - name: Publish distribution to PyPI
-        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # v1.14.0
+        uses: pypa/gh-action-pypi-publish@ba38be9e461d3875417946c167d0b5f3d385a247 # v1.14.1

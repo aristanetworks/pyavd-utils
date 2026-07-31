@@ -11,11 +11,10 @@ title: Rust crate layout
 graph LR
 validation["crate validation"]
 avdschema["crate avdschema"]
-pyvalidation["crate pyvalidation"]
 validation --->|depends on| avdschema
-pyvalidation --->|depends on| avdschema
-pyvalidation --->|depends on| validation
 passwords["crate passwords"]
-pypasswords["crate pypasswords"]
-pypasswords --->|depends on| passwords
+python_bindings["crate python-bindings"]
+python_bindings --->|depends on| avdschema
+python_bindings --->|depends on| validation
+python_bindings --->|depends on| passwords
 ```

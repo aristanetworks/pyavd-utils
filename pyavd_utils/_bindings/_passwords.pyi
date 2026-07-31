@@ -1,7 +1,7 @@
-# Copyright (c) 2025-2026 Arista Networks, Inc.
+# Copyright (c) 2026 Arista Networks, Inc.
 # Use of this source code is governed by the Apache License 2.0
 # that can be found in the LICENSE file.
-# For now we allow docstrings in stubs
+# Including docstrings since that is why we want this.
 # ruff: noqa: PYI021
 
 def sha512_crypt(password: str, salt: str) -> str:
@@ -33,7 +33,7 @@ def cbc_encrypt(key: str, data: str) -> str:
         str: The encrypted data, encoded in base64.
 
     Raises:
-      RunTimeError: If anything fails during encryption.
+      RuntimeError: If anything fails during encryption.
     """
 
 def cbc_decrypt(key: str, encrypted_data: str) -> str:
@@ -49,14 +49,12 @@ def cbc_decrypt(key: str, encrypted_data: str) -> str:
 
     Raises:
       ValueError: If encrypted_data is not a valid base64 string.
-      RunTimeError: If anything fails during decryption.
+      RuntimeError: If anything fails during decryption.
     """
 
-def cbc_verify(key: str, encrypted_data: str) -> str:
+def cbc_verify(key: str, encrypted_data: str) -> bool:
     """
     Verify if an encrypted password is decryptable with the given key.
-
-    It does not return the password but only raises an error if the password cannot be decrypted.
 
     Args:
         key: The decryption key.

@@ -41,6 +41,36 @@ pub(crate) fn get_test_store() -> Store {
                         "type": "str",
                         "description": "this is from key2",
                     },
+                    "top_level": {
+                        "type": "list",
+                        "primary_key": "name",
+                        "items": {
+                            "type": "dict",
+                            "keys": {
+                                "name": {"type": "str"}
+                            }
+                        }
+                    },
+                    "outer": {
+                        "type": "list",
+                        "primary_key": "name",
+                        "items": {
+                            "type": "dict",
+                            "keys": {
+                                "name": {"type": "str"},
+                                "inner": {
+                                    "type": "list",
+                                    "primary_key": "id",
+                                    "items": {
+                                        "type": "dict",
+                                        "keys": {
+                                            "id": {"type": "str"}
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 },
                 "dynamic_keys": {
                     "dynamic.key": {

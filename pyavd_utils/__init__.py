@@ -2,11 +2,11 @@
 # Use of this source code is governed by the Apache License 2.0
 # that can be found in the LICENSE file.
 
-from . import passwords, validation
+from . import passwords, schema_store, validation
 
 __author__ = "Arista Networks"
 __copyright__ = "Copyright 2025 Arista Networks"
 __license__ = "Apache 2.0"
 __version__ = "0.0.7"
 
-__all__ = ["passwords", "validation"]
+__all__ = ["passwords", "schema_store", "validation"]

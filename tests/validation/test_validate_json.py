@@ -3,7 +3,7 @@
 # that can be found in the LICENSE file.
 import pytest
 
-from pyavd_utils.validation import validate_json
+from pyavd_utils.validation import validate_json, validate_json_with_adhoc_schema
 
 
 @pytest.mark.usefixtures("init_store")
@@ -21,6 +21,29 @@ def test_validate_json() -> None:
 
     assert len(validation_result.deprecations) == 0
     assert len(validation_result.ignored_eos_config_keys) == 0
+
+
+@pytest.mark.usefixtures("init_store")
+def test_validate_json_with_adhoc_schema() -> None:
+    validation_result = validate_json_with_adhoc_schema('{"value": 1234}', '{"type": "dict", "keys": {"value": {"type": "int", "max": 1233}}}')
+
+    assert len(validation_result.violations) == 1
+    assert validation_result.violations[0].path == ["value"]
+    assert validation_result.violations[0].message == "The value '1234' is above the maximum allowed '1233'."
+    assert len(validation_result.deprecations) == 0
+    assert len(validation_result.ignored_eos_config_keys) == 0
+
+
+@pytest.mark.usefixtures("init_store")
+def test_validate_json_with_adhoc_schema_invalid_json() -> None:
+    with pytest.raises(RuntimeError, match="Invalid JSON in data"):
+        validate_json_with_adhoc_schema("invalid_json", '{"type": "dict"}')
+
+
+@pytest.mark.usefixtures("init_store")
+def test_validate_json_with_adhoc_schema_invalid_schema() -> None:
+    with pytest.raises(RuntimeError, match="Invalid JSON in adhoc schema"):
+        validate_json_with_adhoc_schema("{}", '{"tpe": "dict"}')
 
 
 @pytest.mark.usefixtures("init_store")
