@@ -493,4 +493,15 @@ mod tests {
             ));
         }
     }
+
+    #[test]
+    fn get_list_primary_key_missing_eos_config_schema_errors() {
+        let store: Store = serde_json::from_value(json!({})).unwrap();
+        let result = get_list_primary_key("eos_config", &store, &[]);
+
+        assert!(matches!(
+            result,
+            Err(GetSchemaFromPathError::StoreError(SchemaStoreError::InvalidSchemaName(name))) if name == "eos_config"
+        ));
+    }
 }

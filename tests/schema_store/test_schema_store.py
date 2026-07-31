@@ -41,4 +41,5 @@ def test_schema_store_get_list_primary_key(data_path: list[str], expected_primar
 @pytest.mark.parametrize("schema_name", ["eos_cli_config_gen", "eos_designs"])
 def test_schema_store_get_list_primary_key_unsupported_schema_name_errors(schema_name: str) -> None:
     with pytest.raises(RuntimeError, match="not supported"):
-        get_list_primary_key(schema_name, [])
+        # Intentionally violate the typed API contract to test runtime validation.
+        get_list_primary_key(schema_name, [])  # pyright: ignore[reportArgumentType]

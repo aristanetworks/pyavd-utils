@@ -151,3 +151,27 @@ fn get_list_primary_key_py_unsupported_schema_name_errors() {
         });
     }
 }
+
+#[test]
+fn get_list_primary_key_py_invalid_schema_path_errors() {
+    setup();
+    pyo3::Python::attach(|py| {
+        let module = py
+            .import("_bindings")
+            .unwrap()
+            .getattr("_schema_store")
+            .unwrap();
+        let err = {
+            let args = ("eos_config", vec!["hostname", "INVALID"]);
+            module
+                .call_method1("get_list_primary_key", args)
+                .unwrap_err()
+        };
+
+        assert!(err.is_instance_of::<pyo3::exceptions::PyRuntimeError>(py));
+        assert!(
+            err.to_string()
+                .contains("Error while resolving schema path: Resolve(RefSyntax")
+        );
+    });
+}
