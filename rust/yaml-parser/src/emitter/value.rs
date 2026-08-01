@@ -146,6 +146,7 @@ impl<'input> Emitter<'input> {
     pub(super) fn maybe_emit_empty_scalar_for_non_bridging_properties(
         &mut self,
         min_indent: IndentLevel,
+        empty_span: Span,
         properties: EmitterProperties<'input>,
         initial_crossed_line: bool,
         property_indent: Option<IndentLevel>,
@@ -210,7 +211,7 @@ impl<'input> Emitter<'input> {
                     style: ScalarStyle::Plain,
                     value: Cow::Borrowed(""),
                     properties: event_properties.into_event_box(),
-                    span: self.current_span(),
+                    span: empty_span,
                 },
             };
         }
@@ -293,7 +294,7 @@ impl<'input> Emitter<'input> {
                 style: ScalarStyle::Plain,
                 value: Cow::Borrowed(""),
                 properties: properties.clone().into_event_box(),
-                span: self.current_span(),
+                span: ctx.empty_span,
             });
         }
 
@@ -668,6 +669,7 @@ impl<'input> Emitter<'input> {
         if property_indent.is_some() {
             match self.maybe_emit_empty_scalar_for_non_bridging_properties(
                 min_indent,
+                ctx.empty_span,
                 properties,
                 initial_crossed_line,
                 property_indent,
@@ -762,6 +764,7 @@ impl<'input> Emitter<'input> {
                     self.state_stack.push(ParseState::Value {
                         ctx: ValueContext {
                             min_indent,
+                            empty_span: ctx.empty_span,
                             content_column: None,
                             kind: ctx.kind,
                             allow_implicit_mapping,
@@ -776,7 +779,7 @@ impl<'input> Emitter<'input> {
                         style: ScalarStyle::Plain,
                         value: Cow::Borrowed(""),
                         properties: properties.into_event_box(),
-                        span: self.current_span(),
+                        span: ctx.empty_span,
                     })
                 }
             }
@@ -788,6 +791,7 @@ impl<'input> Emitter<'input> {
                 self.state_stack.push(ParseState::Value {
                     ctx: ValueContext {
                         min_indent,
+                        empty_span: ctx.empty_span,
                         content_column: ctx.content_column,
                         kind: ctx.kind,
                         allow_implicit_mapping,

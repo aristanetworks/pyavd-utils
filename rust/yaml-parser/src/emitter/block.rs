@@ -132,6 +132,7 @@ impl<'input> Emitter<'input> {
                             });
                             self.check_tabs_after_block_indicator();
                             let ws_width = self.skip_ws();
+                            let empty_span = Span::at(self.current_span().start);
 
                             // Determine content_column: where content starts on the same line.
                             // Only meaningful if content follows on the same line as the `-`.
@@ -154,6 +155,7 @@ impl<'input> Emitter<'input> {
                                 self.state_stack.push(ParseState::Value {
                                     ctx: ValueContext {
                                         min_indent,
+                                        empty_span,
                                         content_column: content_col,
                                         kind: ValueKind::SeqEntryValue,
                                         allow_implicit_mapping: true,
@@ -195,6 +197,7 @@ impl<'input> Emitter<'input> {
                                     self.state_stack.push(ParseState::Value {
                                         ctx: ValueContext {
                                             min_indent,
+                                            empty_span,
                                             content_column: content_col,
                                             kind: ValueKind::SeqEntryValue,
                                             allow_implicit_mapping: true,
@@ -211,6 +214,7 @@ impl<'input> Emitter<'input> {
                                     return self.process_value_after_properties(
                                         ValueContext {
                                             min_indent,
+                                            empty_span,
                                             content_column: content_col,
                                             kind: ValueKind::SeqEntryValue,
                                             allow_implicit_mapping: true,
@@ -453,6 +457,7 @@ impl<'input> Emitter<'input> {
                             self.state_stack.push(ParseState::Value {
                                 ctx: ValueContext {
                                     min_indent: indent + 1,
+                                    empty_span: self.current_span(),
                                     content_column: content_col,
                                     kind: ValueKind::ExplicitKey,
                                     allow_implicit_mapping: true,
@@ -544,6 +549,7 @@ impl<'input> Emitter<'input> {
                                 self.state_stack.push(ParseState::Value {
                                     ctx: ValueContext {
                                         min_indent: indent,
+                                        empty_span: self.current_span(),
                                         content_column: None,
                                         kind: ValueKind::ImplicitKey,
                                         allow_implicit_mapping: true,
@@ -604,6 +610,7 @@ impl<'input> Emitter<'input> {
                         let _ = self.take_current();
                         self.check_tabs_after_block_indicator();
                         let ws_width = self.skip_ws();
+                        let empty_span = Span::at(self.current_span().start);
 
                         let next_kind = self.peek_kind();
                         let content_col = if matches!(next_kind, Some(TokenKind::LineStart) | None)
@@ -629,6 +636,7 @@ impl<'input> Emitter<'input> {
                         self.state_stack.push(ParseState::Value {
                             ctx: ValueContext {
                                 min_indent: indent + 1,
+                                empty_span,
                                 content_column: content_col,
                                 kind: ValueKind::MappingValue,
                                 allow_implicit_mapping: !is_implicit_scalar_key,

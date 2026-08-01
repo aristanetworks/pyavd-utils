@@ -925,6 +925,7 @@ impl<'input> Emitter<'input> {
                     self.state_stack.push(ParseState::Value {
                         ctx: ValueContext {
                             min_indent: 0,
+                            empty_span: Span::at(span.end),
                             content_column: Some(initial_col),
                             kind: ValueKind::TopLevelValue,
                             allow_implicit_mapping: true, // Document root allows implicit mappings
