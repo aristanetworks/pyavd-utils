@@ -31,8 +31,9 @@ impl Emitter<'_> {
         if start >= end {
             return;
         }
-        #[allow(clippy::string_slice, reason = "Span positions are UTF-8 boundaries")]
-        let key_text = &self.input[start..end];
+        let Some(key_text) = self.input.get(start..end) else {
+            return;
+        };
 
         if key_text.contains('\n') {
             let colon_span = (0..10)
@@ -68,8 +69,9 @@ impl Emitter<'_> {
         if start >= end {
             return;
         }
-        #[allow(clippy::string_slice, reason = "Span positions are UTF-8 boundaries")]
-        let key_text = &self.input[start..end];
+        let Some(key_text) = self.input.get(start..end) else {
+            return;
+        };
 
         if key_text.contains('\n') {
             self.error(ErrorKind::MultilineImplicitKey, colon_span);
@@ -237,5 +239,23 @@ impl Emitter<'_> {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Emitter;
+    use crate::span::Span;
+
+    #[test]
+    fn multiline_key_checks_ignore_spans_without_utf8_boundaries() {
+        let mut block_emitter = Emitter::new("é:");
+        block_emitter.check_multiline_implicit_key(Span::new(1..2));
+        assert!(block_emitter.take_errors().is_empty());
+
+        let mut flow_emitter = Emitter::new(": é");
+        flow_emitter.pos = 1;
+        flow_emitter.check_multiline_flow_key(Span::new(2..2), Span::new(3..3));
+        assert!(flow_emitter.take_errors().is_empty());
     }
 }

@@ -722,7 +722,6 @@ impl<'a, 'input, W: Write> WriterState<'a, 'input, W> {
         Ok(())
     }
 
-    #[allow(clippy::indexing_slicing, reason = "chunk size handled")]
     fn write_indent(&mut self) -> std::io::Result<()> {
         let mut remaining = self.indent;
         while remaining >= INDENT_CHUNK.len() {
@@ -730,7 +729,8 @@ impl<'a, 'input, W: Write> WriterState<'a, 'input, W> {
             remaining -= INDENT_CHUNK.len();
         }
         if remaining > 0 {
-            self.out.write_all(&INDENT_CHUNK[..remaining])?;
+            let (indent, _) = INDENT_CHUNK.split_at(remaining);
+            self.out.write_all(indent)?;
         }
         self.at_line_start = false;
         Ok(())
