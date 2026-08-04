@@ -305,4 +305,25 @@ mod tests {
             serde_json::to_string(&schema_b).unwrap()
         );
     }
+
+    #[test]
+    fn test_deprecation_with_upgrade_handler() {
+        use crate::utils::test_utils::get_test_str_schema_with_upgrade_handler;
+
+        let source_schema = get_test_str_schema_with_upgrade_handler();
+        let mut schema = AnySchema::Str(Str::default());
+        schema.inherit(&source_schema);
+        let deprecation = match schema {
+            AnySchema::Str(str_schema) => str_schema.base.deprecation.clone(),
+            _ => panic!("Expected Str schema"),
+        };
+
+        assert!(deprecation.is_some());
+        let dep = deprecation.unwrap();
+        assert_eq!(dep.warning, true);
+        assert_eq!(dep.new_key, Some("new_field".to_owned()));
+        assert_eq!(dep.remove_in_version, Some("10.0.0".to_owned()));
+        assert_eq!(dep.removed, Some(true));
+        assert_eq!(dep.upgrade_handler, Some("simple".to_owned()));
+    }
 }

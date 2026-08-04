@@ -62,4 +62,6 @@ pub struct Deprecation {
     pub remove_after_date: Option<String>,
     /// URL detailing the deprecation and migration guidelines
     pub url: Option<String>,
+    /// Upgrade handler used to migrate deprecated data
+    pub upgrade_handler: Option<String>,
 }
