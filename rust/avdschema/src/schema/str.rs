@@ -5,6 +5,7 @@
 use std::sync::OnceLock;
 
 use fancy_regex::Regex;
+use fancy_regex::RegexBuilder;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value;
@@ -102,7 +103,11 @@ impl Pattern {
     }
     pub fn get_compiled_pattern(&self) -> Result<&Regex, &fancy_regex::Error> {
         self.compiled_pattern
-            .get_or_init(|| Regex::new(format!("^{}$", &self.pattern).as_str()))
+            .get_or_init(|| {
+                RegexBuilder::new(format!("^{}$", &self.pattern).as_str())
+                    .unicode_mode(false)
+                    .build()
+            })
             .as_ref()
     }
 }
@@ -119,6 +124,7 @@ impl From<&str> for Pattern {
 
 #[cfg(test)]
 mod tests {
+    use super::Pattern;
     use super::Str;
     use crate::any::AnySchema;
     use crate::boolean::Bool;
@@ -134,5 +140,29 @@ mod tests {
         let anyschema = &AnySchema::Bool(Bool::default());
         let result: Result<&Str, _> = anyschema.try_into();
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn perl_classes_compile() {
+        assert!(Pattern::from(r"\d+\s+\d+").get_compiled_pattern().is_ok());
+    }
+
+    #[test]
+    fn lookahead_compiles() {
+        assert!(
+            Pattern::from("(?=[a-z])(?=.*[0-9])[a-z0-9]+")
+                .get_compiled_pattern()
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn variable_lookbehind_compiles() {
+        assert!(Pattern::from("(?<=a+)b").get_compiled_pattern().is_ok());
+    }
+
+    #[test]
+    fn broad_unicode_property_is_rejected() {
+        assert!(Pattern::from(r"\p{Greek}+").get_compiled_pattern().is_err());
     }
 }

@@ -167,7 +167,7 @@
 //! - `ARCHITECTURE.md` for implementation details
 
 mod ast_event;
-#[cfg(feature = "avdschema")]
+#[cfg(feature = "avdschema-core")]
 mod avdschema_data_impl;
 mod emitter;
 mod error;
@@ -188,7 +188,7 @@ pub mod writer;
 pub mod serde;
 
 // Public API: high-level parsing, AST, spans, and errors.
-#[cfg(feature = "avdschema")]
+#[cfg(feature = "avdschema-core")]
 pub use avdschema_data_impl::YamlMapping;
 pub use error::ErrorKind;
 pub use error::ParseError;

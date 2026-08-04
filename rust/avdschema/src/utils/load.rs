@@ -8,6 +8,7 @@ use std::ffi::OsStr;
 use std::fs::File;
 #[cfg(feature = "dump_load_files")]
 use std::io;
+#[cfg(any(feature = "dump_load_files", feature = "gzip"))]
 use std::io::BufReader;
 #[cfg(feature = "dump_load_files")]
 use std::path::Path;
@@ -79,6 +80,7 @@ where
         let reader = BufReader::new(decompressor);
         Ok(serde_json::from_reader(reader)?)
     }
+    #[cfg(feature = "gzip")]
     fn from_gz_bytes(bytes: &[u8]) -> Result<Self, LoadError> {
         let decompressor = flate2::read::GzDecoder::new(bytes);
         let reader = BufReader::new(decompressor);
@@ -116,6 +118,7 @@ where
 #[derive(Debug, derive_more::Display, derive_more::From)]
 pub enum LoadError {
     JsonError(serde_json::Error),
+    #[cfg(feature = "yaml")]
     YamlError(serde_yaml::Error),
     #[cfg(feature = "dump_load_files")]
     IoError(io::Error),
