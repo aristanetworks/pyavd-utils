@@ -7,6 +7,16 @@
     "* 0-7 * * 1"
   ],
   "timezone": "UTC",
+  "enabledManagers": [
+    "cargo",
+    "github-actions",
+    "pep621",
+    "pre-commit",
+    "rust-toolchain"
+  ],
+  "pre-commit": {
+    "enabled": true
+  },
   "packageRules": [
     {
       "description": "Maintain production and build dependencies for Python",
@@ -59,6 +69,29 @@
       "rangeStrategy": "replace",
       "semanticCommitType": "chore",
       "commitMessagePrefix": "Bump(rust): "
+    },
+    {
+      "description": "Handling hook rev autoupdates.",
+      "matchManagers": [
+        "pre-commit"
+      ],
+      "matchDepTypes": [
+        "repository"
+      ],
+      "enabled": true,
+      "semanticCommitType": "ci",
+      "commitMessagePrefix": "CI: "
+    },
+    {
+      "description": "pre-commit Python additional_dependencies only; hook rev updates stay with pre-commit.ci.",
+      "matchManagers": [
+        "pre-commit"
+      ],
+      "matchDepTypes": [
+        "pre-commit-python"
+      ],
+      "commitMessagePrefix": "ci:",
+      "rangeStrategy": "bump"
     }
   ]
 }
