@@ -13,8 +13,13 @@
     clippy::unnecessary_wraps,
     reason = "PyO3-facing API names and test assertions mirror the exported Python module contract"
 )]
+#![deny(unused_crate_dependencies)]
+
+#[cfg(test)]
+use criterion as _;
 
 mod passwords;
+mod schema_merge;
 mod schema_store;
 mod validation;
 
@@ -34,6 +39,8 @@ pub mod _bindings {
 
     #[pymodule_export]
     use crate::passwords::_passwords;
+    #[pymodule_export]
+    use crate::schema_merge::_schema_merge;
     #[pymodule_export]
     use crate::schema_store::_schema_store;
     #[pymodule_export]
