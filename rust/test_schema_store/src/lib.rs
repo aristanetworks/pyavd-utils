@@ -14,9 +14,13 @@ const ADV_SCHEMA_URL: &str =
 static STORE_GZ_PATH: OnceLock<PathBuf> = OnceLock::new();
 
 pub fn initialize() -> PathBuf {
+    let path = _get_store_gz_path();
+    if path.exists() {
+        return path;
+    }
+
     let resp = reqwest::blocking::get(ADV_SCHEMA_URL).unwrap();
     let body = resp.bytes().unwrap();
-    let path = _get_store_gz_path();
     let file = std::fs::File::create(&path).unwrap();
     let mut writer = std::io::BufWriter::new(file);
     writer.write_all(&body).unwrap();

@@ -36,8 +36,6 @@ use std::time::Duration;
 use criterion::BenchmarkId;
 use criterion::Criterion;
 use criterion::Throughput;
-use criterion::criterion_group;
-use criterion::criterion_main;
 use saphyr::LoadableYamlNode as _;
 #[cfg(feature = "serde")]
 use serde::Deserialize;
@@ -81,6 +79,18 @@ const BLOCK_SCALARS: &str = include_str!("data/block_scalars.yml");
 const FLOW_COLLECTIONS: &str = include_str!("data/flow_collections.yml");
 const ANCHORS_ALIASES: &str = include_str!("data/anchors_aliases.yml");
 const TAGS: &str = include_str!("data/tags.yml");
+
+fn eos_config_yaml(interface_count: usize) -> String {
+    let mut data = String::from("ethernet_interfaces:\n");
+    for interface_index in 1..=interface_count {
+        data.push_str("  - name: Ethernet");
+        data.push_str(&interface_index.to_string());
+        data.push_str("\n    description: benchmark interface ");
+        data.push_str(&interface_index.to_string());
+        data.push('\n');
+    }
+    data
+}
 
 fn bench_yaml_parser_parse(bench: &mut criterion::Bencher<'_>, input: &str) {
     bench.iter(|| {
@@ -193,6 +203,23 @@ fn bench_parse_latency(criterion: &mut Criterion) {
     larger_group.finish();
 }
 
+/// Benchmark parser scaling on deterministic AVD-like interface data.
+fn bench_avd_scale(criterion: &mut Criterion) {
+    let mut group = criterion.benchmark_group("avd_scale");
+
+    for interface_count in [10, 100, 1_000] {
+        let input = eos_config_yaml(interface_count);
+        group.throughput(input_throughput(&input));
+        group.bench_with_input(
+            BenchmarkId::new("yaml_parser", format!("{interface_count}_interfaces")),
+            &input,
+            |bench, data| bench_yaml_parser_parse(bench, data),
+        );
+    }
+
+    group.finish();
+}
+
 /// Benchmark specific scalar types to identify performance characteristics.
 fn bench_scalar_types(criterion: &mut Criterion) {
     // Plain scalars (zero-copy opportunity)
@@ -295,11 +322,22 @@ fn bench_serde_deserialize_throughput(criterion: &mut Criterion) {
 #[cfg(not(feature = "serde"))]
 fn bench_serde_deserialize_throughput(_criterion: &mut Criterion) {}
 
-criterion_group!(
-    benches,
-    bench_parse_throughput,
-    bench_parse_latency,
-    bench_scalar_types,
-    bench_serde_deserialize_throughput,
-);
-criterion_main!(benches);
+fn run_benchmarks(criterion: &mut Criterion) {
+    bench_parse_throughput(criterion);
+    bench_parse_latency(criterion);
+    bench_avd_scale(criterion);
+    bench_scalar_types(criterion);
+    bench_serde_deserialize_throughput(criterion);
+}
+
+#[cfg(codspeed)]
+fn main() {
+    let mut criterion = Criterion::new_instrumented();
+    run_benchmarks(&mut criterion);
+}
+
+#[cfg(not(codspeed))]
+fn main() {
+    let mut criterion = Criterion::default().configure_from_args();
+    run_benchmarks(&mut criterion);
+}

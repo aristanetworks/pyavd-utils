@@ -116,6 +116,15 @@ jobs:
       id-token: write
     uses: $/.github/workflows/codecov.yml
 
+  codspeed:
+    name: Run Rust benchmarks
+    needs: cargo_build_and_test
+    if: github.repository == 'aristanetworks/pyavd-utils'
+    permissions:
+      contents: read
+      id-token: write
+    uses: $/.github/workflows/codspeed.yml
+
   # --------------------------------------------------------------------- #
   # Build and test cross platform pyavd-utils wheels and upload artifacts
   # --------------------------------------------------------------------- #
