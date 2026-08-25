@@ -10,8 +10,6 @@
 
 use std::sync::OnceLock;
 
-use avdschema::Load as _;
-use avdschema::Store;
 use criterion::Criterion;
 use criterion::criterion_group;
 use criterion::criterion_main;
@@ -20,10 +18,29 @@ use pyo3::types::PyDict;
 use python_bindings::_bindings;
 use test_schema_store::get_store_gz_path;
 
-const TEST_DATA: &str = r#"{"fabric_name":"foo","type":"l3ls-evpn"}"#;
-
 static INIT_PY: OnceLock<()> = OnceLock::new();
 static INIT_STORE: OnceLock<()> = OnceLock::new();
+static TEST_DATA: OnceLock<String> = OnceLock::new();
+
+fn eos_config_json(interface_count: usize) -> String {
+    let mut data = String::from("{\"ethernet_interfaces\":[");
+    for interface_index in 1..=interface_count {
+        if interface_index > 1 {
+            data.push(',');
+        }
+        data.push_str("{\"name\":\"Ethernet");
+        data.push_str(&interface_index.to_string());
+        data.push_str("\",\"description\":");
+        data.push_str(&(10_000 + interface_index).to_string());
+        data.push('}');
+    }
+    data.push_str("]}");
+    data
+}
+
+fn benchmark_data() -> &'static str {
+    TEST_DATA.get_or_init(|| eos_config_json(256)).as_str()
+}
 
 fn setup_python_with_store() {
     INIT_PY.get_or_init(|| {
@@ -47,22 +64,10 @@ fn setup_python_with_store() {
     });
 }
 
-fn benchmark_load_and_resolve_store(criterion: &mut Criterion) {
-    let schema_file = get_store_gz_path();
-    let mut group = criterion.benchmark_group("sample-size-10");
-    group.sample_size(10);
-    group.bench_function("load_and_resolve_store", |bencher| {
-        bencher.iter(|| {
-            let store = Store::from_file(Some(std::hint::black_box(schema_file))).unwrap();
-            std::hint::black_box(store.as_resolved().unwrap());
-        });
-    });
-    group.finish();
-}
-
 fn benchmark_get_validated_data(criterion: &mut Criterion) {
     setup_python_with_store();
-    criterion.bench_function("get_validated_data", |bencher| {
+    let data = benchmark_data();
+    criterion.bench_function("python_bindings/get_validated_data", |bencher| {
         pyo3::Python::attach(|py| {
             let module = py
                 .import("_bindings")
@@ -72,9 +77,9 @@ fn benchmark_get_validated_data(criterion: &mut Criterion) {
             bencher.iter(|| {
                 let kwargs = PyDict::new(py);
                 kwargs
-                    .set_item("data_as_json", std::hint::black_box(TEST_DATA))
+                    .set_item("data_as_json", std::hint::black_box(data))
                     .unwrap();
-                kwargs.set_item("schema_name", "avd_design").unwrap();
+                kwargs.set_item("schema_name", "eos_config").unwrap();
                 std::hint::black_box(
                     module
                         .call_method("get_validated_data", (), Some(&kwargs))
@@ -85,9 +90,35 @@ fn benchmark_get_validated_data(criterion: &mut Criterion) {
     });
 }
 
+fn benchmark_validate_json(criterion: &mut Criterion) {
+    setup_python_with_store();
+    let data = benchmark_data();
+    criterion.bench_function("python_bindings/validate_json", |bencher| {
+        pyo3::Python::attach(|py| {
+            let module = py
+                .import("_bindings")
+                .unwrap()
+                .getattr("_validation")
+                .unwrap();
+            bencher.iter(|| {
+                let kwargs = PyDict::new(py);
+                kwargs
+                    .set_item("data_as_json", std::hint::black_box(data))
+                    .unwrap();
+                kwargs.set_item("schema_name", "eos_config").unwrap();
+                std::hint::black_box(
+                    module
+                        .call_method("validate_json", (), Some(&kwargs))
+                        .unwrap(),
+                );
+            });
+        });
+    });
+}
+
 criterion_group!(
     benches,
-    benchmark_load_and_resolve_store,
-    benchmark_get_validated_data
+    benchmark_get_validated_data,
+    benchmark_validate_json
 );
 criterion_main!(benches);

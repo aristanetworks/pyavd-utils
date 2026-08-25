@@ -8,6 +8,7 @@ license.workspace = true
 workspace = true
 
 [dev-dependencies]
+criterion = { workspace = true }
 test_schema_store = { path = "../test_schema_store" }
 
 [dependencies]
@@ -41,3 +42,8 @@ gzip = ["dep:flate2"]
 regex-perf = ["fancy-regex/perf"]
 xz2 = ["dump_load_files", "dep:xz2"]
 yaml = ["dep:serde_yaml"]
+
+[[bench]]
+name = "performance"
+harness = false
+required-features = ["dump_load_files"]

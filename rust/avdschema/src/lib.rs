@@ -25,6 +25,8 @@
 // its broad Unicode property tables.
 use regex_automata as _;
 #[cfg(test)]
+use criterion as _;
+#[cfg(test)]
 use test_schema_store as _;
 
 mod inherit;

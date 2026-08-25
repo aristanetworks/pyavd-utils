@@ -50,3 +50,25 @@ The existing `yaml-parser` feature named `avdschema` retains the default
 `avdschema` feature set, including performance accelerators, gzip, and YAML.
 Use `avdschema-core` for the lean path. Unicode-aware Perl classes and
 variable-length lookbehinds are always enabled.
+
+## Benchmarks
+
+Run the Criterion-compatible benchmark suites locally from the repository root:
+
+```bash
+cargo bench --locked --workspace --all-features
+```
+
+CodSpeed uses simulation and memory analysis builds. The measurement modes must
+be present when the benchmark binaries are built so the required instrumentation
+is included:
+
+```bash
+cargo install cargo-codspeed --version 5.0.1 --locked
+cargo codspeed build --locked --workspace --all-features --measurement-mode simulation,memory
+cargo codspeed run --workspace
+```
+
+Simulation is the current name for the mode formerly called instrumentation.
+The GitHub workflow uploads both simulation and memory measurements after the
+Rust test matrix succeeds.
