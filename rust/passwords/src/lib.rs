@@ -12,6 +12,9 @@
 )]
 #![deny(unused_crate_dependencies)]
 
+#[cfg(test)]
+use criterion as _;
+
 // Feature sha512
 
 #[cfg(feature = "sha512")]

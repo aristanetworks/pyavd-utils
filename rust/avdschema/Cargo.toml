@@ -8,6 +8,7 @@ license.workspace = true
 workspace = true
 
 [dev-dependencies]
+criterion = { workspace = true }
 test_schema_store = { path = "../test_schema_store" }
 
 [dependencies]
@@ -61,3 +62,8 @@ mmap = ["dep:mmap-guard"]
 xz2 = ["dump_load_files", "dep:xz2"]
 # Load and dump YAML source schemas through serde.
 yaml = ["dep:yaml-parser"]
+
+[[bench]]
+name = "performance"
+harness = false
+required-features = ["dump_load_files"]
