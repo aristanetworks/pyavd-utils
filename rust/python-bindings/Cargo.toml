@@ -24,6 +24,7 @@ serde_json = { workspace = true, features = [
     "arbitrary_precision",
     "preserve_order",
 ] }
+schema-merge = { path = "../schema-merge" }
 validation = { path = "../validation" }
 
 [features]

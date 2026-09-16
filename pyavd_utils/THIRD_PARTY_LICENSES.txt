@@ -11,6 +11,7 @@ Used by:
   - avdschema 0.0.7
   - passwords 0.0.7
   - python-bindings 0.0.7
+  - schema-merge 0.0.7
   - validation 0.0.7
   - yaml-parser 0.0.7
   - ryu 1.0.23
