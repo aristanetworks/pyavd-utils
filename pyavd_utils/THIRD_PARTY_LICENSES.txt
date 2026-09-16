@@ -8,12 +8,12 @@ Apache License 2.0
 ================================================================================
 
 Used by:
-  - avd-lsp-support 0.0.7
-  - avdschema 0.0.7
-  - passwords 0.0.7
-  - python-bindings 0.0.7
-  - validation 0.0.7
-  - yaml-parser 0.0.7
+  - avd-lsp-support 0.0.8
+  - avdschema 0.0.8
+  - passwords 0.0.8
+  - python-bindings 0.0.8
+  - validation 0.0.8
+  - yaml-parser 0.0.8
   - ryu 1.0.23
 
 License text:

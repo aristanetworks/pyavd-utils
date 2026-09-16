@@ -76,7 +76,7 @@ checksum = "f2032f911046de80f0a198e0901378627c33f59ea0ac00e363d481118bd70a53"
 
 [[package]]
 name = "avd-lsp-support"
-version = "0.0.7"
+version = "0.0.8"
 dependencies = [
  "avdschema",
  "validation",
@@ -85,7 +85,7 @@ dependencies = [
 
 [[package]]
 name = "avdschema"
-version = "0.0.7"
+version = "0.0.8"
 dependencies = [
  "derive_more",
  "fancy-regex",
@@ -1184,7 +1184,7 @@ dependencies = [
 
 [[package]]
 name = "passwords"
-version = "0.0.7"
+version = "0.0.8"
 dependencies = [
  "base64",
  "base64ct",
@@ -1343,7 +1343,7 @@ dependencies = [
 
 [[package]]
 name = "python-bindings"
-version = "0.0.7"
+version = "0.0.8"
 dependencies = [
  "avdschema",
  "criterion",
@@ -2081,7 +2081,7 @@ checksum = "b6c140620e7ffbb22c2dee59cafe6084a59b5ffc27a8859a5f0d494b5d52b6be"
 
 [[package]]
 name = "validation"
-version = "0.0.7"
+version = "0.0.8"
 dependencies = [
  "avdschema",
  "derive_more",
@@ -2304,7 +2304,7 @@ dependencies = [
 
 [[package]]
 name = "yaml-parser"
-version = "0.0.7"
+version = "0.0.8"
 dependencies = [
  "avdschema",
  "criterion",

@@ -38,7 +38,7 @@ crate exposes the exact schema, validation, and YAML parser API used by the LSP
 and owns its lean feature selection:
 
 ```toml
-avd-lsp-support = { version = "0.0.7", default-features = false }
+avd-lsp-support = { version = "0.0.8", default-features = false }
 ```
 
 Native LSP consumers can enable its `gzip` feature when needed. The browser

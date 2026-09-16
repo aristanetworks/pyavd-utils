@@ -1,5 +1,5 @@
 [workspace]
-package.version = "0.0.7"
+package.version = "0.0.8"
 package.license = "Apache-2.0"
 
 members = ["rust/*"]

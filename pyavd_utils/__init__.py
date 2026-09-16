@@ -7,6 +7,6 @@ from . import passwords, schema_store, validation
 __author__ = "Arista Networks"
 __copyright__ = "Copyright 2025 Arista Networks"
 __license__ = "Apache 2.0"
-__version__ = "0.0.7"
+__version__ = "0.0.8"
 
 __all__ = ["passwords", "schema_store", "validation"]
