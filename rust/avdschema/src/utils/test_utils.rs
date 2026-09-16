@@ -285,6 +285,36 @@ pub(crate) fn get_test_dict_schema() -> AnySchema {
     .unwrap()
 }
 
+pub(crate) fn get_test_str_schema_with_upgrade_handler() -> AnySchema {
+    AnySchema::deserialize(json!(
+        {
+            "type": "str",
+            "display_name": "str",
+            "description": "test_str_schema_with_upgrade_handler",
+            "required": true,
+            "valid_values": ["foo", "bar"],
+            "default": "bar",
+            "min_length": 3,
+            "max_length": 3,
+            "convert_types": ["int"],
+            "convert_to_lower_case": true,
+            "format": "mac",
+            "pattern": "(foo|bar)",
+            "deprecation": {
+                "warning": true,
+                "new_key": "new_field",
+                "remove_in_version": "10.0.0",
+                "remove_after_date": "soon",
+                "url": "somewhere",
+                "removed": true,
+                "upgrade_handler": "simple"
+            },
+            "documentation_options": {"table": "test"},
+        }
+    ))
+    .unwrap()
+}
+
 #[cfg(feature = "dump_load_files")]
 static AVD_STORE: OnceLock<Store> = OnceLock::new();
 

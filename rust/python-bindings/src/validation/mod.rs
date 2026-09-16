@@ -52,6 +52,7 @@ pub(crate) mod _validation {
         pub version: Option<String>,
         pub replacement: Option<String>,
         pub url: Option<String>,
+        pub upgrade_handler: Option<String>,
     }
 
     #[pyclass(from_py_object, frozen, get_all)]
@@ -116,6 +117,25 @@ pub(crate) mod _validation {
             let mut result = ValidationResult::default();
             for feedback in value.errors {
                 match feedback.issue {
+                    ::validation::feedback::ErrorIssue::Violation(
+                        ::validation::feedback::Violation::Removed(removed),
+                    ) => {
+                        let message = removed.to_string();
+                        let path: Vec<String> = feedback.path.into();
+                        result.violations.push(Violation {
+                            message: message.clone(),
+                            path: path.clone(),
+                        });
+                        result.deprecations.push(Deprecation {
+                            message,
+                            path,
+                            removed: true,
+                            version: removed.version.into(),
+                            replacement: removed.replacement.into(),
+                            url: removed.url.into(),
+                            upgrade_handler: removed.upgrade_handler,
+                        });
+                    }
                     ::validation::feedback::ErrorIssue::Violation(violation) => {
                         result.violations.push(Violation {
                             message: violation.to_string(),
@@ -139,6 +159,7 @@ pub(crate) mod _validation {
                             version: deprecated.version.into(),
                             replacement: deprecated.replacement.into(),
                             url: deprecated.url.into(),
+                            upgrade_handler: None,
                         });
                     }
                     ::validation::feedback::WarningIssue::IgnoredEosConfigKey(ignored) => {

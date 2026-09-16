@@ -52,6 +52,8 @@ class Deprecation:
     """New data model to use instead."""
     url: str | None
     """Url where more information can be found."""
+    upgrade_handler: str | None
+    """Handler to use when upgrading the data model."""
 
 class IgnoredEosConfigKey:
     """EOS Config key found in AVD Design input."""

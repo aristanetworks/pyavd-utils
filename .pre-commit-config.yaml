@@ -1,29 +1,6 @@
 ---
 # See https://pre-commit.com for more information
 # See https://pre-commit.com/hooks.html for more hooks
-ci:
-  autoupdate_commit_msg: "CI: pre-commit autoupdate"
-  autofix_prs: false
-  # Keep pre-commit.ci for autoupdate only. Run hooks through autofix.ci.
-  skip:
-    - trailing-whitespace
-    - end-of-file-fixer
-    - check-added-large-files
-    - check-merge-conflict
-    - insert-license
-    - cargo-fmt-nightly
-    - cargo-check
-    - cargo-clippy
-    - cargo-deny
-    - cargo-about
-    - ruff
-    - ruff-format
-    - pyright
-    - pylint
-    - codespell
-    - markdownlint-cli2
-    - zizmor
-
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: 3e8a8703264a2f4a69428a0aa4dcb512790b2c8c  # frozen: v6.0.0
@@ -147,6 +124,7 @@ repos:
       - id: pyright
         name: PyRight static type checker
         types: [python]
+        language: python
         additional_dependencies:
           - 'pytest>=8.2.0'
 

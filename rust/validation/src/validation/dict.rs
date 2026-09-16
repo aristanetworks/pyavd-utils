@@ -1151,7 +1151,8 @@ mod tests {
                     path: vec!["foo".into()].into(),
                     replacement: None.into(),
                     version: None.into(),
-                    url: None.into()
+                    url: None.into(),
+                    upgrade_handler: None,
                 })
                 .into()
             }]
