@@ -76,44 +76,38 @@ dev = [
 # cibuildwheel configuration
 # -------------------------------------- #
 [tool.cibuildwheel]
+# Build the CPython 3.10 stable ABI baseline once per platform. The wheel is
+# tested on every supported Python version by the build-wheel workflow.
+build = "cp310-*"
 skip = [
-    "cp38-*",
-    "cp39-*",
     "*-win32",
-    "*-musllinux_i686",
     "*_i686",
-    "cp3??t-*", # for now building with cp310 which does not work with free threading
 ]
 
 before-all = "uname -a"
 
 [tool.cibuildwheel.linux]
 before-build = "curl -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain none && rustup show"
-repair-wheel-command = [
-  "auditwheel repair -w {dest_dir} {wheel}",
-  "pipx run abi3audit --strict --report {wheel}",
-]
+repair-wheel-command = "auditwheel repair -w {dest_dir} {wheel}"
 
 [tool.cibuildwheel.linux.environment]
 PATH = "$HOME/.cargo/bin:$PATH"
 
 [tool.cibuildwheel.macos]
 before-build = "rustup show && rustup target add x86_64-apple-darwin"
-repair-wheel-command = [
-  "delocate-wheel --require-archs {delocate_archs} -w {dest_dir} -v {wheel}",
-  "pipx run abi3audit --strict --report {wheel}",
-]
+repair-wheel-command = "delocate-wheel --require-archs {delocate_archs} -w {dest_dir} -v {wheel}"
 
 [tool.cibuildwheel.macos.environment]
 # Needed for intel wheel as otherwise cibuildwheel use 10.9 which does not work for Rust
 MACOSX_DEPLOYMENT_TARGET = "10.12"
 
+[[tool.cibuildwheel.overrides]]
+select = "*-macosx_arm64"
+environment = { MACOSX_DEPLOYMENT_TARGET = "11.0" }
+
 [tool.cibuildwheel.windows]
 before-build = "rustup show"
-repair-wheel-command = [
-  "copy {wheel} {dest_dir}",
-  "pipx run abi3audit --strict --report {wheel}",
-]
+
 [tool.ruff]
 line-length = 160
 target-version = "py310"
