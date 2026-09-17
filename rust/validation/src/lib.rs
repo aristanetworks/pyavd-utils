@@ -22,6 +22,7 @@
 )]
 #![deny(unused_crate_dependencies)]
 
+mod consolidation;
 mod context;
 pub mod feedback;
 mod validatable;

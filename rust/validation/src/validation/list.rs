@@ -16,7 +16,11 @@ use crate::validatable::ValidatableValue;
 use crate::validation::Validation;
 
 impl Validation for List {
-    fn validate<V: ValidatableValue>(&self, value: &V, ctx: &mut Context) -> Option<V::Coerced> {
+    fn validate<'schema, V: ValidatableValue>(
+        &'schema self,
+        value: &V,
+        ctx: &mut Context<'schema>,
+    ) -> Option<V::Coerced> {
         if let Some(ref_result) = validate_ref(self, value, ctx) {
             return ref_result;
         }
@@ -61,10 +65,10 @@ fn validate_ref<V: ValidatableValue>(
 
 /// Validate and optionally coerce sequence items.
 /// Returns `Some(coerced_items)` when coercion is enabled, None otherwise.
-fn validate_items<'a, S: ValidatableSequence<'a>>(
-    schema: &List,
+fn validate_items<'schema, 'input, S: ValidatableSequence<'input>>(
+    schema: &'schema List,
     input: &S,
-    ctx: &mut Context,
+    ctx: &mut Context<'schema>,
 ) -> Option<Vec<<S::Value as ValidatableValue>::Coerced>> {
     let mut coerced = ctx
         .configuration
@@ -85,10 +89,10 @@ fn validate_items<'a, S: ValidatableSequence<'a>>(
     coerced
 }
 
-fn validate_item_schema<V: ValidatableValue>(
-    schema: &List,
+fn validate_item_schema<'schema, V: ValidatableValue>(
+    schema: &'schema List,
     item: &V,
-    ctx: &mut Context,
+    ctx: &mut Context<'schema>,
 ) -> V::Coerced {
     if let Some(item_schema) = &schema.items {
         // validate() returns Option, but we know return_coerced_data is true here
@@ -101,7 +105,11 @@ fn validate_item_schema<V: ValidatableValue>(
     }
 }
 
-fn validate_item_schema_only<V: ValidatableValue>(schema: &List, item: &V, ctx: &mut Context) {
+fn validate_item_schema_only<'schema, V: ValidatableValue>(
+    schema: &'schema List,
+    item: &V,
+    ctx: &mut Context<'schema>,
+) {
     if let Some(item_schema) = &schema.items {
         let _ = item_schema.validate(item, ctx);
     }

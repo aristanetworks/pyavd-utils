@@ -34,7 +34,11 @@ pub trait Validation {
     /// `None` otherwise (to avoid expensive allocations in validation-only use cases).
     ///
     /// The coerced value preserves metadata exposed by the original value type.
-    fn validate<V: ValidatableValue>(&self, value: &V, ctx: &mut Context) -> Option<V::Coerced>;
+    fn validate<'schema, V: ValidatableValue>(
+        &'schema self,
+        value: &V,
+        ctx: &mut Context<'schema>,
+    ) -> Option<V::Coerced>;
 
     fn handle_invalid_type<V: ValidatableValue>(
         value: &V,

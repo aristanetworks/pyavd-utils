@@ -381,6 +381,51 @@ fn get_validated_data_ok() {
 }
 
 #[test]
+fn get_validated_avd_design_data_normalizes_dynamic_keys() {
+    setup();
+    pyo3::Python::attach(|py| {
+        let module = py
+            .import("_bindings")
+            .unwrap()
+            .getattr("_validation")
+            .unwrap();
+        let data_as_json_str = serde_json::json!({
+            "fabric_name": "TEST-FABRIC",
+            "custom_node_type_keys": [{"key": "l3leaf", "type": "l3leaf"}],
+            "custom_connected_endpoints_keys": [{"key": "servers", "type": "server"}],
+            "l3leaf": {"defaults": {}},
+            "servers": [],
+            "tenants": [],
+        })
+        .to_string();
+        let result = {
+            let kwargs = pyo3::types::PyDict::new(py);
+            kwargs.set_item("data_as_json", data_as_json_str).unwrap();
+            kwargs.set_item("schema_name", "avd_design").unwrap();
+            module
+                .call_method("get_validated_data", (), Some(&kwargs))
+                .unwrap()
+        };
+        let validated_data: String = result.getattr("validated_data").unwrap().extract().unwrap();
+        let validated_data: serde_json::Value = serde_json::from_str(&validated_data).unwrap();
+
+        assert_eq!(
+            validated_data,
+            serde_json::json!({
+                "fabric_name": "TEST-FABRIC",
+                "custom_node_type_keys": [{"key": "l3leaf", "type": "l3leaf"}],
+                "custom_connected_endpoints_keys": [{"key": "servers", "type": "server"}],
+                "_dynamic_keys": {
+                    "connected_endpoints": [{"key": "servers", "source": "custom_connected_endpoints", "value": []}],
+                    "network_services": [{"key": "tenants", "source": "network_services", "value": []}],
+                    "node_types": [{"key": "l3leaf", "source": "custom_node_types", "value": {"defaults": {}}}],
+                },
+            })
+        );
+    });
+}
+
+#[test]
 fn get_validated_data_not_ok() {
     setup();
     pyo3::Python::attach(|py| {

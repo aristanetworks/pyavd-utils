@@ -9,6 +9,8 @@ use yaml_parser::Node;
 use yaml_parser::parse;
 
 use super::Validation as _;
+use crate::consolidation::DataConsolidationError;
+use crate::consolidation::consolidate_data;
 use crate::context::Configuration;
 use crate::context::Context;
 use crate::context::ValidationResult;
@@ -83,8 +85,17 @@ where
     ) -> Result<ValidationOutput<V::Coerced>, StoreValidateError> {
         debug!("Validating value");
         let mut ctx = Context::new(self, configuration);
+        if ctx.configuration.consolidate_data && !ctx.configuration.return_coerced_data {
+            return Err(DataConsolidationError::CoercedDataNotRequested.into());
+        }
         let schema = self.get(schema_name)?;
-        let coerced = schema.validate(value, &mut ctx);
+        let mut coerced = schema.validate(value, &mut ctx);
+        if ctx.configuration.consolidate_data
+            && ctx.result.errors.is_empty()
+            && let Some(data) = coerced.as_mut()
+        {
+            consolidate_data(schema_name, data, &ctx)?;
+        }
         debug!("Validating value done");
         Ok(ValidationOutput {
             result: ctx.result,
@@ -166,6 +177,7 @@ impl StoreValidateInput for Store {
 #[derive(Debug, derive_more::Display, derive_more::From)]
 pub enum StoreValidateError {
     SchemaStore(avdschema::SchemaStoreError),
+    DataConsolidation(DataConsolidationError),
 }
 
 #[cfg(test)]
@@ -403,6 +415,53 @@ mod tests {
 
         assert!(result.result.errors.is_empty());
         assert_eq!(result.coerced, Some(serde_json::json!({ "key3": "123" })));
+    }
+
+    #[test]
+    fn validate_value_consolidates_when_coerced_data_is_requested() {
+        let input = serde_json::json!({ "key3": 123 });
+        let store = get_test_store();
+        let configuration = Configuration {
+            consolidate_data: true,
+            return_coerced_data: true,
+            ..Default::default()
+        };
+
+        let result = store
+            .validate_value(&input, "avd_design", Some(&configuration))
+            .unwrap();
+
+        assert!(result.result.errors.is_empty());
+        assert_eq!(
+            result.coerced,
+            Some(serde_json::json!({
+                "key3": "123",
+                "_dynamic_keys": {
+                    "connected_endpoints": [],
+                    "network_services": [],
+                    "node_types": [],
+                },
+            }))
+        );
+    }
+
+    #[test]
+    fn validate_value_rejects_consolidation_without_coerced_data() {
+        let input = serde_json::json!({ "key3": 123 });
+        let store = get_test_store();
+        let configuration = Configuration {
+            consolidate_data: true,
+            ..Default::default()
+        };
+
+        let result = store.validate_value(&input, "avd_design", Some(&configuration));
+
+        assert!(matches!(
+            result,
+            Err(StoreValidateError::DataConsolidation(
+                DataConsolidationError::CoercedDataNotRequested
+            ))
+        ));
     }
 
     #[test]
