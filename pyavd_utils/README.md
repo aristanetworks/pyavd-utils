@@ -14,6 +14,7 @@ The intended public import surface is the small set of Python wrapper modules:
 ```python
 from pyavd_utils.passwords import cbc_encrypt
 from pyavd_utils.schema_store import init_store_from_file
+from pyavd_utils.stage_cache import FileStageCache
 from pyavd_utils.validation import validate_json
 ```
 
@@ -36,6 +37,7 @@ The extension exposes internal PyO3 submodules as attributes:
 ```python
 from pyavd_utils._bindings import _passwords
 from pyavd_utils._bindings import _schema_store
+from pyavd_utils._bindings import _stage_cache
 from pyavd_utils._bindings import _validation
 ```
 
@@ -51,6 +53,7 @@ pyavd_utils/_bindings/
   __init__.pyi
   _passwords.pyi
   _schema_store.pyi
+  _stage_cache.pyi
   _validation.pyi
 ```
 

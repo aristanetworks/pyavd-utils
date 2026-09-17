@@ -16,6 +16,7 @@
 
 mod passwords;
 mod schema_store;
+mod stage_cache;
 mod validation;
 
 #[pyo3::pymodule]
@@ -36,6 +37,8 @@ pub mod _bindings {
     use crate::passwords::_passwords;
     #[pymodule_export]
     use crate::schema_store::_schema_store;
+    #[pymodule_export]
+    use crate::stage_cache::_stage_cache;
     #[pymodule_export]
     use crate::validation::_validation;
 }

@@ -17,6 +17,7 @@ fancy-regex = { version = "0.18" }
 serde = { version = "1.0.217" }
 serde_json = { version = "1.0.150" }
 serde_yaml = { version = "0.9.33" }
+sha2 = { version = "0.11.0", default-features = false }
 
 [profile.release]
 # debug = true

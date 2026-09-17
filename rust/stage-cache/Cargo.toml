@@ -1,0 +1,20 @@
+[package]
+name = "stage-cache"
+version.workspace = true
+edition = "2024"
+license.workspace = true
+description = "Reusable file-backed stage cache for deterministic build orchestration."
+
+[lints]
+workspace = true
+
+[dependencies]
+hex = { version = "0.4", default-features = false, features = ["std"] }
+pyo3 = { workspace = true, optional = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+
+[features]
+default = []
+python-bindings = ["dep:pyo3"]
