@@ -1284,7 +1284,7 @@ dependencies = [
 name = "passwords"
 version = "0.0.7"
 dependencies = [
- "base64 0.22.1",
+ "base64 0.23.1",
  "base64ct",
  "cbc",
  "cipher",
