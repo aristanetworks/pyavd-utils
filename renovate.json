@@ -49,6 +49,16 @@
       "commitMessagePrefix": "CI: "
     },
     {
+      "description": "Preserve the supported Python version matrix",
+      "matchManagers": [
+        "github-actions"
+      ],
+      "matchPackageNames": [
+        "python"
+      ],
+      "enabled": false
+    },
+    {
       "description": "Maintain dependencies for Rust crates",
       "matchManagers": [
         "cargo"
