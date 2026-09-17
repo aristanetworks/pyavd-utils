@@ -4,19 +4,30 @@
 
 //! Curated pyavd-utils API for the AVD language server.
 //!
-//! This crate is the language server's dependency and feature boundary. Its
-//! default feature graph contains the schema, validation, and YAML APIs used by
-//! the browser WASM build without native compression or regex accelerators.
-//! Native consumers can opt into `gzip` without changing the
-//! public API imported by the language server.
+//! This crate is the language server's sole dependency and feature boundary
+//! for pyavd-utils. Each module re-exports only the individual functions,
+//! traits, and types imported by the language server. It deliberately does not
+//! re-export complete source crates or their module trees.
 //!
-//! The modules below intentionally re-export individual API items instead of
-//! their complete source crates. Changes to the language server contract are
-//! therefore reviewed and checked here.
+//! # Feature contract
+//!
+//! The default feature set is empty and is the contract used by the browser
+//! WASM build. It includes schema navigation and validation plus parsing of the
+//! user's YAML documents through [`yaml`].
+//!
+//! The optional `gzip` feature is used only by native helpers and tests to load
+//! a schema store from compressed JSON bytes with `Load::from_gz_bytes`. It
+//! does not enable schema loading from the filesystem, YAML schema
+//! deserialization, or directory traversal. Those are `avdschema` authoring
+//! and CLI capabilities, not language-server runtime capabilities.
+//!
+//! Changes to these exports or features should be driven by an import in the
+//! language server and covered by the contract tests below.
 
 #![deny(unused_crate_dependencies)]
 
-/// Schema types and navigation used by the language server.
+/// Schema-store loading, navigation, and schema types used by the language
+/// server.
 #[allow(
     clippy::module_name_repetitions,
     reason = "The facade keeps the source type names while grouping them by API domain."
@@ -34,8 +45,8 @@ pub mod schema {
     pub use avdschema::str::Format;
 }
 
-/// Validation configuration, results, and diagnostics used by the language
-/// server.
+/// Validation entry points, configuration, results, and diagnostics used by
+/// the language server.
 pub mod validation {
     pub use validation::Configuration;
     pub use validation::StoreValidate;
@@ -49,7 +60,10 @@ pub mod validation {
     pub use validation::feedback::WarningIssue;
 }
 
-/// YAML parser AST and event APIs used by the language server.
+/// YAML document parsing, AST, and event APIs used by the language server.
+///
+/// This module parses user documents. It is unrelated to loading schema files
+/// in YAML format, which is intentionally outside this crate's feature graph.
 pub mod yaml {
     pub use yaml_parser::CollectionStyle;
     pub use yaml_parser::Event;
@@ -65,6 +79,7 @@ pub mod yaml {
 #[cfg(test)]
 mod tests {
     use super::schema::AnySchema;
+    use super::schema::Dump as _;
     use super::schema::DynamicKeyOverrides;
     use super::schema::Format;
     use super::schema::Load as _;
@@ -95,6 +110,7 @@ mod tests {
         let _ = emit_events("key: value\n");
 
         if let (Ok(store), Some(document)) = (store, documents.first()) {
+            let _ = store.to_json();
             let _ = get_schema_from_path("schema", &store, &[], &document.value, None);
         }
 
@@ -117,5 +133,16 @@ mod tests {
         let _: Option<Node<'_>> = None;
         let _: Option<Span> = None;
         let _: Option<Value<'_>> = None;
+    }
+
+    #[cfg(feature = "gzip")]
+    #[test]
+    fn gzip_contract_loads_schema_store_from_bytes() {
+        const EMPTY_STORE_GZIP: &[u8] = &[
+            0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0xab, 0xae, 0x05, 0x00,
+            0x43, 0xbf, 0xa6, 0xa3, 0x02, 0x00, 0x00, 0x00,
+        ];
+
+        assert!(Store::from_gz_bytes(EMPTY_STORE_GZIP).is_ok());
     }
 }

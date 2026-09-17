@@ -17,5 +17,7 @@ yaml-parser = { path = "../yaml-parser", default-features = false, features = [
 ] }
 
 [features]
+# The browser LSP uses the empty default feature set. Native helpers opt into
+# gzip solely to load schema stores from compressed JSON bytes.
 default = []
 gzip = ["avdschema/gzip"]

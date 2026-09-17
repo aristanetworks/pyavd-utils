@@ -3,10 +3,11 @@
   "extends": [
     "config:recommended"
   ],
-  "schedule": [
-    "* 0-7 * * 1"
-  ],
   "timezone": "UTC",
+  "minimumReleaseAge": "7 days",
+  "gitIgnoredAuthors": [
+    "114827586+autofix-ci[bot]@users.noreply.github.com"
+  ],
   "enabledManagers": [
     "cargo",
     "github-actions",
@@ -49,6 +50,16 @@
       ],
       "semanticCommitType": "ci",
       "commitMessagePrefix": "CI: "
+    },
+    {
+      "description": "Preserve the supported Python version matrix",
+      "matchManagers": [
+        "github-actions"
+      ],
+      "matchPackageNames": [
+        "python"
+      ],
+      "enabled": false
     },
     {
       "description": "Maintain dependencies for Rust crates",

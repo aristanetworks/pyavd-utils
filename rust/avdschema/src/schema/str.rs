@@ -104,7 +104,7 @@ impl Pattern {
     pub fn get_compiled_pattern(&self) -> Result<&Regex, &fancy_regex::Error> {
         self.compiled_pattern
             .get_or_init(|| {
-                RegexBuilder::new(format!("^{}$", &self.pattern).as_str())
+                RegexBuilder::new(format!("^(?:{})$", self.pattern).as_str())
                     // This keeps the Perl classes `\d`, `\s`, and `\w` enabled with ASCII
                     // semantics; see `perl_classes_compile`. It only disables their Unicode
                     // expansion and Unicode properties such as `\p{Greek}`.
@@ -162,6 +162,16 @@ mod tests {
     #[test]
     fn variable_lookbehind_compiles() {
         assert!(Pattern::from("(?<=a+)b").get_compiled_pattern().is_ok());
+    }
+
+    #[test]
+    fn alternation_matches_the_complete_value() {
+        let pattern = Pattern::from("foo|bar");
+        let compiled_pattern = pattern.get_compiled_pattern().unwrap();
+
+        assert!(compiled_pattern.is_match("foo").unwrap());
+        assert!(compiled_pattern.is_match("bar").unwrap());
+        assert!(!compiled_pattern.is_match("foobar").unwrap());
     }
 
     #[test]

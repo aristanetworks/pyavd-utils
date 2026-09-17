@@ -109,7 +109,7 @@ repos:
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
     # Ruff version.
-    rev: cb8c523fd4835aba42af70f4cad5568db4df0b6c  # frozen: v0.16.0
+    rev: 321478e58f4938179c6b86e4ddfa923d1547a49b  # frozen: v0.16.6
     hooks:
       # Run the linter.
       - id: ruff
@@ -119,14 +119,14 @@ repos:
       - id: ruff-format
 
   - repo: https://github.com/RobertCraigie/pyright-python
-    rev: 392b6ba8e54be6d603e02e9f8d601d27b7a48d12  # frozen: v1.1.411
+    rev: 1aa6dfeb849ae43fb6f16fc17228bcbd358a19c3  # frozen: v1.1.414
     hooks:
       - id: pyright
         name: PyRight static type checker
         types: [python]
         language: python
         additional_dependencies:
-          - 'pytest>=8.2.0'
+          - 'pytest>=9.1.1'
 
   - repo: https://github.com/pycqa/pylint
     rev: "8a396357098337ba8be714fffdf2d00947a9778c"  # frozen: v4.0.6
@@ -155,7 +155,7 @@ repos:
         name: Check for Linting errors on Markdown files with settings defined in `.markdownlint-cli2.yaml`.
 
   - repo: https://github.com/zizmorcore/zizmor-pre-commit
-    rev: 067260dc5fe6ea86b7551bfd6f8b3ba4e6c93129  # frozen: v1.28.0
+    rev: fa412071e4f5d44d44f9e365f4676f9df92456a2  # frozen: v1.30.1
     hooks:
       - id: zizmor
         name: Check GitHub Actions with zizmor
