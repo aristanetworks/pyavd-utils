@@ -114,7 +114,7 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    uses: ./.github/workflows/codecov.yml
+    uses: $/.github/workflows/codecov.yml
 
   # --------------------------------------------------------------------- #
   # Build and test cross platform pyavd-utils wheels and upload artifacts
@@ -130,6 +130,6 @@ jobs:
           - windows-latest
           - macos-15-intel
           - macos-latest
-    uses: ./.github/workflows/build-wheel.yml
+    uses: $/.github/workflows/build-wheel.yml
     with:
       runner: ${{ matrix.os }}
