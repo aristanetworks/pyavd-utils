@@ -270,8 +270,8 @@ MIT License
 ================================================================================
 
 Used by:
-  - serde_with 3.21.0
-  - serde_with_macros 3.21.0
+  - serde_with 3.23.0
+  - serde_with_macros 3.23.0
 
 License text:
 --------------------------------------------------------------------------------
@@ -1023,9 +1023,9 @@ MIT License
 ================================================================================
 
 Used by:
-  - darling 0.23.0
-  - darling_core 0.23.0
-  - darling_macro 0.23.0
+  - darling 0.24.1
+  - darling_core 0.24.1
+  - darling_macro 0.24.1
 
 License text:
 --------------------------------------------------------------------------------
@@ -1252,7 +1252,7 @@ Used by:
   - serde_json 1.0.151
   - serde_yaml 0.9.34+deprecated
   - syn 2.0.119
-  - syn 3.0.2
+  - syn 3.0.6
   - unicode-ident 1.0.24
   - unsafe-libyaml 0.2.11
   - zmij 1.0.23
