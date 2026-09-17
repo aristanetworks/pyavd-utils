@@ -89,10 +89,6 @@ pub struct Properties<'input> {
     pub tag: Option<Property<'input>>,
 }
 
-#[allow(
-    clippy::elidable_lifetime_names,
-    reason = "need explicit lifetime for update/updated signatures"
-)]
 impl<'input> Properties<'input> {
     /// Create properties with just an anchor.
     #[must_use]

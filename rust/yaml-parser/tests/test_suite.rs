@@ -12,7 +12,6 @@
     clippy::min_ident_chars,
     reason = "single-char names are fine in tests"
 )]
-#![allow(clippy::indexing_slicing, reason = "panics are acceptable in tests")]
 #![allow(
     clippy::tests_outside_test_module,
     reason = "integration tests are in tests/ dir"
@@ -782,7 +781,6 @@ fn analyze_error_kinds() {
     clippy::print_stderr,
     clippy::cast_precision_loss,
     clippy::as_conversions,
-    clippy::use_debug,
     clippy::tests_outside_test_module,
     reason = "Integration test with test output and statistics calculation"
 )]
@@ -836,7 +834,6 @@ do NOT remove or relax it just to get green tests.",
     clippy::print_stderr,
     clippy::cast_precision_loss,
     clippy::as_conversions,
-    clippy::use_debug,
     clippy::tests_outside_test_module,
     reason = "Integration test with test output and statistics calculation"
 )]
