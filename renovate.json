@@ -3,10 +3,8 @@
   "extends": [
     "config:recommended"
   ],
-  "schedule": [
-    "* 0-7 * * 1"
-  ],
   "timezone": "UTC",
+  "minimumReleaseAge": "7 days",
   "enabledManagers": [
     "cargo",
     "github-actions",
