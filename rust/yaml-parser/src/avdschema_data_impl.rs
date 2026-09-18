@@ -117,11 +117,10 @@ mod tests {
     use avdschema::SchemaDataMapping as _;
     use avdschema::SchemaDataSequence as _;
     use avdschema::SchemaDataValue as _;
-    use avdschema::SchemaKeys;
+    use avdschema::SchemaView;
     use avdschema::Store;
-    use avdschema::any::AnySchema;
-    use avdschema::dict::Dict;
-    use avdschema::get_schema_from_path;
+    use avdschema::StoreSource;
+    use avdschema::resolve_dynamic_keys;
     use serde_yaml::from_str;
 
     use super::YamlMapping;
@@ -162,7 +161,7 @@ mod tests {
     }
 
     fn test_store() -> Store {
-        from_str(
+        let source: StoreSource = from_str(
             "
 eos_config:
   type: dict
@@ -183,7 +182,8 @@ eos_config:
       max: 10
 ",
         )
-        .unwrap()
+        .unwrap();
+        Store::compile(&source).unwrap()
     }
 
     #[test]
@@ -327,77 +327,50 @@ items:
 
     #[test]
     fn get_dynamic_keys_handles_string_sequence_wrong_type_and_missing_root() {
-        let schema: Dict = from_str(
-            "
-dynamic_keys:
-  name:
-    type: int
-  names:
-    type: bool
-  wrong:
-    type: str
-",
+        let store = Store::from_json(
+            r#"{"test":{"type":"dict","dynamic_keys":{"name":{"type":"int"},"names":{"type":"bool"},"wrong":{"type":"str"}}}}"#,
         )
         .unwrap();
+        let Some(SchemaView::Dict(schema)) = store.get("test") else {
+            panic!("test schema should be a dictionary")
+        };
 
         let string_doc = parse_single_document("name: single\n");
         let string_dynamic_keys =
-            schema.get_dynamic_keys((&string_doc.value).as_mapping().unwrap(), None);
+            resolve_dynamic_keys(schema, (&string_doc.value).as_mapping().unwrap(), None);
         assert_eq!(
-            string_dynamic_keys
-                .unwrap()
-                .keys()
-                .cloned()
-                .collect::<Vec<_>>(),
+            string_dynamic_keys.keys().cloned().collect::<Vec<_>>(),
             vec!["single".to_owned()]
         );
 
         let sequence_doc = parse_single_document("names: [one, two]\n");
         let sequence_dynamic_keys =
-            schema.get_dynamic_keys((&sequence_doc.value).as_mapping().unwrap(), None);
+            resolve_dynamic_keys(schema, (&sequence_doc.value).as_mapping().unwrap(), None);
         assert_eq!(
-            sequence_dynamic_keys
-                .unwrap()
-                .keys()
-                .cloned()
-                .collect::<Vec<_>>(),
+            sequence_dynamic_keys.keys().cloned().collect::<Vec<_>>(),
             vec!["one".to_owned(), "two".to_owned()]
         );
 
         let wrong_type_doc = parse_single_document("wrong: 7\n");
         let wrong_type_dynamic_keys =
-            schema.get_dynamic_keys((&wrong_type_doc.value).as_mapping().unwrap(), None);
-        assert!(wrong_type_dynamic_keys.unwrap().is_empty());
+            resolve_dynamic_keys(schema, (&wrong_type_doc.value).as_mapping().unwrap(), None);
+        assert!(wrong_type_dynamic_keys.is_empty());
 
         let missing_root_doc = parse_single_document("other: value\n");
-        let missing_root_dynamic_keys =
-            schema.get_dynamic_keys((&missing_root_doc.value).as_mapping().unwrap(), None);
-        assert!(missing_root_dynamic_keys.unwrap().is_empty());
+        let missing_root_dynamic_keys = resolve_dynamic_keys(
+            schema,
+            (&missing_root_doc.value).as_mapping().unwrap(),
+            None,
+        );
+        assert!(missing_root_dynamic_keys.is_empty());
     }
 
     #[test]
     fn schema_keys_include_dynamic_keys_for_parsed_yaml() {
-        let schema: AnySchema = from_str(
-            "
-type: dict
-keys:
-  key2:
-    type: str
-  dynamic:
-    type: list
-    items:
-      type: dict
-      keys:
-        key:
-          type: str
-dynamic_keys:
-  dynamic.key:
-    type: int
-    max: 10
-allow_other_keys: true
-",
-        )
-        .unwrap();
+        let store = test_store();
+        let Some(SchemaView::Dict(schema)) = store.get("eos_config") else {
+            panic!("eos_config should be a dictionary")
+        };
         let doc = parse_single_document(
             "
 dynamic:
@@ -407,14 +380,13 @@ key2: value
 ",
         );
 
-        let schema_keys =
-            SchemaKeys::try_from_schema_with_value(&schema, &doc.value, None).unwrap();
+        let dynamic_keys = resolve_dynamic_keys(schema, (&doc.value).as_mapping().unwrap(), None);
 
-        assert_eq!(schema_keys.keys.len(), 4);
-        assert!(schema_keys.keys.contains_key("key2"));
-        assert!(schema_keys.keys.contains_key("dynamic"));
-        assert!(schema_keys.keys.contains_key("one"));
-        assert!(schema_keys.keys.contains_key("two"));
+        assert_eq!(schema.keys().count() + dynamic_keys.len(), 4);
+        assert!(schema.key("key2").is_some());
+        assert!(schema.key("dynamic").is_some());
+        assert!(dynamic_keys.contains_key("one"));
+        assert!(dynamic_keys.contains_key("two"));
     }
 
     #[test]
@@ -429,20 +401,25 @@ key2: value
 ",
         );
 
-        let root = get_schema_from_path("eos_config", &store, &[], &doc.value, None).unwrap();
-        assert_eq!(root, Some(store.get("eos_config").unwrap()));
+        let root = store
+            .get_schema_from_path("eos_config", &[], &doc.value, None)
+            .unwrap();
+        assert!(matches!(root, Some(SchemaView::Dict(_))));
 
-        let static_key =
-            get_schema_from_path("eos_config", &store, &["key2".to_owned()], &doc.value, None)
-                .unwrap();
-        let expected_static: AnySchema =
-            from_str("type: str\ndescription: this is from key2\n").unwrap();
-        assert_eq!(static_key, Some(&expected_static),);
+        let static_key = store
+            .get_schema_from_path("eos_config", &["key2".to_owned()], &doc.value, None)
+            .unwrap();
+        let Some(SchemaView::Str(static_key)) = static_key else {
+            panic!("key2 should be a string")
+        };
+        assert_eq!(static_key.common().description(), Some("this is from key2"));
 
-        let dynamic_key =
-            get_schema_from_path("eos_config", &store, &["two".to_owned()], &doc.value, None)
-                .unwrap();
-        let expected_dynamic: AnySchema = from_str("type: int\nmax: 10\n").unwrap();
-        assert_eq!(dynamic_key, Some(&expected_dynamic),);
+        let dynamic_key = store
+            .get_schema_from_path("eos_config", &["two".to_owned()], &doc.value, None)
+            .unwrap();
+        let Some(SchemaView::Int(dynamic_key)) = dynamic_key else {
+            panic!("two should be a dynamic integer key")
+        };
+        assert_eq!(dynamic_key.max(), Some(10));
     }
 }

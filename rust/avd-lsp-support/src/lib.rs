@@ -16,7 +16,7 @@
 //! user's YAML documents through [`yaml`].
 //!
 //! The optional `gzip` feature is used only by native helpers and tests to load
-//! a schema store from compressed JSON bytes with `Load::from_gz_bytes`. It
+//! a schema store from compressed JSON bytes with [`schema::Store::from_gz_bytes`]. It
 //! does not enable schema loading from the filesystem, YAML schema
 //! deserialization, or directory traversal. Those are `avdschema` authoring
 //! and CLI capabilities, not language-server runtime capabilities.
@@ -30,19 +30,21 @@
 /// server.
 #[allow(
     clippy::module_name_repetitions,
-    reason = "The facade keeps the source type names while grouping them by API domain."
+    reason = "The facade keeps the runtime view type names while grouping them by API domain."
 )]
 pub mod schema {
-    pub use avdschema::Dump;
-    pub use avdschema::Load;
+    pub use avdschema::BoolView;
+    pub use avdschema::DictView;
+    pub use avdschema::IntView;
+    pub use avdschema::ListView;
+    pub use avdschema::SchemaPathError;
+    pub use avdschema::SchemaValueView;
+    pub use avdschema::SchemaView;
     pub use avdschema::Store;
-    pub use avdschema::any::AnySchema;
-    pub use avdschema::any::Shortcuts;
-    pub use avdschema::dict::Dict;
+    pub use avdschema::StoreError;
+    pub use avdschema::StrView;
+    pub use avdschema::StringFormatView;
     pub use avdschema::dict::DynamicKeyOverrides;
-    pub use avdschema::get_schema_from_path;
-    pub use avdschema::list::List;
-    pub use avdschema::str::Format;
 }
 
 /// Validation entry points, configuration, results, and diagnostics used by
@@ -78,13 +80,18 @@ pub mod yaml {
 
 #[cfg(test)]
 mod tests {
-    use super::schema::AnySchema;
-    use super::schema::Dump as _;
+    use super::schema::BoolView;
+    use super::schema::DictView;
     use super::schema::DynamicKeyOverrides;
-    use super::schema::Format;
-    use super::schema::Load as _;
+    use super::schema::IntView;
+    use super::schema::ListView;
+    use super::schema::SchemaPathError;
+    use super::schema::SchemaValueView;
+    use super::schema::SchemaView;
     use super::schema::Store;
-    use super::schema::get_schema_from_path;
+    use super::schema::StoreError;
+    use super::schema::StrView;
+    use super::schema::StringFormatView;
     use super::validation::Configuration;
     use super::validation::ErrorIssue;
     use super::validation::Feedback;
@@ -110,15 +117,22 @@ mod tests {
         let _ = emit_events("key: value\n");
 
         if let (Ok(store), Some(document)) = (store, documents.first()) {
-            let _ = store.to_json();
-            let _ = get_schema_from_path("schema", &store, &[], &document.value, None);
+            let _ = store.get_schema_from_path("schema", &[], &document.value, None);
         }
 
         // Keep the exact imported LSP surface type-checked, including traits
         // and types whose constructors are not part of the consumer contract.
-        let _: Option<AnySchema> = None;
+        let _: Option<BoolView<'_>> = None;
+        let _: Option<DictView<'_>> = None;
         let _: Option<DynamicKeyOverrides> = None;
-        let _: Option<Format> = None;
+        let _: Option<IntView<'_>> = None;
+        let _: Option<ListView<'_>> = None;
+        let _: Option<SchemaPathError> = None;
+        let _: Option<SchemaValueView<'_>> = None;
+        let _: Option<SchemaView<'_>> = None;
+        let _: Option<StoreError> = None;
+        let _: Option<StrView<'_>> = None;
+        let _: Option<StringFormatView> = None;
         let _: Option<Configuration> = None;
         let _: Option<Feedback<ErrorIssue>> = None;
         let _: Option<Feedback<InfoIssue>> = None;

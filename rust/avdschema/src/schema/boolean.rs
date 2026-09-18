@@ -4,65 +4,49 @@
 
 use serde::Deserialize;
 use serde::Serialize;
-use serde_json::Value;
 use serde_with::skip_serializing_none;
 
-use super::any::AnySchema;
+use super::any::SourceSchema;
 use super::base::Base;
 use super::base::documentation_options::DocumentationOptions;
-use crate::any::Shortcuts;
-use crate::base::Deprecation;
 
 /// AVD Schema for boolean data.
 #[skip_serializing_none]
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct Bool {
+pub struct SourceBool {
     #[serde(flatten)]
     pub base: Base<bool>,
     pub documentation_options: Option<DocumentationOptions>,
 }
 
-impl Shortcuts for Bool {
-    fn is_required(&self) -> bool {
-        self.base.required.unwrap_or_default()
-    }
-    fn deprecation(&self) -> &Option<Deprecation> {
-        &self.base.deprecation
-    }
-
-    fn default_(&self) -> Option<Value> {
-        self.base.default.as_ref().map(|value| Value::Bool(*value))
-    }
-}
-
-impl<'x> TryFrom<&'x AnySchema> for &'x Bool {
+impl<'x> TryFrom<&'x SourceSchema> for &'x SourceBool {
     type Error = &'static str;
 
-    fn try_from(value: &'x AnySchema) -> Result<Self, Self::Error> {
+    fn try_from(value: &'x SourceSchema) -> Result<Self, Self::Error> {
         match value {
-            AnySchema::Bool(bool) => Ok(bool),
-            _ => Err("Unable to convert from AnySchema to Bool. Invalid Schema type."),
+            SourceSchema::Bool(bool) => Ok(bool),
+            _ => Err("Unable to convert from SourceSchema to SourceBool. Invalid Schema type."),
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::Bool;
-    use crate::any::AnySchema;
-    use crate::str::Str;
+    use super::SourceBool;
+    use crate::any::SourceSchema;
+    use crate::str::SourceStr;
 
     #[test]
     fn try_from_anyschema_ok() {
-        let anyschema = &AnySchema::Bool(Bool::default());
-        let result: Result<&Bool, _> = anyschema.try_into();
+        let anyschema = &SourceSchema::Bool(SourceBool::default());
+        let result: Result<&SourceBool, _> = anyschema.try_into();
         assert!(result.is_ok());
     }
     #[test]
     fn try_from_anyschema_err() {
-        let anyschema = &AnySchema::Str(Str::default());
-        let result: Result<&Bool, _> = anyschema.try_into();
+        let anyschema = &SourceSchema::Str(SourceStr::default());
+        let result: Result<&SourceBool, _> = anyschema.try_into();
         assert!(result.is_err());
     }
 }

@@ -5,7 +5,7 @@
 use ordermap::OrderMap;
 use serde_json::Value;
 
-use crate::any::AnySchema;
+use crate::any::SourceSchema;
 use crate::base::Base;
 use crate::base::DataValue;
 use crate::base::Deprecation;
@@ -13,13 +13,13 @@ use crate::base::convert_types::ConvertTypes;
 use crate::base::documentation_options::DocumentationOptions;
 use crate::base::documentation_options::DocumentationOptionsDict;
 use crate::base::valid_values::ValidValues;
-use crate::boolean::Bool;
-use crate::dict::Dict;
-use crate::int::Int;
-use crate::list::List;
+use crate::boolean::SourceBool;
+use crate::dict::SourceDict;
+use crate::int::SourceInt;
+use crate::list::SourceList;
 use crate::str::Format;
 use crate::str::Pattern;
-use crate::str::Str;
+use crate::str::SourceStr;
 
 trait InheritableWithClone {}
 impl InheritableWithClone for String {}
@@ -30,10 +30,10 @@ impl<T> InheritableWithClone for Vec<T> where T: Clone {}
 impl InheritableWithClone for Deprecation {}
 impl InheritableWithClone for DocumentationOptions {}
 impl InheritableWithClone for DocumentationOptionsDict {}
-impl InheritableWithClone for OrderMap<String, AnySchema> {}
+impl InheritableWithClone for OrderMap<String, SourceSchema> {}
 impl InheritableWithClone for OrderMap<String, Value> {}
 impl InheritableWithClone for Format {}
-impl InheritableWithClone for Box<AnySchema> {}
+impl InheritableWithClone for Box<SourceSchema> {}
 impl InheritableWithClone for Pattern {}
 
 pub trait Inherit {
@@ -53,7 +53,7 @@ where
         }
     }
 }
-impl Inherit for OrderMap<String, AnySchema> {
+impl Inherit for OrderMap<String, SourceSchema> {
     fn inherit(&mut self, other: &Self) {
         other.iter().for_each(|(key, other_value)| {
             self.entry(key.clone())
@@ -90,14 +90,14 @@ where
             .inherit(&other.dynamic_valid_values);
     }
 }
-impl Inherit for Bool {
+impl Inherit for SourceBool {
     fn inherit(&mut self, other: &Self) {
         self.base.inherit(&other.base);
         self.documentation_options
             .inherit(&other.documentation_options);
     }
 }
-impl Inherit for Dict {
+impl Inherit for SourceDict {
     fn inherit(&mut self, other: &Self) {
         // Deep inherit each key in the maps (keys, dynamic_keys, defs) if it is set in both. Otherwise use regular option inheritance.
         if let (Some(keys), Some(other_keys)) = (self.keys.as_mut(), other.keys.as_ref()) {
@@ -128,7 +128,7 @@ impl Inherit for Dict {
             .inherit(&other.documentation_options);
     }
 }
-impl Inherit for Int {
+impl Inherit for SourceInt {
     fn inherit(&mut self, other: &Self) {
         self.min.inherit(&other.min);
         self.max.inherit(&other.max);
@@ -139,7 +139,7 @@ impl Inherit for Int {
             .inherit(&other.documentation_options);
     }
 }
-impl Inherit for List {
+impl Inherit for SourceList {
     fn inherit(&mut self, other: &Self) {
         // Deep inherit "items" if it is set in both. Otherwise use regular option inheritance.
         if let (Some(items), Some(other_items)) = (self.items.as_deref_mut(), other.items.as_ref())
@@ -159,7 +159,7 @@ impl Inherit for List {
             .inherit(&other.documentation_options);
     }
 }
-impl Inherit for Str {
+impl Inherit for SourceStr {
     fn inherit(&mut self, other: &Self) {
         self.convert_to_lower_case
             .inherit(&other.convert_to_lower_case);
@@ -174,7 +174,7 @@ impl Inherit for Str {
             .inherit(&other.documentation_options);
     }
 }
-impl Inherit for AnySchema {
+impl Inherit for SourceSchema {
     fn inherit(&mut self, other: &Self) {
         match (self, other) {
             (Self::Bool(schema), Self::Bool(other_schema)) => {
@@ -204,12 +204,12 @@ impl Inherit for AnySchema {
 #[cfg(test)]
 mod tests {
     use super::Inherit as _;
-    use crate::any::AnySchema;
-    use crate::boolean::Bool;
-    use crate::dict::Dict;
-    use crate::int::Int;
-    use crate::list::List;
-    use crate::str::Str;
+    use crate::any::SourceSchema;
+    use crate::boolean::SourceBool;
+    use crate::dict::SourceDict;
+    use crate::int::SourceInt;
+    use crate::list::SourceList;
+    use crate::str::SourceStr;
     use crate::utils::test_utils::get_test_bool_schema;
     use crate::utils::test_utils::get_test_dict_schema;
     use crate::utils::test_utils::get_test_int_schema;
@@ -218,7 +218,7 @@ mod tests {
 
     #[test]
     fn inherit_bool() {
-        let mut schema_a = AnySchema::Bool(Bool::default());
+        let mut schema_a = SourceSchema::Bool(SourceBool::default());
         let schema_b = get_test_bool_schema();
         // Verify that the schemas are different
         assert_ne!(
@@ -236,7 +236,7 @@ mod tests {
 
     #[test]
     fn inherit_int() {
-        let mut schema_a = AnySchema::Int(Int::default());
+        let mut schema_a = SourceSchema::Int(SourceInt::default());
         let schema_b = get_test_int_schema();
         // Verify that the schemas are different
         assert_ne!(
@@ -254,7 +254,7 @@ mod tests {
 
     #[test]
     fn inherit_str() {
-        let mut schema_a = AnySchema::Str(Str::default());
+        let mut schema_a = SourceSchema::Str(SourceStr::default());
         let schema_b = get_test_str_schema();
         // Verify that the schemas are different
         assert_ne!(
@@ -272,7 +272,7 @@ mod tests {
 
     #[test]
     fn inherit_list() {
-        let mut schema_a = AnySchema::List(List::default());
+        let mut schema_a = SourceSchema::List(SourceList::default());
         let schema_b = get_test_list_schema();
         // Verify that the schemas are different
         assert_ne!(
@@ -290,7 +290,7 @@ mod tests {
 
     #[test]
     fn inherit_dict() {
-        let mut schema_a = AnySchema::Dict(Dict::default());
+        let mut schema_a = SourceSchema::Dict(SourceDict::default());
         let schema_b = get_test_dict_schema();
         // Verify that the schemas are different
         assert_ne!(
@@ -311,11 +311,11 @@ mod tests {
         use crate::utils::test_utils::get_test_str_schema_with_upgrade_handler;
 
         let source_schema = get_test_str_schema_with_upgrade_handler();
-        let mut schema = AnySchema::Str(Str::default());
+        let mut schema = SourceSchema::Str(SourceStr::default());
         schema.inherit(&source_schema);
         let deprecation = match schema {
-            AnySchema::Str(str_schema) => str_schema.base.deprecation.clone(),
-            _ => panic!("Expected Str schema"),
+            SourceSchema::Str(str_schema) => str_schema.base.deprecation.clone(),
+            _ => panic!("Expected SourceStr schema"),
         };
 
         assert!(deprecation.is_some());

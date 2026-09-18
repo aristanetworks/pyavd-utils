@@ -171,7 +171,7 @@ fn get_list_primary_key_py_invalid_schema_path_errors() {
         assert!(err.is_instance_of::<pyo3::exceptions::PyRuntimeError>(py));
         assert!(
             err.to_string()
-                .contains("Error while resolving schema path: Resolve(RefSyntax")
+                .contains("Data path cannot be traversed through this schema node")
         );
     });
 }

@@ -164,7 +164,7 @@ fn init_store_py_twice_err() {
         let err = {
             let args = ();
             let kwargs = pyo3::types::PyDict::new(py);
-            let file = py.detach(test_schema_store::get_store_gz_path);
+            let file = py.detach(super::get_store_archive_path);
             kwargs.set_item("file", file).unwrap();
             module
                 .call_method("init_store_from_file", args, Some(&kwargs))

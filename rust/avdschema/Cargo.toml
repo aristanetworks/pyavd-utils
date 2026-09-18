@@ -19,6 +19,9 @@ derive_more = { workspace = true, features = [
 flate2 = { version = "1.1.0", optional = true }
 ordermap = { workspace = true, features = ["serde"] }
 fancy-regex = { workspace = true, features = ["std", "variable-lookbehinds"] }
+indexmap = { workspace = true }
+rkyv = { workspace = true }
+self_cell = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true, features = ["preserve_order"] }
 serde_with = { version = "3.20.0" }
@@ -26,10 +29,21 @@ serde_yaml = { workspace = true, optional = true }
 walkdir = { version = "2.5.0", optional = true }
 xz2 = { version = "0.1.7", optional = true }
 
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+mmap-guard = { workspace = true, optional = true }
+
 [features]
+# General-purpose native defaults. Lean consumers should opt into only the capabilities they use.
 default = ["gzip", "regex-perf", "yaml"]
-dump_load_files = ["dep:walkdir", "gzip", "yaml"]
+# File-oriented schema authoring and archive generation. This also enables native mmap loading.
+dump_load_files = ["mmap", "dep:walkdir", "gzip", "yaml"]
+# Compile gzip-compressed JSON schema sources into process-owned stores.
 gzip = ["dep:flate2"]
+# Enable the native regex performance accelerators omitted by lean and WASM consumers.
 regex-perf = ["fancy-regex/perf"]
+# Memory-map an existing raw compiled archive on native targets.
+mmap = ["dep:mmap-guard"]
+# Load and dump legacy xz-compressed schema source files.
 xz2 = ["dump_load_files", "dep:xz2"]
+# Load and dump YAML source schemas through serde.
 yaml = ["dep:serde_yaml"]

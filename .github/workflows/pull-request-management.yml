@@ -80,7 +80,14 @@ jobs:
       - name: Generate coverage report with cargo llvm-cov
         run: |
           cargo install cargo-llvm-cov --locked
-          cargo llvm-cov --locked --all-targets --all-features --lcov --output-path lcov.info
+          # Keep instrumented artifacts separate from the normal Cargo test build above.
+          export CARGO_TARGET_DIR="${RUNNER_TEMP}/pyavd-utils-llvm-cov-target"
+          # Apply LLVM instrumentation to Cargo tests and the PyO3 extension built by pip.
+          eval "$(cargo llvm-cov show-env --sh)"
+          cargo test --locked --all-targets --all-features
+          python -m pip install -e . "pytest>=8.2.0"
+          python -m pytest
+          cargo llvm-cov report --lcov --output-path lcov.info
         if: |
           matrix.os == 'ubuntu-latest'
       - name: Upload coverage report

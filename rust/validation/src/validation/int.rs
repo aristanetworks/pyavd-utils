@@ -2,71 +2,78 @@
 // Use of this source code is governed by the Apache License 2.0
 // that can be found in the LICENSE file.
 
-use avdschema::any::AnySchema;
-use avdschema::int::Int;
-use avdschema::resolve_ref;
+use avdschema::IntView;
 
-use super::Validation;
-use super::valid_values::ValidateValidValues as _;
+use super::NodeValidation;
+use super::invalid_type;
 use crate::context::Context;
+use crate::context::ValidationState;
 use crate::feedback::Type;
 use crate::feedback::Violation;
 use crate::validatable::ValidatableValue;
 
-impl Validation for Int {
-    fn validate<V: ValidatableValue>(&self, value: &V, ctx: &mut Context) -> Option<V::Coerced> {
-        if let Some(ref_result) = validate_ref(self, value, ctx) {
-            return ref_result;
-        }
-
-        // Lenient type check - accept anything coercible to int (e.g., "123" -> 123)
-        if let Some(integer) = value.as_i64() {
-            // Emit coercion info if the original value was not an int
-            if !value.is_int() {
-                ctx.add_coercion_for(value, integer);
-            }
-            self.valid_values.validate(value, &integer, ctx);
-            validate_min(self, value, &integer, ctx);
-            validate_max(self, value, &integer, ctx);
-            ctx.configuration
-                .return_coerced_data
-                .then(|| value.coerce_int(integer))
-        } else if value.is_int() {
-            ctx.add_error_for(
-                value,
-                Violation::IntegerOutOfRange {
-                    found: value.as_str().map_or_else(
-                        || value.to_feedback_value().to_string(),
-                        std::borrow::Cow::into_owned,
-                    ),
-                },
-            );
-            None
-        } else {
-            Self::handle_invalid_type(value, ctx, Type::Int)
-        }
-    }
-}
-
-/// Validate against a referenced schema (for unresolved $ref ending with #).
-fn validate_ref<V: ValidatableValue>(
-    schema: &Int,
+pub(crate) fn validate_node<V: ValidatableValue>(
+    schema: IntView<'_>,
     value: &V,
     ctx: &mut Context,
-) -> Option<Option<V::Coerced>> {
-    if let Some(ref_) = schema.base.schema_ref.as_ref()
-        && let Ok(AnySchema::Int(ref_schema)) = resolve_ref(ref_, ctx.store)
-    {
-        return Some(ref_schema.validate(value, ctx));
+    state: &mut ValidationState,
+) -> NodeValidation<i64> {
+    // Lenient type check - accept anything coercible to int (e.g., "123" -> 123)
+    if let Some(integer) = value.as_i64() {
+        // Emit coercion info if the original value was not an int
+        if !value.is_int() {
+            ctx.add_coercion_for(state, value, integer);
+        }
+        if schema
+            .valid_values()
+            .is_some_and(|mut valid_values| !valid_values.any(|valid_value| valid_value == integer))
+        {
+            ctx.add_error_for(
+                state,
+                value,
+                Violation::InvalidValue {
+                    expected: schema
+                        .valid_values()
+                        .into_iter()
+                        .flatten()
+                        .collect::<Vec<_>>()
+                        .into(),
+                    found: integer.into(),
+                },
+            );
+        }
+        validate_min(schema, value, &integer, ctx, state);
+        validate_max(schema, value, &integer, ctx, state);
+        NodeValidation::Valid(integer)
+    } else if value.is_int() {
+        ctx.add_error_for(
+            state,
+            value,
+            Violation::IntegerOutOfRange {
+                found: value.as_str().map_or_else(
+                    || value.to_feedback_value().to_string(),
+                    std::borrow::Cow::into_owned,
+                ),
+            },
+        );
+        NodeValidation::Invalid
+    } else {
+        invalid_type(value, ctx, state, Type::Int)
     }
-    None
 }
 
-fn validate_min<V: ValidatableValue>(schema: &Int, value: &V, input: &i64, ctx: &mut Context) {
-    if let Some(min) = schema.min
+fn validate_min<V: ValidatableValue>(
+    schema: IntView<'_>,
+    value: &V,
+    input: &i64,
+    ctx: &mut Context,
+    state: &ValidationState,
+) {
+    if let Some(min) = schema.min()
         && min > *input
     {
         ctx.add_error_for(
+            state,
             value,
             Violation::ValueBelowMinimum {
                 minimum: min,
@@ -76,11 +83,18 @@ fn validate_min<V: ValidatableValue>(schema: &Int, value: &V, input: &i64, ctx: 
     }
 }
 
-fn validate_max<V: ValidatableValue>(schema: &Int, value: &V, input: &i64, ctx: &mut Context) {
-    if let Some(max) = schema.max
+fn validate_max<V: ValidatableValue>(
+    schema: IntView<'_>,
+    value: &V,
+    input: &i64,
+    ctx: &mut Context,
+    state: &ValidationState,
+) {
+    if let Some(max) = schema.max()
         && max < *input
     {
         ctx.add_error_for(
+            state,
             value,
             Violation::ValueAboveMaximum {
                 maximum: max,
@@ -92,6 +106,7 @@ fn validate_max<V: ValidatableValue>(schema: &Int, value: &V, input: &i64, ctx: 
 
 #[cfg(test)]
 mod tests {
+    use avdschema::int::SourceInt;
     use serde_json::Value;
 
     use super::*;
@@ -100,24 +115,22 @@ mod tests {
     use crate::feedback::CoercionNote;
     use crate::feedback::Feedback;
     use crate::feedback::Violation;
-    use crate::validation::test_utils::get_test_store;
+    use crate::validation::test_utils::TestValidate as _;
 
     #[test]
     fn validate_type_ok() {
-        let schema = Int::default();
+        let schema = SourceInt::default();
         let input: Value = 123.into();
-        let store = get_test_store();
-        let mut ctx = Context::new(&store, None);
+        let mut ctx = Context::new(None);
         let _ = schema.validate(&input, &mut ctx);
         assert!(ctx.result.errors.is_empty() && ctx.result.infos.is_empty());
     }
 
     #[test]
     fn validate_type_err() {
-        let schema = Int::default();
+        let schema = SourceInt::default();
         let input = serde_json::json!({});
-        let store = get_test_store();
-        let mut ctx = Context::new(&store, None);
+        let mut ctx = Context::new(None);
         let _ = schema.validate(&input, &mut ctx);
         assert!(ctx.result.infos.is_empty());
         assert_eq!(
@@ -136,10 +149,9 @@ mod tests {
 
     #[test]
     fn validate_json_integer_out_of_range_err() {
-        let schema = Int::default();
+        let schema = SourceInt::default();
         let input = Value::Number(serde_json::Number::from(i64::MAX as u64 + 1));
-        let store = get_test_store();
-        let mut ctx = Context::new(&store, None);
+        let mut ctx = Context::new(None);
         let _ = schema.validate(&input, &mut ctx);
         assert!(ctx.result.infos.is_empty());
         assert_eq!(
@@ -157,26 +169,24 @@ mod tests {
 
     #[test]
     fn validate_yaml_integer_variant_within_i64_ok() {
-        let schema = Int::default();
+        let schema = SourceInt::default();
         let input = yaml_parser::Node::new(
             yaml_parser::Value::Int(yaml_parser::Integer::U64(123)),
             yaml_parser::Span::default(),
         );
-        let store = get_test_store();
-        let mut ctx = Context::new(&store, None);
+        let mut ctx = Context::new(None);
         let _ = schema.validate(&input, &mut ctx);
         assert!(ctx.result.errors.is_empty() && ctx.result.infos.is_empty());
     }
 
     #[test]
     fn validate_yaml_integer_out_of_range_err() {
-        let schema = Int::default();
+        let schema = SourceInt::default();
         let input = yaml_parser::Node::new(
             yaml_parser::Value::Int(yaml_parser::Integer::U64(i64::MAX as u64 + 1)),
             yaml_parser::Span::default(),
         );
-        let store = get_test_store();
-        let mut ctx = Context::new(&store, None);
+        let mut ctx = Context::new(None);
         let _ = schema.validate(&input, &mut ctx);
         assert!(ctx.result.infos.is_empty());
         assert_eq!(
@@ -194,15 +204,14 @@ mod tests {
 
     #[test]
     fn validate_type_coerced_from_str_ok() {
-        let schema = Int::default();
+        let schema = SourceInt::default();
         let input: Value = "123".into();
-        let store = get_test_store();
         let configuration = Configuration {
             return_coercion_infos: true,
             return_coerced_data: true,
             ..Default::default()
         };
-        let mut ctx = Context::new(&store, Some(&configuration));
+        let mut ctx = Context::new(Some(&configuration));
         let coerced = schema.validate(&input, &mut ctx);
         assert!(ctx.result.errors.is_empty());
         assert_eq!(
@@ -222,10 +231,9 @@ mod tests {
 
     #[test]
     fn validate_type_coerced_from_str_err() {
-        let schema = Int::default();
+        let schema = SourceInt::default();
         let input: Value = "one23".into();
-        let store = get_test_store();
-        let mut ctx = Context::new(&store, None);
+        let mut ctx = Context::new(None);
         let _ = schema.validate(&input, &mut ctx);
         assert!(ctx.result.infos.is_empty());
         assert_eq!(
@@ -244,8 +252,7 @@ mod tests {
 
     #[test]
     fn validate_type_coerced_from_bool_ok() {
-        let schema = Int::default();
-        let store = get_test_store();
+        let schema = SourceInt::default();
         let configuration = Configuration {
             return_coercion_infos: true,
             return_coerced_data: true,
@@ -254,7 +261,7 @@ mod tests {
 
         // Test true -> 1
         let input_true: Value = true.into();
-        let mut true_ctx = Context::new(&store, Some(&configuration));
+        let mut true_ctx = Context::new(Some(&configuration));
         let true_coerced = schema.validate(&input_true, &mut true_ctx);
         assert!(true_ctx.result.errors.is_empty());
         assert_eq!(
@@ -273,7 +280,7 @@ mod tests {
 
         // Test false -> 0
         let input_false: Value = false.into();
-        let mut false_ctx = Context::new(&store, Some(&configuration));
+        let mut false_ctx = Context::new(Some(&configuration));
         let false_coerced = schema.validate(&input_false, &mut false_ctx);
         assert!(false_ctx.result.errors.is_empty());
         assert_eq!(
@@ -294,13 +301,12 @@ mod tests {
     #[test]
     fn validate_valid_values_ok() {
         let schema = {
-            let mut int = Int::default();
+            let mut int = SourceInt::default();
             int.valid_values.valid_values = Some(vec![123]);
             int
         };
         let input: Value = 123.into();
-        let store = get_test_store();
-        let mut ctx = Context::new(&store, None);
+        let mut ctx = Context::new(None);
         let _ = schema.validate(&input, &mut ctx);
         assert!(ctx.result.errors.is_empty() && ctx.result.infos.is_empty());
     }
@@ -308,13 +314,12 @@ mod tests {
     #[test]
     fn validate_valid_values_err() {
         let schema = {
-            let mut int = Int::default();
+            let mut int = SourceInt::default();
             int.valid_values.valid_values = Some(vec![123]);
             int
         };
         let input: Value = 321.into();
-        let store = get_test_store();
-        let mut ctx = Context::new(&store, None);
+        let mut ctx = Context::new(None);
         let _ = schema.validate(&input, &mut ctx);
         assert!(ctx.result.infos.is_empty());
         assert_eq!(
@@ -333,26 +338,24 @@ mod tests {
 
     #[test]
     fn validate_min_ok() {
-        let schema = Int {
+        let schema = SourceInt {
             min: Some(122),
             ..Default::default()
         };
         let input: Value = 123.into();
-        let store = get_test_store();
-        let mut ctx = Context::new(&store, None);
+        let mut ctx = Context::new(None);
         let _ = schema.validate(&input, &mut ctx);
         assert!(ctx.result.errors.is_empty() && ctx.result.infos.is_empty());
     }
 
     #[test]
     fn validate_min_err() {
-        let schema = Int {
+        let schema = SourceInt {
             min: Some(122),
             ..Default::default()
         };
         let input: Value = 121.into();
-        let store = get_test_store();
-        let mut ctx = Context::new(&store, None);
+        let mut ctx = Context::new(None);
         let _ = schema.validate(&input, &mut ctx);
         assert!(ctx.result.infos.is_empty());
         assert_eq!(
@@ -371,26 +374,24 @@ mod tests {
 
     #[test]
     fn validate_max_ok() {
-        let schema = Int {
+        let schema = SourceInt {
             max: Some(124),
             ..Default::default()
         };
         let input: Value = 123.into();
-        let store = get_test_store();
-        let mut ctx = Context::new(&store, None);
+        let mut ctx = Context::new(None);
         let _ = schema.validate(&input, &mut ctx);
         assert!(ctx.result.errors.is_empty() && ctx.result.infos.is_empty());
     }
 
     #[test]
     fn validate_max_err() {
-        let schema = Int {
+        let schema = SourceInt {
             max: Some(124),
             ..Default::default()
         };
         let input: Value = 125.into();
-        let store = get_test_store();
-        let mut ctx = Context::new(&store, None);
+        let mut ctx = Context::new(None);
         let _ = schema.validate(&input, &mut ctx);
         assert!(ctx.result.infos.is_empty());
         assert_eq!(
@@ -409,15 +410,14 @@ mod tests {
 
     #[test]
     fn validate_type_coerced_from_integral_float_ok() {
-        let schema = Int::default();
+        let schema = SourceInt::default();
         let input = serde_json::json!(1.0);
-        let store = get_test_store();
         let configuration = Configuration {
             return_coercion_infos: true,
             return_coerced_data: true,
             ..Default::default()
         };
-        let mut ctx = Context::new(&store, Some(&configuration));
+        let mut ctx = Context::new(Some(&configuration));
         let coerced = schema.validate(&input, &mut ctx);
 
         assert!(ctx.result.errors.is_empty());

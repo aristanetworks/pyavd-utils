@@ -26,13 +26,13 @@ mod context;
 pub mod feedback;
 mod validatable;
 mod validation;
+mod walker;
 
 pub use self::context::Configuration;
-pub use self::context::Context;
 pub use self::context::ValidationResult;
-pub use self::validation::Validation;
 pub use self::validation::store::InputValidationResult;
 pub use self::validation::store::StoreValidate;
+pub use self::validation::store::StoreValidateError;
 pub use self::validation::store::StoreValidateInput;
 pub use self::validation::store::ValidationOutput;
 pub use self::validation::store::YamlValidationResult;

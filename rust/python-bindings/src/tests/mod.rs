@@ -4,6 +4,9 @@
 
 use std::sync::OnceLock;
 
+use avdschema::Load as _;
+use avdschema::Store;
+use avdschema::StoreSource;
 use pyo3::types::PyAnyMethods as _;
 use pyo3::types::PyDict;
 
@@ -15,6 +18,17 @@ mod validation;
 
 static INIT_PY: OnceLock<()> = OnceLock::new();
 static INIT_STORE: OnceLock<()> = OnceLock::new();
+static TEST_ARCHIVE_PATH: OnceLock<std::path::PathBuf> = OnceLock::new();
+
+fn get_store_archive_path() -> &'static std::path::PathBuf {
+    TEST_ARCHIVE_PATH.get_or_init(|| {
+        let source_path = test_schema_store::get_store_gz_path();
+        let source = StoreSource::from_file(Some(source_path)).unwrap();
+        let archive_path = source_path.with_file_name("schemas.rkyv");
+        Store::compile_to_file(&source, &archive_path).unwrap();
+        archive_path
+    })
+}
 
 fn setup_python() {
     INIT_PY.get_or_init(|| {
@@ -33,7 +47,7 @@ fn setup() {
                 .getattr("_schema_store")
                 .unwrap();
             let kwargs = PyDict::new(py);
-            let file = py.detach(test_schema_store::get_store_gz_path);
+            let file = py.detach(get_store_archive_path);
             kwargs.set_item("file", file).unwrap();
             module
                 .call_method("init_store_from_file", (), Some(&kwargs))

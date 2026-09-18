@@ -133,8 +133,8 @@ pub enum LoadError {
 #[cfg(all(test, feature = "dump_load_files"))]
 mod tests {
     use super::Load as _;
-    use crate::Store;
-    use crate::any::AnySchema;
+    use crate::StoreSource;
+    use crate::any::SourceSchema;
     use crate::utils::test_utils::get_test_dict_schema;
     use crate::utils::test_utils::get_test_store;
     use crate::utils::test_utils::get_tmp_file;
@@ -144,7 +144,7 @@ mod tests {
         crate::utils::dump::tests::dump_yaml();
         let file_path = get_tmp_file("test_dump.yml");
         let schema = get_test_dict_schema();
-        let result = AnySchema::from_file(Some(&file_path));
+        let result = SourceSchema::from_file(Some(&file_path));
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), schema);
     }
@@ -153,7 +153,7 @@ mod tests {
         crate::utils::dump::tests::dump_json();
         let file_path = get_tmp_file("test_dump.json");
         let schema = get_test_dict_schema();
-        let result = AnySchema::from_file(Some(&file_path));
+        let result = SourceSchema::from_file(Some(&file_path));
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), schema);
     }
@@ -163,7 +163,7 @@ mod tests {
         crate::utils::dump::tests::dump_xz2();
         let file_path = get_tmp_file("test_dump.xz2");
         let schema = get_test_dict_schema();
-        let result = AnySchema::from_file(Some(&file_path));
+        let result = SourceSchema::from_file(Some(&file_path));
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), schema);
     }
@@ -172,7 +172,7 @@ mod tests {
         crate::utils::dump::tests::dump_gz();
         let file_path = get_tmp_file("test_dump.gz");
         let schema = get_test_dict_schema();
-        let result = AnySchema::from_file(Some(&file_path));
+        let result = SourceSchema::from_file(Some(&file_path));
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), schema);
     }
@@ -181,7 +181,7 @@ mod tests {
         crate::utils::dump::tests::dump_store_yaml();
         let file_path = get_tmp_file("test_dump_store.yml");
         let store = get_test_store();
-        let result = Store::from_file(Some(&file_path));
+        let result = StoreSource::from_file(Some(&file_path));
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), store);
     }

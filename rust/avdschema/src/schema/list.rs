@@ -7,19 +7,17 @@ use serde::Serialize;
 use serde_json::Value;
 use serde_with::skip_serializing_none;
 
-use super::any::AnySchema;
+use super::any::SourceSchema;
 use super::base::documentation_options::DocumentationOptions;
-use crate::any::Shortcuts;
-use crate::base::Deprecation;
 use crate::schema::base::Base;
 
 /// AVD Schema for list data.
 #[skip_serializing_none]
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct List {
+pub struct SourceList {
     /// Schema for list items
-    pub items: Option<Box<AnySchema>>,
+    pub items: Option<Box<SourceSchema>>,
     pub min_length: Option<u64>,
     pub max_length: Option<u64>,
     /// Name of a primary key in a list of dictionaries.
@@ -36,49 +34,33 @@ pub struct List {
     pub documentation_options: Option<DocumentationOptions>,
 }
 
-impl Shortcuts for List {
-    fn is_required(&self) -> bool {
-        self.base.required.unwrap_or_default()
-    }
-
-    fn deprecation(&self) -> &Option<Deprecation> {
-        &self.base.deprecation
-    }
-    fn default_(&self) -> Option<Value> {
-        self.base
-            .default
-            .as_ref()
-            .map(|value| Value::Array(value.to_owned()))
-    }
-}
-
-impl<'x> TryFrom<&'x AnySchema> for &'x List {
+impl<'x> TryFrom<&'x SourceSchema> for &'x SourceList {
     type Error = &'static str;
 
-    fn try_from(value: &'x AnySchema) -> Result<Self, Self::Error> {
+    fn try_from(value: &'x SourceSchema) -> Result<Self, Self::Error> {
         match value {
-            AnySchema::List(list) => Ok(list),
-            _ => Err("Unable to convert from AnySchema to List. Invalid Schema type."),
+            SourceSchema::List(list) => Ok(list),
+            _ => Err("Unable to convert from SourceSchema to SourceList. Invalid Schema type."),
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::List;
-    use crate::any::AnySchema;
-    use crate::dict::Dict;
+    use super::SourceList;
+    use crate::any::SourceSchema;
+    use crate::dict::SourceDict;
 
     #[test]
     fn try_from_anyschema_ok() {
-        let anyschema = &AnySchema::List(List::default());
-        let result: Result<&List, _> = anyschema.try_into();
+        let anyschema = &SourceSchema::List(SourceList::default());
+        let result: Result<&SourceList, _> = anyschema.try_into();
         assert!(result.is_ok());
     }
     #[test]
     fn try_from_anyschema_err() {
-        let anyschema = &AnySchema::Dict(Dict::default());
-        let result: Result<&List, _> = anyschema.try_into();
+        let anyschema = &SourceSchema::Dict(SourceDict::default());
+        let result: Result<&SourceList, _> = anyschema.try_into();
         assert!(result.is_err());
     }
 }

@@ -10,11 +10,12 @@ pub(crate) use _validation::first_input_diagnostic_as_pyerr;
 /// Schema validation helpers.
 #[pyo3::pymodule]
 pub(crate) mod _validation {
-    use ::validation::Context;
+    use ::validation::StoreValidate as _;
     use ::validation::StoreValidateInput as _;
-    use ::validation::Validation as _;
     use ::validation::feedback::InputDiagnostic;
-    use avdschema::any::AnySchema;
+    use avdschema::Store;
+    use avdschema::StoreSource;
+    use avdschema::any::SourceSchema;
     use log::debug;
     use pyo3::PyResult;
     use pyo3::exceptions::PyRuntimeError;
@@ -23,6 +24,8 @@ pub(crate) mod _validation {
     use pyo3::pymethods;
 
     use crate::schema_store::get_store;
+
+    const ADHOC_SCHEMA_NAME: &str = "__adhoc__";
 
     fn invalid_json_in_data_err(message: impl std::fmt::Display) -> pyo3::PyErr {
         PyRuntimeError::new_err(format!("Invalid JSON in data: {message}"))
@@ -252,16 +255,25 @@ pub(crate) mod _validation {
         schema_as_json: &str,
         configuration: Option<Configuration>,
     ) -> PyResult<ValidationResult> {
-        let schema: AnySchema = serde_json::from_str(schema_as_json).map_err(|err| {
+        let schema: SourceSchema = serde_json::from_str(schema_as_json).map_err(|err| {
             PyRuntimeError::new_err(format!("Invalid JSON in adhoc schema: {err}"))
         })?;
         let data: serde_json::Value =
             serde_json::from_str(data_as_json).map_err(invalid_json_in_data_err)?;
 
+        let raw_store: StoreSource = serde_json::from_value(serde_json::json!({
+            ADHOC_SCHEMA_NAME: schema
+        }))
+        .map_err(|err| PyRuntimeError::new_err(format!("Invalid adhoc schema: {err}")))?;
+        let archive = Store::compile_schema(&raw_store, ADHOC_SCHEMA_NAME)
+            .map_err(|err| PyRuntimeError::new_err(format!("Invalid adhoc schema: {err}")))?;
         let config: Option<::validation::Configuration> = configuration.map(Into::into);
-        let mut ctx = Context::new(get_store()?, config.as_ref());
-        let _ = schema.validate(&data, &mut ctx);
+        let output = archive
+            .validate_value(&data, ADHOC_SCHEMA_NAME, config.as_ref())
+            .map_err(|err| {
+                PyRuntimeError::new_err(format!("Error while validating the data: {err}"))
+            })?;
 
-        ValidationResult::from_validation_result(ctx.result)
+        ValidationResult::from_validation_result(output.result)
     }
 }

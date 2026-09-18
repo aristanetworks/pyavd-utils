@@ -6,14 +6,29 @@
 from pathlib import Path
 from typing import Literal
 
+def compile_schema_archive(source: Path, destination: Path) -> None:
+    """
+    Compile a source schema-store file into the archived runtime format.
+
+    The destination is written atomically. Its parent directory must already exist. The resulting
+    file can be memory-mapped by `init_store_from_file`.
+
+    Args:
+        source: Path to the source schema-store file.
+        destination: Path where the compiled archive should be written.
+
+    Raises:
+        RuntimeError: If the source cannot be loaded, the schemas cannot be compiled, or the
+            destination cannot be written.
+    """
+
 def get_list_primary_key(schema_name: Literal["eos_config"], data_path: list[str]) -> str | None:
     """
     Return the primary key for a list schema at the given data path.
 
     Limitation:
-        This only supports the EOS config schema for now, since other AVD schemas can use
-        dynamic keys which are not supported by this helper yet. The only supported schema
-        name is "eos_config".
+        The only supported schema name is "eos_config". Path resolution does not use caller data
+        or dynamic-key overrides.
 
     Args:
         schema_name: The name of the schema to inspect.
@@ -27,14 +42,14 @@ def get_list_primary_key(schema_name: Literal["eos_config"], data_path: list[str
 
 def init_store_from_file(file: Path) -> None:
     """
-    Initialize the shared Schema store from a file containing the full schema store.
+    Initialize the shared Schema store from a compiled schema archive.
 
-    Usually this is the schema.json.gz file built with pyavd.
-    This must be called before using validation or schema-merge APIs that rely on the shared store.
+    The archive is validated and memory-mapped. Initialization can happen only once in each
+    process and must happen before using APIs that rely on the shared schema store.
 
     Args:
-        file: Path to the json, yml or json.gz file holding the schema store.
+        file: Path to the compiled schema archive.
 
     Raises:
-        RuntimeError: For any issue hit during loading, deserializing, combining and resolving schemas.
+        RuntimeError: If the store was already initialized or the archive cannot be opened or validated.
     """

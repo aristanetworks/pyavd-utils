@@ -4,22 +4,19 @@
 
 use serde::Deserialize;
 use serde::Serialize;
-use serde_json::Value;
 use serde_with::skip_serializing_none;
 
-use super::any::AnySchema;
+use super::any::SourceSchema;
 use super::base::convert_types::ConvertTypes;
 use super::base::documentation_options::DocumentationOptions;
 use super::base::valid_values::ValidValues;
-use crate::any::Shortcuts;
-use crate::base::Deprecation;
 use crate::schema::base::Base;
 
 /// AVD Schema for integer data.
 #[skip_serializing_none]
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct Int {
+pub struct SourceInt {
     pub min: Option<i64>,
     pub max: Option<i64>,
     #[serde(flatten)]
@@ -30,48 +27,33 @@ pub struct Int {
     pub valid_values: ValidValues<i64>,
     pub documentation_options: Option<DocumentationOptions>,
 }
-impl Shortcuts for Int {
-    fn is_required(&self) -> bool {
-        self.base.required.unwrap_or_default()
-    }
-
-    fn deprecation(&self) -> &Option<Deprecation> {
-        &self.base.deprecation
-    }
-    fn default_(&self) -> Option<Value> {
-        self.base
-            .default
-            .as_ref()
-            .map(|value| Value::Number((*value).into()))
-    }
-}
-impl<'x> TryFrom<&'x AnySchema> for &'x Int {
+impl<'x> TryFrom<&'x SourceSchema> for &'x SourceInt {
     type Error = &'static str;
 
-    fn try_from(value: &'x AnySchema) -> Result<Self, Self::Error> {
+    fn try_from(value: &'x SourceSchema) -> Result<Self, Self::Error> {
         match value {
-            AnySchema::Int(int) => Ok(int),
-            _ => Err("Unable to convert from AnySchema to Int. Invalid Schema type."),
+            SourceSchema::Int(int) => Ok(int),
+            _ => Err("Unable to convert from SourceSchema to SourceInt. Invalid Schema type."),
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::Int;
-    use crate::any::AnySchema;
-    use crate::str::Str;
+    use super::SourceInt;
+    use crate::any::SourceSchema;
+    use crate::str::SourceStr;
 
     #[test]
     fn try_from_anyschema_ok() {
-        let anyschema = &AnySchema::Int(Int::default());
-        let result: Result<&Int, _> = anyschema.try_into();
+        let anyschema = &SourceSchema::Int(SourceInt::default());
+        let result: Result<&SourceInt, _> = anyschema.try_into();
         assert!(result.is_ok());
     }
     #[test]
     fn try_from_anyschema_err() {
-        let anyschema = &AnySchema::Str(Str::default());
-        let result: Result<&Int, _> = anyschema.try_into();
+        let anyschema = &SourceSchema::Str(SourceStr::default());
+        let result: Result<&SourceInt, _> = anyschema.try_into();
         assert!(result.is_err());
     }
 }

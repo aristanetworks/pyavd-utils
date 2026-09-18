@@ -1,191 +1,373 @@
-// Copyright (c) 2025-2026 Arista Networks, Inc.
+// Copyright (c) 2026 Arista Networks, Inc.
 // Use of this source code is governed by the Apache License 2.0
 // that can be found in the LICENSE file.
-use std::collections::HashMap;
-#[cfg(feature = "dump_load_files")]
-use std::path::PathBuf;
 
-use serde::Deserialize;
-use serde::Serialize;
+//! Ownership, loading, and integrity of the compiled schema store.
 
-use crate::resolve::errors::SchemaResolverError;
-use crate::resolve_schema;
-use crate::schema::any::AnySchema;
-use crate::utils::dump::Dump;
-use crate::utils::load::Load;
-#[cfg(feature = "dump_load_files")]
-use crate::utils::load::LoadError;
+#![allow(
+    clippy::mem_forget,
+    reason = "self_cell internally uses mem::forget to safely construct its self-referential owner"
+)]
 
-/// Schema store containing the AVD schemas.
-/// The store is used as entrypoint for validation and when resolving a $ref pointing to a specific schema.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg(any(feature = "dump_load_files", feature = "mmap"))]
+use std::path::Path;
+use std::sync::OnceLock;
+
+use fancy_regex::Regex;
+use fancy_regex::RegexBuilder;
+#[cfg(feature = "mmap")]
+use mmap_guard::FileData;
+use rkyv::rancor::Error as RkyvError;
+use self_cell::self_cell;
+
+use crate::Load as _;
+use crate::SchemaView;
+use crate::StoreSource;
+use crate::compiled::ARCHIVE_FORMAT_VERSION;
+use crate::compiled::ARCHIVE_HEADER_LENGTH;
+use crate::compiled::ARCHIVE_MAGIC;
+use crate::compiled::ArchivedCompiledStore;
+use crate::compiled::ArchivedSchemaId;
+use crate::compiled::CompiledStore;
+
+enum ArchiveBytes {
+    #[cfg(feature = "mmap")]
+    Mapped(FileData),
+    Owned(rkyv::util::AlignedVec),
+}
+
+impl AsRef<[u8]> for ArchiveBytes {
+    fn as_ref(&self) -> &[u8] {
+        match self {
+            #[cfg(feature = "mmap")]
+            Self::Mapped(data) => data.as_ref(),
+            Self::Owned(data) => data.as_slice(),
+        }
+    }
+}
+
+struct ArchiveRoot<'a>(&'a ArchivedCompiledStore);
+
+self_cell!(
+    struct ArchiveCell {
+        owner: ArchiveBytes,
+
+        #[covariant]
+        dependent: ArchiveRoot,
+    }
+);
+
+/// Immutable compiled schema store plus process-local derived caches.
+///
+/// A store either owns aligned archive bytes compiled in this process or retains a native
+/// memory mapping. Views borrow directly from those bytes without deserializing schema nodes into
+/// separate Rust objects. The only mutable derived state is the thread-safe regular-expression
+/// cache.
 pub struct Store {
-    #[serde(flatten)]
-    schemas: HashMap<String, AnySchema>,
+    archive: ArchiveCell,
+    compiled_patterns: Vec<OnceLock<Result<Regex, String>>>,
+}
+
+impl std::fmt::Debug for Store {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Store")
+            .field("roots", &self.archived().roots.len())
+            .field("compiled_patterns", &self.compiled_patterns.len())
+            .finish_non_exhaustive()
+    }
 }
 
 impl Store {
-    /// Return the schema names present in this store.
-    pub fn schema_names(&self) -> Vec<&str> {
-        let mut schema_names: Vec<_> = self.schemas.keys().map(String::as_str).collect();
-        schema_names.sort_unstable();
-        schema_names
+    /// Load a JSON schema source and compile it into process-owned archived bytes.
+    pub fn from_json(json: &str) -> Result<Self, StoreError> {
+        let source = StoreSource::from_json(json)
+            .map_err(|error| StoreError::InvalidSource(error.to_string()))?;
+        Self::compile(&source)
     }
 
-    pub fn get(&self, schema_name: &str) -> Result<&AnySchema, SchemaStoreError> {
-        if let Some(schema) = self.schemas.get(schema_name) {
-            return Ok(schema);
-        }
-        // Either we have an invalid schema or we may be using an old schema name,
-        // or tests using new schema names towards and old schema store.
-        let schema_alias = match schema_name {
-            "eos_designs" => "avd_design",
-            "eos_cli_config_gen" => "eos_config",
-            "avd_design" => "eos_designs",
-            "eos_config" => "eos_cli_config_gen",
-            _ => schema_name,
-        };
-        self.schemas
-            .get(schema_alias)
-            .ok_or_else(|| SchemaStoreError::InvalidSchemaName(schema_name.to_owned()))
+    /// Load gzip-compressed JSON schema source and compile it into process-owned archived bytes.
+    #[cfg(feature = "gzip")]
+    pub fn from_gz_bytes(bytes: &[u8]) -> Result<Self, StoreError> {
+        let source = StoreSource::from_gz_bytes(bytes)
+            .map_err(|error| StoreError::InvalidSource(error.to_string()))?;
+        Self::compile(&source)
     }
 
-    pub fn as_resolved(mut self) -> Result<Self, SchemaResolverError> {
-        // Clone each schema so we can resolve them while still being able to resolve $refs between them.
-        let cloned_schemas = self.schemas.clone();
-        for (schema_name, mut schema) in cloned_schemas {
-            // Inplace resolve schema
-            resolve_schema(&mut schema, &self)?;
-            self.schemas.insert(schema_name, schema);
-        }
-        Ok(self)
+    /// Memory-map and validate a compiled schema archive.
+    ///
+    /// The archive must use the format version supported by this crate. The returned store keeps
+    /// the mapping alive for as long as any borrowed view can exist.
+    #[cfg(feature = "mmap")]
+    pub fn from_file(path: &Path) -> Result<Self, StoreError> {
+        let bytes = mmap_guard::map_file(path)?;
+        Self::from_bytes(ArchiveBytes::Mapped(bytes))
     }
 
-    /// Create a new store instance based on the schema files in the given paths.
-    /// If a path points to a directory, files matching *.yml will be read and combined
-    /// with a shallow merge, so avoid overlapping keys.
-    /// If a path points to a single .yml or .json file it will be used directly.
-    /// If a path points to a .gz file it will decompressed and the inner file,
-    /// which must be a json file, will then be used.
+    /// Compile a raw schema store into process-owned archived bytes.
+    pub fn compile(source: &StoreSource) -> Result<Self, StoreError> {
+        let bytes = CompiledStore::compile(source)?.to_bytes()?;
+        Self::from_bytes(ArchiveBytes::Owned(bytes))
+    }
+
+    /// Compile one named root and its reachable schema nodes into owned bytes.
+    pub fn compile_schema(source: &StoreSource, schema_name: &str) -> Result<Self, StoreError> {
+        let bytes = CompiledStore::compile_schema(source, schema_name)?.to_bytes()?;
+        Self::from_bytes(ArchiveBytes::Owned(bytes))
+    }
+
+    /// Compile a source store and atomically write its archived runtime representation.
     #[cfg(feature = "dump_load_files")]
-    pub fn new_from_paths(schema_paths: HashMap<String, PathBuf>) -> Result<Self, LoadError> {
-        let mut schemas = HashMap::new();
-        for (schema_name, schema_path) in schema_paths {
-            schemas.insert(schema_name, AnySchema::new_from_path(schema_path)?);
-        }
-        Ok(Store { schemas })
+    pub fn compile_to_file(source: &StoreSource, destination: &Path) -> Result<(), StoreError> {
+        CompiledStore::compile_to_file(source, destination)?;
+        Ok(())
+    }
+
+    fn from_bytes(bytes: ArchiveBytes) -> Result<Self, StoreError> {
+        let archive = ArchiveCell::try_new(bytes, |bytes| {
+            validate_header(bytes.as_ref())?;
+            rkyv::access::<ArchivedCompiledStore, RkyvError>(bytes.as_ref())
+                .map_err(|error| StoreError::InvalidArchive(error.to_string()))
+                .and_then(|store| {
+                    validate_integrity(store)?;
+                    Ok(ArchiveRoot(store))
+                })
+        })?;
+        let pattern_count = archive.borrow_dependent().0.strings.len();
+        Ok(Self {
+            archive,
+            compiled_patterns: std::iter::repeat_with(OnceLock::new)
+                .take(pattern_count)
+                .collect(),
+        })
+    }
+
+    /// Return the root schema view for a schema name, including AVD aliases.
+    pub fn get(&self, schema_name: &str) -> Option<SchemaView<'_>> {
+        let archived = self.archived();
+        let id = archived.roots.get(schema_name).or_else(|| {
+            let alias = match schema_name {
+                "eos_designs" => "avd_design",
+                "eos_cli_config_gen" => "eos_config",
+                "avd_design" => "eos_designs",
+                "eos_config" => "eos_cli_config_gen",
+                _ => return None,
+            };
+            archived.roots.get(alias)
+        })?;
+        Some(crate::views::schema_view(self, *id))
+    }
+
+    pub(crate) fn archived(&self) -> &ArchivedCompiledStore {
+        self.archive.borrow_dependent().0
+    }
+
+    pub(crate) fn pattern(&self, index: u32, pattern: &str) -> Result<&Regex, &str> {
+        let Some(cell) = usize::try_from(index)
+            .ok()
+            .and_then(|index| self.compiled_patterns.get(index))
+        else {
+            return Err("string schema index is outside the pattern cache");
+        };
+        cell.get_or_init(|| {
+            RegexBuilder::new(format!("^(?:{pattern})$").as_str())
+                // Keep the Perl classes `\d`, `\s`, and `\w` enabled with ASCII semantics.
+                // This disables their Unicode expansion and properties such as `\p{Greek}`.
+                .unicode_mode(false)
+                .build()
+                .map_err(|error| error.to_string())
+        })
+        .as_ref()
+        .map_err(String::as_str)
     }
 }
-impl Dump for Store {}
-impl Load for Store {}
 
-#[derive(Debug, derive_more::Display, derive_more::From)]
-pub enum SchemaStoreError {
-    #[display("Schema name '{_0}' not found in the schema store.")]
-    InvalidSchemaName(String),
+/// Error returned while compiling, loading, or validating a compiled schema store.
+#[derive(Debug, derive_more::Display)]
+pub enum StoreError {
+    /// The bytes do not carry the compiled-schema archive magic header.
+    #[display("Input is not a compiled AVD schema archive")]
+    NotArchive,
+    /// The archive format version is not supported by this library.
+    #[display("Unsupported compiled schema archive version {found}; expected {expected}")]
+    UnsupportedVersion {
+        /// Version encoded in the archive.
+        found: u32,
+        /// Version supported by this library.
+        expected: u32,
+    },
+    /// The archive bytes or internal identifiers failed validation.
+    #[display("Invalid compiled schema archive: {_0}")]
+    InvalidArchive(String),
+    /// The source schema store could not be deserialized.
+    #[display("Invalid schema source: {_0}")]
+    InvalidSource(String),
+    /// A filesystem operation failed.
+    Io(std::io::Error),
+    /// Source-schema compilation or archive serialization failed.
+    Compile(crate::compiled::CompileError),
+}
+
+impl From<std::io::Error> for StoreError {
+    fn from(error: std::io::Error) -> Self {
+        Self::Io(error)
+    }
+}
+
+impl From<crate::compiled::CompileError> for StoreError {
+    fn from(error: crate::compiled::CompileError) -> Self {
+        Self::Compile(error)
+    }
+}
+
+fn validate_header(bytes: &[u8]) -> Result<(), StoreError> {
+    if bytes.get(..ARCHIVE_MAGIC.len()) != Some(ARCHIVE_MAGIC) {
+        return Err(StoreError::NotArchive);
+    }
+    if bytes.len() < ARCHIVE_HEADER_LENGTH {
+        return Err(StoreError::InvalidArchive(
+            "archive header is truncated".to_owned(),
+        ));
+    }
+    let version_bytes: [u8; 4] = bytes
+        .get(ARCHIVE_MAGIC.len()..ARCHIVE_MAGIC.len() + 4)
+        .and_then(|bytes| bytes.try_into().ok())
+        .ok_or(StoreError::NotArchive)?;
+    let found = u32::from_le_bytes(version_bytes);
+    if found != ARCHIVE_FORMAT_VERSION {
+        return Err(StoreError::UnsupportedVersion {
+            found,
+            expected: ARCHIVE_FORMAT_VERSION,
+        });
+    }
+    Ok(())
+}
+
+/// Validate every archived identifier before a public view can perform unchecked table lookup.
+///
+/// Keep this synchronized with every [`ArchivedSchemaId`] field added to the compiled model.
+fn validate_integrity(store: &ArchivedCompiledStore) -> Result<(), StoreError> {
+    for id in store.roots.values() {
+        validate_schema_id(store, *id)?;
+    }
+    for schema in store.lists.iter() {
+        if let Some(id) = schema.items.as_ref() {
+            validate_schema_id(store, *id)?;
+        }
+    }
+    for schema in store.dicts.iter() {
+        for id in schema.keys.values().chain(schema.dynamic_keys.values()) {
+            validate_schema_id(store, *id)?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_schema_id(
+    store: &ArchivedCompiledStore,
+    id: ArchivedSchemaId,
+) -> Result<(), StoreError> {
+    let valid = match id {
+        ArchivedSchemaId::Bool(index) => {
+            usize::try_from(index.to_native()).is_ok_and(|index| index < store.bools.len())
+        }
+        ArchivedSchemaId::Int(index) => {
+            usize::try_from(index.to_native()).is_ok_and(|index| index < store.ints.len())
+        }
+        ArchivedSchemaId::Str(index) => {
+            usize::try_from(index.to_native()).is_ok_and(|index| index < store.strings.len())
+        }
+        ArchivedSchemaId::List(index) => {
+            usize::try_from(index.to_native()).is_ok_and(|index| index < store.lists.len())
+        }
+        ArchivedSchemaId::Dict(index) => {
+            usize::try_from(index.to_native()).is_ok_and(|index| index < store.dicts.len())
+        }
+    };
+    if valid {
+        Ok(())
+    } else {
+        Err(StoreError::InvalidArchive(format!(
+            "schema id {id:?} is outside its typed table"
+        )))
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    #[cfg(feature = "gzip")]
+    use std::io::Write as _;
 
-    #[cfg(feature = "dump_load_files")]
-    use super::Load as _;
-    #[cfg(feature = "dump_load_files")]
-    use crate::Dump as _;
-    #[cfg(feature = "dump_load_files")]
-    use crate::Store;
-    #[cfg(feature = "dump_load_files")]
-    use crate::utils::test_utils::get_avd_store;
-    use crate::utils::test_utils::get_test_store;
-    #[cfg(feature = "dump_load_files")]
-    use crate::utils::test_utils::get_tmp_file;
+    use indexmap::IndexMap;
+    #[cfg(feature = "gzip")]
+    use serde_json::json;
 
+    use super::*;
+    use crate::SchemaView;
+    use crate::compiled::CompiledStore;
+    use crate::compiled::SchemaId;
     #[test]
-    #[cfg(feature = "dump_load_files")]
-    fn dump_avd_store() {
-        // Dumping uncompressed and compressed schema.
-        let store = get_avd_store();
+    fn constructors_reject_non_archives_versions_and_invalid_ids() {
+        assert!(matches!(
+            Store::from_bytes(ArchiveBytes::Owned(rkyv::util::AlignedVec::new())),
+            Err(StoreError::NotArchive)
+        ));
 
-        let json_file_path = get_tmp_file("test_dump_avd_store_resolved.json");
-        let json_result = store.to_file(Some(&json_file_path));
-        assert!(json_result.is_ok());
+        let mut truncated = rkyv::util::AlignedVec::new();
+        truncated.extend_from_slice(ARCHIVE_MAGIC);
+        assert!(matches!(
+            Store::from_bytes(ArchiveBytes::Owned(truncated)),
+            Err(StoreError::InvalidArchive(_))
+        ));
 
-        // Now dump as compressed file to see the size difference
-        let gzip_file_path = get_tmp_file("test_dump_avd_store_resolved.gz");
-        let gzip_result = store.to_file(Some(&gzip_file_path));
-        assert!(gzip_result.is_ok());
+        let mut versioned = CompiledStore::default().to_bytes().unwrap();
+        versioned[ARCHIVE_MAGIC.len()..ARCHIVE_MAGIC.len() + 4]
+            .copy_from_slice(&(ARCHIVE_FORMAT_VERSION + 1).to_le_bytes());
+        assert!(matches!(
+            Store::from_bytes(ArchiveBytes::Owned(versioned)),
+            Err(StoreError::UnsupportedVersion { .. })
+        ));
 
-        #[cfg(feature = "xz2")]
-        {
-            let xz_file_path = get_tmp_file("test_dump_avd_store_resolved.xz2");
-            let xz_result = store.to_file(Some(&xz_file_path));
-            assert!(xz_result.is_ok());
+        let invalid = CompiledStore {
+            roots: IndexMap::from_iter([("invalid".into(), SchemaId::Dict(0))]),
+            ..Default::default()
         }
+        .to_bytes()
+        .unwrap();
+        assert!(matches!(
+            Store::from_bytes(ArchiveBytes::Owned(invalid)),
+            Err(StoreError::InvalidArchive(_))
+        ));
     }
 
+    #[cfg(feature = "gzip")]
     #[test]
-    #[cfg(feature = "dump_load_files")]
-    fn load_avd_store() {
-        dump_avd_store();
-        let store = get_avd_store();
-
-        // Now load the previously dumped files and compare
-        let json_file_path = get_tmp_file("test_dump_avd_store_resolved.json");
-        let json_result = Store::from_file(Some(&json_file_path));
-        assert!(json_result.is_ok());
-        assert_eq!(json_result.unwrap(), *store);
-
-        let gzip_file_path = get_tmp_file("test_dump_avd_store_resolved.gz");
-        let gzip_result = Store::from_file(Some(&gzip_file_path));
-        assert!(gzip_result.is_ok());
-        assert_eq!(gzip_result.unwrap(), *store);
-
-        #[cfg(feature = "xz2")]
-        {
-            let xz_file_path = get_tmp_file("test_dump_avd_store_resolved.xz2");
-            let xz_result = Store::from_file(Some(&xz_file_path));
-            assert!(xz_result.is_ok());
-            assert_eq!(xz_result.unwrap(), *store);
-        }
+    fn gzip_source_constructor_compiles_runtime_store() {
+        let source = json!({"test": {"type": "bool"}}).to_string();
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        encoder.write_all(source.as_bytes()).unwrap();
+        let bytes = encoder.finish().unwrap();
+        let store = Store::from_gz_bytes(&bytes).unwrap();
+        assert!(matches!(store.get("test"), Some(SchemaView::Bool(_))));
     }
 
+    #[cfg(feature = "mmap")]
     #[test]
-    #[cfg(feature = "dump_load_files")]
-    #[ignore = "Test only used for manual performance testing"]
-    fn quick_load_avd_store_json() {
-        //Depends on dump to be done before. This is just here to test the speed of loading from the file.
-        let file_path = get_tmp_file("test_dump_avd_store_resolved.json");
-        let result = Store::from_file(Some(&file_path));
-        assert!(result.is_ok());
-    }
+    fn file_constructor_maps_archives() {
+        let archive =
+            std::env::temp_dir().join(format!("archive-runtime-{}.rkyv", std::process::id()));
 
-    #[test]
-    #[cfg(feature = "dump_load_files")]
-    #[ignore = "Test only used for manual performance testing"]
-    fn quick_load_avd_store_gz() {
-        //Depends on dump to be done before. This is just here to test the speed of loading from the file.
-        let file_path = get_tmp_file("test_dump_avd_store_resolved.gz");
-        let result = Store::from_file(Some(&file_path));
-        assert!(result.is_ok());
-    }
+        let source_model = StoreSource::from_json(r#"{"test":{"type":"bool"}}"#).unwrap();
+        let bytes = CompiledStore::compile(&source_model)
+            .unwrap()
+            .to_bytes()
+            .unwrap();
+        std::fs::write(&archive, bytes.as_slice()).unwrap();
+        let mapped_store = Store::from_file(&archive).unwrap();
+        assert!(matches!(
+            mapped_store.get("test"),
+            Some(SchemaView::Bool(_))
+        ));
 
-    #[test]
-    #[cfg(feature = "dump_load_files")]
-    #[ignore = "Test only used for manual performance testing"]
-    fn quick_load_avd_store_xz2() {
-        //Depends on dump to be done before. This is just here to test the speed of loading from the file.
-        let file_path = get_tmp_file("test_dump_avd_store_resolved.xz2");
-        let result = Store::from_file(Some(&file_path));
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn schema_names_returns_sorted_store_keys() {
-        let store = get_test_store();
-
-        assert_eq!(
-            store.schema_names(),
-            ["avd_design", "cv_deploy", "eos_config"]
-        );
+        std::fs::remove_file(archive).unwrap();
     }
 }

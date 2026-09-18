@@ -1,47 +1,37 @@
 // Copyright (c) 2025-2026 Arista Networks, Inc.
 // Use of this source code is governed by the Apache License 2.0
 // that can be found in the LICENSE file.
+
 pub mod dynamic_keys;
 
-use std::sync::OnceLock;
-
-use dynamic_keys::CachedDefaultDynamicKeys;
-pub use dynamic_keys::DefaultDynamicKeys;
-pub use dynamic_keys::DictKeyMatch;
-pub use dynamic_keys::DynamicKeyInfo;
 pub use dynamic_keys::DynamicKeyOverrides;
-use dynamic_keys::ResolvedDictKeys;
 use ordermap::OrderMap;
 use serde::Deserialize;
 use serde::Serialize;
-use serde_json::Map;
 use serde_json::Value;
 use serde_with::skip_serializing_none;
 
-use super::any::AnySchema;
+use super::any::SourceSchema;
 use super::base::Base;
 use super::base::documentation_options::DocumentationOptionsDict;
-use crate::SchemaDataValue as _;
-use crate::any::Shortcuts;
-use crate::base::Deprecation;
-use crate::utils::schema_data::SchemaDataMapping;
-use crate::utils::schema_data::SchemaDataSequence as _;
 
-/// AVD Schema for dictionary data.
+/// Source model for an AVD dictionary schema.
 #[skip_serializing_none]
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct Dict {
-    /// Dictionary of dictionary-keys in the format `{<keyname>: {<schema>}}`.
-    /// `keyname` must use snake case.
-    /// `schema` is the schema for each key. This is a recursive schema, so the value must conform to AVD Schema
-    pub keys: Option<OrderMap<String, AnySchema>>,
-    /// Dictionary of dynamic dictionary-keys in the format `{<variable.path>: {<schema>}}`.
-    /// `variable.path` is a variable path using dot-notation and pointing to a variable under the parent dictionary containing dictionary-keys.
-    /// If an element of the variable path is a list, every list item will unpacked.
-    /// `schema` is the schema for each key. This is a recursive schema, so the value must conform to AVD Schema
-    /// Note that this is building the schema from values in the _data_ being validated!
-    pub dynamic_keys: Option<OrderMap<String, AnySchema>>,
+pub struct SourceDict {
+    /// Dictionary of dictionary keys in the format `{<keyname>: {<schema>}}`.
+    ///
+    /// `keyname` must use snake case. `schema` is recursive and must conform
+    /// to the AVD schema format.
+    pub keys: Option<OrderMap<String, SourceSchema>>,
+    /// Dictionary of dynamic dictionary keys in the format
+    /// `{<variable.path>: {<schema>}}`.
+    ///
+    /// `variable.path` uses dot notation and points to data under the parent
+    /// dictionary containing the concrete key names. Lists in the path are
+    /// expanded across all items.
+    pub dynamic_keys: Option<OrderMap<String, SourceSchema>>,
     pub allow_other_keys: Option<bool>,
     pub relaxed_validation: Option<bool>,
     #[serde(rename = "$id")]
@@ -49,615 +39,40 @@ pub struct Dict {
     #[serde(rename = "$schema")]
     pub schema_schema: Option<String>,
     #[serde(rename = "$defs")]
-    pub schema_defs: Option<OrderMap<String, AnySchema>>,
+    pub schema_defs: Option<OrderMap<String, SourceSchema>>,
     #[serde(flatten)]
     pub base: Base<OrderMap<String, Value>>,
     pub documentation_options: Option<DocumentationOptionsDict>,
-    #[serde(skip)]
-    pub _cached_default_dynamic_keys: OnceLock<CachedDefaultDynamicKeys>,
-}
-impl<'a> Dict {
-    /// Return the cached default dynamic keys, initializing them on first access.
-    pub fn default_dynamic_keys(&self) -> Option<&DefaultDynamicKeys> {
-        self._cached_default_dynamic_keys
-            .get_or_init(|| self.init_default_dynamic_keys())
-            .as_deref()
-    }
-
-    /// Get map of dynamic keys and their corresponding schema.
-    /// Reads the `dynamic_keys` definition in the schema, resolves the pointers in the given inputs
-    /// (or use the default values for the schema), then overlays caller-supplied concrete-key
-    /// overrides. This is used by the LSP when interpreting # comments on keys.
-    pub fn get_dynamic_keys<'input, M>(
-        &'a self,
-        dict: M,
-        overrides: Option<&DynamicKeyOverrides>,
-    ) -> Option<OrderMap<String, DynamicKeyInfo<'a>>>
-    where
-        M: SchemaDataMapping<'input>,
-    {
-        self.dynamic_keys.as_ref().map(|dynamic_keys| {
-            let mut resolved_dynamic_keys: OrderMap<String, DynamicKeyInfo<'a>> = dynamic_keys
-                .iter()
-                .filter(|(_, dynamic_key_schema)| !dynamic_key_schema.is_removed())
-                .flat_map(|(dynamic_key_path, dynamic_key_schema)| {
-                    self.get_dynamic_key_values(dynamic_key_path, dict)
-                        .into_iter()
-                        .flatten()
-                        .map(|key| {
-                            (
-                                key,
-                                DynamicKeyInfo {
-                                    dynamic_key_path,
-                                    schema: dynamic_key_schema,
-                                },
-                            )
-                        })
-                })
-                .collect();
-
-            if let Some(overrides) = overrides {
-                for (concrete_key, dynamic_key_path) in overrides {
-                    let Some((schema_dynamic_key_path, dynamic_key_schema)) =
-                        dynamic_keys.get_key_value(dynamic_key_path)
-                    else {
-                        continue;
-                    };
-                    if dynamic_key_schema.is_removed() {
-                        continue;
-                    }
-                    resolved_dynamic_keys.insert(
-                        concrete_key.clone(),
-                        DynamicKeyInfo {
-                            dynamic_key_path: schema_dynamic_key_path,
-                            schema: dynamic_key_schema,
-                        },
-                    );
-                }
-            }
-
-            resolved_dynamic_keys
-        })
-    }
-
-    /// Resolve dynamic-key values with precedence: input values, then schema defaults.
-    fn get_dynamic_key_values<'input, M>(
-        &self,
-        dynamic_key_path: &str,
-        dict: M,
-    ) -> Option<Vec<String>>
-    where
-        M: SchemaDataMapping<'input>,
-    {
-        if let Some(keys) = Dict::get_all(dynamic_key_path, dict) {
-            Some(keys)
-        } else if let Some(default_dynamic_keys) = self.default_dynamic_keys() {
-            default_dynamic_keys.get(dynamic_key_path).cloned()
-        } else {
-            None
-        }
-    }
-
-    fn init_default_dynamic_keys(&self) -> CachedDefaultDynamicKeys {
-        self.dynamic_keys.as_ref().map(|dynamic_keys| {
-            dynamic_keys
-                .iter()
-                .filter(|(_, dynamic_key_schema)| !dynamic_key_schema.is_removed())
-                .flat_map(|(dynamic_key_path, _)| {
-                    dynamic_key_path
-                        .split('.')
-                        .next()
-                        .and_then(|root_key| {
-                            Some(self.get_default_for_key(root_key).map(|default_value| {
-                                let default_as_input_map =
-                                    Map::from_iter([(root_key.to_owned(), default_value)]);
-                                Dict::get_all(dynamic_key_path, &default_as_input_map).map(
-                                    |default_dynamic_keys| {
-                                        (dynamic_key_path.clone(), default_dynamic_keys)
-                                    },
-                                )
-                            }))
-                            .flatten()
-                        })
-                        .flatten()
-                        .into_iter()
-                })
-                .collect::<DefaultDynamicKeys>()
-                .into()
-        })
-    }
-
-    pub fn get_default_for_key(&self, key: &str) -> Option<Value> {
-        self.keys
-            .as_ref()
-            .and_then(|keys| keys.get(key).and_then(Shortcuts::default_))
-    }
-
-    // Get all string values from the given key_path. Non-string values are ignored.
-    // Returns None if the first key was missing. That will tell us if we need to look at the default value instead.
-    pub(self) fn get_all<'input, M>(key_path: &str, dict: M) -> Option<Vec<String>>
-    where
-        M: SchemaDataMapping<'input>,
-    {
-        let mut path = key_path.split('.');
-        path.next()
-            .and_then(|root_key| dict.get(root_key).map(|value| (root_key, value)))
-            .map(|(key, value)| {
-                value
-                    .walk(path, Some(&mut vec![key.to_owned()]))
-                    .into_iter()
-                    .flat_map(|(_, value)| {
-                        if let Some(string) = value.as_str() {
-                            return vec![string.to_owned()];
-                        }
-                        let Some(array) = value.as_sequence() else {
-                            // Ignore an incorrect type targeted by the key_path.
-                            // The validation will report this during validation of that model.
-                            return Vec::new();
-                        };
-                        let mut strings = Vec::new();
-                        for item in array.iter() {
-                            if let Some(string) = item.as_str() {
-                                strings.push(string.to_owned());
-                            }
-                        }
-                        strings
-                    })
-                    .collect::<Vec<String>>()
-            })
-    }
-
-    pub fn resolve_dict_keys<'input, M>(
-        &'a self,
-        dict: M,
-        dynamic_keys_overrides: Option<&DynamicKeyOverrides>,
-    ) -> ResolvedDictKeys<'a>
-    where
-        M: SchemaDataMapping<'input>,
-    {
-        ResolvedDictKeys {
-            static_keys: self.keys.as_ref(),
-            dynamic_keys: self.get_dynamic_keys(dict, dynamic_keys_overrides),
-        }
-    }
 }
 
-impl Shortcuts for Dict {
-    fn is_required(&self) -> bool {
-        self.base.required.unwrap_or_default()
-    }
-
-    fn deprecation(&self) -> &Option<Deprecation> {
-        &self.base.deprecation
-    }
-    fn default_(&self) -> Option<Value> {
-        self.base
-            .default
-            .as_ref()
-            .map(|value| Value::Object(Map::from_iter(value.to_owned())))
-    }
-}
-
-impl<'x> TryFrom<&'x AnySchema> for &'x Dict {
+impl<'a> TryFrom<&'a SourceSchema> for &'a SourceDict {
     type Error = &'static str;
 
-    fn try_from(value: &'x AnySchema) -> Result<Self, Self::Error> {
+    fn try_from(value: &'a SourceSchema) -> Result<Self, Self::Error> {
         match value {
-            AnySchema::Dict(dict) => Ok(dict),
-            _ => Err("Unable to convert from AnySchema to Dict. Invalid Schema type."),
+            SourceSchema::Dict(dict) => Ok(dict),
+            _ => Err("Unable to convert from SourceSchema to SourceDict. Invalid Schema type."),
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use ordermap::OrderMap;
-    use serde_json::Value;
-    use serde_json::json;
-
-    use super::DefaultDynamicKeys;
-    use super::Dict;
-    use super::DynamicKeyInfo;
-    use super::DynamicKeyOverrides;
-    use crate::any::AnySchema;
-    use crate::base::Base;
-    use crate::base::Deprecation;
-    use crate::boolean::Bool;
-    use crate::int::Int;
-    use crate::list::List;
-    use crate::str::Str;
-    use crate::utils::test_utils::get_test_dict_schema;
-
-    fn removed_bool_schema() -> AnySchema {
-        Bool {
-            base: Base {
-                deprecation: Some(Deprecation {
-                    removed: Some(true),
-                    ..Default::default()
-                }),
-                ..Default::default()
-            },
-            ..Default::default()
-        }
-        .into()
-    }
+    use super::SourceDict;
+    use crate::any::SourceSchema;
+    use crate::boolean::SourceBool;
 
     #[test]
-    fn try_from_anyschema_ok() {
-        let anyschema = &AnySchema::Dict(Dict::default());
-        let result: Result<&Dict, _> = anyschema.try_into();
+    fn try_from_source_schema_ok() {
+        let schema = SourceSchema::Dict(SourceDict::default());
+        let result: Result<&SourceDict, _> = (&schema).try_into();
         assert!(result.is_ok());
     }
+
     #[test]
-    fn try_from_anyschema_err() {
-        let anyschema = &AnySchema::Bool(Bool::default());
-        let result: Result<&Dict, _> = anyschema.try_into();
+    fn try_from_source_schema_err() {
+        let schema = SourceSchema::Bool(SourceBool::default());
+        let result: Result<&SourceDict, _> = (&schema).try_into();
         assert!(result.is_err());
-    }
-
-    #[test]
-    fn get_dynamic_keys_list_of_dicts() {
-        let dynamic_key_schema: AnySchema = Bool::default().into();
-        let dict_schema = Dict {
-            dynamic_keys: Some(OrderMap::from_iter([(
-                "outer.inner".to_owned(),
-                dynamic_key_schema.clone(),
-            )])),
-            ..Default::default()
-        };
-        let value: Value =
-            json!({"outer": [ {"inner": "one"}, {"inner": "two"}, {"inner": "three"}]});
-        let result = dict_schema.get_dynamic_keys(value.as_object().unwrap(), None);
-        assert_eq!(
-            result,
-            Some(OrderMap::from_iter([
-                (
-                    "one".to_owned(),
-                    DynamicKeyInfo {
-                        dynamic_key_path: "outer.inner",
-                        schema: &dynamic_key_schema,
-                    }
-                ),
-                (
-                    "two".to_owned(),
-                    DynamicKeyInfo {
-                        dynamic_key_path: "outer.inner",
-                        schema: &dynamic_key_schema,
-                    }
-                ),
-                (
-                    "three".to_owned(),
-                    DynamicKeyInfo {
-                        dynamic_key_path: "outer.inner",
-                        schema: &dynamic_key_schema,
-                    }
-                ),
-            ]))
-        );
-    }
-    #[test]
-    fn get_dynamic_keys_list_of_strings() {
-        let dynamic_key_schema: AnySchema = Bool::default().into();
-        let dict_schema = Dict {
-            dynamic_keys: Some(OrderMap::from_iter([(
-                "list".to_owned(),
-                dynamic_key_schema.clone(),
-            )])),
-            ..Default::default()
-        };
-        let value: Value = json!({"list": ["one", "two", "three"]});
-        let result = dict_schema.get_dynamic_keys(value.as_object().unwrap(), None);
-        assert_eq!(
-            result,
-            Some(OrderMap::from_iter([
-                (
-                    "one".to_owned(),
-                    DynamicKeyInfo {
-                        dynamic_key_path: "list",
-                        schema: &dynamic_key_schema,
-                    }
-                ),
-                (
-                    "two".to_owned(),
-                    DynamicKeyInfo {
-                        dynamic_key_path: "list",
-                        schema: &dynamic_key_schema,
-                    }
-                ),
-                (
-                    "three".to_owned(),
-                    DynamicKeyInfo {
-                        dynamic_key_path: "list",
-                        schema: &dynamic_key_schema,
-                    }
-                ),
-            ]))
-        );
-    }
-    #[test]
-    fn get_dynamic_keys_from_schema_with_default_and_override() {
-        let test_dict_schema = get_test_dict_schema();
-        let dict_schema: &Dict = (&test_dict_schema).try_into().unwrap();
-        let dynamic_key_schema = dict_schema
-            .dynamic_keys
-            .as_ref()
-            .unwrap()
-            .get("outer.inner")
-            .unwrap();
-        let value: Value = json!({"outer": [{"inner": "one"}, {"inner": "two"}]});
-        let result = dict_schema.get_dynamic_keys(value.as_object().unwrap(), None);
-        assert_eq!(
-            result,
-            Some(OrderMap::from_iter([
-                (
-                    "one".to_owned(),
-                    DynamicKeyInfo {
-                        dynamic_key_path: "outer.inner",
-                        schema: dynamic_key_schema,
-                    }
-                ),
-                (
-                    "two".to_owned(),
-                    DynamicKeyInfo {
-                        dynamic_key_path: "outer.inner",
-                        schema: dynamic_key_schema,
-                    }
-                ),
-            ]))
-        );
-    }
-
-    #[test]
-    fn get_dynamic_keys_from_schema_with_default_only() {
-        let test_dict_schema = get_test_dict_schema();
-        let dict_schema: &Dict = (&test_dict_schema).try_into().unwrap();
-        let dynamic_key_schema = dict_schema
-            .dynamic_keys
-            .as_ref()
-            .unwrap()
-            .get("outer.inner")
-            .unwrap();
-        let value: Value = json!({"bool_key": true});
-        let result = dict_schema.get_dynamic_keys(value.as_object().unwrap(), None);
-        assert_eq!(
-            result,
-            Some(OrderMap::from_iter([(
-                "dyn_key1_int".to_owned(),
-                DynamicKeyInfo {
-                    dynamic_key_path: "outer.inner",
-                    schema: dynamic_key_schema,
-                }
-            ),]))
-        );
-    }
-
-    #[test]
-    fn get_dynamic_keys_overrides_resolved_keys() {
-        let dynamic_key_schema: AnySchema = Bool::default().into();
-        let dict_schema = Dict {
-            dynamic_keys: Some(OrderMap::from_iter([(
-                "list".to_owned(),
-                dynamic_key_schema.clone(),
-            )])),
-            ..Default::default()
-        };
-        let value: Value = json!({"list": ["one"], "other": ["other"]});
-        let overrides = DynamicKeyOverrides::from_iter([("two".to_owned(), "list".to_owned())]);
-        let result = dict_schema.get_dynamic_keys(value.as_object().unwrap(), Some(&overrides));
-        assert_eq!(
-            result,
-            Some(OrderMap::from_iter([
-                (
-                    "one".to_owned(),
-                    DynamicKeyInfo {
-                        dynamic_key_path: "list",
-                        schema: &dynamic_key_schema,
-                    }
-                ),
-                (
-                    "two".to_owned(),
-                    DynamicKeyInfo {
-                        dynamic_key_path: "list",
-                        schema: &dynamic_key_schema,
-                    }
-                ),
-            ]))
-        );
-    }
-
-    #[test]
-    fn get_dynamic_keys_override_beats_default_collision() {
-        let default_dynamic_key_schema: AnySchema = Int::default().into();
-        let override_dynamic_key_schema: AnySchema = Bool::default().into();
-        let dict_schema = Dict {
-            keys: Some(OrderMap::from_iter([(
-                "tenants".to_owned(),
-                List {
-                    items: Some(Box::new(AnySchema::Dict(Dict {
-                        keys: Some(OrderMap::from_iter([(
-                            "name".to_owned(),
-                            Str::default().into(),
-                        )])),
-                        ..Default::default()
-                    }))),
-                    base: Base {
-                        default: Some(vec![json!({"name": "l3spine"})]),
-                        ..Default::default()
-                    },
-                    ..Default::default()
-                }
-                .into(),
-            )])),
-            dynamic_keys: Some(OrderMap::from_iter([
-                ("tenants.name".to_owned(), default_dynamic_key_schema),
-                (
-                    "network_services_keys.name".to_owned(),
-                    override_dynamic_key_schema.clone(),
-                ),
-            ])),
-            ..Default::default()
-        };
-        let value: Value = json!({});
-        let overrides = DynamicKeyOverrides::from_iter([(
-            "l3spine".to_owned(),
-            "network_services_keys.name".to_owned(),
-        )]);
-        let result = dict_schema.get_dynamic_keys(value.as_object().unwrap(), Some(&overrides));
-        assert_eq!(
-            result,
-            Some(OrderMap::from_iter([(
-                "l3spine".to_owned(),
-                DynamicKeyInfo {
-                    dynamic_key_path: "network_services_keys.name",
-                    schema: &override_dynamic_key_schema,
-                }
-            )]))
-        );
-    }
-
-    #[test]
-    fn get_dynamic_keys_excludes_removed_entries_after_kept_entries() {
-        let kept_dynamic_key_schema: AnySchema = Bool::default().into();
-        let later_dynamic_key_schema: AnySchema = Int::default().into();
-        let dict_schema = Dict {
-            dynamic_keys: Some(OrderMap::from_iter([
-                ("kept_list".to_owned(), kept_dynamic_key_schema.clone()),
-                ("removed_list".to_owned(), removed_bool_schema()),
-                ("later_list".to_owned(), later_dynamic_key_schema.clone()),
-            ])),
-            ..Default::default()
-        };
-        let value: Value = json!({
-            "kept_list": ["kept"],
-            "removed_list": ["removed"],
-            "later_list": ["later"],
-        });
-        let overrides: OrderMap<String, String> = DynamicKeyOverrides::from_iter([(
-            "removed_override".to_owned(),
-            "removed_list".to_owned(),
-        )]);
-        let result = dict_schema.get_dynamic_keys(value.as_object().unwrap(), Some(&overrides));
-
-        assert_eq!(
-            result,
-            Some(OrderMap::from_iter([
-                (
-                    "kept".to_owned(),
-                    DynamicKeyInfo {
-                        dynamic_key_path: "kept_list",
-                        schema: &kept_dynamic_key_schema,
-                    }
-                ),
-                (
-                    "later".to_owned(),
-                    DynamicKeyInfo {
-                        dynamic_key_path: "later_list",
-                        schema: &later_dynamic_key_schema,
-                    }
-                ),
-            ]))
-        );
-    }
-
-    #[test]
-    fn default_dynamic_keys_excludes_removed_entries_after_kept_entries() {
-        let dict_schema = Dict {
-            keys: Some(OrderMap::from_iter([
-                (
-                    "kept_list".to_owned(),
-                    List {
-                        base: Base {
-                            default: Some(vec![json!("kept")]),
-                            ..Default::default()
-                        },
-                        ..Default::default()
-                    }
-                    .into(),
-                ),
-                (
-                    "removed_list".to_owned(),
-                    List {
-                        base: Base {
-                            default: Some(vec![json!("removed")]),
-                            ..Default::default()
-                        },
-                        ..Default::default()
-                    }
-                    .into(),
-                ),
-                (
-                    "later_list".to_owned(),
-                    List {
-                        base: Base {
-                            default: Some(vec![json!("later")]),
-                            ..Default::default()
-                        },
-                        ..Default::default()
-                    }
-                    .into(),
-                ),
-            ])),
-            dynamic_keys: Some(OrderMap::from_iter([
-                ("kept_list".to_owned(), Bool::default().into()),
-                ("removed_list".to_owned(), removed_bool_schema()),
-                ("later_list".to_owned(), Int::default().into()),
-            ])),
-            ..Default::default()
-        };
-        let expected_result: DefaultDynamicKeys = OrderMap::from_iter([
-            ("kept_list".to_owned(), vec!["kept".to_owned()]),
-            ("later_list".to_owned(), vec!["later".to_owned()]),
-        ]);
-
-        let result = dict_schema.default_dynamic_keys();
-
-        assert_eq!(result, Some(&expected_result));
-    }
-
-    #[test]
-    fn get_all_some() {
-        let value: Value = json!({"outer": [{"inner": "one"}, {"inner": "two"}]});
-        let result = Dict::get_all("outer.inner", value.as_object().unwrap());
-        assert_eq!(result, Some(vec!["one".to_owned(), "two".to_owned()]));
-    }
-
-    #[test]
-    fn get_all_none() {
-        let value: Value = json!({"outer": [{"inner": "one"}, {"inner": "two"}]});
-        let result = Dict::get_all("non_existing.inner", value.as_object().unwrap());
-        assert!(result.is_none());
-    }
-
-    #[test]
-    fn get_default_for_key_some() {
-        let test_dict_schema = get_test_dict_schema();
-        let dict_schema: &Dict = (&test_dict_schema).try_into().unwrap();
-        let result = dict_schema.get_default_for_key("outer");
-        assert_eq!(result, Some(json!([{"inner": "dyn_key1_int"}])));
-    }
-
-    #[test]
-    fn get_default_for_key_none() {
-        let test_dict_schema = get_test_dict_schema();
-        let dict_schema: &Dict = (&test_dict_schema).try_into().unwrap();
-        let result = dict_schema.get_default_for_key("str_key");
-        assert!(result.is_none());
-    }
-
-    #[test]
-    fn default_dynamic_keys_some() {
-        let test_dict_schema = get_test_dict_schema();
-        let dict_schema: &Dict = (&test_dict_schema).try_into().unwrap();
-        let expected_result: DefaultDynamicKeys =
-            OrderMap::from_iter([("outer.inner".to_owned(), vec!["dyn_key1_int".to_owned()])]);
-        let result = dict_schema.default_dynamic_keys();
-        assert_eq!(result, Some(&expected_result));
-    }
-
-    #[test]
-    fn default_dynamic_keys_none() {
-        let dict_schema = Dict::default();
-        let result = dict_schema.default_dynamic_keys();
-        assert_eq!(result, None);
     }
 }

@@ -514,13 +514,28 @@ pub struct Deprecated {
     pub url: UrlField,
 }
 impl Deprecated {
-    pub(crate) fn from_schema(path: &Path, deprecation: &avdschema::base::Deprecation) -> Self {
+    pub(crate) fn from_parts(
+        path: &Path,
+        replacement: Option<&str>,
+        version: Option<&str>,
+        url: Option<&str>,
+    ) -> Self {
         Self {
             path: path.to_owned(),
-            replacement: deprecation.new_key.clone().into(),
-            version: deprecation.remove_in_version.clone().into(),
-            url: deprecation.url.clone().into(),
+            replacement: replacement.map(ToOwned::to_owned).into(),
+            version: version.map(ToOwned::to_owned).into(),
+            url: url.map(ToOwned::to_owned).into(),
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn from_schema(path: &Path, deprecation: &avdschema::base::Deprecation) -> Self {
+        Self::from_parts(
+            path,
+            deprecation.new_key.as_deref(),
+            deprecation.remove_in_version.as_deref(),
+            deprecation.url.as_deref(),
+        )
     }
 }
 
@@ -534,14 +549,31 @@ pub struct Removed {
     pub upgrade_handler: Option<String>,
 }
 impl Removed {
-    pub(crate) fn from_schema(path: &Path, deprecation: &avdschema::base::Deprecation) -> Self {
+    pub(crate) fn from_parts(
+        path: &Path,
+        replacement: Option<&str>,
+        version: Option<&str>,
+        url: Option<&str>,
+        upgrade_handler: Option<&str>,
+    ) -> Self {
         Self {
             path: path.to_owned(),
-            replacement: deprecation.new_key.clone().into(),
-            version: deprecation.remove_in_version.clone().into(),
-            url: deprecation.url.clone().into(),
-            upgrade_handler: deprecation.upgrade_handler.clone(),
+            replacement: replacement.map(ToOwned::to_owned).into(),
+            version: version.map(ToOwned::to_owned).into(),
+            url: url.map(ToOwned::to_owned).into(),
+            upgrade_handler: upgrade_handler.map(ToOwned::to_owned),
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn from_schema(path: &Path, deprecation: &avdschema::base::Deprecation) -> Self {
+        Self::from_parts(
+            path,
+            deprecation.new_key.as_deref(),
+            deprecation.remove_in_version.as_deref(),
+            deprecation.url.as_deref(),
+            deprecation.upgrade_handler.as_deref(),
+        )
     }
 }
 #[derive(Clone, Debug, PartialEq, Serialize, derive_more::Display)]

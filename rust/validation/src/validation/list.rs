@@ -4,119 +4,69 @@
 
 use std::collections::HashMap;
 
-use avdschema::any::AnySchema;
-use avdschema::list::List;
-use avdschema::resolve_ref;
+use avdschema::ListView;
 
 use crate::context::Context;
+use crate::context::ValidationState;
 use crate::feedback::Type;
 use crate::feedback::Violation;
 use crate::validatable::ValidatableSequence;
 use crate::validatable::ValidatableValue;
-use crate::validation::Validation;
+use crate::validation::NodeValidation;
 
-impl Validation for List {
-    fn validate<V: ValidatableValue>(&self, value: &V, ctx: &mut Context) -> Option<V::Coerced> {
-        if let Some(ref_result) = validate_ref(self, value, ctx) {
-            return ref_result;
-        }
-
-        if let Some(seq) = value.as_sequence() {
-            validate_min_length(self, value, &seq, ctx);
-            validate_max_length(self, value, &seq, ctx);
-            validate_unique_keys(self, &seq, ctx);
-            // Validate items and optionally collect coerced results
-            let coerced_items = validate_items(self, &seq, ctx);
-            coerced_items.map(|items| value.coerce_sequence(items))
-        } else if value.is_null() && !ctx.configuration.restrict_null_values {
-            ctx.configuration
-                .return_coerced_data
-                .then(|| value.coerce_null())
-        } else {
-            ctx.add_error_for(
-                value,
-                Violation::InvalidType {
-                    expected: Type::List,
-                    found: value.value_type(),
-                },
-            );
-            None
-        }
-    }
-}
-
-/// Validate against a referenced schema (for unresolved $ref ending with #).
-fn validate_ref<V: ValidatableValue>(
-    schema: &List,
-    value: &V,
+/// Validate list-wide constraints without recursively validating item bodies.
+///
+/// Returns [`NodeValidation::Valid`] with a sequence view when traversal may
+/// continue, [`NodeValidation::Null`] for an accepted null, or
+/// [`NodeValidation::Invalid`] after recording an invalid-type diagnostic.
+pub(crate) fn validate_node<'a, V: ValidatableValue>(
+    schema: ListView<'_>,
+    value: &'a V,
     ctx: &mut Context,
-) -> Option<Option<V::Coerced>> {
-    if let Some(ref_) = schema.base.schema_ref.as_ref()
-        && let Ok(AnySchema::List(ref_schema)) = resolve_ref(ref_, ctx.store)
-    {
-        return Some(ref_schema.validate(value, ctx));
+    state: &mut ValidationState,
+) -> NodeValidation<V::Sequence<'a>> {
+    if let Some(sequence) = value.as_sequence() {
+        validate_min_length(schema, value, &sequence, ctx, state);
+        validate_max_length(schema, value, &sequence, ctx, state);
+        validate_unique_keys(schema, &sequence, ctx, state);
+        NodeValidation::Valid(sequence)
+    } else if value.is_null() && !ctx.configuration.restrict_null_values {
+        NodeValidation::Null
+    } else {
+        ctx.add_error_for(
+            state,
+            value,
+            Violation::InvalidType {
+                expected: Type::List,
+                found: value.value_type(),
+            },
+        );
+        NodeValidation::Invalid
     }
-    None
 }
 
-/// Validate and optionally coerce sequence items.
-/// Returns `Some(coerced_items)` when coercion is enabled, None otherwise.
-fn validate_items<'a, S: ValidatableSequence<'a>>(
-    schema: &List,
-    input: &S,
-    ctx: &mut Context,
-) -> Option<Vec<<S::Value as ValidatableValue>::Coerced>> {
-    let mut coerced = ctx
-        .configuration
-        .return_coerced_data
-        .then(|| Vec::with_capacity(input.len()));
-
-    for (i, item) in input.iter().enumerate() {
-        ctx.state.path.push(i.to_string());
-        validate_item_primary_key(schema, item, ctx);
-        if let Some(ref mut items) = coerced {
-            let coerced_item = validate_item_schema(schema, item, ctx);
-            items.push(coerced_item);
-        } else {
-            validate_item_schema_only(schema, item, ctx);
-        }
-        ctx.state.path.pop();
-    }
-    coerced
-}
-
-fn validate_item_schema<V: ValidatableValue>(
-    schema: &List,
+/// Validate list-item structure before recursively validating the item body.
+pub(crate) fn validate_item_node<V: ValidatableValue>(
+    schema: ListView<'_>,
     item: &V,
     ctx: &mut Context,
-) -> V::Coerced {
-    if let Some(item_schema) = &schema.items {
-        // validate() returns Option, but we know return_coerced_data is true here
-        item_schema
-            .validate(item, ctx)
-            .unwrap_or_else(|| item.clone_to_coerced())
-    } else {
-        // No item schema - preserve the value as-is
-        item.clone_to_coerced()
-    }
-}
-
-fn validate_item_schema_only<V: ValidatableValue>(schema: &List, item: &V, ctx: &mut Context) {
-    if let Some(item_schema) = &schema.items {
-        let _ = item_schema.validate(item, ctx);
-    }
+    state: &ValidationState,
+) {
+    validate_item_primary_key(schema, item, ctx, state);
 }
 
 fn validate_min_length<'a, V: ValidatableValue, S: ValidatableSequence<'a>>(
-    schema: &List,
+    schema: ListView<'_>,
     value: &V,
     input: &S,
     ctx: &mut Context,
+    state: &ValidationState,
 ) {
-    if let Some(min_length) = schema.min_length {
+    if let Some(min_length) = schema.min_length() {
         let length = input.len() as u64;
         if min_length > length {
             ctx.add_error_for(
+                state,
                 value,
                 Violation::LengthBelowMinimum {
                     minimum: min_length,
@@ -128,15 +78,17 @@ fn validate_min_length<'a, V: ValidatableValue, S: ValidatableSequence<'a>>(
 }
 
 fn validate_max_length<'a, V: ValidatableValue, S: ValidatableSequence<'a>>(
-    schema: &List,
+    schema: ListView<'_>,
     value: &V,
     input: &S,
     ctx: &mut Context,
+    state: &ValidationState,
 ) {
-    if let Some(max_length) = schema.max_length {
+    if let Some(max_length) = schema.max_length() {
         let length = input.len() as u64;
         if max_length < length {
             ctx.add_error_for(
+                state,
                 value,
                 Violation::LengthAboveMaximum {
                     maximum: max_length,
@@ -147,11 +99,17 @@ fn validate_max_length<'a, V: ValidatableValue, S: ValidatableSequence<'a>>(
     }
 }
 
-fn validate_item_primary_key<V: ValidatableValue>(schema: &List, item: &V, ctx: &mut Context) {
-    if let Some(primary_key) = &schema.primary_key
+fn validate_item_primary_key<V: ValidatableValue>(
+    schema: ListView<'_>,
+    item: &V,
+    ctx: &mut Context,
+    state: &ValidationState,
+) {
+    if let Some(primary_key) = schema.primary_key()
         && item.get(primary_key).is_none_or(ValidatableValue::is_null)
     {
         ctx.add_error_for(
+            state,
             item,
             Violation::MissingRequiredKey {
                 key: primary_key.to_owned(),
@@ -161,18 +119,18 @@ fn validate_item_primary_key<V: ValidatableValue>(schema: &List, item: &V, ctx: 
 }
 
 fn validate_unique_keys<'a, S: ValidatableSequence<'a>>(
-    schema: &List,
+    schema: ListView<'_>,
     items: &S,
     ctx: &mut Context,
+    state: &ValidationState,
 ) {
     type SeenItem<'a, T> = (Vec<String>, &'a T);
 
-    let unique_keys = schema.unique_keys.iter().flatten().chain(
+    let unique_keys = schema.unique_keys().into_iter().flatten().chain(
         // the primary key is considered unique unless told otherwise
         schema
-            .primary_key
-            .as_ref()
-            .filter(|_| !schema.allow_duplicate_primary_key.unwrap_or_default()),
+            .primary_key()
+            .filter(|_| !schema.allow_duplicate_primary_key()),
     );
 
     for unique_key in unique_keys {
@@ -195,6 +153,7 @@ fn validate_unique_keys<'a, S: ValidatableSequence<'a>>(
                         // Add violations for all duplicates in both directions.
                         for (seen_item_trail, seen_value) in seen_item_trails.iter() {
                             ctx.add_duplicate_value_violation_pair_for(
+                                state,
                                 *seen_value,
                                 seen_item_trail,
                                 value,
@@ -222,9 +181,10 @@ fn value_to_string<V: ValidatableValue>(value: &V) -> String {
 
 #[cfg(test)]
 mod tests {
-    use avdschema::any::AnySchema;
-    use avdschema::dict::Dict;
-    use avdschema::str::Str;
+    use avdschema::any::SourceSchema;
+    use avdschema::dict::SourceDict;
+    use avdschema::list::SourceList;
+    use avdschema::str::SourceStr;
     use ordermap::OrderMap;
     use serde_json::Value;
 
@@ -232,24 +192,22 @@ mod tests {
     use crate::Configuration;
     use crate::feedback::CoercionNote;
     use crate::feedback::Feedback;
-    use crate::validation::test_utils::get_test_store;
+    use crate::validation::test_utils::TestValidate as _;
 
     #[test]
     fn validate_type_ok() {
-        let schema = List::default();
+        let schema = SourceList::default();
         let input = serde_json::json!(["foo", "bar"]);
-        let store = get_test_store();
-        let mut ctx = Context::new(&store, None);
+        let mut ctx = Context::new(None);
         let _ = schema.validate(&input, &mut ctx);
         assert!(ctx.result.errors.is_empty() && ctx.result.infos.is_empty());
     }
 
     #[test]
     fn validate_type_err() {
-        let schema = List::default();
+        let schema = SourceList::default();
         let input: Value = true.into();
-        let store = get_test_store();
-        let mut ctx = Context::new(&store, None);
+        let mut ctx = Context::new(None);
         let _ = schema.validate(&input, &mut ctx);
         assert!(ctx.result.infos.is_empty());
         assert_eq!(
@@ -268,26 +226,24 @@ mod tests {
 
     #[test]
     fn validate_item_type_ok() {
-        let schema = List {
-            items: Some(AnySchema::Str(Str::default()).into()),
+        let schema = SourceList {
+            items: Some(SourceSchema::Str(SourceStr::default()).into()),
             ..Default::default()
         };
         let input = serde_json::json!(["foo", "bar"]);
-        let store = get_test_store();
-        let mut ctx = Context::new(&store, None);
+        let mut ctx = Context::new(None);
         let _ = schema.validate(&input, &mut ctx);
         assert!(ctx.result.errors.is_empty() && ctx.result.infos.is_empty());
     }
 
     #[test]
     fn validate_item_type_err() {
-        let schema = List {
-            items: Some(Box::new(Str::default().into())),
+        let schema = SourceList {
+            items: Some(Box::new(SourceStr::default().into())),
             ..Default::default()
         };
         let input = serde_json::json!([{}, {}]);
-        let store = get_test_store();
-        let mut ctx = Context::new(&store, None);
+        let mut ctx = Context::new(None);
         let _ = schema.validate(&input, &mut ctx);
         assert!(ctx.result.infos.is_empty());
         assert_eq!(
@@ -317,18 +273,17 @@ mod tests {
 
     #[test]
     fn validate_item_type_coercion_ok_err() {
-        let schema = List {
-            items: Some(Box::new(Str::default().into())),
+        let schema = SourceList {
+            items: Some(Box::new(SourceStr::default().into())),
             ..Default::default()
         };
         let input = serde_json::json!([1, []]);
-        let store = get_test_store();
         let configuration = Configuration {
             return_coercion_infos: true,
             return_coerced_data: true,
             ..Default::default()
         };
-        let mut ctx = Context::new(&store, Some(&configuration));
+        let mut ctx = Context::new(Some(&configuration));
         let coerced = schema.validate(&input, &mut ctx);
         // Int 1 is coerced to String "1"
         assert_eq!(
@@ -343,7 +298,7 @@ mod tests {
                 .into()
             }]
         );
-        // Second item [] is invalid (List, not Str)
+        // Second item [] is invalid (SourceList, not SourceStr)
         assert_eq!(
             ctx.result.errors,
             vec![Feedback {
@@ -362,26 +317,24 @@ mod tests {
 
     #[test]
     fn validate_min_length_ok() {
-        let schema = List {
+        let schema = SourceList {
             min_length: Some(1),
             ..Default::default()
         };
         let input = serde_json::json!(["foo", "bar"]);
-        let store = get_test_store();
-        let mut ctx = Context::new(&store, None);
+        let mut ctx = Context::new(None);
         let _ = schema.validate(&input, &mut ctx);
         assert!(ctx.result.errors.is_empty() && ctx.result.infos.is_empty());
     }
 
     #[test]
     fn validate_min_length_err() {
-        let schema = List {
+        let schema = SourceList {
             min_length: Some(3),
             ..Default::default()
         };
         let input = serde_json::json!(["foo", "bar"]);
-        let store = get_test_store();
-        let mut ctx = Context::new(&store, None);
+        let mut ctx = Context::new(None);
         let _ = schema.validate(&input, &mut ctx);
         assert!(ctx.result.infos.is_empty());
         assert_eq!(
@@ -400,26 +353,24 @@ mod tests {
 
     #[test]
     fn validate_max_length_ok() {
-        let schema = List {
+        let schema = SourceList {
             max_length: Some(2),
             ..Default::default()
         };
         let input = serde_json::json!(["foo", "bar"]);
-        let store = get_test_store();
-        let mut ctx = Context::new(&store, None);
+        let mut ctx = Context::new(None);
         let _ = schema.validate(&input, &mut ctx);
         assert!(ctx.result.errors.is_empty() && ctx.result.infos.is_empty());
     }
 
     #[test]
     fn validate_max_length_err() {
-        let schema = List {
+        let schema = SourceList {
             max_length: Some(2),
             ..Default::default()
         };
         let input = serde_json::json!(["foo", "bar", "baz"]);
-        let store = get_test_store();
-        let mut ctx = Context::new(&store, None);
+        let mut ctx = Context::new(None);
         let _ = schema.validate(&input, &mut ctx);
         assert!(ctx.result.infos.is_empty());
         assert_eq!(
@@ -438,10 +389,13 @@ mod tests {
 
     #[test]
     fn validate_primary_key_ok() {
-        let schema = List {
+        let schema = SourceList {
             items: Some(Box::new(
-                Dict {
-                    keys: Some(OrderMap::from_iter([("foo".into(), Str::default().into())])),
+                SourceDict {
+                    keys: Some(OrderMap::from_iter([(
+                        "foo".into(),
+                        SourceStr::default().into(),
+                    )])),
                     ..Default::default()
                 }
                 .into(),
@@ -450,18 +404,20 @@ mod tests {
             ..Default::default()
         };
         let input = serde_json::json!([{ "foo": "v1" }, { "foo": "v2" }]);
-        let store = get_test_store();
-        let mut ctx = Context::new(&store, None);
+        let mut ctx = Context::new(None);
         let _ = schema.validate(&input, &mut ctx);
         assert!(ctx.result.errors.is_empty() && ctx.result.infos.is_empty());
     }
 
     #[test]
     fn validate_primary_key_required_err() {
-        let schema = List {
+        let schema = SourceList {
             items: Some(Box::new(
-                Dict {
-                    keys: Some(OrderMap::from_iter([("foo".into(), Str::default().into())])),
+                SourceDict {
+                    keys: Some(OrderMap::from_iter([(
+                        "foo".into(),
+                        SourceStr::default().into(),
+                    )])),
                     ..Default::default()
                 }
                 .into(),
@@ -470,8 +426,7 @@ mod tests {
             ..Default::default()
         };
         let input = serde_json::json!([{ "foo": null }, { "foo": "v1" }]);
-        let store = get_test_store();
-        let mut ctx = Context::new(&store, None);
+        let mut ctx = Context::new(None);
         let _ = schema.validate(&input, &mut ctx);
         assert!(ctx.result.infos.is_empty());
         assert_eq!(
@@ -486,10 +441,13 @@ mod tests {
 
     #[test]
     fn validate_primary_key_not_unique_err() {
-        let schema = List {
+        let schema = SourceList {
             items: Some(Box::new(
-                Dict {
-                    keys: Some(OrderMap::from_iter([("foo".into(), Str::default().into())])),
+                SourceDict {
+                    keys: Some(OrderMap::from_iter([(
+                        "foo".into(),
+                        SourceStr::default().into(),
+                    )])),
                     ..Default::default()
                 }
                 .into(),
@@ -498,8 +456,7 @@ mod tests {
             ..Default::default()
         };
         let input = serde_json::json!([{ "foo": "111" }, { "foo": "222" }, { "foo": "111" }]);
-        let store = get_test_store();
-        let mut ctx = Context::new(&store, None);
+        let mut ctx = Context::new(None);
         let _ = schema.validate(&input, &mut ctx);
         assert!(ctx.result.infos.is_empty());
         assert_eq!(
@@ -529,10 +486,13 @@ mod tests {
 
     #[test]
     fn validate_allow_duplicate_primary_key_ok() {
-        let schema = List {
+        let schema = SourceList {
             items: Some(Box::new(
-                Dict {
-                    keys: Some(OrderMap::from_iter([("foo".into(), Str::default().into())])),
+                SourceDict {
+                    keys: Some(OrderMap::from_iter([(
+                        "foo".into(),
+                        SourceStr::default().into(),
+                    )])),
                     ..Default::default()
                 }
                 .into(),
@@ -542,8 +502,7 @@ mod tests {
             ..Default::default()
         };
         let input = serde_json::json!([{ "foo": "111" }, { "foo": "222" }, { "foo": "111" }]);
-        let store = get_test_store();
-        let mut ctx = Context::new(&store, None);
+        let mut ctx = Context::new(None);
         let _ = schema.validate(&input, &mut ctx);
         assert!(ctx.result.infos.is_empty());
         assert!(ctx.result.errors.is_empty());
@@ -551,17 +510,17 @@ mod tests {
 
     #[test]
     fn validate_unique_keys_through_nested_list_err() {
-        let schema = List {
+        let schema = SourceList {
             items: Some(Box::new(
-                Dict {
+                SourceDict {
                     keys: Some(OrderMap::from_iter([(
                         "aliases".into(),
-                        List {
+                        SourceList {
                             items: Some(Box::new(
-                                Dict {
+                                SourceDict {
                                     keys: Some(OrderMap::from_iter([(
                                         "name".into(),
-                                        Str::default().into(),
+                                        SourceStr::default().into(),
                                     )])),
                                     ..Default::default()
                                 }
@@ -582,8 +541,7 @@ mod tests {
             {"aliases": [{"name": "dup"}]},
             {"aliases": [{"name": "dup"}]}
         ]);
-        let store = get_test_store();
-        let mut ctx = Context::new(&store, None);
+        let mut ctx = Context::new(None);
         let _ = schema.validate(&input, &mut ctx);
 
         assert_eq!(

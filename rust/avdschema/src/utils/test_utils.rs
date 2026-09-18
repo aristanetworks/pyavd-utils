@@ -13,8 +13,8 @@ use serde::Deserialize as _;
 use serde_json::json;
 use test_schema_store as _;
 
-use crate::Store;
-use crate::any::AnySchema;
+use crate::StoreSource;
+use crate::any::SourceSchema;
 #[cfg(feature = "dump_load_files")]
 const TMP_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tmp");
 
@@ -27,8 +27,8 @@ pub(crate) fn get_tmp_file(filename: &str) -> PathBuf {
     get_tmp_path().join(filename)
 }
 
-pub(crate) fn get_test_store() -> Store {
-    Store::deserialize(json!(
+pub(crate) fn get_test_store() -> StoreSource {
+    StoreSource::deserialize(json!(
         {
             "eos_config": {
                 "type": "dict",
@@ -106,31 +106,8 @@ pub(crate) fn get_test_store() -> Store {
     .unwrap()
 }
 
-pub(crate) fn get_test_dict_schema_with_refs() -> AnySchema {
-    AnySchema::deserialize(json!(
-        {
-            "type": "dict",
-            "keys": {
-                "single_ref": {
-                    "type": "str",
-                    "$ref": "eos_cli_config_gen#/keys/key2"
-                },
-                "nested_ref": {
-                    "type": "str",
-                    "$ref": "eos_cli_config_gen#/keys/key1"
-                },
-                "cross_schema_ref": {
-                    "type": "str",
-                    "$ref": "eos_designs#/keys/key3"
-                },
-            }
-        }
-    ))
-    .unwrap()
-}
-
-pub(crate) fn get_test_bool_schema() -> AnySchema {
-    AnySchema::deserialize(json!(
+pub(crate) fn get_test_bool_schema() -> SourceSchema {
+    SourceSchema::deserialize(json!(
         {
             "type": "bool",
             "display_name": "bool",
@@ -152,8 +129,8 @@ pub(crate) fn get_test_bool_schema() -> AnySchema {
     .unwrap()
 }
 
-pub(crate) fn get_test_int_schema() -> AnySchema {
-    AnySchema::deserialize(json!(
+pub(crate) fn get_test_int_schema() -> SourceSchema {
+    SourceSchema::deserialize(json!(
         {
             "type": "int",
             "display_name": "int",
@@ -179,8 +156,8 @@ pub(crate) fn get_test_int_schema() -> AnySchema {
     .unwrap()
 }
 
-pub(crate) fn get_test_str_schema() -> AnySchema {
-    AnySchema::deserialize(json!(
+pub(crate) fn get_test_str_schema() -> SourceSchema {
+    SourceSchema::deserialize(json!(
         {
             "type": "str",
             "display_name": "str",
@@ -209,8 +186,8 @@ pub(crate) fn get_test_str_schema() -> AnySchema {
     .unwrap()
 }
 
-pub(crate) fn get_test_list_schema() -> AnySchema {
-    AnySchema::deserialize(json!(
+pub(crate) fn get_test_list_schema() -> SourceSchema {
+    SourceSchema::deserialize(json!(
         {
             "type": "list",
             "display_name": "list",
@@ -244,8 +221,8 @@ pub(crate) fn get_test_list_schema() -> AnySchema {
     .unwrap()
 }
 
-pub(crate) fn get_test_dict_schema() -> AnySchema {
-    AnySchema::deserialize(json!(
+pub(crate) fn get_test_dict_schema() -> SourceSchema {
+    SourceSchema::deserialize(json!(
         {
             "type": "dict",
             "display_name": "list",
@@ -285,8 +262,8 @@ pub(crate) fn get_test_dict_schema() -> AnySchema {
     .unwrap()
 }
 
-pub(crate) fn get_test_str_schema_with_upgrade_handler() -> AnySchema {
-    AnySchema::deserialize(json!(
+pub(crate) fn get_test_str_schema_with_upgrade_handler() -> SourceSchema {
+    SourceSchema::deserialize(json!(
         {
             "type": "str",
             "display_name": "str",
@@ -316,18 +293,15 @@ pub(crate) fn get_test_str_schema_with_upgrade_handler() -> AnySchema {
 }
 
 #[cfg(feature = "dump_load_files")]
-static AVD_STORE: OnceLock<Store> = OnceLock::new();
+static AVD_STORE: OnceLock<StoreSource> = OnceLock::new();
 
 #[cfg(feature = "dump_load_files")]
-fn init_avd_store() -> Store {
+fn init_avd_store() -> StoreSource {
     use crate::Load as _;
-    Store::from_file(Some(test_schema_store::get_store_gz_path()))
-        .unwrap()
-        .as_resolved()
-        .unwrap()
+    StoreSource::from_file(Some(test_schema_store::get_store_gz_path())).unwrap()
 }
 
 #[cfg(feature = "dump_load_files")]
-pub(crate) fn get_avd_store() -> &'static Store {
+pub(crate) fn get_avd_store() -> &'static StoreSource {
     AVD_STORE.get_or_init(init_avd_store)
 }

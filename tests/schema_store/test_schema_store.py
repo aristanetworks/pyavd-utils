@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from pyavd_utils.schema_store import get_list_primary_key, init_store_from_file
+from pyavd_utils.schema_store import compile_schema_archive, get_list_primary_key, init_store_from_file
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -20,6 +20,28 @@ def test_schema_store_init_store_from_file_twice_errors(tmp_path: Path) -> None:
 
     with pytest.raises(RuntimeError, match="Initialization can only happen once"):
         init_store_from_file(schema_file)
+
+
+def test_compile_schema_archive_rejects_invalid_source(tmp_path: Path) -> None:
+    source = tmp_path / "schemas.json"
+    destination = tmp_path / "schemas.rkyv"
+    source.write_text("not JSON", encoding="UTF-8")
+
+    with pytest.raises(RuntimeError, match="Error while loading the Schema Store"):
+        compile_schema_archive(source, destination)
+
+    assert not destination.exists()
+
+
+def test_compile_schema_archive_rejects_invalid_schema(tmp_path: Path) -> None:
+    source = tmp_path / "schemas.json"
+    destination = tmp_path / "schemas.rkyv"
+    source.write_text(r'{"test":{"type":"str","$ref":"missing#"}}', encoding="UTF-8")
+
+    with pytest.raises(RuntimeError, match="Unable to resolve schema reference 'missing#'"):
+        compile_schema_archive(source, destination)
+
+    assert not destination.exists()
 
 
 @pytest.mark.usefixtures("init_store")
