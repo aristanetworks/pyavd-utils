@@ -44,29 +44,36 @@ fn eos_config_yaml(interface_count: usize) -> String {
     data
 }
 
-fn resolved_store() -> Option<Store> {
+#[expect(
+    clippy::expect_used,
+    reason = "benchmark setup must fail loudly when the schema fixture is invalid"
+)]
+fn resolved_store() -> Store {
     Store::from_file(Some(get_store_gz_path()))
-        .ok()?
+        .expect("benchmark schema store must load")
         .as_resolved()
-        .ok()
+        .expect("benchmark schema store must resolve")
 }
 
+#[expect(
+    clippy::expect_used,
+    reason = "benchmark setup must fail loudly when generated fixtures are invalid"
+)]
 fn benchmark_validation(criterion: &mut Criterion) {
-    let Some(store) = resolved_store() else {
-        return;
-    };
+    let store = resolved_store();
     let json_input = eos_config_json(INTERFACE_COUNT);
     let yaml_input = eos_config_yaml(INTERFACE_COUNT);
-    let Ok(json_value) = serde_json::from_str::<serde_json::Value>(&json_input) else {
-        return;
-    };
+    let json_value = serde_json::from_str::<serde_json::Value>(&json_input)
+        .expect("generated benchmark JSON must parse");
     let (yaml_documents, yaml_errors) = yaml_parser::parse(&yaml_input);
-    let Some(yaml_value) = yaml_documents.into_iter().next() else {
-        return;
-    };
-    if !yaml_errors.is_empty() {
-        return;
-    }
+    assert!(
+        yaml_errors.is_empty(),
+        "generated benchmark YAML must parse without errors: {yaml_errors:?}"
+    );
+    let yaml_value = yaml_documents
+        .into_iter()
+        .next()
+        .expect("generated benchmark YAML must contain one document");
 
     let validate_only = Configuration::default();
     let return_coerced = Configuration {
