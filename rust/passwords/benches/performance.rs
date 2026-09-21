@@ -17,10 +17,13 @@ use passwords::simple_7_encrypt;
 const PASSWORD: &str = "LittleDropBobbyTable";
 const CBC_KEY: &[u8] = b"benchmark-fabric_passwd";
 
+#[expect(
+    clippy::expect_used,
+    reason = "benchmark fixture generation must fail loudly on invalid inputs"
+)]
 fn benchmark_simple_7(criterion: &mut Criterion) {
-    let Ok(ciphertext) = simple_7_encrypt(PASSWORD, Some(7)) else {
-        return;
-    };
+    let ciphertext = simple_7_encrypt(PASSWORD, Some(7))
+        .expect("Simple 7 benchmark fixture generation must succeed");
 
     criterion.bench_function("passwords/simple_7_encrypt", |bencher| {
         bencher.iter(|| simple_7_encrypt(black_box(PASSWORD), black_box(Some(7))));
@@ -30,10 +33,13 @@ fn benchmark_simple_7(criterion: &mut Criterion) {
     });
 }
 
+#[expect(
+    clippy::expect_used,
+    reason = "benchmark fixture generation must fail loudly on invalid inputs"
+)]
 fn benchmark_cbc(criterion: &mut Criterion) {
-    let Ok(ciphertext) = cbc_encrypt(CBC_KEY, PASSWORD.as_bytes()) else {
-        return;
-    };
+    let ciphertext = cbc_encrypt(CBC_KEY, PASSWORD.as_bytes())
+        .expect("CBC benchmark fixture generation must succeed");
 
     criterion.bench_function("passwords/cbc_encrypt", |bencher| {
         bencher.iter(|| cbc_encrypt(black_box(CBC_KEY), black_box(PASSWORD.as_bytes())));
