@@ -12,27 +12,38 @@ use avdschema::get_list_primary_key;
 use criterion::Criterion;
 use test_schema_store::get_store_gz_path;
 
-fn resolved_store() -> Option<Store> {
+#[expect(
+    clippy::expect_used,
+    reason = "benchmark setup must fail loudly when the schema fixture is invalid"
+)]
+fn resolved_store() -> Store {
     Store::from_file(Some(get_store_gz_path()))
-        .ok()?
+        .expect("benchmark schema store must load")
         .as_resolved()
-        .ok()
+        .expect("benchmark schema store must resolve")
 }
 
+#[expect(
+    clippy::expect_used,
+    reason = "the benchmark must fail rather than measure schema load or resolution errors"
+)]
 fn benchmark_load_and_resolve_store(criterion: &mut Criterion) {
     let schema_file = get_store_gz_path();
     criterion.bench_function("avdschema/load_and_resolve_store", |bencher| {
         bencher.iter(|| {
-            let loaded = Store::from_file(Some(black_box(schema_file)));
-            black_box(loaded.map(Store::as_resolved))
+            let loaded = Store::from_file(Some(black_box(schema_file)))
+                .expect("benchmark schema store must load");
+            black_box(
+                loaded
+                    .as_resolved()
+                    .expect("benchmark schema store must resolve"),
+            )
         });
     });
 }
 
 fn benchmark_get_list_primary_key(criterion: &mut Criterion) {
-    let Some(store) = resolved_store() else {
-        return;
-    };
+    let store = resolved_store();
     let data_path = vec!["ethernet_interfaces".to_owned()];
 
     criterion.bench_function("avdschema/get_list_primary_key", |bencher| {
