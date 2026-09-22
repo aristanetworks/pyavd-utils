@@ -23,11 +23,10 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
-      - name: Setup Rust and cargo-codspeed
-        uses: moonrepo/setup-rust@abb2d32350334249b178c401e5ec5836e0cd88d3 # v1.3.0
-        with:
-          bins: cargo-codspeed@5.0.1
-          cache-target: release
+      - name: Install Rust toolchain from rust-toolchain.toml
+        run: rustup show
+      - name: Install cargo-codspeed
+        run: cargo install cargo-codspeed --version 5.0.1 --locked
       - name: Download schema benchmark fixture
         run: >-
           curl --fail --location
