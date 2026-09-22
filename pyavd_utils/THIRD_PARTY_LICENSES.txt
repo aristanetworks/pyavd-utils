@@ -199,7 +199,7 @@ MIT License
 
 Used by:
   - log 0.4.34
-  - regex-automata 0.4.16
+  - regex-automata 0.4.18
   - regex-syntax 0.8.11
 
 License text:
