@@ -18,6 +18,29 @@ def test_get_validated_data() -> None:
 
 
 @pytest.mark.usefixtures("init_store")
+def test_get_validated_avd_design_data_normalizes_dynamic_keys() -> None:
+    inputs = (
+        '{"fabric_name":"TEST-FABRIC",'
+        '"custom_node_type_keys":[{"key":"l3leaf","type":"l3leaf"}],'
+        '"custom_connected_endpoints_keys":[{"key":"servers","type":"server"}],'
+        '"l3leaf":{"defaults":{}},"servers":[],"tenants":[]}'
+    )
+
+    result = get_validated_data(inputs, "avd_design")
+
+    assert result.validated_data is not None
+    assert result.validated_data == (
+        '{"fabric_name":"TEST-FABRIC",'
+        '"custom_node_type_keys":[{"key":"l3leaf","type":"l3leaf"}],'
+        '"custom_connected_endpoints_keys":[{"key":"servers","type":"server"}],'
+        '"_dynamic_keys":{'
+        '"connected_endpoints":[{"key":"servers","source":"custom_connected_endpoints","value":[]}],'
+        '"network_services":[{"key":"tenants","source":"network_services","value":[]}],'
+        '"node_types":[{"key":"l3leaf","source":"custom_node_types","value":{"defaults":{}}}]}}'
+    )
+
+
+@pytest.mark.usefixtures("init_store")
 def test_get_validated_data_not_ok() -> None:
     expected_violations: list[tuple[list[str], str]] = [
         (["ethernet_interfaces", "0", "unknown"], "Invalid key."),

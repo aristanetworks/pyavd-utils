@@ -20,6 +20,7 @@ use std::borrow::Cow;
 
 use avdschema::SchemaDataMapping;
 
+use crate::consolidation::ConsolidatableValue;
 use crate::feedback::SourceSpan;
 use crate::feedback::Type;
 
@@ -57,7 +58,7 @@ pub trait ValidatableValue: Sized {
     /// The output type after coercion.
     ///
     /// For `serde_json::Value`, this is `Value` (same type).
-    type Coerced;
+    type Coerced: ConsolidatableValue;
 
     /// The output entry type used when rebuilding a coerced mapping.
     ///

@@ -212,6 +212,7 @@ pub(crate) mod _validation {
             let mut config: ::validation::Configuration =
                 configuration.map(Into::into).unwrap_or_default();
             config.return_coerced_data = true;
+            config.consolidate_data = true;
             let output = get_store()?
                 .validate_json(data_as_json, schema_name, Some(&config))
                 .map_err(|err| {

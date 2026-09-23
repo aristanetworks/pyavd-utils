@@ -34,7 +34,11 @@ const EOS_CLI_CONFIG_GEN_ROLE_KEYS: [&str; 8] = [
 ];
 
 impl Validation for Dict {
-    fn validate<V: ValidatableValue>(&self, value: &V, ctx: &mut Context) -> Option<V::Coerced> {
+    fn validate<'schema, V: ValidatableValue>(
+        &'schema self,
+        value: &V,
+        ctx: &mut Context<'schema>,
+    ) -> Option<V::Coerced> {
         if let Some(ref_result) = validate_ref(self, value, ctx) {
             return ref_result;
         }
@@ -96,10 +100,10 @@ fn validate_ref<V: ValidatableValue>(
 
 /// Validate and optionally coerce mapping keys.
 /// Returns `Some(coerced_items)` when coercion is enabled, None otherwise.
-fn validate_keys<'a, M: ValidatableMapping<'a>>(
-    schema: &Dict,
+fn validate_keys<'schema, 'input, M: ValidatableMapping<'input>>(
+    schema: &'schema Dict,
     input: &M,
-    ctx: &mut Context,
+    ctx: &mut Context<'schema>,
 ) -> Option<Vec<<M::Value as ValidatableValue>::CoercedMappingItem>> {
     let mut coerced_items = ctx.configuration.return_coerced_data.then(Vec::new);
 
@@ -125,7 +129,9 @@ fn validate_keys<'a, M: ValidatableMapping<'a>>(
             None
         }
     };
-    let resolved_dict_keys = schema.resolve_dict_keys(
+    let capture_dynamic_key_matches =
+        ctx.configuration.consolidate_data && ctx.state.path.is_empty();
+    let mut resolved_dict_keys = schema.resolve_dict_keys(
         input.as_schema_data_mapping(),
         ctx.configuration.dynamic_key_overrides.as_deref(),
     );
@@ -156,14 +162,22 @@ fn validate_keys<'a, M: ValidatableMapping<'a>>(
 
         let dict_key_match = resolved_dict_keys.resolve(input_schema_key);
         let coerced_value = match dict_key_match {
-            DictKeyMatch::Static(key_schema) => validate_matched_key(
-                input_schema_key,
-                key_schema,
-                input_value,
-                key_span,
-                input,
-                ctx,
-            ),
+            DictKeyMatch::Static(key_schema) => {
+                // Remove an overlapping dynamic key match when capturing them.
+                if capture_dynamic_key_matches
+                    && let Some(dynamic_keys) = resolved_dict_keys.dynamic_keys.as_mut()
+                {
+                    dynamic_keys.remove(input_schema_key);
+                }
+                validate_matched_key(
+                    input_schema_key,
+                    key_schema,
+                    input_value,
+                    key_span,
+                    input,
+                    ctx,
+                )
+            }
             DictKeyMatch::Dynamic(dynamic_key_info) => validate_matched_key(
                 input_schema_key,
                 dynamic_key_info.schema,
@@ -201,16 +215,19 @@ fn validate_keys<'a, M: ValidatableMapping<'a>>(
         ctx.state.path.pop();
     }
 
+    if capture_dynamic_key_matches {
+        ctx.dynamic_key_matches = resolved_dict_keys.dynamic_keys.take();
+    }
     coerced_items
 }
 
-fn validate_matched_key<'a, M: ValidatableMapping<'a>>(
+fn validate_matched_key<'schema, 'input, M: ValidatableMapping<'input>>(
     input_schema_key: &str,
-    key_schema: &AnySchema,
+    key_schema: &'schema AnySchema,
     input_value: &M::Value,
     key_span: Option<crate::feedback::SourceSpan>,
     input: &M,
-    ctx: &mut Context,
+    ctx: &mut Context<'schema>,
 ) -> Option<<M::Value as ValidatableValue>::Coerced> {
     if check_deprecation(input_schema_key, key_schema, key_span, input, ctx) {
         // Removed keys skip further validation but preserve the original value in the coerced output.
@@ -534,6 +551,64 @@ mod tests {
     }
 
     #[test]
+    fn validate_avd_design_dynamic_keys_are_recorded_in_selector_order() {
+        let schema = Dict {
+            keys: Some(OrderMap::from_iter([(
+                "node_type_keys".into(),
+                List {
+                    items: Some(Box::new(
+                        Dict {
+                            keys: Some(OrderMap::from_iter([(
+                                "key".into(),
+                                Str::default().into(),
+                            )])),
+                            ..Default::default()
+                        }
+                        .into(),
+                    )),
+                    ..Default::default()
+                }
+                .into(),
+            )])),
+            dynamic_keys: Some(OrderMap::from_iter([(
+                "node_type_keys.key".into(),
+                Dict::default().into(),
+            )])),
+            allow_other_keys: Some(true),
+            ..Default::default()
+        };
+        let input = serde_json::json!({
+            "node_type_keys": [{"key": "leaf"}, {"key": "spine"}, {"key": "unused"}],
+            "spine": {},
+            "leaf": {},
+            "unused": null,
+        });
+        let store = get_test_store();
+        let configuration = Configuration {
+            consolidate_data: true,
+            ..Default::default()
+        };
+        let mut ctx = Context::new(&store, Some(&configuration));
+        let _ = schema.validate(&input, &mut ctx);
+
+        assert!(ctx.result.errors.is_empty());
+        let dynamic_key_matches = ctx.dynamic_key_matches.as_ref().unwrap();
+        assert_eq!(
+            dynamic_key_matches
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            ["leaf", "spine", "unused"]
+        );
+        assert!(
+            dynamic_key_matches
+                .values()
+                .all(|dynamic_key| dynamic_key.source
+                    == Some(avdschema::dict::DynamicKeySource::NodeTypes))
+        );
+    }
+
+    #[test]
     fn validate_dynamic_keys_err() {
         let schema = Dict {
             keys: Some(OrderMap::from_iter([(
@@ -650,12 +725,18 @@ mod tests {
                 "dynkey1".into(),
                 "my_dynamic_keys.key".into(),
             )]))),
+            consolidate_data: true,
             ..Default::default()
         };
         let mut ctx = Context::new(&store, Some(&configuration));
         let _ = schema.validate(&input, &mut ctx);
         assert!(ctx.result.errors.is_empty());
         assert!(ctx.result.infos.is_empty());
+        assert!(
+            ctx.dynamic_key_matches
+                .as_ref()
+                .is_some_and(OrderMap::is_empty)
+        );
     }
 
     #[test]

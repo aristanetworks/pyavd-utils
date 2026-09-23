@@ -10,6 +10,7 @@ pub use dynamic_keys::DefaultDynamicKeys;
 pub use dynamic_keys::DictKeyMatch;
 pub use dynamic_keys::DynamicKeyInfo;
 pub use dynamic_keys::DynamicKeyOverrides;
+pub use dynamic_keys::DynamicKeySource;
 use dynamic_keys::ResolvedDictKeys;
 use ordermap::OrderMap;
 use serde::Deserialize;
@@ -76,48 +77,55 @@ impl<'a> Dict {
     where
         M: SchemaDataMapping<'input>,
     {
-        self.dynamic_keys.as_ref().map(|dynamic_keys| {
-            let mut resolved_dynamic_keys: OrderMap<String, DynamicKeyInfo<'a>> = dynamic_keys
-                .iter()
-                .filter(|(_, dynamic_key_schema)| !dynamic_key_schema.is_removed())
-                .flat_map(|(dynamic_key_path, dynamic_key_schema)| {
-                    self.get_dynamic_key_values(dynamic_key_path, dict)
-                        .into_iter()
-                        .flatten()
-                        .map(|key| {
-                            (
-                                key,
-                                DynamicKeyInfo {
-                                    dynamic_key_path,
-                                    schema: dynamic_key_schema,
-                                },
-                            )
-                        })
-                })
-                .collect();
+        let dynamic_keys = self.dynamic_keys.as_ref()?;
 
-            if let Some(overrides) = overrides {
-                for (concrete_key, dynamic_key_path) in overrides {
-                    let Some((schema_dynamic_key_path, dynamic_key_schema)) =
-                        dynamic_keys.get_key_value(dynamic_key_path)
-                    else {
-                        continue;
-                    };
-                    if dynamic_key_schema.is_removed() {
-                        continue;
+        let mut resolved_dynamic_keys: OrderMap<String, DynamicKeyInfo<'a>> = OrderMap::new();
+        for (dynamic_key_path, dynamic_key_schema) in dynamic_keys
+            .iter()
+            .filter(|(_, dynamic_key_schema)| !dynamic_key_schema.is_removed())
+        {
+            for key in self
+                .get_dynamic_key_values(dynamic_key_path, dict)
+                .into_iter()
+                .flatten()
+            {
+                let dynamic_key_info = DynamicKeyInfo {
+                    dynamic_key_path,
+                    schema: dynamic_key_schema,
+                    source: DynamicKeySource::from_schema_path(dynamic_key_path),
+                };
+                match resolved_dynamic_keys.get(&key) {
+                    // Custom selectors take precedence over built-in selectors when both select the same key.
+                    Some(existing) if existing.dynamic_key_path.starts_with("custom_") => {}
+                    _ => {
+                        resolved_dynamic_keys.insert(key, dynamic_key_info);
                     }
-                    resolved_dynamic_keys.insert(
-                        concrete_key.clone(),
-                        DynamicKeyInfo {
-                            dynamic_key_path: schema_dynamic_key_path,
-                            schema: dynamic_key_schema,
-                        },
-                    );
                 }
             }
+        }
 
-            resolved_dynamic_keys
-        })
+        if let Some(overrides) = overrides {
+            for (concrete_key, dynamic_key_path) in overrides {
+                let Some((schema_dynamic_key_path, dynamic_key_schema)) =
+                    dynamic_keys.get_key_value(dynamic_key_path)
+                else {
+                    continue;
+                };
+                if dynamic_key_schema.is_removed() {
+                    continue;
+                }
+                resolved_dynamic_keys.insert(
+                    concrete_key.clone(),
+                    DynamicKeyInfo {
+                        dynamic_key_path: schema_dynamic_key_path,
+                        schema: dynamic_key_schema,
+                        source: DynamicKeySource::from_schema_path(schema_dynamic_key_path),
+                    },
+                );
+            }
+        }
+
+        Some(resolved_dynamic_keys)
     }
 
     /// Resolve dynamic-key values with precedence: input values, then schema defaults.
@@ -259,6 +267,7 @@ mod tests {
     use super::Dict;
     use super::DynamicKeyInfo;
     use super::DynamicKeyOverrides;
+    use super::DynamicKeySource;
     use crate::any::AnySchema;
     use crate::base::Base;
     use crate::base::Deprecation;
@@ -316,6 +325,7 @@ mod tests {
                     DynamicKeyInfo {
                         dynamic_key_path: "outer.inner",
                         schema: &dynamic_key_schema,
+                        source: None,
                     }
                 ),
                 (
@@ -323,6 +333,7 @@ mod tests {
                     DynamicKeyInfo {
                         dynamic_key_path: "outer.inner",
                         schema: &dynamic_key_schema,
+                        source: None,
                     }
                 ),
                 (
@@ -330,6 +341,7 @@ mod tests {
                     DynamicKeyInfo {
                         dynamic_key_path: "outer.inner",
                         schema: &dynamic_key_schema,
+                        source: None,
                     }
                 ),
             ]))
@@ -355,6 +367,7 @@ mod tests {
                     DynamicKeyInfo {
                         dynamic_key_path: "list",
                         schema: &dynamic_key_schema,
+                        source: None,
                     }
                 ),
                 (
@@ -362,6 +375,7 @@ mod tests {
                     DynamicKeyInfo {
                         dynamic_key_path: "list",
                         schema: &dynamic_key_schema,
+                        source: None,
                     }
                 ),
                 (
@@ -369,6 +383,7 @@ mod tests {
                     DynamicKeyInfo {
                         dynamic_key_path: "list",
                         schema: &dynamic_key_schema,
+                        source: None,
                     }
                 ),
             ]))
@@ -394,6 +409,7 @@ mod tests {
                     DynamicKeyInfo {
                         dynamic_key_path: "outer.inner",
                         schema: dynamic_key_schema,
+                        source: None,
                     }
                 ),
                 (
@@ -401,6 +417,7 @@ mod tests {
                     DynamicKeyInfo {
                         dynamic_key_path: "outer.inner",
                         schema: dynamic_key_schema,
+                        source: None,
                     }
                 ),
             ]))
@@ -426,6 +443,7 @@ mod tests {
                 DynamicKeyInfo {
                     dynamic_key_path: "outer.inner",
                     schema: dynamic_key_schema,
+                    source: None,
                 }
             ),]))
         );
@@ -452,6 +470,7 @@ mod tests {
                     DynamicKeyInfo {
                         dynamic_key_path: "list",
                         schema: &dynamic_key_schema,
+                        source: None,
                     }
                 ),
                 (
@@ -459,6 +478,7 @@ mod tests {
                     DynamicKeyInfo {
                         dynamic_key_path: "list",
                         schema: &dynamic_key_schema,
+                        source: None,
                     }
                 ),
             ]))
@@ -510,8 +530,36 @@ mod tests {
                 DynamicKeyInfo {
                     dynamic_key_path: "network_services_keys.name",
                     schema: &override_dynamic_key_schema,
+                    source: Some(DynamicKeySource::NetworkServices),
                 }
             )]))
+        );
+    }
+
+    #[test]
+    fn resolve_dict_keys_prefers_custom_dynamic_key_match() {
+        let dict_schema = Dict {
+            dynamic_keys: Some(OrderMap::from_iter([
+                ("standard_keys".to_owned(), Int::default().into()),
+                ("custom_keys".to_owned(), Bool::default().into()),
+            ])),
+            ..Default::default()
+        };
+        let value = json!({
+            "custom_keys": ["shared"],
+            "standard_keys": ["shared"],
+            "shared": true,
+        });
+
+        let resolved = dict_schema.resolve_dict_keys(value.as_object().unwrap(), None);
+
+        assert_eq!(
+            resolved
+                .dynamic_keys
+                .as_ref()
+                .and_then(|keys| keys.get("shared"))
+                .map(|info| info.dynamic_key_path),
+            Some("custom_keys")
         );
     }
 
@@ -546,6 +594,7 @@ mod tests {
                     DynamicKeyInfo {
                         dynamic_key_path: "kept_list",
                         schema: &kept_dynamic_key_schema,
+                        source: None,
                     }
                 ),
                 (
@@ -553,6 +602,7 @@ mod tests {
                     DynamicKeyInfo {
                         dynamic_key_path: "later_list",
                         schema: &later_dynamic_key_schema,
+                        source: None,
                     }
                 ),
             ]))

@@ -23,6 +23,51 @@ pub struct DynamicKeyInfo<'a> {
     pub dynamic_key_path: &'a str,
     /// The schema for this dynamic key.
     pub schema: &'a AnySchema,
+    /// AVD Design source classification used by post-validation consolidation.
+    pub source: Option<DynamicKeySource>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DynamicKeySource {
+    CustomNodeTypes,
+    ConnectedEndpoints,
+    CustomConnectedEndpoints,
+    NetworkServices,
+    NodeTypes,
+}
+
+impl DynamicKeySource {
+    #[must_use]
+    pub fn from_schema_path(path: &str) -> Option<Self> {
+        match path {
+            "custom_node_type_keys.key" => Some(Self::CustomNodeTypes),
+            "connected_endpoints_keys.key" => Some(Self::ConnectedEndpoints),
+            "custom_connected_endpoints_keys.key" => Some(Self::CustomConnectedEndpoints),
+            "network_services_keys.name" => Some(Self::NetworkServices),
+            "node_type_keys.key" => Some(Self::NodeTypes),
+            _ => None,
+        }
+    }
+
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::CustomNodeTypes => "custom_node_types",
+            Self::ConnectedEndpoints => "connected_endpoints",
+            Self::CustomConnectedEndpoints => "custom_connected_endpoints",
+            Self::NetworkServices => "network_services",
+            Self::NodeTypes => "node_types",
+        }
+    }
+
+    #[must_use]
+    pub const fn collection_key(self) -> &'static str {
+        match self {
+            Self::CustomNodeTypes | Self::NodeTypes => "node_types",
+            Self::ConnectedEndpoints | Self::CustomConnectedEndpoints => "connected_endpoints",
+            Self::NetworkServices => "network_services",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]

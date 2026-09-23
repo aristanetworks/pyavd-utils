@@ -10,7 +10,11 @@ use crate::context::Context;
 use crate::validatable::ValidatableValue;
 
 impl Validation for AnySchema {
-    fn validate<V: ValidatableValue>(&self, value: &V, ctx: &mut Context) -> Option<V::Coerced> {
+    fn validate<'schema, V: ValidatableValue>(
+        &'schema self,
+        value: &V,
+        ctx: &mut Context<'schema>,
+    ) -> Option<V::Coerced> {
         delegate_anyschema_method!(self, validate, value, ctx)
     }
 }

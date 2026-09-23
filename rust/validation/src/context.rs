@@ -5,7 +5,9 @@
 use std::sync::Arc;
 
 use avdschema::Store;
+use avdschema::dict::DynamicKeyInfo;
 use avdschema::dict::DynamicKeyOverrides;
+use ordermap::OrderMap;
 
 use crate::feedback::CoercionNote;
 use crate::feedback::ErrorIssue;
@@ -27,15 +29,17 @@ pub struct Context<'a> {
     pub configuration: Configuration,
     pub store: &'a Store,
     pub result: ValidationResult,
+    pub(crate) dynamic_key_matches: Option<OrderMap<String, DynamicKeyInfo<'a>>>,
     pub(crate) state: State,
 }
 
 impl<'a> Context<'a> {
-    pub fn new(store: &'a Store, configuration: Option<&'a Configuration>) -> Self {
+    pub fn new(store: &'a Store, configuration: Option<&Configuration>) -> Self {
         Self {
             configuration: configuration.cloned().unwrap_or_default(),
             store,
             result: Default::default(),
+            dynamic_key_matches: None,
             state: Default::default(),
         }
     }
@@ -176,6 +180,9 @@ pub struct Configuration {
     /// When true, validation returns coerced data with types adjusted according to the schema.
     /// When false (default), validation returns a null placeholder to avoid expensive cloning.
     pub return_coerced_data: bool,
+    /// Run schema-specific consolidation on successfully validated coerced data.
+    /// This requires `return_coerced_data` to also be true.
+    pub consolidate_data: bool,
     /// Set to true when you need the coerced output (e.g., for data transformation).
     /// Set to false for validation-only use cases (e.g., LSP diagnostics).
     pub return_coercion_infos: bool,
