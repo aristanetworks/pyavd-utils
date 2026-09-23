@@ -12,8 +12,8 @@ derive_more = { workspace = true, features = ["display"] }
 serde = { workspace = true, optional = true }
 
 [dev-dependencies]
-criterion = "0.8.2" # Used for benchmarking
-saphyr = "0.0.12"   # Used for benchmarking
+criterion = "=0.8.2" # Used for benchmarking
+saphyr = "=0.0.12"   # Used for benchmarking
 serde_yaml = { workspace = true } # Used for serde benchmarking
 
 [features]
