@@ -57,6 +57,24 @@ fn get_list_primary_key_py_nested_list_ok() {
 }
 
 #[test]
+fn get_list_primary_key_py_avd_design_ok() {
+    setup();
+    pyo3::Python::attach(|py| {
+        let module = py
+            .import("_bindings")
+            .unwrap()
+            .getattr("_schema_store")
+            .unwrap();
+        let primary_key = {
+            let args = ("avd_design", vec!["node_type_keys"]);
+            module.call_method1("get_list_primary_key", args).unwrap()
+        };
+
+        assert_eq!(primary_key.to_string(), "key");
+    });
+}
+
+#[test]
 fn get_list_primary_key_py_non_list_path_is_none() {
     setup();
     pyo3::Python::attach(|py| {
@@ -130,7 +148,7 @@ fn get_list_primary_key_py_unknown_path_is_none() {
 #[test]
 fn get_list_primary_key_py_unsupported_schema_name_errors() {
     setup();
-    for schema_name in ["eos_cli_config_gen", "eos_designs"] {
+    for schema_name in ["eos_cli_config_gen", "eos_designs", "cv_deploy"] {
         pyo3::Python::attach(|py| {
             let module = py
                 .import("_bindings")

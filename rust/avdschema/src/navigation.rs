@@ -24,14 +24,23 @@ impl Store {
     /// Return the primary key for the list schema at a data path.
     ///
     /// Path resolution is performed without caller-provided data or dynamic-key overrides.
-    /// Schema-defined default dynamic keys remain available. Numeric path components traverse
-    /// list items.
+    /// For `avd_design`, schema-default dynamic keys are disabled and only static schema paths
+    /// are supported. Schema-defined default dynamic keys remain available for other schemas.
+    /// Numeric path components traverse list items.
     pub fn get_list_primary_key(
         &self,
         schema_name: &str,
         data_path: &[String],
     ) -> Result<Option<&str>, SchemaPathError> {
-        let empty_data = serde_json::Value::Object(serde_json::Map::new());
+        let empty_data = if schema_name == "avd_design" {
+            serde_json::json!({
+                "node_type_keys": [],
+                "connected_endpoints_keys": [],
+                "network_services_keys": [],
+            })
+        } else {
+            serde_json::Value::Object(serde_json::Map::new())
+        };
         let Some(view) = self.get_schema_from_path(schema_name, data_path, &empty_data, None)?
         else {
             return Ok(None);
@@ -216,6 +225,75 @@ mod tests {
             .to_string(),
         )
         .expect("navigation schema should compile")
+    }
+
+    fn avd_design_navigation_store() -> Store {
+        Store::from_json(
+            &json!({
+                "avd_design": {
+                    "type": "dict",
+                    "keys": {
+                        "node_type_keys": {
+                            "type": "list",
+                            "primary_key": "key",
+                            "default": [{"key": "l3leaf"}],
+                            "items": {"type": "dict", "keys": {"key": {"type": "str"}}},
+                        },
+                        "connected_endpoints_keys": {
+                            "type": "list",
+                            "primary_key": "key",
+                            "default": [{"key": "servers"}],
+                            "items": {"type": "dict", "keys": {"key": {"type": "str"}}},
+                        },
+                        "network_services_keys": {
+                            "type": "list",
+                            "primary_key": "name",
+                            "default": [{"name": "tenants"}],
+                            "items": {"type": "dict", "keys": {"name": {"type": "str"}}},
+                        },
+                    },
+                    "dynamic_keys": {
+                        "node_type_keys.key": {
+                            "type": "list",
+                            "primary_key": "node",
+                            "items": {"type": "dict", "keys": {"node": {"type": "str"}}},
+                        },
+                        "connected_endpoints_keys.key": {
+                            "type": "list",
+                            "primary_key": "name",
+                            "items": {"type": "dict", "keys": {"name": {"type": "str"}}},
+                        },
+                        "network_services_keys.name": {
+                            "type": "list",
+                            "primary_key": "name",
+                            "items": {"type": "dict", "keys": {"name": {"type": "str"}}},
+                        },
+                    },
+                },
+            })
+            .to_string(),
+        )
+        .expect("AVD design navigation schema should compile")
+    }
+
+    #[test]
+    fn list_primary_key_supports_avd_design_static_paths_without_dynamic_defaults() {
+        let store = avd_design_navigation_store();
+        assert_eq!(
+            store
+                .get_list_primary_key("avd_design", &["node_type_keys".into()])
+                .unwrap(),
+            Some("key")
+        );
+
+        for dynamic_key in ["l3leaf", "servers", "tenants"] {
+            assert_eq!(
+                store
+                    .get_list_primary_key("avd_design", &[dynamic_key.into()])
+                    .unwrap(),
+                None
+            );
+        }
     }
 
     #[test]
