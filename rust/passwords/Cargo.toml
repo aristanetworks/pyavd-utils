@@ -13,6 +13,9 @@ cbc = ["dep:cbc", "dep:cipher", "dep:des", "dep:base64"]
 sha512 = ["dep:base64ct", "dep:sha-crypt"]
 simple-7 = ["dep:getrandom", "dep:hex"]
 
+[dev-dependencies]
+criterion = { workspace = true }
+
 [dependencies]
 derive_more = { workspace = true, features = ["display", "from"]}
 # sha512 feature
@@ -26,3 +29,8 @@ base64 = { version = "0.23.0", default-features = false , features = ["std"], op
 # simple-7 feature
 hex = { version = "0.4", default-features = false, features = ["std"], optional = true}
 getrandom = { version = "0.4", default-features = false, optional = true }
+
+[[bench]]
+name = "performance"
+harness = false
+required-features = ["cbc", "sha512", "simple-7"]
