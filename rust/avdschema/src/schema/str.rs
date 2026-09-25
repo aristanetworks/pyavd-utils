@@ -19,6 +19,7 @@ use super::base::valid_values::ValidValues;
 
 /// Enum for string formats allowed by the [`SourceStr`] schema.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "metaschema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum Format {
     Cidr,
@@ -36,6 +37,7 @@ pub enum Format {
 /// AVD Schema for string data.
 #[skip_serializing_none]
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "metaschema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct SourceStr {
     /// Convert string value to lower case before performing validation
@@ -52,6 +54,10 @@ pub struct SourceStr {
     #[serde(flatten)]
     pub base: Base<String>,
     #[serde(flatten)]
+    #[cfg_attr(
+        feature = "metaschema",
+        schemars(with = "super::base::convert_types::StrConvertTypes")
+    )]
     pub convert_types: ConvertTypes,
     #[serde(flatten)]
     pub valid_values: ValidValues<String>,
@@ -70,6 +76,8 @@ impl<'x> TryFrom<&'x SourceSchema> for &'x SourceStr {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, derive_more::Display)]
+#[cfg_attr(feature = "metaschema", derive(schemars::JsonSchema))]
+#[cfg_attr(feature = "metaschema", schemars(extend("format" = "regex")))]
 #[display("{pattern}")]
 #[serde(transparent)]
 pub struct Pattern {

@@ -52,6 +52,8 @@ mod compiled;
     reason = "Legacy schema inheritance API predates missing-doc enforcement."
 )]
 mod inherit;
+#[cfg(feature = "metaschema")]
+mod metaschema;
 mod navigation;
 #[allow(
     missing_docs,
@@ -80,6 +82,8 @@ pub use self::compiled::CompileError;
 pub use self::compiled::SchemaDiagnostic;
 pub use self::compiled::SchemaDiagnostics;
 pub use self::inherit::Inherit;
+#[cfg(feature = "metaschema")]
+pub use self::metaschema::generate_metaschema_json;
 pub use self::navigation::SchemaPathError;
 pub use self::navigation::resolve_dynamic_keys;
 pub use self::resolve::errors::SchemaResolverError;

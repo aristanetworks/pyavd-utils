@@ -9,6 +9,7 @@ use serde_with::skip_serializing_none;
 // Valid values allowed by schema. Used for Int and Str schemas.
 #[skip_serializing_none]
 #[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "metaschema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct ValidValues<T> {
     /// List of valid values

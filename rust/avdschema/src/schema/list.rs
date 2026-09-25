@@ -14,6 +14,7 @@ use crate::schema::base::Base;
 /// AVD Schema for list data.
 #[skip_serializing_none]
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "metaschema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct SourceList {
     /// Schema for list items
@@ -22,8 +23,13 @@ pub struct SourceList {
     pub max_length: Option<u64>,
     /// Name of a primary key in a list of dictionaries.
     /// The configured key is implicitly required and must have unique values between the list elements
+    #[cfg_attr(feature = "metaschema", schemars(regex(pattern = "^[a-z][a-z0-9_]*$")))]
     pub primary_key: Option<String>,
     /// List of keys or dot-notation path keys that must be unique in addition to `primary_key`.
+    #[cfg_attr(
+        feature = "metaschema",
+        schemars(inner(regex(pattern = "^[a-z][a-z0-9_.]*$")))
+    )]
     pub unique_keys: Option<Vec<String>>,
     /// Set to True to allow duplicate `primary_key` values for a list of dicts.
     /// Useful when primary key is only used for triggering documentation.

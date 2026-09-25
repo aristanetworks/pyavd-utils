@@ -22,6 +22,7 @@ use crate::utils::load::LoadFromFragments;
 
 /// Enum covering all AVD Schema types.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, derive_more::From)]
+#[cfg_attr(feature = "metaschema", derive(schemars::JsonSchema))]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum SourceSchema {
     Bool(SourceBool),

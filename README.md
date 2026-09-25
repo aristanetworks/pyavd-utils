@@ -32,6 +32,10 @@ This package is an **internal dependency** designed solely for the use of the `p
 
 This repository, `pyavd-utils`, provides functionalities to PyAVD, specifically handling the heavy lifting of data structure validation and manipulation with the speed and safety guarantees of **Rust**.
 
+Schema compilation and source-code generation are distributed separately as `pyavd-utils-gen`.
+The generation package pins the matching `pyavd-utils` release and is only needed by AVD's
+development and build tooling; pyAVD runtime installations do not need it.
+
 ---
 
 ## Contribution and Development

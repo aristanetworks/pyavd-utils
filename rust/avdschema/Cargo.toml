@@ -29,6 +29,7 @@ regex-automata = { workspace = true, features = [
 ] }
 indexmap = { workspace = true }
 rkyv = { workspace = true }
+schemars = { workspace = true, optional = true }
 self_cell = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true, features = ["arbitrary_precision", "preserve_order"] }
@@ -47,6 +48,8 @@ default = ["gzip", "regex-perf", "yaml"]
 dump_load_files = ["mmap", "dep:walkdir", "gzip", "yaml"]
 # Compile gzip-compressed JSON schema sources into process-owned stores.
 gzip = ["dep:flate2"]
+# Generate the JSON Schema describing the AVD source-schema authoring format.
+metaschema = ["dep:schemars"]
 # Enable the native regex performance accelerators omitted by lean and WASM consumers.
 regex-perf = ["fancy-regex/perf"]
 # Memory-map an existing raw compiled archive on native targets.
