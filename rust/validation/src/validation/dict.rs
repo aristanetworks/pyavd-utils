@@ -484,7 +484,7 @@ mod tests {
                 .into(),
             )])),
             allow_other_keys: Some(true),
-            keys: Some(Default::default()),
+            keys: Some(OrderMap::default()),
             ..Default::default()
         };
         let input = serde_json::json!({ "dynkey1": 5 });

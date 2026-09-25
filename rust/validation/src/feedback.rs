@@ -108,7 +108,7 @@ impl From<Path> for Vec<String> {
 }
 impl<'a> FromIterator<&'a str> for Path {
     fn from_iter<T: IntoIterator<Item = &'a str>>(iter: T) -> Self {
-        Self(Vec::from_iter(iter.into_iter().map(ToOwned::to_owned)))
+        Self(iter.into_iter().map(ToOwned::to_owned).collect())
     }
 }
 
