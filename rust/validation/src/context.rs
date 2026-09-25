@@ -28,7 +28,7 @@ impl Context {
     pub(crate) fn new(configuration: Option<&Configuration>) -> Self {
         Self {
             configuration: configuration.cloned().unwrap_or_default(),
-            result: Default::default(),
+            result: ValidationResult::default(),
         }
     }
     pub(crate) fn add_error_for<V: ValidatableValue>(

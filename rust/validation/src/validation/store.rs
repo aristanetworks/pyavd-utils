@@ -113,7 +113,7 @@ impl StoreValidateInput for Store {
                     input_diagnostics: vec![InputDiagnostic::ParseDiagnostic(
                         ParseDiagnostic::from_source(&parse_error),
                     )],
-                    document: Default::default(),
+                    document: ValidationOutput::default(),
                 });
             }
         };
