@@ -1562,6 +1562,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "python-generation-bindings"
+version = "0.0.10"
+dependencies = [
+ "avdschema",
+ "log",
+ "pyo3",
+ "pyo3-build-config",
+ "pyo3-log",
+]
+
+[[package]]
 name = "quote"
 version = "1.0.47"
 source = "registry+https://github.com/rust-lang/crates.io-index"

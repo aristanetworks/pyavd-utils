@@ -6,6 +6,12 @@ resolution-markers = [
     "python_full_version < '3.11'",
 ]
 
+[manifest]
+members = [
+    "pyavd-utils",
+    "pyavd-utils-gen",
+]
+
 [[package]]
 name = "annotated-types"
 version = "0.7.0"
@@ -459,6 +465,16 @@ dev = [
     { name = "pyright", specifier = ">=1.1.411" },
 ]
 pytest = [{ name = "pytest", specifier = ">=8.2.0" }]
+
+[[package]]
+name = "pyavd-utils-gen"
+source = { editable = "python/pyavd-utils-gen" }
+dependencies = [
+    { name = "pyavd-utils" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "pyavd-utils", editable = "." }]
 
 [[package]]
 name = "pydantic"
