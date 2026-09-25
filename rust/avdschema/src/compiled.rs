@@ -41,7 +41,7 @@ pub(crate) const ARCHIVE_MAGIC: &[u8; 8] = b"AVDSCHM\0";
 /// Increment this whenever a previously generated archive cannot be read with exactly the same
 /// semantics. The version is deliberately independent of the crate version; archives are not
 /// otherwise promised to be portable between arbitrary pyavd-utils releases.
-pub(crate) const ARCHIVE_FORMAT_VERSION: u32 = 1;
+pub(crate) const ARCHIVE_FORMAT_VERSION: u32 = 2;
 /// Bytes reserved for magic, version, and future header fields before the rkyv root.
 pub(crate) const ARCHIVE_HEADER_LENGTH: usize = 16;
 
@@ -188,11 +188,44 @@ pub struct ListSchema {
 
 #[derive(Archive, Serialize, Deserialize, Clone, Debug)]
 #[rkyv(derive(Debug))]
+pub struct PrefixKeySchema {
+    pub prefixes_key: Option<String>,
+    pub prefixes: Option<Vec<String>>,
+    pub default_prefixes: Vec<String>,
+    pub include_suffix_in_data: bool,
+    pub schema: SchemaId,
+}
+
+impl PartialEq for PrefixKeySchema {
+    fn eq(&self, other: &Self) -> bool {
+        self.prefixes_key == other.prefixes_key
+            && self.prefixes == other.prefixes
+            && self.default_prefixes == other.default_prefixes
+            && self.include_suffix_in_data == other.include_suffix_in_data
+            && self.schema == other.schema
+    }
+}
+
+impl Eq for PrefixKeySchema {}
+
+impl Hash for PrefixKeySchema {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.prefixes_key.hash(state);
+        self.prefixes.hash(state);
+        self.default_prefixes.hash(state);
+        self.include_suffix_in_data.hash(state);
+        self.schema.hash(state);
+    }
+}
+
+#[derive(Archive, Serialize, Deserialize, Clone, Debug)]
+#[rkyv(derive(Debug))]
 pub struct DictSchema {
     pub common: Common,
     pub keys: IndexMap<String, SchemaId>,
     pub dynamic_keys: IndexMap<String, SchemaId>,
     pub default_dynamic_keys: IndexMap<String, Vec<String>>,
+    pub prefix_keys: Vec<PrefixKeySchema>,
     pub allow_other_keys: bool,
     pub begin_relaxed_validation: bool,
 }
@@ -206,6 +239,7 @@ impl PartialEq for DictSchema {
                 .default_dynamic_keys
                 .iter()
                 .eq(other.default_dynamic_keys.iter())
+            && self.prefix_keys == other.prefix_keys
             && self.allow_other_keys == other.allow_other_keys
             && self.begin_relaxed_validation == other.begin_relaxed_validation
     }
@@ -221,6 +255,7 @@ impl Hash for DictSchema {
         self.default_dynamic_keys
             .iter()
             .for_each(|entry| entry.hash(state));
+        self.prefix_keys.hash(state);
         self.allow_other_keys.hash(state);
         self.begin_relaxed_validation.hash(state);
     }
@@ -757,6 +792,28 @@ impl<'a> Compiler<'a> {
             &schema_path_with(schema_path, "dynamic_keys"),
         )?;
         let default_dynamic_keys = default_dynamic_keys(&dynamic_keys, self, layers, schema_path)?;
+        let prefix_keys = schemas
+            .clone()
+            .find_map(|schema| schema.prefix_keys.as_ref())
+            .map(|configs| {
+                configs
+                    .iter()
+                    .enumerate()
+                    .map(|(index, config)| {
+                        self.compile_prefix_key(
+                            config,
+                            layers,
+                            schema_path,
+                            &schema_path_with(
+                                &schema_path_with(schema_path, "prefix_keys"),
+                                &index.to_string(),
+                            ),
+                        )
+                    })
+                    .collect::<Result<Vec<_>, _>>()
+            })
+            .transpose()?
+            .unwrap_or_default();
         let begin_relaxed_validation = matches!(
             declared.first(),
             Some(SourceSchema::Dict(schema))
@@ -768,6 +825,7 @@ impl<'a> Compiler<'a> {
             keys,
             dynamic_keys,
             default_dynamic_keys,
+            prefix_keys,
             allow_other_keys: schemas
                 .clone()
                 .find_map(|schema| schema.allow_other_keys)
@@ -794,6 +852,43 @@ impl<'a> Compiler<'a> {
                     .map(|id| (name.to_owned(), id))
             })
             .collect()
+    }
+
+    fn compile_prefix_key(
+        &mut self,
+        config: &'a crate::dict::SourcePrefixKey,
+        layers: &[&'a SourceSchema],
+        dict_schema_path: &[String],
+        config_schema_path: &[String],
+    ) -> Result<PrefixKeySchema, CompileError> {
+        let referenced = resolve_ref(&config.schema_ref, self.source).map_err(|error| {
+            SchemaDiagnostic::Reference {
+                schema_path: config_schema_path.to_vec(),
+                reference: config.schema_ref.clone(),
+                error,
+            }
+        })?;
+        let schema = self.compile_layers(
+            &[referenced],
+            &schema_path_with(config_schema_path, "schema_ref"),
+        )?;
+        let default_prefixes = if config.prefixes.is_none() {
+            config
+                .prefixes_key
+                .as_deref()
+                .map(|key| default_prefixes(key, self, layers, dict_schema_path))
+                .transpose()?
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+        Ok(PrefixKeySchema {
+            prefixes_key: config.prefixes_key.clone(),
+            prefixes: config.prefixes.clone(),
+            default_prefixes,
+            include_suffix_in_data: config.include_suffix_in_data,
+            schema,
+        })
     }
 
     fn intern(&mut self, node: NodeKey) -> Result<SchemaId, CompileError> {
@@ -1051,6 +1146,38 @@ fn default_dynamic_keys(
         }
     }
     Ok(result)
+}
+
+fn default_prefixes(
+    prefixes_key: &str,
+    compiler: &Compiler<'_>,
+    layers: &[&SourceSchema],
+    schema_path: &[String],
+) -> Result<Vec<String>, CompileError> {
+    let child_layers = layers
+        .iter()
+        .filter_map(|schema| match schema {
+            SourceSchema::Dict(schema) => schema.keys.as_ref()?.get(prefixes_key),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    if child_layers.is_empty() {
+        return Ok(Vec::new());
+    }
+    let child_schema_path = schema_path_with(&schema_path_with(schema_path, "keys"), prefixes_key);
+    let expanded_child_layers = compiler.expand_layers(&child_layers, &child_schema_path)?;
+    Ok(expanded_child_layers
+        .iter()
+        .find_map(|schema| schema_default(schema))
+        .and_then(|value| {
+            value.as_array().map(|values| {
+                values
+                    .iter()
+                    .filter_map(|item| item.as_str().map(ToOwned::to_owned))
+                    .collect()
+            })
+        })
+        .unwrap_or_default())
 }
 
 fn values_at_path<'a>(
@@ -1338,6 +1465,40 @@ mod tests {
             structural_cycle_diagnostic.to_string(),
             "Schema contains a structural cycle while compiling 'root/keys/child'"
         );
+    }
+
+    #[test]
+    fn prefix_key_reference_errors_include_the_configuration_path() {
+        let source = StoreSource::from_json(
+            r#"{
+                "test": {
+                    "type": "dict",
+                    "prefix_keys": [{
+                        "prefixes": ["custom_"],
+                        "include_suffix_in_data": false,
+                        "schema_ref": "missing#"
+                    }]
+                }
+            }"#,
+        )
+        .unwrap();
+        let CompileError::InvalidSchema(diagnostics) = CompiledStore::compile(&source).unwrap_err()
+        else {
+            panic!("invalid prefix-key reference should return schema diagnostics")
+        };
+
+        assert!(matches!(
+            diagnostics.iter().next(),
+            Some(SchemaDiagnostic::Reference {
+                schema_path,
+                reference,
+                error: SchemaResolverError::SchemaStore(
+                    SchemaStoreError::InvalidSchemaName(name)
+                ),
+            }) if schema_path == &["test", "prefix_keys", "0"]
+                && reference == "missing#"
+                && name == "missing"
+        ));
     }
 
     #[test]

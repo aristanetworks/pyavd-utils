@@ -3,9 +3,11 @@
 // that can be found in the LICENSE file.
 
 pub mod dynamic_keys;
+mod prefix_keys;
 
 pub use dynamic_keys::DynamicKeyOverrides;
 use ordermap::OrderMap;
+pub use prefix_keys::SourcePrefixKey;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value;
@@ -32,6 +34,8 @@ pub struct SourceDict {
     /// dictionary containing the concrete key names. Lists in the path are
     /// expanded across all items.
     pub dynamic_keys: Option<OrderMap<String, SourceSchema>>,
+    /// Prefix-based dictionary keys evaluated from static prefixes or sibling input data.
+    pub prefix_keys: Option<Vec<SourcePrefixKey>>,
     pub allow_other_keys: Option<bool>,
     pub relaxed_validation: Option<bool>,
     #[serde(rename = "$id")]
