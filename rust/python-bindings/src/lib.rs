@@ -5,9 +5,7 @@
 
 #![allow(
     missing_docs,
-    missing_debug_implementations,
     clippy::fn_params_excessive_bools,
-    clippy::module_name_repetitions,
     clippy::needless_pass_by_value,
     clippy::struct_excessive_bools,
     clippy::unnecessary_wraps,
