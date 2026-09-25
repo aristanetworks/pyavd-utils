@@ -49,10 +49,15 @@ pub(crate) const ARCHIVE_HEADER_LENGTH: usize = 16;
 #[derive(Archive, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[rkyv(derive(Clone, Copy, Debug, PartialEq, Eq, Hash))]
 pub enum SchemaId {
+    /// Boolean schema table index.
     Bool(u32),
+    /// Integer schema table index.
     Int(u32),
+    /// String schema table index.
     Str(u32),
+    /// List schema table index.
     List(u32),
+    /// Dictionary schema table index.
     Dict(u32),
 }
 

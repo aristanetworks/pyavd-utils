@@ -59,6 +59,7 @@ args = ["--locked"]
 [dependency-groups]
 pytest = [
     "pytest>=8.2.0",
+    "ruff==0.16.0",
 ]
 coverage = [
     "coverage[toml]==7.16.1",
@@ -152,6 +153,8 @@ convention = "google"
   "INP001", # implicit namespace package. Add an `__init__.py` - Tests are not in packages
   "PLC0415", # `import` should be at the top-level of a file
 ]
+"tests/schema_generation/artifacts/*.py" = ["A002"]
+"tests/schema_generation/artifacts/*.py.expected" = ["A002"]
 
 [tool.ruff.lint.pylint]
 max-args = 15

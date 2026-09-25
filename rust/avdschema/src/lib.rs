@@ -47,6 +47,8 @@ use regex_automata as _;
 use test_schema_store as _;
 
 mod compiled;
+#[cfg(feature = "generation")]
+mod generation;
 #[allow(
     missing_docs,
     reason = "Legacy schema inheritance API predates missing-doc enforcement."
@@ -79,6 +81,13 @@ mod views;
 pub use self::compiled::CompileError;
 pub use self::compiled::SchemaDiagnostic;
 pub use self::compiled::SchemaDiagnostics;
+pub use self::compiled::SchemaId;
+#[cfg(feature = "generation")]
+pub use self::generation::GenerationError;
+#[cfg(feature = "generation")]
+pub use self::generation::generate_python_models;
+#[cfg(feature = "generation")]
+pub use self::generation::generate_python_models_projection;
 pub use self::inherit::Inherit;
 pub use self::navigation::SchemaPathError;
 pub use self::navigation::resolve_dynamic_keys;

@@ -45,6 +45,8 @@ mmap-guard = { workspace = true, optional = true }
 default = ["gzip", "regex-perf", "yaml"]
 # File-oriented schema authoring and archive generation. This also enables native mmap loading.
 dump_load_files = ["mmap", "dep:walkdir", "gzip", "yaml"]
+# Build-time schema artifact generation from file-backed source stores.
+generation = ["dump_load_files"]
 # Compile gzip-compressed JSON schema sources into process-owned stores.
 gzip = ["dep:flate2"]
 # Enable the native regex performance accelerators omitted by lean and WASM consumers.

@@ -1,0 +1,112 @@
+{
+  "eos_cli_config_gen": {
+    "type": "dict",
+    "keys": {
+      "aaa_authentication": {
+        "type": "dict",
+        "keys": {
+          "login": {
+            "type": "dict",
+            "keys": {
+              "default": {
+                "type": "str",
+                "description": "Login authentication method(s) as a string."
+              },
+              "command_api": {
+                "type": "str",
+                "description": "Command-API authentication method(s) as a string."
+              },
+              "console": {
+                "type": "str",
+                "description": "Console authentication method(s) as a string."
+              }
+            }
+          }
+        }
+      }
+    },
+    "$defs": {
+      "methods": {
+        "type": "list",
+        "min_length": 1,
+        "items": {
+          "type": "dict",
+          "keys": {
+            "method": {
+              "type": "str",
+              "required": true,
+              "valid_values": ["logging", "group"]
+            },
+            "group": {
+              "type": "str",
+              "description": "Specify the server group to be used.\nThis option is applicable only when the `method` key is explicitly set to `group`."
+            }
+          }
+        }
+      }
+    }
+  },
+  "schema_generation_fixture": {
+    "type": "dict",
+    "allow_other_keys": true,
+    "keys": {
+      "accounting": {
+        "type": "dict",
+        "keys": {
+          "type": {
+            "type": "str",
+            "valid_values": ["none", "start-stop", "stop-only"],
+            "required": true
+          },
+          "methods": {
+            "type": "list",
+            "$ref": "eos_cli_config_gen#/$defs/methods"
+          },
+          "legacy_group": {
+            "type": "str",
+            "deprecation": {
+              "removed": true,
+              "warning": true,
+              "new_key": "methods.group",
+              "remove_in_version": "6.0.0"
+            }
+          }
+        }
+      },
+      "authentication": {
+        "type": "dict",
+        "keys": {
+          "login": {
+            "type": "dict",
+            "$ref": "eos_cli_config_gen#/keys/aaa_authentication/keys/login"
+          }
+        }
+      },
+      "interface_profiles": {
+        "type": "list",
+        "primary_key": "name",
+        "items": {
+          "type": "dict",
+          "keys": {
+            "name": {
+              "type": "str",
+              "description": "Interface-Profile Name."
+            },
+            "commands": {
+              "type": "list",
+              "required": true,
+              "items": {
+                "type": "str",
+                "description": "EOS CLI interface command."
+              }
+            },
+            "shutdown": {
+              "type": "bool",
+              "default": false
+            }
+          }
+        }
+      }
+    }
+  }
+}
