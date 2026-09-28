@@ -79,15 +79,15 @@ pub(crate) mod _schema_store {
     #[pyfunction]
     /// Return the primary key for a list schema at the given data path.
     ///
-    /// This helper only supports the EOS config schema. Path resolution does not use caller data
-    /// or dynamic-key overrides.
+    /// Dynamic keys in the AVD design schema are not supported today; only
+    /// static schema paths can be inspected.
     pub(crate) fn get_list_primary_key(
         schema_name: &str,
         data_path: Vec<String>,
     ) -> PyResult<Option<String>> {
-        if schema_name != "eos_config" {
+        if !matches!(schema_name, "eos_config" | "avd_design") {
             return Err(PyRuntimeError::new_err(format!(
-                "Schema name '{schema_name}' is not supported by get_list_primary_key. Supported schema names are 'eos_config'."
+                "Schema name '{schema_name}' is not supported by get_list_primary_key. Supported schema names are 'eos_config' and 'avd_design'."
             )));
         }
         get_store()?
