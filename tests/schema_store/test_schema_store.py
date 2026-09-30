@@ -7,7 +7,8 @@ from typing import TYPE_CHECKING, Literal
 
 import pytest
 
-from pyavd_utils.schema_store import compile_schema_archive, get_list_primary_key, init_store_from_file
+from pyavd_utils.schema_store import get_list_primary_key, init_store_from_file
+from pyavd_utils_gen.schema_store import compile_schema_archive
 
 if TYPE_CHECKING:
     from pathlib import Path
