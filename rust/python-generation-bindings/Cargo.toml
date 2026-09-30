@@ -1,0 +1,20 @@
+[package]
+name = "python-generation-bindings"
+version.workspace = true
+edition = "2024"
+license.workspace = true
+
+[lints]
+workspace = true
+
+[build-dependencies]
+pyo3-build-config = { workspace = true }
+
+[dependencies]
+avdschema = { path = "../avdschema", default-features = false, features = ["dump_load_files"] }
+log = { workspace = true }
+pyo3 = { workspace = true, features = ["abi3-py310"] }
+pyo3-log = { workspace = true }
+
+[lib]
+crate-type = ["cdylib", "lib"]

@@ -6,29 +6,13 @@
 from pathlib import Path
 from typing import Literal
 
-def compile_schema_archive(source: Path, destination: Path) -> None:
-    """
-    Compile a source schema-store file into the archived runtime format.
-
-    The destination is written atomically. Its parent directory must already exist. The resulting
-    file can be memory-mapped by `init_store_from_file`.
-
-    Args:
-        source: Path to the source schema-store file.
-        destination: Path where the compiled archive should be written.
-
-    Raises:
-        RuntimeError: If the source cannot be loaded, the schemas cannot be compiled, or the
-            destination cannot be written.
-    """
-
-def get_list_primary_key(schema_name: Literal["eos_config"], data_path: list[str]) -> str | None:
+def get_list_primary_key(schema_name: Literal["eos_config", "avd_design"], data_path: list[str]) -> str | None:
     """
     Return the primary key for a list schema at the given data path.
 
     Limitation:
-        The only supported schema name is "eos_config". Path resolution does not use caller data
-        or dynamic-key overrides.
+        Dynamic keys in the AVD design schema are not supported today; only static schema paths
+        can be inspected. The supported schema names are "eos_config" and "avd_design".
 
     Args:
         schema_name: The name of the schema to inspect.

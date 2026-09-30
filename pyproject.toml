@@ -72,6 +72,9 @@ dev = [
     "pyright>=1.1.411",
 ]
 
+[tool.uv.workspace]
+members = ["python/pyavd-utils-gen"]
+
 # -------------------------------------- #
 # cibuildwheel configuration
 # -------------------------------------- #
@@ -161,7 +164,7 @@ max-statements = 148
 
 [tool.ruff.lint.isort]
 # TODO: check if needed
-known-first-party = ["pyavd_utils"]
+known-first-party = ["pyavd_utils", "pyavd_utils_gen"]
 
 [tool.ruff.format]
 docstring-code-format = true
@@ -170,6 +173,7 @@ docstring-code-format = true
 exclude = [
   ".github",
 ]
+extraPaths = ["python/pyavd-utils-gen"]
 pythonVersion = "3.10"
 
 reportMissingImports = "error"
@@ -181,6 +185,7 @@ branch = true
 parallel = true
 source = [
   "pyavd_utils",
+  "python/pyavd-utils-gen/pyavd_utils_gen",
 ]
 
 [tool.coverage.report]
@@ -261,3 +266,27 @@ serialize = [
     "{major}.{minor}.{patch}.{pre_l}{pre_n}",
     "{major}.{minor}.{patch}",
 ]
+
+[[tool.bumpversion.files]]
+filename = "python/pyavd-utils-gen/pyavd_utils_gen/__init__.py"
+search = '__version__ = "{current_version}"'
+replace = '__version__ = "{new_version}"'
+parse = """(?x)
+    (?P<major>0|[1-9]\\d*)\\.
+    (?P<minor>0|[1-9]\\d*)\\.
+    (?P<patch>0|[1-9]\\d*)
+    (?:
+        \\.                           # dot separator for pre-release section
+        (?P<pre_l>[a-zA-Z-]+)         # pre-release label
+        (?P<pre_n>0|[1-9]\\d*)        # pre-release version number
+    )?                                # pre-release section is optional
+"""
+serialize = [
+    "{major}.{minor}.{patch}.{pre_l}{pre_n}",
+    "{major}.{minor}.{patch}",
+]
+
+[[tool.bumpversion.files]]
+filename = "python/pyavd-utils-gen/pyproject.toml"
+search = 'dependencies = ["pyavd-utils=={current_version}"]'
+replace = 'dependencies = ["pyavd-utils=={new_version}"]'

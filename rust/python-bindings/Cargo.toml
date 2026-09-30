@@ -11,11 +11,15 @@ workspace = true
 pyo3-build-config = { workspace = true }
 
 [dev-dependencies]
+avdschema = { path = "../avdschema", features = ["dump_load_files"] }
 criterion = { version = "=0.8.2" }
 test_schema_store = { path = "../test_schema_store" }
 
 [dependencies]
-avdschema = { path = "../avdschema", features = ["dump_load_files"] }
+avdschema = { path = "../avdschema", default-features = false, features = [
+    "mmap",
+    "regex-perf",
+] }
 log = { workspace = true }
 passwords = { path = "../passwords", default-features = false, optional = true }
 pyo3 = { workspace = true, features = ["abi3-py310"] }
@@ -24,7 +28,9 @@ serde_json = { workspace = true, features = [
     "arbitrary_precision",
     "preserve_order",
 ] }
-validation = { path = "../validation" }
+validation = { path = "../validation", default-features = false, features = [
+    "regex-perf",
+] }
 
 [features]
 default = ["cbc", "sha512", "simple-7"]
