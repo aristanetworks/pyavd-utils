@@ -14,6 +14,8 @@ from pyavd_utils.passwords import (
     Simple7InvalidHexEncodingError,
     Simple7InvalidSaltFormatError,
     Simple7InvalidSaltValueError,
+    Simple7InvalidUtf8Error,
+    Simple7RandomSourceUnavailableError,
     simple_7_decrypt,
     simple_7_encrypt,
 )
@@ -24,6 +26,10 @@ def test_simple_7_error_hierarchy() -> None:
     assert issubclass(Simple7InvalidSaltValueError, PasswordError)
     assert issubclass(Simple7EmptyPasswordError, PasswordError)
     assert issubclass(Simple7DataTooShortError, PasswordError)
+    assert issubclass(Simple7InvalidHexEncodingError, PasswordError)
+    assert issubclass(Simple7InvalidSaltFormatError, PasswordError)
+    assert issubclass(Simple7InvalidUtf8Error, PasswordError)
+    assert issubclass(Simple7RandomSourceUnavailableError, PasswordError)
 
 
 SIMPLE_7_ENCRYPT_TEST_DATA = [
@@ -61,13 +67,6 @@ SIMPLE_7_ENCRYPT_TEST_DATA = [
         "",
         pytest.raises(Simple7InvalidSaltValueError, match="Salt must be in the range 0-15, got 16"),
         id="Invalid salt value (16)",
-    ),
-    pytest.param(
-        "",
-        5,
-        "",
-        pytest.raises(ValueError, match="Password must not be empty"),
-        id="Empty password",
     ),
     pytest.param(
         "test_password",

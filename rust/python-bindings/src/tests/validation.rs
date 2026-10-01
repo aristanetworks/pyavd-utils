@@ -7,6 +7,7 @@ use pyo3::types::PyAnyMethods as _;
 use super::get_path_and_message_from_py_violation;
 use super::setup;
 use crate::validation::ValidationResult;
+use crate::validation::exceptions;
 use crate::validation::first_input_diagnostic_as_pyerr;
 
 #[test]
@@ -176,6 +177,8 @@ fn init_store_py_twice_err() {
             "Unable to initialize the schema store. \
                  Initialization can only happen once, and must be done before running any validations."
         );
+        assert!(err.is_instance_of::<exceptions::ValidationStoreAlreadyInitializedError>(py));
+        assert!(err.is_instance_of::<exceptions::ValidationError>(py));
     });
 }
 

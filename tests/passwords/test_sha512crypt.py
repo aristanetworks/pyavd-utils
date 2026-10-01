@@ -2,6 +2,7 @@
 # Use of this source code is governed by the Apache License 2.0
 # that can be found in the LICENSE file.
 
+import pickle
 from contextlib import AbstractContextManager
 from contextlib import nullcontext as does_not_raise
 
@@ -23,6 +24,16 @@ def test_sha512_crypt_error_hierarchy() -> None:
     assert issubclass(Sha512CryptInvalidSaltCharacterError, PasswordError)
     assert issubclass(Sha512CryptLibraryError, PasswordError)
     assert issubclass(Sha512CryptBase64Error, PasswordError)
+
+
+def test_sha512_crypt_error_module_and_pickle() -> None:
+    """Test that SHA512 crypt errors have the public module path and can be pickled."""
+    err = Sha512CryptInvalidSaltEmptyError("boom")
+
+    assert Sha512CryptInvalidSaltEmptyError.__module__ == "pyavd_utils.passwords"
+    unpickled = pickle.loads(pickle.dumps(err))  # noqa: S301
+    assert type(unpickled) is Sha512CryptInvalidSaltEmptyError
+    assert str(unpickled) == "boom"
 
 
 SHA512_CRYPT_TEST_DATA = [

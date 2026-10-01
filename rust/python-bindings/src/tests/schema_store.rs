@@ -5,6 +5,7 @@
 use pyo3::types::PyAnyMethods as _;
 
 use super::setup;
+use crate::validation::exceptions;
 
 #[test]
 fn get_list_primary_key_py_ok() {
@@ -165,6 +166,8 @@ fn get_list_primary_key_py_unsupported_schema_name_errors() {
                     .unwrap_err()
             };
 
+            assert!(err.is_instance_of::<exceptions::ValidationInvalidSchemaNameError>(py));
+            assert!(err.is_instance_of::<exceptions::ValidationError>(py));
             assert!(err.to_string().contains("not supported"));
         });
     }
@@ -186,7 +189,8 @@ fn get_list_primary_key_py_invalid_schema_path_errors() {
                 .unwrap_err()
         };
 
-        assert!(err.is_instance_of::<pyo3::exceptions::PyRuntimeError>(py));
+        assert!(err.is_instance_of::<exceptions::ValidationSchemaPathError>(py));
+        assert!(err.is_instance_of::<exceptions::ValidationError>(py));
         assert!(
             err.to_string()
                 .contains("Data path cannot be traversed through this schema node")

@@ -2,6 +2,9 @@
 // Use of this source code is governed by the Apache License 2.0
 // that can be found in the LICENSE file.
 
+pub(crate) mod errors;
+pub(crate) mod exceptions;
+
 #[cfg(test)]
 pub(crate) use _validation::ValidationResult;
 #[cfg(test)]
@@ -18,17 +21,33 @@ pub(crate) mod _validation {
     use avdschema::any::SourceSchema;
     use log::debug;
     use pyo3::PyResult;
-    use pyo3::exceptions::PyRuntimeError;
     use pyo3::pyclass;
     use pyo3::pyfunction;
     use pyo3::pymethods;
 
     use crate::schema_store::get_store;
+    use crate::validation::errors::ValidationPyError;
+
+    #[rustfmt::skip]
+    #[pymodule_export]
+    pub(crate) use super::exceptions::{
+        ValidationError,
+        ValidationInternalError,
+        ValidationInvalidAdhocSchemaJsonError,
+        ValidationInvalidCoercedDataJsonError,
+        ValidationInvalidJsonDataError,
+        ValidationInvalidSchemaNameError,
+        ValidationSchemaPathError,
+        ValidationStoreAlreadyInitializedError,
+        ValidationStoreLoadError,
+        ValidationStoreLoadIoError,
+        ValidationStoreNotInitializedError,
+    };
 
     const ADHOC_SCHEMA_NAME: &str = "__adhoc__";
 
     fn invalid_json_in_data_err(message: impl std::fmt::Display) -> pyo3::PyErr {
-        PyRuntimeError::new_err(format!("Invalid JSON in data: {message}"))
+        ValidationPyError::InvalidJsonData(message.to_string()).into()
     }
 
     pub(crate) fn first_input_diagnostic_as_pyerr(
@@ -146,7 +165,7 @@ pub(crate) mod _validation {
                         });
                     }
                     ::validation::feedback::ErrorIssue::InternalError { message } => {
-                        return Err(PyRuntimeError::new_err(format!(
+                        return Err(ValidationInternalError::new_err(format!(
                             "Error occurred during validation: {message}"
                         )));
                     }
@@ -189,17 +208,15 @@ pub(crate) mod _validation {
         data_as_json: &str,
         schema_name: &str,
         configuration: Option<Configuration>,
-    ) -> PyResult<ValidationResult> {
+    ) -> Result<ValidationResult, ValidationPyError> {
         let config = configuration.map(Into::into);
-        let output = get_store()?
-            .validate_json(data_as_json, schema_name, config.as_ref())
-            .map_err(|err| {
-                PyRuntimeError::new_err(format!("Error while validating the data: {err}"))
-            })?;
+        let output = get_store()?.validate_json(data_as_json, schema_name, config.as_ref())?;
         if let Some(err) = first_input_diagnostic_as_pyerr(output.input_diagnostics.first()) {
-            return Err(err);
+            return Err(ValidationPyError::from(err));
         }
-        ValidationResult::from_validation_result(output.document.result)
+        Ok(ValidationResult::from_validation_result(
+            output.document.result,
+        )?)
     }
 
     #[pyfunction]
@@ -209,41 +226,39 @@ pub(crate) mod _validation {
         data_as_json: &str,
         schema_name: &str,
         configuration: Option<Configuration>,
-    ) -> PyResult<ValidatedDataResult> {
+    ) -> Result<ValidatedDataResult, ValidationPyError> {
         debug!("python_bindings::get_validated_data Begin");
-        let result: PyResult<ValidatedDataResult> = py.detach(|| {
-            let mut config: ::validation::Configuration =
-                configuration.map(Into::into).unwrap_or_default();
-            config.return_coerced_data = true;
-            let output = get_store()?
-                .validate_json(data_as_json, schema_name, Some(&config))
-                .map_err(|err| {
-                    PyRuntimeError::new_err(format!("Error while validating the data: {err}"))
-                })?;
-            if let Some(err) = first_input_diagnostic_as_pyerr(output.input_diagnostics.first()) {
-                return Err(err);
-            }
-            debug!("python_bindings::get_validated_data Validation Done");
-            let validated_data = if output.document.result.errors.is_empty() {
-                output
-                    .document
-                    .coerced
-                    .map(|coerced| {
-                        serde_json::to_string(&coerced).map_err(|err| {
-                            PyRuntimeError::new_err(format!("Invalid JSON in coerced data: {err}"))
+        let result: Result<ValidatedDataResult, ValidationPyError> =
+            py.detach(|| -> Result<ValidatedDataResult, ValidationPyError> {
+                let mut config: ::validation::Configuration =
+                    configuration.map(Into::into).unwrap_or_default();
+                config.return_coerced_data = true;
+                let output =
+                    get_store()?.validate_json(data_as_json, schema_name, Some(&config))?;
+                if let Some(err) = first_input_diagnostic_as_pyerr(output.input_diagnostics.first())
+                {
+                    return Err(ValidationPyError::from(err));
+                }
+                debug!("python_bindings::get_validated_data Validation Done");
+                let validated_data = if output.document.result.errors.is_empty() {
+                    output
+                        .document
+                        .coerced
+                        .map(|coerced| {
+                            serde_json::to_string(&coerced)
+                                .map_err(|err| ValidationPyError::InvalidCoercedDataJson(err))
                         })
-                    })
-                    .transpose()?
-            } else {
-                None
-            };
-            Ok(ValidatedDataResult {
-                validation_result: ValidationResult::from_validation_result(
-                    output.document.result,
-                )?,
-                validated_data,
-            })
-        });
+                        .transpose()?
+                } else {
+                    None
+                };
+                Ok(ValidatedDataResult {
+                    validation_result: ValidationResult::from_validation_result(
+                        output.document.result,
+                    )?,
+                    validated_data,
+                })
+            });
         debug!("python_bindings::get_validated_data End");
         result
     }
@@ -254,26 +269,25 @@ pub(crate) mod _validation {
         data_as_json: &str,
         schema_as_json: &str,
         configuration: Option<Configuration>,
-    ) -> PyResult<ValidationResult> {
+    ) -> Result<ValidationResult, ValidationPyError> {
         let schema: SourceSchema = serde_json::from_str(schema_as_json).map_err(|err| {
-            PyRuntimeError::new_err(format!("Invalid JSON in adhoc schema: {err}"))
+            ValidationPyError::InvalidAdhocSchema(format!("Invalid JSON in adhoc schema: {err}"))
         })?;
-        let data: serde_json::Value =
-            serde_json::from_str(data_as_json).map_err(invalid_json_in_data_err)?;
+        let data: serde_json::Value = serde_json::from_str(data_as_json)
+            .map_err(|err| ValidationPyError::InvalidJsonData(err.to_string()))?;
 
         let raw_store: StoreSource = serde_json::from_value(serde_json::json!({
             ADHOC_SCHEMA_NAME: schema
         }))
-        .map_err(|err| PyRuntimeError::new_err(format!("Invalid adhoc schema: {err}")))?;
-        let archive = Store::compile_schema(&raw_store, ADHOC_SCHEMA_NAME)
-            .map_err(|err| PyRuntimeError::new_err(format!("Invalid adhoc schema: {err}")))?;
+        .map_err(|err| {
+            ValidationPyError::InvalidAdhocSchema(format!("Invalid adhoc schema: {err}"))
+        })?;
+        let archive = Store::compile_schema(&raw_store, ADHOC_SCHEMA_NAME).map_err(|err| {
+            ValidationPyError::InvalidAdhocSchema(format!("Invalid adhoc schema: {err}"))
+        })?;
         let config: Option<::validation::Configuration> = configuration.map(Into::into);
-        let output = archive
-            .validate_value(&data, ADHOC_SCHEMA_NAME, config.as_ref())
-            .map_err(|err| {
-                PyRuntimeError::new_err(format!("Error while validating the data: {err}"))
-            })?;
+        let output = archive.validate_value(&data, ADHOC_SCHEMA_NAME, config.as_ref())?;
 
-        ValidationResult::from_validation_result(output.result)
+        Ok(ValidationResult::from_validation_result(output.result)?)
     }
 }

@@ -2,54 +2,71 @@
 // Use of this source code is governed by the Apache License 2.0
 // that can be found in the LICENSE file.
 
+pub(crate) mod errors;
+pub(crate) mod exceptions;
+
 /// Password hashing and encryption helpers.
 #[pyo3::pymodule]
 pub(crate) mod _passwords {
-    use pyo3::PyResult;
-    #[cfg(any(feature = "cbc", feature = "sha512", feature = "simple-7"))]
-    use pyo3::exceptions::PyRuntimeError;
-    #[cfg(any(feature = "cbc", feature = "sha512", feature = "simple-7"))]
-    use pyo3::exceptions::PyValueError;
+    #[cfg(feature = "cbc")]
+    use super::errors::CbcDecryptPyError;
+    #[cfg(feature = "cbc")]
+    use super::errors::CbcEncryptPyError;
+    #[cfg(feature = "sha512")]
+    use super::errors::Sha512CryptPyError;
+    #[cfg(feature = "simple-7")]
+    use super::errors::Simple7PyError;
+    #[rustfmt::skip]
+    #[pymodule_export]
+    pub(crate) use super::exceptions::{
+        CBCDecryptionFailedError,
+        CBCEncryptionFailedError,
+        CBCInvalidBase64Error,
+        CBCInvalidBase64Utf8Error,
+        CBCInvalidSignatureError,
+        CBCInvalidUtf8Error,
+        PasswordError,
+        Sha512CryptBase64Error,
+        Sha512CryptInvalidSaltCharacterError,
+        Sha512CryptInvalidSaltEmptyError,
+        Sha512CryptLibraryError,
+        Simple7DataTooShortError,
+        Simple7EmptyPasswordError,
+        Simple7InvalidHexEncodingError,
+        Simple7InvalidSaltFormatError,
+        Simple7InvalidSaltValueError,
+        Simple7InvalidUtf8Error,
+        Simple7RandomSourceUnavailableError,
+    };
     #[cfg(any(feature = "cbc", feature = "sha512", feature = "simple-7"))]
     use pyo3::pyfunction;
 
     #[cfg(feature = "sha512")]
     #[pyfunction]
     /// Computes the SHA512 crypt value for the password given the salt.
-    pub(crate) fn sha512_crypt(password: &str, salt: &str) -> PyResult<String> {
-        ::passwords::sha512_crypt(password, salt).map_err(|err| match err {
-            ::passwords::Sha512CryptError::InvalidSalt(_)
-            | ::passwords::Sha512CryptError::Base64InvalidLength(_) => {
-                PyValueError::new_err(err.to_string())
-            }
-            ::passwords::Sha512CryptError::ShaCrypt(_) => PyRuntimeError::new_err(err.to_string()),
-        })
+    pub(crate) fn sha512_crypt(password: &str, salt: &str) -> Result<String, Sha512CryptPyError> {
+        Ok(::passwords::sha512_crypt(password, salt)?)
     }
 
     #[cfg(feature = "cbc")]
     #[pyfunction]
     /// Encrypt the data with CBC `TripleDES`.
-    pub(crate) fn cbc_encrypt(password: &str, data: &str) -> PyResult<String> {
-        let result_bytes = ::passwords::cbc_encrypt(password.as_bytes(), data.as_bytes())
-            .map_err(|err| PyRuntimeError::new_err(err.to_string()))?;
-        String::from_utf8(result_bytes)
-            .map_err(|_err| PyRuntimeError::new_err("Base64 output contained invalid UTF-8"))
+    pub(crate) fn cbc_encrypt(password: &str, data: &str) -> Result<String, CbcEncryptPyError> {
+        let result_bytes = ::passwords::cbc_encrypt(password.as_bytes(), data.as_bytes())?;
+        Ok(String::from_utf8(result_bytes)?)
     }
 
     #[cfg(feature = "cbc")]
     #[pyfunction]
     /// Decrypt the `encrypted_data` with CBC `TripleDES`.
-    pub(crate) fn cbc_decrypt(password: &str, encrypted_data: &str) -> PyResult<String> {
+    pub(crate) fn cbc_decrypt(
+        password: &str,
+        encrypted_data: &str,
+    ) -> Result<String, CbcDecryptPyError> {
         let decrypted_bytes =
-            ::passwords::cbc_decrypt(password.as_bytes(), encrypted_data.as_bytes()).map_err(
-                |err| match err {
-                    ::passwords::CbcError::InvalidBase64 => PyValueError::new_err(err.to_string()),
-                    _ => PyRuntimeError::new_err(err.to_string()),
-                },
-            )?;
+            ::passwords::cbc_decrypt(password.as_bytes(), encrypted_data.as_bytes())?;
 
-        String::from_utf8(decrypted_bytes)
-            .map_err(|_err| PyValueError::new_err(::passwords::CbcError::InvalidUtf8.to_string()))
+        Ok(String::from_utf8(decrypted_bytes)?)
     }
 
     #[cfg(feature = "cbc")]
@@ -62,21 +79,14 @@ pub(crate) mod _passwords {
     #[cfg(feature = "simple-7")]
     #[pyfunction]
     /// Encrypt (obfuscate) a password with insecure type-7.
-    pub(crate) fn simple_7_encrypt(data: &str, salt: Option<u8>) -> PyResult<String> {
-        ::passwords::simple_7_encrypt(data, salt).map_err(|err| match err {
-            ::passwords::Simple7Error::InvalidSaltValue(_)
-            | ::passwords::Simple7Error::EmptyPassword => PyValueError::new_err(err.to_string()),
-            _ => PyRuntimeError::new_err(err.to_string()),
-        })
+    pub(crate) fn simple_7_encrypt(data: &str, salt: Option<u8>) -> Result<String, Simple7PyError> {
+        Ok(::passwords::simple_7_encrypt(data, salt)?)
     }
 
     #[cfg(feature = "simple-7")]
     #[pyfunction]
     /// Decrypt (deobfuscate) a password from insecure type-7.
-    pub(crate) fn simple_7_decrypt(data: &str) -> PyResult<String> {
-        ::passwords::simple_7_decrypt(data).map_err(|err| match err {
-            ::passwords::Simple7Error::InvalidUtf8(_) => PyRuntimeError::new_err(err.to_string()),
-            _ => PyValueError::new_err(err.to_string()),
-        })
+    pub(crate) fn simple_7_decrypt(data: &str) -> Result<String, Simple7PyError> {
+        Ok(::passwords::simple_7_decrypt(data)?)
     }
 }
