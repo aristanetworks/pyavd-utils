@@ -19,32 +19,40 @@ impl From<Sha512CryptPyError> for PyErr {
 }
 
 #[cfg(feature = "cbc")]
-#[derive(Debug)]
-pub(crate) enum CbcPyError {
+#[derive(Debug, derive_more::From)]
+pub(crate) enum CbcEncryptPyError {
     Cbc(passwords::CbcError),
     InvalidBase64Utf8(std::string::FromUtf8Error),
-    InvalidUtf8(std::string::FromUtf8Error),
 }
 
 #[cfg(feature = "cbc")]
-impl From<passwords::CbcError> for CbcPyError {
-    fn from(err: passwords::CbcError) -> Self {
-        Self::Cbc(err)
+impl From<CbcEncryptPyError> for PyErr {
+    fn from(err: CbcEncryptPyError) -> Self {
+        match err {
+            CbcEncryptPyError::Cbc(err) => cbc_error_to_pyerr(&err),
+            CbcEncryptPyError::InvalidBase64Utf8(_err) =>
+                exceptions::CBCInvalidBase64Utf8Error::new_err(
+                    "CBC Base64 output is not valid UTF-8.",
+                ),
+        }
     }
 }
 
 #[cfg(feature = "cbc")]
-impl From<CbcPyError> for PyErr {
-    fn from(err: CbcPyError) -> Self {
+#[derive(Debug, derive_more::From)]
+pub(crate) enum CbcDecryptPyError {
+    Cbc(passwords::CbcError),
+    InvalidUtf8(std::string::FromUtf8Error),
+}
+
+#[cfg(feature = "cbc")]
+impl From<CbcDecryptPyError> for PyErr {
+    fn from(err: CbcDecryptPyError) -> Self {
         match err {
-            CbcPyError::Cbc(err) => cbc_error_to_pyerr(&err),
-            CbcPyError::InvalidBase64Utf8(err) => exceptions::CBCInvalidBase64Utf8Error::new_err(
-                format!("Base64 output contained invalid UTF-8: {err}"),
-            ),
-            CbcPyError::InvalidUtf8(err) => exceptions::CBCInvalidUtf8Error::new_err(format!(
-                "{}: {err}",
-                passwords::CbcError::InvalidUtf8
-            )),
+            CbcDecryptPyError::Cbc(err) => cbc_error_to_pyerr(&err),
+            CbcDecryptPyError::InvalidUtf8(_err) => {
+                exceptions::CBCInvalidUtf8Error::new_err("Decrypted data is not valid UTF-8.")
+            }
         }
     }
 }

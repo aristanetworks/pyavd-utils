@@ -3,7 +3,7 @@
 // that can be found in the LICENSE file.
 
 use super::*;
-use crate::errors::CbcPyError;
+use crate::errors::{CbcDecryptPyError, CbcEncryptPyError};
 
 #[test]
 fn cbc_decrypt_invalid_base64_err() {
@@ -100,37 +100,37 @@ fn cbc_verify_returns_bool() {
 #[test]
 fn cbc_internal_errors_map_to_specific_pyerrs() {
     with_passwords_module(|py, _module| {
-        let err = pyo3::PyErr::from(CbcPyError::from(::passwords::CbcError::InvalidUtf8));
+        let err = pyo3::PyErr::from(CbcDecryptPyError::from(::passwords::CbcError::InvalidUtf8));
         assert!(err.is_instance_of::<passwords::CBCInvalidUtf8Error>(py));
         assert_eq!(
             err.value(py).to_string(),
             "Decrypted data is not valid UTF-8."
         );
 
-        let from_utf8_err_0 = String::from_utf8(Vec::from([255])).unwrap_err();
-        let wrapper_err = pyo3::PyErr::from(CbcPyError::InvalidUtf8(from_utf8_err_0));
+        let from_utf8_err = String::from_utf8(Vec::from([255])).unwrap_err();
+        let wrapper_err = pyo3::PyErr::from(CbcDecryptPyError::InvalidUtf8(from_utf8_err));
         assert!(wrapper_err.is_instance_of::<passwords::CBCInvalidUtf8Error>(py));
         assert_eq!(
             wrapper_err.value(py).to_string(),
-            // TODO: Align errors so they are lower case and don't contain punctuation.
-            "Decrypted data is not valid UTF-8.: invalid utf-8 sequence of 1 bytes from index 0"
+            "Decrypted data is not valid UTF-8."
         );
 
-        let encryption_err =
-            pyo3::PyErr::from(CbcPyError::from(::passwords::CbcError::EncryptionFailed));
+        let encryption_err = pyo3::PyErr::from(CbcEncryptPyError::from(
+            ::passwords::CbcError::EncryptionFailed,
+        ));
         assert!(encryption_err.is_instance_of::<passwords::CBCEncryptionFailedError>(py));
         assert_eq!(
             encryption_err.value(py).to_string(),
             "Encryption failed: internal block alignment error."
         );
 
-        let from_utf8_err_1 = String::from_utf8(Vec::from([255])).unwrap_err();
+        let from_utf8_err = String::from_utf8(Vec::from([255])).unwrap_err();
         let wrapper_encryption_err =
-            pyo3::PyErr::from(CbcPyError::InvalidBase64Utf8(from_utf8_err_1));
+            pyo3::PyErr::from(CbcEncryptPyError::InvalidBase64Utf8(from_utf8_err));
         assert!(wrapper_encryption_err.is_instance_of::<passwords::CBCInvalidBase64Utf8Error>(py));
         assert_eq!(
             wrapper_encryption_err.value(py).to_string(),
-            "Base64 output contained invalid UTF-8: invalid utf-8 sequence of 1 bytes from index 0"
+            "CBC Base64 output is not valid UTF-8."
         );
     });
 }

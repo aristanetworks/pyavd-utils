@@ -17,7 +17,7 @@ mod passwords {
     use pyo3::pyfunction;
 
     #[cfg(feature = "cbc")]
-    use crate::errors::CbcPyError;
+    use crate::errors::{CbcDecryptPyError, CbcEncryptPyError};
     #[cfg(feature = "sha512")]
     use crate::errors::Sha512CryptPyError;
     #[cfg(feature = "simple-7")]
@@ -55,19 +55,22 @@ mod passwords {
     #[cfg(feature = "cbc")]
     #[pyfunction]
     /// Encrypt the data with CBC `TripleDES`
-    pub(crate) fn cbc_encrypt(password: &str, data: &str) -> Result<String, CbcPyError> {
+    pub(crate) fn cbc_encrypt(password: &str, data: &str) -> Result<String, CbcEncryptPyError> {
         let result_bytes = passwords::cbc_encrypt(password.as_bytes(), data.as_bytes())?;
-        Ok(String::from_utf8(result_bytes).map_err(CbcPyError::InvalidBase64Utf8)?)
+        Ok(String::from_utf8(result_bytes)?)
     }
 
     #[cfg(feature = "cbc")]
     #[pyfunction]
     /// Decrypt the `encrypted_data` with CBC `TripleDES`
-    pub(crate) fn cbc_decrypt(password: &str, encrypted_data: &str) -> Result<String, CbcPyError> {
+    pub(crate) fn cbc_decrypt(
+        password: &str,
+        encrypted_data: &str,
+    ) -> Result<String, CbcDecryptPyError> {
         let decrypted_bytes =
             passwords::cbc_decrypt(password.as_bytes(), encrypted_data.as_bytes())?;
 
-        Ok(String::from_utf8(decrypted_bytes).map_err(CbcPyError::InvalidUtf8)?)
+        Ok(String::from_utf8(decrypted_bytes)?)
     }
 
     #[cfg(feature = "cbc")]

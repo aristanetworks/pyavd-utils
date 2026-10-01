@@ -1358,7 +1358,6 @@ version = "0.0.6"
 dependencies = [
  "avdschema",
  "criterion",
- "derive_more",
  "log",
  "pyo3",
  "pyo3-build-config",
