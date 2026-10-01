@@ -29,18 +29,22 @@ jobs:
     name: Python coverage
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
-          python-version: 3.11
-      - name: Install tox
-        run: |
-          pip install tox --upgrade
+          python-version: "3.14"
+      - name: Install Rust toolchain from rust-toolchain.toml
+        run: rustup show
       - name: Generate coverage report
         run: |-
-          tox run -e coverage,report
+          uv sync --locked --all-packages --no-default-groups --group pytest --group coverage
+          uv run --no-sync coverage erase
+          uv run --no-sync coverage run -m pytest
+          uv run --no-sync coverage combine
+          uv run --no-sync coverage report
+          uv run --no-sync coverage xml
       - name: Upload pytest coverage data
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -63,24 +67,35 @@ jobs:
           - macos-15-intel
           - macos-latest
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Install Rust toolchain from rust-toolchain.toml
         run: rustup show
       # This is needed because we have pyo3 tests and our minimum python version is 3.10.
       # On some test containers (looking at you windows-latest) the included Python is 3.9.
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: "3.12"
+          python-version: "3.14"
       - name: Install YAML test suite fixture
         run: python scripts/fetch_yaml_test_suite.py
       - name: Run all tests
         run: cargo test --locked --all-targets --all-features
+      - name: Install uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        if: |
+          matrix.os == 'ubuntu-latest'
       - name: Generate coverage report with cargo llvm-cov
         run: |
           cargo install cargo-llvm-cov --locked
-          cargo llvm-cov --locked --all-targets --all-features --lcov --output-path lcov.info
+          # Keep instrumented artifacts separate from the normal Cargo test build above.
+          export CARGO_TARGET_DIR="${RUNNER_TEMP}/pyavd-utils-llvm-cov-target"
+          # Apply LLVM instrumentation to Cargo tests and the PyO3 extension built by uv.
+          eval "$(cargo llvm-cov show-env --sh)"
+          cargo test --locked --all-targets --all-features
+          uv sync --locked --all-packages --no-default-groups --group pytest
+          uv run --no-sync python -m pytest
+          cargo llvm-cov report --lcov --output-path lcov.info
         if: |
           matrix.os == 'ubuntu-latest'
       - name: Upload coverage report
@@ -93,6 +108,20 @@ jobs:
       - name: Test building to all targets
         run: cargo build --locked --all-targets --all-features
 
+  cargo_wasm:
+    name: Check AVD LSP support WASM contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Rust toolchain from rust-toolchain.toml
+        run: rustup show
+      - name: Install WASM target
+        run: rustup target add wasm32-unknown-unknown
+      - name: Check lean AVD LSP support build
+        run: cargo check --locked --no-default-features -p avd-lsp-support --target wasm32-unknown-unknown
+
   codecov:
     name: Upload coverage to CodeCov
     needs: [python_coverage, cargo_build_and_test]
@@ -100,7 +129,7 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    uses: ./.github/workflows/codecov.yml
+    uses: $/.github/workflows/codecov.yml
 
   # --------------------------------------------------------------------- #
   # Build and test cross platform pyavd-utils wheels and upload artifacts
@@ -116,6 +145,6 @@ jobs:
           - windows-latest
           - macos-15-intel
           - macos-latest
-    uses: ./.github/workflows/build-wheel.yml
+    uses: $/.github/workflows/build-wheel.yml
     with:
       runner: ${{ matrix.os }}

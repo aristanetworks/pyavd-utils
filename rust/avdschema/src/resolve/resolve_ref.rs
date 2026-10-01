@@ -7,9 +7,8 @@ use std::sync::LazyLock;
 use fancy_regex::Regex;
 
 use super::walker::Walker as _;
-use crate::Store;
-use crate::any::AnySchema;
-use crate::resolve::errors::RefSyntax;
+use crate::StoreSource;
+use crate::any::SourceSchema;
 use crate::resolve::errors::SchemaResolverError;
 
 /// Regex matching $ref syntax according the AVD metaschema.
@@ -19,8 +18,11 @@ static REF_REGEX: LazyLock<Regex> =
 /// Resolve the given ref by first finding the relevant schema in in the store
 /// and afterwards walk that schema according to the path.
 /// Returns the schema pointed to by the ref, or an error for invalid ref.
-pub fn resolve_ref<'a>(ref_: &str, store: &'a Store) -> Result<&'a AnySchema, SchemaResolverError> {
-    let syntax_err = || RefSyntax {
+pub(crate) fn resolve_ref<'a>(
+    ref_: &str,
+    store: &'a StoreSource,
+) -> Result<&'a SourceSchema, SchemaResolverError> {
+    let syntax_err = || SchemaResolverError::RefSyntax {
         schema_ref: ref_.to_owned(),
     };
     // unwrap_or_default() cannot fail: the regex is compiled above and uses no lookarounds.
@@ -39,9 +41,11 @@ pub fn resolve_ref<'a>(ref_: &str, store: &'a Store) -> Result<&'a AnySchema, Sc
 #[cfg(test)]
 mod tests {
     use super::resolve_ref;
+    use crate::Load as _;
+    use crate::StoreSource;
     use crate::resolve::errors::SchemaResolverError;
-    use crate::store::SchemaStoreError;
-    use crate::str::Str;
+    use crate::resolve::walker::SchemaWalkError;
+    use crate::str::SourceStr;
     use crate::utils::test_utils::get_test_store;
 
     #[test]
@@ -51,7 +55,7 @@ mod tests {
         let result = resolve_ref("eos_cli_config_gen#/keys/key2", &test_store);
         assert!(result.is_ok());
         let result_schema = result.unwrap();
-        let str_schema_result: Result<&Str, _> = result_schema.try_into();
+        let str_schema_result: Result<&SourceStr, _> = result_schema.try_into();
         assert!(str_schema_result.is_ok());
         let str_schema = str_schema_result.unwrap();
         assert!(str_schema.base.description.is_some());
@@ -68,7 +72,7 @@ mod tests {
         let result = resolve_ref("eos_config#/keys/key2", &test_store);
         assert!(result.is_ok());
         let result_schema = result.unwrap();
-        let str_schema_result: Result<&Str, _> = result_schema.try_into();
+        let str_schema_result: Result<&SourceStr, _> = result_schema.try_into();
         assert!(str_schema_result.is_ok());
         let str_schema = str_schema_result.unwrap();
         assert!(str_schema.base.description.is_some());
@@ -85,7 +89,7 @@ mod tests {
         let result = resolve_ref("cv_deploy#/keys/key4", &test_store);
         assert!(result.is_ok());
         let result_schema = result.unwrap();
-        let str_schema_result: Result<&Str, _> = result_schema.try_into();
+        let str_schema_result: Result<&SourceStr, _> = result_schema.try_into();
         assert!(str_schema_result.is_ok());
         let str_schema = str_schema_result.unwrap();
         assert!(str_schema.base.description.is_some());
@@ -103,7 +107,7 @@ mod tests {
         assert!(result.is_err());
         assert!(matches!(
             result.unwrap_err(),
-            SchemaResolverError::RefSyntax(_)
+            SchemaResolverError::RefSyntax { .. }
         ));
     }
 
@@ -115,7 +119,7 @@ mod tests {
         assert!(result.is_err());
         assert!(matches!(
             result.unwrap_err(),
-            SchemaResolverError::RefSyntax(_)
+            SchemaResolverError::RefSyntax { .. }
         ));
     }
 
@@ -127,7 +131,90 @@ mod tests {
         assert!(result.is_err());
         assert!(matches!(
             result.unwrap_err(),
-            SchemaResolverError::SchemaStoreError(SchemaStoreError::InvalidSchemaName(_))
+            SchemaResolverError::SchemaStore(
+                crate::source_store::SchemaStoreError::InvalidSchemaName(_),
+            )
+        ));
+    }
+
+    #[test]
+    fn resolve_ref_walks_all_schema_containers() {
+        let store = StoreSource::from_json(
+            r#"{
+                "test": {
+                    "type": "dict",
+                    "keys": {
+                        "list": {"type": "list", "items": {"type": "bool"}}
+                    },
+                    "dynamic_keys": {"dynamic": {"type": "int"}},
+                    "$defs": {"definition": {"type": "str"}}
+                }
+            }"#,
+        )
+        .unwrap();
+
+        assert!(matches!(
+            resolve_ref("test#/keys/list/items", &store),
+            Ok(crate::any::SourceSchema::Bool(_))
+        ));
+        assert!(matches!(
+            resolve_ref("test#/dynamic_keys/dynamic", &store),
+            Ok(crate::any::SourceSchema::Int(_))
+        ));
+        assert!(matches!(
+            resolve_ref("test#/$defs/definition", &store),
+            Ok(crate::any::SourceSchema::Str(_))
+        ));
+    }
+
+    #[test]
+    fn resolve_ref_reports_structured_walk_errors() {
+        let store = StoreSource::from_json(
+            r#"{
+                "scalar": {"type": "str"},
+                "test": {
+                    "type": "dict",
+                    "keys": {
+                        "list": {"type": "list"}
+                    },
+                    "dynamic_keys": {"dynamic": {"type": "int"}},
+                    "$defs": {"definition": {"type": "str"}}
+                }
+            }"#,
+        )
+        .unwrap();
+
+        assert!(matches!(
+            resolve_ref("test#/keys/missing", &store),
+            Err(SchemaResolverError::SchemaWalk(
+                SchemaWalkError::PathNotFound { element }
+            )) if element == "missing"
+        ));
+        for mapping in ["keys", "dynamic_keys", "$defs"] {
+            assert!(matches!(
+                resolve_ref(&format!("test#/{mapping}"), &store),
+                Err(SchemaResolverError::SchemaWalk(
+                    SchemaWalkError::PointingToMapping { mapping: found }
+                )) if found == mapping
+            ));
+        }
+        assert!(matches!(
+            resolve_ref("test#/invalid/path", &store),
+            Err(SchemaResolverError::SchemaWalk(
+                SchemaWalkError::InvalidPathElement { element }
+            )) if element == "invalid"
+        ));
+        assert!(matches!(
+            resolve_ref("scalar#/keys/value", &store),
+            Err(SchemaResolverError::SchemaWalk(
+                SchemaWalkError::NotDictOrList
+            ))
+        ));
+        assert!(matches!(
+            resolve_ref("test#/keys/list/items", &store),
+            Err(SchemaResolverError::SchemaWalk(
+                SchemaWalkError::PathNotFound { element }
+            )) if element == "items"
         ));
     }
 }

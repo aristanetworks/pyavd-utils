@@ -9,18 +9,21 @@ help: ## Display help message
 	@grep -E '^[0-9a-zA-Z_-]+\.*[0-9a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
 
 .PHONY: clean
-clean: ## Build pyavd-utils package
-	rm -rf $(CURRENT_DIR)/build/ $(CURRENT_DIR)/dist/ $(CURRENT_DIR)/pyavd.egg-info/ $(CURRENT_DIR)/pyavd_utils/*.so
+clean: ## Remove pyavd-utils and pyavd-utils-gen build artifacts
+	rm -rf $(CURRENT_DIR)/build/ $(CURRENT_DIR)/dist/ $(CURRENT_DIR)/pyavd_utils.egg-info/ $(CURRENT_DIR)/pyavd_utils/*.so
+	rm -rf $(CURRENT_DIR)/python/pyavd-utils-gen/build/ $(CURRENT_DIR)/python/pyavd-utils-gen/*.egg-info/ $(CURRENT_DIR)/python/pyavd-utils-gen/pyavd_utils_gen/*.so
 
 .PHONY: build
-build: clean check-cargo ## Build pyavd-utils package
+build: clean check-cargo ## Build pyavd-utils and pyavd-utils-gen packages
 	pip3 install build
 	python3 -m build --wheel
+	python3 -m build --wheel --outdir $(CURRENT_DIR)/dist python/pyavd-utils-gen
 
 .PHONY: uv-build
-uv-build: clean check-cargo ## Build pyavd-utils package
+uv-build: clean check-cargo ## Build pyavd-utils and pyavd-utils-gen packages using uv
 	uv pip install build
 	python3 -m build --wheel
+	python3 -m build --wheel --outdir $(CURRENT_DIR)/dist python/pyavd-utils-gen
 
 .PHONY: publish
 publish: ## Publish pyavd package to PyPI (build first)

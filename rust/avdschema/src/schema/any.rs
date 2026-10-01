@@ -7,15 +7,12 @@ use std::path::PathBuf;
 
 use serde::Deserialize;
 use serde::Serialize;
-use serde_json::Value;
 
-use super::boolean::Bool;
-use super::dict::Dict;
-use super::int::Int;
-use super::list::List;
-use super::str::Str;
-use crate::base::Deprecation;
-use crate::delegate_anyschema_method;
+use super::boolean::SourceBool;
+use super::dict::SourceDict;
+use super::int::SourceInt;
+use super::list::SourceList;
+use super::str::SourceStr;
 use crate::utils::dump::Dump;
 use crate::utils::load::Load;
 #[cfg(feature = "dump_load_files")]
@@ -26,14 +23,14 @@ use crate::utils::load::LoadFromFragments;
 /// Enum covering all AVD Schema types.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, derive_more::From)]
 #[serde(tag = "type", rename_all = "lowercase")]
-pub enum AnySchema {
-    Bool(Bool),
-    Int(Int),
-    Str(Str),
-    List(List),
-    Dict(Dict),
+pub enum SourceSchema {
+    Bool(SourceBool),
+    Int(SourceInt),
+    Str(SourceStr),
+    List(SourceList),
+    Dict(SourceDict),
 }
-impl AnySchema {
+impl SourceSchema {
     /// Create a new schema instance based on the schema file(s) in the given path.
     /// If the path points to a directory, files matching *.yml will be read and combined
     /// with a shallow merge, so avoid overlapping keys.
@@ -49,52 +46,7 @@ impl AnySchema {
     }
 }
 
-impl Dump for AnySchema {}
-impl Load for AnySchema {}
+impl Dump for SourceSchema {}
+impl Load for SourceSchema {}
 #[cfg(feature = "dump_load_files")]
-impl LoadFromFragments for AnySchema {}
-
-impl From<&AnySchema> for String {
-    /// Get schema type as Python-like type string
-    fn from(value: &AnySchema) -> Self {
-        match value {
-            AnySchema::Bool(_) => "bool".to_owned(),
-            AnySchema::Dict(_) => "dict".to_owned(),
-            AnySchema::Int(_) => "int".to_owned(),
-            AnySchema::List(_) => "list".to_owned(),
-            AnySchema::Str(_) => "str".to_owned(),
-        }
-    }
-}
-impl AnySchema {
-    pub fn is_removed(&self) -> bool {
-        self.deprecation()
-            .as_ref()
-            .and_then(|deprecation| deprecation.removed)
-            .unwrap_or_default()
-    }
-}
-pub trait Shortcuts {
-    /// Returns a boolean indicating if the schema field is required.
-    fn is_required(&self) -> bool;
-
-    /// Returns the deprecation information from the schema if set.
-    fn deprecation(&self) -> &Option<Deprecation>;
-
-    /// Returns the default value if any.
-    fn default_(&self) -> Option<Value>;
-}
-
-impl Shortcuts for AnySchema {
-    fn is_required(&self) -> bool {
-        delegate_anyschema_method!(self, is_required,)
-    }
-
-    fn deprecation(&self) -> &Option<Deprecation> {
-        delegate_anyschema_method!(self, deprecation,)
-    }
-
-    fn default_(&self) -> Option<Value> {
-        delegate_anyschema_method!(self, default_,)
-    }
-}
+impl LoadFromFragments for SourceSchema {}

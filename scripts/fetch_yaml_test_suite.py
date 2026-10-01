@@ -39,7 +39,7 @@ def clean_target_dir() -> None:
 def download_archive(destination: Path) -> None:
     # ARCHIVE_URL is a pinned HTTPS GitHub archive URL, so this controlled
     # use of urlopen is intentional here.
-    with urllib.request.urlopen(ARCHIVE_URL) as response, destination.open("wb") as file:  # noqa: S310
+    with urllib.request.urlopen(ARCHIVE_URL) as response, destination.open("wb") as file:
         shutil.copyfileobj(response, file)
 
 

@@ -1,29 +1,6 @@
 ---
 # See https://pre-commit.com for more information
 # See https://pre-commit.com/hooks.html for more hooks
-ci:
-  autoupdate_commit_msg: "CI: pre-commit autoupdate"
-  autofix_prs: false
-  # Keep pre-commit.ci for autoupdate only. Run hooks through autofix.ci.
-  skip:
-    - trailing-whitespace
-    - end-of-file-fixer
-    - check-added-large-files
-    - check-merge-conflict
-    - insert-license
-    - cargo-fmt-nightly
-    - cargo-check
-    - cargo-clippy
-    - cargo-deny
-    - cargo-about
-    - ruff
-    - ruff-format
-    - pyright
-    - pylint
-    - codespell
-    - markdownlint-cli2
-    - zizmor
-
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: 3e8a8703264a2f4a69428a0aa4dcb512790b2c8c  # frozen: v6.0.0
@@ -33,7 +10,7 @@ repos:
       - id: end-of-file-fixer
         name: Ensures that a file is either empty, or ends with one newline.
         exclude_types: [svg, json]
-        exclude: ^pyavd_utils/THIRD_PARTY_LICENSES.txt$
+        exclude: ^(pyavd_utils|python/pyavd-utils-gen/pyavd_utils_gen)/THIRD_PARTY_LICENSES.txt$
       - id: check-added-large-files
         name: Prevents giant files from being committed.
       - id: check-merge-conflict
@@ -99,26 +76,53 @@ repos:
           - --all-targets
           - --all-features
         files: ^rust/
-      # Check licenses of Rust dependencies
+      # Check security and source policy for all Rust dependencies, including dev dependencies.
       - id: cargo-deny
+        name: Check Rust dependency advisories, bans, and sources
         args:
           - --locked
           - --all-features
           - check
+          - advisories
+          - bans
+          - sources
+        files: ^rust/
+      # Check licenses for dependencies included in the release product.
+      - id: cargo-deny
+        name: Check release Rust dependency licenses
+        args:
+          - --locked
+          - --all-features
+          - check
+          - --exclude-dev
+          - licenses
         files: ^rust/
       - id: cargo-about
-        name: Generate third-party Rust licenses
+        name: Generate pyavd-utils third-party Rust licenses
         args:
           - generate
           - --locked
+          - --manifest-path
+          - rust/python-bindings/Cargo.toml
           - -o
           - pyavd_utils/THIRD_PARTY_LICENSES.txt
+          - about-text.hbs
+        files: (^|/)Cargo\.(toml|lock)$|^about\.toml$|^about-text\.hbs$
+      - id: cargo-about
+        name: Generate pyavd-utils-gen third-party Rust licenses
+        args:
+          - generate
+          - --locked
+          - --manifest-path
+          - rust/python-generation-bindings/Cargo.toml
+          - -o
+          - python/pyavd-utils-gen/pyavd_utils_gen/THIRD_PARTY_LICENSES.txt
           - about-text.hbs
         files: (^|/)Cargo\.(toml|lock)$|^about\.toml$|^about-text\.hbs$
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
     # Ruff version.
-    rev: 01a675ea018f2fb714478a5ffb83fcea8374bb06  # frozen: v0.15.21
+    rev: 2eeb5678de71a00c0902cbda7105d328432f72cb  # frozen: v0.16.8
     hooks:
       # Run the linter.
       - id: ruff
@@ -128,13 +132,14 @@ repos:
       - id: ruff-format
 
   - repo: https://github.com/RobertCraigie/pyright-python
-    rev: 392b6ba8e54be6d603e02e9f8d601d27b7a48d12  # frozen: v1.1.411
+    rev: 1aa6dfeb849ae43fb6f16fc17228bcbd358a19c3  # frozen: v1.1.414
     hooks:
       - id: pyright
         name: PyRight static type checker
         types: [python]
+        language: python
         additional_dependencies:
-          - 'pytest>=8.2.0'
+          - 'pytest>=9.1.1'
 
   - repo: https://github.com/pycqa/pylint
     rev: "8a396357098337ba8be714fffdf2d00947a9778c"  # frozen: v4.0.6
@@ -145,25 +150,25 @@ repos:
         types: [python]
 
   - repo: https://github.com/codespell-project/codespell
-    rev: 2ccb47ff45ad361a21071a7eedda4c37e6ae8c5a  # frozen: v2.4.2
+    rev: 57b21406f092110c18776e39b0bda50d37c945c8  # frozen: v2.4.3
     hooks:
       - id: codespell
         name: Check for common misspellings in text files.
         entry: codespell
         language: python
         types: [text]
-        exclude: ^(pyavd_utils/THIRD_PARTY_LICENSES.txt|Cargo.lock)$
+        exclude: ^((pyavd_utils|python/pyavd-utils-gen/pyavd_utils_gen)/THIRD_PARTY_LICENSES.txt|Cargo.lock)$
         args:
           - '--ignore-words=.github/ignore-codespell-words'  # Ignore words listed in this file
 
   - repo: https://github.com/DavidAnson/markdownlint-cli2
-    rev: 534166213006ec869b773b7ed8c6ebeaad1165d0  # frozen: v0.23.0
+    rev: 916ad0aaa108c64d294101002066f530ea170b10  # frozen: v0.23.3
     hooks:
       - id: markdownlint-cli2
         name: Check for Linting errors on Markdown files with settings defined in `.markdownlint-cli2.yaml`.
 
   - repo: https://github.com/zizmorcore/zizmor-pre-commit
-    rev: e3eebf65325ccc992422292cb7a4baee967cf815  # frozen: v1.26.1
+    rev: fa412071e4f5d44d44f9e365f4676f9df92456a2  # frozen: v1.30.1
     hooks:
       - id: zizmor
         name: Check GitHub Actions with zizmor

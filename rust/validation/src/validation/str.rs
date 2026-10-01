@@ -2,88 +2,91 @@
 // Use of this source code is governed by the Apache License 2.0
 // that can be found in the LICENSE file.
 
-use avdschema::any::AnySchema;
-use avdschema::resolve_ref;
-use avdschema::str::Str;
+use std::borrow::Cow;
 
-use super::Validation;
-use super::valid_values::ValidateValidValues as _;
+use avdschema::StrView;
+
+use super::NodeValidation;
+use super::invalid_type;
 use crate::context::Context;
+use crate::context::ValidationState;
 use crate::feedback::ErrorIssue;
 use crate::feedback::Type;
 use crate::feedback::Violation;
 use crate::validatable::ValidatableValue;
 
-impl Validation for Str {
-    fn validate<V: ValidatableValue>(&self, value: &V, ctx: &mut Context) -> Option<V::Coerced> {
-        if let Some(ref_result) = validate_ref(self, value, ctx) {
-            return ref_result;
+pub(crate) fn validate_node<'a, V: ValidatableValue>(
+    schema: StrView<'_>,
+    value: &'a V,
+    ctx: &mut Context,
+    state: &mut ValidationState,
+) -> NodeValidation<Cow<'a, str>> {
+    // Lenient type check - accept anything coercible to string
+    if let Some(string) = value.as_str() {
+        // Emit coercion info if original was not a string
+        if !value.is_str() {
+            ctx.add_coercion_for(state, value, string.as_ref());
         }
-
-        // Lenient type check - accept anything coercible to string
-        if let Some(string) = value.as_str() {
-            let input = string.into_owned();
-            // Emit coercion info if original was not a string
-            if !value.is_str() {
-                ctx.add_coercion_for(value, input.as_str());
-            }
-            // Apply convert_to_lower_case if specified
-            let input = convert_to_lower_case(self, value, input, ctx);
-            self.valid_values.validate(value, &input, ctx);
-            validate_min_length(self, value, &input, ctx);
-            validate_max_length(self, value, &input, ctx);
-            validate_pattern(self, value, &input, ctx);
-            ctx.configuration
-                .return_coerced_data
-                .then(|| value.coerce_str(input))
-        } else {
-            Self::handle_invalid_type(value, ctx, Type::Str)
+        // Apply convert_to_lower_case if specified
+        let input = convert_to_lower_case(schema, value, string, ctx, state);
+        if schema
+            .valid_values()
+            .is_some_and(|mut valid_values| !valid_values.any(|valid_value| valid_value == input))
+        {
+            ctx.add_error_for(
+                state,
+                value,
+                Violation::InvalidValue {
+                    expected: schema
+                        .valid_values()
+                        .into_iter()
+                        .flatten()
+                        .map(ToOwned::to_owned)
+                        .collect::<Vec<_>>()
+                        .into(),
+                    found: input.as_ref().into(),
+                },
+            );
         }
+        validate_min_length(schema, value, input.as_ref(), ctx, state);
+        validate_max_length(schema, value, input.as_ref(), ctx, state);
+        validate_pattern(schema, value, input.as_ref(), ctx, state);
+        NodeValidation::Valid(input)
+    } else {
+        invalid_type(value, ctx, state, Type::Str)
     }
 }
 
-fn convert_to_lower_case<V: ValidatableValue>(
-    schema: &Str,
+fn convert_to_lower_case<'a, V: ValidatableValue>(
+    schema: StrView<'_>,
     value: &V,
-    input: String,
+    input: Cow<'a, str>,
     ctx: &mut Context,
-) -> String {
-    if !schema.convert_to_lower_case.unwrap_or_default() {
+    state: &ValidationState,
+) -> Cow<'a, str> {
+    if !schema.convert_to_lower_case() {
+        return input;
+    }
+    if input.chars().flat_map(char::to_lowercase).eq(input.chars()) {
         return input;
     }
     let lower = input.to_lowercase();
-    if lower == input {
-        input
-    } else {
-        ctx.add_string_lowered_for(value, &input, &lower);
-        lower
-    }
-}
-
-/// Validate against a referenced schema (for unresolved $ref ending with #).
-fn validate_ref<V: ValidatableValue>(
-    schema: &Str,
-    value: &V,
-    ctx: &mut Context,
-) -> Option<Option<V::Coerced>> {
-    if let Some(ref_) = schema.base.schema_ref.as_ref()
-        && let Ok(AnySchema::Str(ref_schema)) = resolve_ref(ref_, ctx.store)
-    {
-        return Some(ref_schema.validate(value, ctx));
-    }
-    None
+    ctx.add_string_lowered_for(state, value, &input, &lower);
+    Cow::Owned(lower)
 }
 
 fn validate_min_length<V: ValidatableValue>(
-    schema: &Str,
+    schema: StrView<'_>,
     value: &V,
     input: &str,
     ctx: &mut Context,
+    state: &ValidationState,
 ) {
-    if let Some(min_length) = schema.min_length {
+    if let Some(min_length) = schema.min_length() {
         let length = input.chars().count() as u64;
         if min_length > length {
             ctx.add_error_for(
+                state,
                 value,
                 Violation::LengthBelowMinimum {
                     minimum: min_length,
@@ -95,15 +98,17 @@ fn validate_min_length<V: ValidatableValue>(
 }
 
 fn validate_max_length<V: ValidatableValue>(
-    schema: &Str,
+    schema: StrView<'_>,
     value: &V,
     input: &str,
     ctx: &mut Context,
+    state: &ValidationState,
 ) {
-    if let Some(max_length) = schema.max_length {
+    if let Some(max_length) = schema.max_length() {
         let length = input.chars().count() as u64;
         if max_length < length {
             ctx.add_error_for(
+                state,
                 value,
                 Violation::LengthAboveMaximum {
                     maximum: max_length,
@@ -114,10 +119,20 @@ fn validate_max_length<V: ValidatableValue>(
     }
 }
 
-fn validate_pattern<V: ValidatableValue>(schema: &Str, value: &V, input: &str, ctx: &mut Context) {
-    if let Some(pattern) = &schema.pattern {
-        match pattern.get_compiled_pattern() {
+fn validate_pattern<V: ValidatableValue>(
+    schema: StrView<'_>,
+    value: &V,
+    input: &str,
+    ctx: &mut Context,
+    state: &ValidationState,
+) {
+    if let Some(pattern) = schema.pattern() {
+        let Some(compiled_pattern) = schema.compiled_pattern() else {
+            return;
+        };
+        match compiled_pattern {
             Err(err) => ctx.add_error_for(
+                state,
                 value,
                 ErrorIssue::InternalError {
                     message: format!("Schema contains an invalid regex pattern '{pattern}': {err}"),
@@ -126,13 +141,15 @@ fn validate_pattern<V: ValidatableValue>(schema: &Str, value: &V, input: &str, c
             Ok(regex_pattern) => match regex_pattern.is_match(input) {
                 Ok(true) => {}
                 Ok(false) => ctx.add_error_for(
+                    state,
                     value,
                     Violation::NotMatchingPattern {
-                        pattern: pattern.to_string(),
+                        pattern: pattern.to_owned(),
                         found: input.into(),
                     },
                 ),
                 Err(err) => ctx.add_error_for(
+                    state,
                     value,
                     ErrorIssue::InternalError {
                         message: err.to_string(),
@@ -146,6 +163,7 @@ fn validate_pattern<V: ValidatableValue>(schema: &Str, value: &V, input: &str, c
 #[cfg(test)]
 mod tests {
     use avdschema::base::valid_values::ValidValues;
+    use avdschema::str::SourceStr;
     use serde_json::Value;
 
     use super::*;
@@ -153,24 +171,22 @@ mod tests {
     use crate::feedback::CoercionNote;
     use crate::feedback::Feedback;
     use crate::feedback::StringLoweredNote;
-    use crate::validation::test_utils::get_test_store;
+    use crate::validation::test_utils::TestValidate as _;
 
     #[test]
     fn validate_type_ok() {
-        let schema = Str::default();
+        let schema = SourceStr::default();
         let input: Value = "foo".into();
-        let store = get_test_store();
-        let mut ctx = Context::new(&store, None);
+        let mut ctx = Context::new(None);
         let _ = schema.validate(&input, &mut ctx);
         assert!(ctx.result.errors.is_empty() && ctx.result.infos.is_empty());
     }
 
     #[test]
     fn validate_type_err() {
-        let schema = Str::default();
+        let schema = SourceStr::default();
         let input = serde_json::json!([]);
-        let store = get_test_store();
-        let mut ctx = Context::new(&store, None);
+        let mut ctx = Context::new(None);
         let _ = schema.validate(&input, &mut ctx);
         assert!(ctx.result.infos.is_empty());
         assert_eq!(
@@ -189,7 +205,7 @@ mod tests {
 
     #[test]
     fn validate_valid_values_ok() {
-        let schema = Str {
+        let schema = SourceStr {
             valid_values: ValidValues {
                 valid_values: Some(vec!["foo".into()]),
                 ..Default::default()
@@ -197,15 +213,14 @@ mod tests {
             ..Default::default()
         };
         let input: Value = "foo".into();
-        let store = get_test_store();
-        let mut ctx = Context::new(&store, None);
+        let mut ctx = Context::new(None);
         let _ = schema.validate(&input, &mut ctx);
         assert!(ctx.result.errors.is_empty() && ctx.result.infos.is_empty());
     }
 
     #[test]
     fn validate_valid_values_err() {
-        let schema = Str {
+        let schema = SourceStr {
             valid_values: ValidValues {
                 valid_values: Some(vec!["foo".into()]),
                 ..Default::default()
@@ -213,8 +228,7 @@ mod tests {
             ..Default::default()
         };
         let input: Value = "FOO".into();
-        let store = get_test_store();
-        let mut ctx = Context::new(&store, None);
+        let mut ctx = Context::new(None);
         let _ = schema.validate(&input, &mut ctx);
         assert!(ctx.result.infos.is_empty());
         assert_eq!(
@@ -233,7 +247,7 @@ mod tests {
 
     #[test]
     fn validate_valid_values_to_lower_case_ok() {
-        let schema = Str {
+        let schema = SourceStr {
             valid_values: ValidValues {
                 valid_values: Some(vec!["foo".into()]),
                 ..Default::default()
@@ -242,13 +256,12 @@ mod tests {
             ..Default::default()
         };
         let input: Value = "FOO".into();
-        let store = get_test_store();
         let configuration = Configuration {
             return_coercion_infos: true,
             return_coerced_data: true,
             ..Default::default()
         };
-        let mut ctx = Context::new(&store, Some(&configuration));
+        let mut ctx = Context::new(Some(&configuration));
         let coerced = schema.validate(&input, &mut ctx);
         assert!(ctx.result.errors.is_empty());
         assert_eq!(
@@ -268,7 +281,7 @@ mod tests {
 
     #[test]
     fn validate_valid_values_from_bool_to_lower_case_ok() {
-        let schema = Str {
+        let schema = SourceStr {
             valid_values: ValidValues {
                 valid_values: Some(vec!["true".into()]),
                 ..Default::default()
@@ -278,13 +291,12 @@ mod tests {
         };
         // Bool input - as_str() returns "True" (Title case), then convert_to_lower_case makes it "true"
         let input: Value = true.into();
-        let store = get_test_store();
         let configuration = Configuration {
             return_coercion_infos: true,
             return_coerced_data: true,
             ..Default::default()
         };
-        let mut ctx = Context::new(&store, Some(&configuration));
+        let mut ctx = Context::new(Some(&configuration));
         let coerced = schema.validate(&input, &mut ctx);
         assert!(ctx.result.errors.is_empty());
         // Two coercion notes: bool -> "True", then "True" -> "true"
@@ -316,16 +328,15 @@ mod tests {
 
     #[test]
     fn validate_type_coerced_from_float_ok() {
-        let schema = Str::default();
+        let schema = SourceStr::default();
         // Float 1.5 can be coerced to string "1.5"
         let input: Value = serde_json::json!(1.5);
-        let store = get_test_store();
         let configuration = Configuration {
             return_coercion_infos: true,
             return_coerced_data: true,
             ..Default::default()
         };
-        let mut ctx = Context::new(&store, Some(&configuration));
+        let mut ctx = Context::new(Some(&configuration));
         let coerced = schema.validate(&input, &mut ctx);
         assert!(ctx.result.errors.is_empty());
         assert_eq!(
@@ -345,13 +356,12 @@ mod tests {
 
     #[test]
     fn validate_min_length_ok() {
-        let schema = Str {
+        let schema = SourceStr {
             min_length: Some(3),
             ..Default::default()
         };
         let input: Value = "foo".into();
-        let store = get_test_store();
-        let mut ctx = Context::new(&store, None);
+        let mut ctx = Context::new(None);
         let _ = schema.validate(&input, &mut ctx);
         assert!(ctx.result.errors.is_empty());
         assert!(ctx.result.warnings.is_empty());
@@ -360,13 +370,12 @@ mod tests {
 
     #[test]
     fn validate_min_length_err() {
-        let schema = Str {
+        let schema = SourceStr {
             min_length: Some(3),
             ..Default::default()
         };
         let input: Value = "go".into();
-        let store = get_test_store();
-        let mut ctx = Context::new(&store, None);
+        let mut ctx = Context::new(None);
         let _ = schema.validate(&input, &mut ctx);
         assert!(ctx.result.infos.is_empty());
         assert_eq!(
@@ -385,26 +394,24 @@ mod tests {
 
     #[test]
     fn validate_max_length_ok() {
-        let schema = Str {
+        let schema = SourceStr {
             max_length: Some(3),
             ..Default::default()
         };
         let input: Value = "foo".into();
-        let store = get_test_store();
-        let mut ctx = Context::new(&store, None);
+        let mut ctx = Context::new(None);
         let _ = schema.validate(&input, &mut ctx);
         assert!(ctx.result.errors.is_empty() && ctx.result.infos.is_empty());
     }
 
     #[test]
     fn validate_max_length_err() {
-        let schema = Str {
+        let schema = SourceStr {
             max_length: Some(3),
             ..Default::default()
         };
         let input: Value = "fooo".into();
-        let store = get_test_store();
-        let mut ctx = Context::new(&store, None);
+        let mut ctx = Context::new(None);
         let _ = schema.validate(&input, &mut ctx);
         assert!(ctx.result.infos.is_empty());
         assert_eq!(
@@ -423,26 +430,24 @@ mod tests {
 
     #[test]
     fn validate_pattern_ok() {
-        let schema = Str {
+        let schema = SourceStr {
             pattern: Some("[a-z][A-Z][a-z]".into()),
             ..Default::default()
         };
         let input: Value = "fOo".into();
-        let store = get_test_store();
-        let mut ctx = Context::new(&store, None);
+        let mut ctx = Context::new(None);
         let _ = schema.validate(&input, &mut ctx);
         assert!(ctx.result.errors.is_empty() && ctx.result.infos.is_empty());
     }
 
     #[test]
     fn validate_pattern_err() {
-        let schema = Str {
+        let schema = SourceStr {
             pattern: Some("[a-z][A-Z][a-z]".into()),
             ..Default::default()
         };
         let input: Value = "foo".into();
-        let store = get_test_store();
-        let mut ctx = Context::new(&store, None);
+        let mut ctx = Context::new(None);
         let _ = schema.validate(&input, &mut ctx);
         assert!(ctx.result.infos.is_empty());
         assert_eq!(
@@ -464,13 +469,12 @@ mod tests {
     #[test]
     fn validate_pattern_lookahead_ok() {
         // Proves fancy-regex syntax is accepted: starts with lowercase AND contains a digit.
-        let schema = Str {
+        let schema = SourceStr {
             pattern: Some("(?=[a-z])(?=.*[0-9])[a-z0-9]+".into()),
             ..Default::default()
         };
         let input: Value = "abc123".into();
-        let store = get_test_store();
-        let mut ctx = Context::new(&store, None);
+        let mut ctx = Context::new(None);
         schema.validate(&input, &mut ctx);
         assert!(ctx.result.errors.is_empty() && ctx.result.infos.is_empty());
     }
@@ -478,13 +482,12 @@ mod tests {
     #[test]
     fn validate_pattern_lookahead_err() {
         // Same pattern — "abcdef" has no digit so the lookahead fails → NotMatchingPattern.
-        let schema = Str {
+        let schema = SourceStr {
             pattern: Some("(?=[a-z])(?=.*[0-9])[a-z0-9]+".into()),
             ..Default::default()
         };
         let input: Value = "abcdef".into();
-        let store = get_test_store();
-        let mut ctx = Context::new(&store, None);
+        let mut ctx = Context::new(None);
         schema.validate(&input, &mut ctx);
         assert!(ctx.result.infos.is_empty());
         assert_eq!(
@@ -505,13 +508,12 @@ mod tests {
     fn validate_pattern_invalid_regex_internal_error() {
         // An unterminated character class is rejected by fancy-regex at compile time.
         let pattern_str = "[invalid";
-        let schema = Str {
+        let schema = SourceStr {
             pattern: Some(pattern_str.into()),
             ..Default::default()
         };
         let input: Value = "foo".into();
-        let store = get_test_store();
-        let mut ctx = Context::new(&store, None);
+        let mut ctx = Context::new(None);
         let _ = schema.validate(&input, &mut ctx);
         assert!(ctx.result.infos.is_empty());
         assert_eq!(ctx.result.errors.len(), 1);

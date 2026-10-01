@@ -108,7 +108,7 @@ impl From<Path> for Vec<String> {
 }
 impl<'a> FromIterator<&'a str> for Path {
     fn from_iter<T: IntoIterator<Item = &'a str>>(iter: T) -> Self {
-        Self(Vec::from_iter(iter.into_iter().map(ToOwned::to_owned)))
+        Self(iter.into_iter().map(ToOwned::to_owned).collect())
     }
 }
 
@@ -381,8 +381,8 @@ pub enum Violation {
     #[display("Invalid key.")]
     UnexpectedKey(),
     /// The dictionary key is repeated in the same mapping.
-    #[display("Duplicate key. This key appears {occurrences} times in the same mapping.")]
-    DuplicateKey { occurrences: usize },
+    #[display("Duplicate key.")]
+    DuplicateKey(),
     /// The integer value is outside the supported range.
     #[display(
         "The integer value '{found}' is outside the supported range '{min}' to '{max}'.",
@@ -514,13 +514,28 @@ pub struct Deprecated {
     pub url: UrlField,
 }
 impl Deprecated {
-    pub(crate) fn from_schema(path: &Path, deprecation: &avdschema::base::Deprecation) -> Self {
+    pub(crate) fn from_parts(
+        path: &Path,
+        replacement: Option<&str>,
+        version: Option<&str>,
+        url: Option<&str>,
+    ) -> Self {
         Self {
             path: path.to_owned(),
-            replacement: deprecation.new_key.clone().into(),
-            version: deprecation.remove_in_version.clone().into(),
-            url: deprecation.url.clone().into(),
+            replacement: replacement.map(ToOwned::to_owned).into(),
+            version: version.map(ToOwned::to_owned).into(),
+            url: url.map(ToOwned::to_owned).into(),
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn from_schema(path: &Path, deprecation: &avdschema::base::Deprecation) -> Self {
+        Self::from_parts(
+            path,
+            deprecation.new_key.as_deref(),
+            deprecation.remove_in_version.as_deref(),
+            deprecation.url.as_deref(),
+        )
     }
 }
 
@@ -531,15 +546,34 @@ pub struct Removed {
     pub replacement: ReplacementField,
     pub version: VersionField,
     pub url: UrlField,
+    pub upgrade_handler: Option<String>,
 }
 impl Removed {
-    pub(crate) fn from_schema(path: &Path, deprecation: &avdschema::base::Deprecation) -> Self {
+    pub(crate) fn from_parts(
+        path: &Path,
+        replacement: Option<&str>,
+        version: Option<&str>,
+        url: Option<&str>,
+        upgrade_handler: Option<&str>,
+    ) -> Self {
         Self {
             path: path.to_owned(),
-            replacement: deprecation.new_key.clone().into(),
-            version: deprecation.remove_in_version.clone().into(),
-            url: deprecation.url.clone().into(),
+            replacement: replacement.map(ToOwned::to_owned).into(),
+            version: version.map(ToOwned::to_owned).into(),
+            url: url.map(ToOwned::to_owned).into(),
+            upgrade_handler: upgrade_handler.map(ToOwned::to_owned),
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn from_schema(path: &Path, deprecation: &avdschema::base::Deprecation) -> Self {
+        Self::from_parts(
+            path,
+            deprecation.new_key.as_deref(),
+            deprecation.remove_in_version.as_deref(),
+            deprecation.url.as_deref(),
+            deprecation.upgrade_handler.as_deref(),
+        )
     }
 }
 #[derive(Clone, Debug, PartialEq, Serialize, derive_more::Display)]
@@ -631,6 +665,7 @@ mod tests {
             replacement: Some("another_key".to_owned()).into(),
             version: Some("6.0.0".to_owned()).into(),
             url: Some("foo.bar".to_owned()).into(),
+            upgrade_handler: Some("simple".to_owned()),
         };
         assert_eq!(
             format!("{removed}").as_str(),
@@ -645,6 +680,7 @@ mod tests {
             removed: Some(true),
             remove_in_version: Some("6.0.0".to_owned()),
             url: Some("my.url".to_owned()),
+            upgrade_handler: Some("simple".to_owned()),
             ..Default::default()
         }
     }
@@ -671,8 +707,11 @@ mod tests {
             replacement: Some("new_key".to_owned()).into(),
             version: Some("6.0.0".to_owned()).into(),
             url: Some("my.url".to_owned()).into(),
+            upgrade_handler: Some("simple".to_owned()),
         };
         assert_eq!(removed, expected_removed);
+        assert_eq!(removed.replacement.0, Some("new_key".to_owned()));
+        assert_eq!(removed.upgrade_handler, Some("simple".to_owned()));
     }
 
     #[test]

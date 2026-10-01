@@ -491,6 +491,7 @@ impl<'input> Emitter<'input> {
                             self.state_stack.push(ParseState::Value {
                                 ctx: ValueContext {
                                     min_indent: 0,
+                                    empty_span: self.current_span(),
                                     content_column: None,
                                     kind: ValueKind::ExplicitKey,
                                     allow_implicit_mapping: true, // Flow context - doesn't affect block mappings
@@ -543,6 +544,7 @@ impl<'input> Emitter<'input> {
                                     self.state_stack.push(ParseState::Value {
                                         ctx: ValueContext {
                                             min_indent: 0,
+                                            empty_span: self.current_span(),
                                             content_column: None,
                                             kind: ValueKind::ImplicitKey, // This is the key of the implicit mapping
                                             allow_implicit_mapping: true, // Flow context
@@ -574,6 +576,7 @@ impl<'input> Emitter<'input> {
                             self.state_stack.push(ParseState::Value {
                                 ctx: ValueContext {
                                     min_indent: 0,
+                                    empty_span: self.current_span(),
                                     content_column: None,
                                     kind: ValueKind::SeqEntryValue, // Sequence entry is a value
                                     allow_implicit_mapping: true,   // Flow context
@@ -621,6 +624,7 @@ impl<'input> Emitter<'input> {
                         self.state_stack.push(ParseState::Value {
                             ctx: ValueContext {
                                 min_indent: 0,
+                                empty_span: self.current_span(),
                                 content_column: None,
                                 kind: ValueKind::MappingValue,
                                 allow_implicit_mapping: true,
@@ -772,6 +776,7 @@ impl<'input> Emitter<'input> {
                         self.state_stack.push(ParseState::Value {
                             ctx: ValueContext {
                                 min_indent: 0,
+                                empty_span: self.current_span(),
                                 content_column: None,
                                 kind: ValueKind::ExplicitKey, // Flow mapping key
                                 allow_implicit_mapping: true, // Flow context
@@ -816,6 +821,7 @@ impl<'input> Emitter<'input> {
                         self.state_stack.push(ParseState::Value {
                             ctx: ValueContext {
                                 min_indent: 0,
+                                empty_span: self.current_span(),
                                 content_column: None,
                                 kind: ValueKind::ImplicitKey, // Flow mapping key
                                 allow_implicit_mapping: true, // Flow context
@@ -860,6 +866,7 @@ impl<'input> Emitter<'input> {
                         self.state_stack.push(ParseState::Value {
                             ctx: ValueContext {
                                 min_indent: 0,
+                                empty_span: self.current_span(),
                                 content_column: None,
                                 kind: ValueKind::MappingValue, // Flow mapping value
                                 allow_implicit_mapping: true,  // Flow context

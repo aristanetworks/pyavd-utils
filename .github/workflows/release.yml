@@ -17,7 +17,6 @@ name: "Publish Python package"
 permissions:
   contents: read
 
-# For now only pyavd-utils
 jobs:
   build-pyavd-utils-wheels:
     name: Build and test pyavd-utils wheel on ${{ matrix.os }}
@@ -34,7 +33,7 @@ jobs:
           - windows-latest
           - macos-15-intel
           - macos-latest
-    uses: ./.github/workflows/build-wheel.yml
+    uses: $/.github/workflows/build-wheel.yml
     with:
       runner: ${{ matrix.os }}
       # Default value to '' to not overwrite the version in the child workflow
@@ -46,12 +45,12 @@ jobs:
     outputs:
       target_version: ${{ steps.target_version.outputs.TARGET_VERSION }}
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: "3.12"
+          python-version: "3.14"
       - name: Install `bump-my-version`
         run: |-
           pip install bump-my-version
@@ -86,14 +85,40 @@ jobs:
           merge-multiple: true
           pattern: pyavd-utils-wheels-*
       - name: Publish distribution to PyPI
-        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # v1.14.0
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          skip-existing: true
+
+  publish-pyavd-utils-gen-testpypi:
+    name: Publish pyavd-utils-gen to Test PyPI
+    needs: [build-pyavd-utils-wheels, publish-pyavd-utils-testpypi]
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'release'
+      || (github.event_name == 'workflow_dispatch')
+    environment:
+      name: test
+      url: https://test.pypi.org/p/pyavd-utils-gen
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Download pyavd-utils-gen wheels
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          path: dist/
+          merge-multiple: true
+          pattern: pyavd-utils-gen-wheels-*
+      - name: Publish distribution to Test PyPI
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
         with:
           repository-url: https://test.pypi.org/legacy/
           skip-existing: true
 
   test-pyavd-utils-from-test-pypi:
     name: Install from test-pypi and test on ${{ matrix.os }} for python ${{ matrix.python }}
-    needs: [target_version, publish-pyavd-utils-testpypi]
+    needs: [target_version, publish-pyavd-utils-gen-testpypi]
     runs-on: ${{ matrix.os }}
     if: |
       github.event_name == 'release'
@@ -110,13 +135,13 @@ jobs:
         python: ["3.10", "3.11", "3.12", "3.13", "3.14"]
     steps:
       - name: Checkout only the tests
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           sparse-checkout: |-
             tests
             pyproject.toml
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: ${{ matrix.python }}
       - name: Install `pyavd-utils` from test Pypi
@@ -125,13 +150,17 @@ jobs:
         shell: bash
         run: |-
           pip install -i https://test.pypi.org/simple/ "pyavd-utils==${TARGET_VERSION}" --group pytest --extra-index-url https://pypi.org/simple
+          python -c "import importlib.util, pyavd_utils.schema_store, pyavd_utils.validation; \
+            assert importlib.util.find_spec('pyavd_utils_gen') is None; \
+            assert not hasattr(pyavd_utils.schema_store, 'compile_schema_archive')"
+          pip install -i https://test.pypi.org/simple/ "pyavd-utils-gen==${TARGET_VERSION}" --extra-index-url https://pypi.org/simple
       - name: Run tests
         run: |-
           pytest tests
 
   test-pyavd-utils-from-test-pypi-musl:
     name: Install from test-pypi and test on musl linux for python ${{ matrix.python }}
-    needs: [target_version, publish-pyavd-utils-testpypi]
+    needs: [target_version, publish-pyavd-utils-gen-testpypi]
     runs-on: ${{ matrix.os }}
     if: |
       github.event_name == 'release'
@@ -160,7 +189,7 @@ jobs:
           mkdir /opt/bin
           ln -s /usr/bin/node /opt/bin/node
       - name: Checkout only the tests
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           sparse-checkout: |-
@@ -172,6 +201,10 @@ jobs:
         run: |-
           pip install --upgrade "pip>=25.1.0"
           pip install -i https://test.pypi.org/simple/ "pyavd-utils==${TARGET_VERSION}" --group pytest --extra-index-url https://pypi.org/simple
+          python -c "import importlib.util, pyavd_utils.schema_store, pyavd_utils.validation; \
+            assert importlib.util.find_spec('pyavd_utils_gen') is None; \
+            assert not hasattr(pyavd_utils.schema_store, 'compile_schema_archive')"
+          pip install -i https://test.pypi.org/simple/ "pyavd-utils-gen==${TARGET_VERSION}" --extra-index-url https://pypi.org/simple
       - name: Run tests
         run: |-
           pytest tests
@@ -196,4 +229,25 @@ jobs:
           merge-multiple: true
           pattern: pyavd-utils-wheels-*
       - name: Publish distribution to PyPI
-        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # v1.14.0
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+
+  publish-pyavd-utils-gen-pypi:
+    name: Publish pyavd-utils-gen to PyPI
+    needs: [publish-pyavd-utils-pypi]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'release'
+    environment:
+      name: production
+      url: https://pypi.org/p/pyavd-utils-gen
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Download pyavd-utils-gen wheels
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          path: dist/
+          merge-multiple: true
+          pattern: pyavd-utils-gen-wheels-*
+      - name: Publish distribution to PyPI
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2

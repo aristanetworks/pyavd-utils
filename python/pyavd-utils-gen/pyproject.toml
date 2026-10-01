@@ -1,0 +1,53 @@
+[project]
+name = "pyavd-utils-gen"
+dynamic = ["version"]
+authors = [{ name = "Arista Networks", email = "avd-dev@arista.com" }]
+description = "Build-time schema generation tooling for pyAVD."
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["pyavd_utils_gen/LICENSE", "pyavd_utils_gen/THIRD_PARTY_LICENSES.txt"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Rust",
+    "Topic :: Software Development :: Build Tools",
+]
+requires-python = ">=3.10"
+dependencies = ["pyavd-utils==0.0.10"]
+
+[project.urls]
+homepage = "https://avd.arista.com"
+repository = "https://github.com/aristanetworks/pyavd-utils"
+
+[build-system]
+requires = [
+    "setuptools>=71.0",
+    "setuptools-rust>=1.12.0",
+]
+
+[tool.distutils.bdist_wheel]
+py-limited-api = "cp310"
+
+[tool.setuptools.dynamic]
+version = { attr = "pyavd_utils_gen.__version__" }
+
+[tool.setuptools.packages.find]
+include = ["pyavd_utils_gen"]
+
+[tool.setuptools.package-data]
+"pyavd_utils_gen" = ["py.typed", "_bindings/*.pyi", "THIRD_PARTY_LICENSES.txt"]
+
+[[tool.setuptools-rust.ext-modules]]
+target = "pyavd_utils_gen._bindings"
+path = "../../rust/python-generation-bindings/Cargo.toml"
+binding = "PyO3"
+args = ["--locked"]
+
+[tool.uv.sources]
+pyavd-utils = { workspace = true }

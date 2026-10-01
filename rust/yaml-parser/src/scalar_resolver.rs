@@ -182,15 +182,14 @@ fn resolve_plain_numeric<'a>(text: Cow<'a, str>, first: &'_ u8) -> Option<Resolv
 
 /// Unsigned plain-scalar fast path: cheap prefix handling before decimal
 /// classification.
-#[allow(clippy::indexing_slicing, reason = "bytes length tracked")]
 #[allow(clippy::inline_always, reason = "Proven performance gain")]
 #[inline(always)]
 fn resolve_unsigned_numeric(text: Cow<'_, str>) -> Option<ResolvedScalar<'_>> {
     let input = text.as_ref();
     let bytes = input.as_bytes();
-    if bytes.len() > 2 && bytes[0] == b'0' {
+    if let [b'0', prefix, _, ..] = bytes {
         let sign = Sign::Positive;
-        match bytes[1] {
+        match prefix {
             b'o' => {
                 return input
                     .strip_prefix("0o")

@@ -9,14 +9,6 @@
     reason = "integration tests in tests/ are top-level by design"
 )]
 #![allow(
-    clippy::expect_used,
-    reason = "panicking on unexpected writer failure is fine in these focused tests"
-)]
-#![allow(
-    clippy::float_cmp,
-    reason = "exact float comparison is intentional for roundtrip equality checks"
-)]
-#![allow(
     clippy::panic,
     reason = "panic is expected in test assertions for mismatched value kinds"
 )]
@@ -86,7 +78,11 @@ fn assert_value_eq_ignoring_spans<'input>(expected: &Value<'input>, actual: &Val
             assert_eq!(left_int, right_int, "integer value changed");
         }
         (Value::Float(left_float), Value::Float(right_float)) => {
-            assert_eq!(left_float, right_float, "float value changed");
+            assert_eq!(
+                left_float.to_bits(),
+                right_float.to_bits(),
+                "float value changed: left={left_float}, right={right_float}",
+            );
         }
         (Value::String(left_str), Value::String(right_str)) => {
             assert_eq!(left_str, right_str, "string value changed");
@@ -124,10 +120,14 @@ fn roundtrip_value(input: &str) {
     );
 
     let mut buf = Vec::new();
-    writer::write_yaml_from_events(&mut buf, &events)
-        .expect("writing YAML from events should succeed");
+    if let Err(error) = writer::write_yaml_from_events(&mut buf, &events) {
+        panic!("writing YAML from events should succeed: {error:?}");
+    }
 
-    let output = String::from_utf8(buf).expect("writer must produce valid UTF-8");
+    let output = match String::from_utf8(buf) {
+        Ok(output) => output,
+        Err(error) => panic!("writer must produce valid UTF-8: {error:?}"),
+    };
 
     let (docs_after, errors_after) = parse(&output);
     assert!(

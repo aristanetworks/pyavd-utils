@@ -8,11 +8,9 @@
     clippy::as_conversions,
     clippy::cast_possible_truncation,
     clippy::cast_precision_loss,
-    clippy::default_trait_access,
     clippy::empty_structs_with_brackets,
     clippy::field_scoped_visibility_modifiers,
     clippy::float_cmp,
-    clippy::from_iter_instead_of_collect,
     clippy::match_wildcard_for_single_variants,
     clippy::option_option,
     clippy::partial_pub_fields,
@@ -26,11 +24,10 @@ mod context;
 pub mod feedback;
 mod validatable;
 mod validation;
+mod walker;
 
 pub use self::context::Configuration;
-pub use self::context::Context;
 pub use self::context::ValidationResult;
-pub use self::validation::Validation;
 pub use self::validation::store::InputValidationResult;
 pub use self::validation::store::StoreValidate;
 pub use self::validation::store::StoreValidateError;

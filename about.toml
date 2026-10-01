@@ -29,3 +29,10 @@ license = "MIT"
 [[miniz_oxide.clarify.files]]
 path = "LICENSE-MIT.md"
 checksum = "799e9ca9d179295ef372f25d3769cdda7d25bb2668add6a6a1e22d1e4c678b8d"
+
+[self_cell.clarify]
+license = "Apache-2.0"
+
+[[self_cell.clarify.files]]
+path = "LICENSE-APACHE"
+checksum = "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"

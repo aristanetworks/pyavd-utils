@@ -142,6 +142,11 @@ pub(super) enum ValueKind {
 #[derive(Debug, Clone, Copy)]
 pub(super) struct ValueContext {
     pub min_indent: IndentLevel,
+    /// Zero-width source location to use when this value is syntactically empty.
+    ///
+    /// Capture this at the owning indicator before consuming trivia; after a
+    /// dedent, `current_span()` belongs to the next parent or sibling node.
+    pub empty_span: Span,
     /// Column where content starts on the same line as the indicator, if known.
     /// `Some(col)` when content follows the indicator on the same line (e.g., `- - a` → col 2).
     /// `None` when content is on a subsequent line or not yet determined.

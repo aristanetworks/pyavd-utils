@@ -1,0 +1,23 @@
+[package]
+name = "avd-lsp-support"
+version.workspace = true
+edition = "2024"
+license.workspace = true
+description = "Stable pyavd-utils API and feature boundary for the AVD language server"
+
+[lints]
+workspace = true
+
+[dependencies]
+avdschema = { path = "../avdschema", default-features = false }
+validation = { path = "../validation", default-features = false }
+yaml-parser = { path = "../yaml-parser", default-features = false, features = [
+    "avdschema-core",
+    "serde",
+] }
+
+[features]
+# The browser LSP uses the empty default feature set. Native helpers opt into
+# gzip solely to load schema stores from compressed JSON bytes.
+default = []
+gzip = ["avdschema/gzip"]

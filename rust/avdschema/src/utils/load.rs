@@ -8,6 +8,7 @@ use std::ffi::OsStr;
 use std::fs::File;
 #[cfg(feature = "dump_load_files")]
 use std::io;
+#[cfg(any(feature = "dump_load_files", feature = "gzip"))]
 use std::io::BufReader;
 #[cfg(feature = "dump_load_files")]
 use std::path::Path;
@@ -79,6 +80,7 @@ where
         let reader = BufReader::new(decompressor);
         Ok(serde_json::from_reader(reader)?)
     }
+    #[cfg(feature = "gzip")]
     fn from_gz_bytes(bytes: &[u8]) -> Result<Self, LoadError> {
         let decompressor = flate2::read::GzDecoder::new(bytes);
         let reader = BufReader::new(decompressor);
@@ -116,6 +118,7 @@ where
 #[derive(Debug, derive_more::Display, derive_more::From)]
 pub enum LoadError {
     JsonError(serde_json::Error),
+    #[cfg(feature = "yaml")]
     YamlError(serde_yaml::Error),
     #[cfg(feature = "dump_load_files")]
     IoError(io::Error),
@@ -130,8 +133,8 @@ pub enum LoadError {
 #[cfg(all(test, feature = "dump_load_files"))]
 mod tests {
     use super::Load as _;
-    use crate::Store;
-    use crate::any::AnySchema;
+    use crate::StoreSource;
+    use crate::any::SourceSchema;
     use crate::utils::test_utils::get_test_dict_schema;
     use crate::utils::test_utils::get_test_store;
     use crate::utils::test_utils::get_tmp_file;
@@ -141,7 +144,7 @@ mod tests {
         crate::utils::dump::tests::dump_yaml();
         let file_path = get_tmp_file("test_dump.yml");
         let schema = get_test_dict_schema();
-        let result = AnySchema::from_file(Some(&file_path));
+        let result = SourceSchema::from_file(Some(&file_path));
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), schema);
     }
@@ -150,7 +153,7 @@ mod tests {
         crate::utils::dump::tests::dump_json();
         let file_path = get_tmp_file("test_dump.json");
         let schema = get_test_dict_schema();
-        let result = AnySchema::from_file(Some(&file_path));
+        let result = SourceSchema::from_file(Some(&file_path));
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), schema);
     }
@@ -160,7 +163,7 @@ mod tests {
         crate::utils::dump::tests::dump_xz2();
         let file_path = get_tmp_file("test_dump.xz2");
         let schema = get_test_dict_schema();
-        let result = AnySchema::from_file(Some(&file_path));
+        let result = SourceSchema::from_file(Some(&file_path));
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), schema);
     }
@@ -169,7 +172,7 @@ mod tests {
         crate::utils::dump::tests::dump_gz();
         let file_path = get_tmp_file("test_dump.gz");
         let schema = get_test_dict_schema();
-        let result = AnySchema::from_file(Some(&file_path));
+        let result = SourceSchema::from_file(Some(&file_path));
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), schema);
     }
@@ -178,7 +181,7 @@ mod tests {
         crate::utils::dump::tests::dump_store_yaml();
         let file_path = get_tmp_file("test_dump_store.yml");
         let store = get_test_store();
-        let result = Store::from_file(Some(&file_path));
+        let result = StoreSource::from_file(Some(&file_path));
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), store);
     }

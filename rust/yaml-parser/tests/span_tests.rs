@@ -224,6 +224,63 @@ fn test_sequence_item_structural_spans() {
 }
 
 #[test]
+fn test_empty_block_sequence_item_span_stays_at_its_insertion_point() {
+    for trailing_spaces in ["", " ", "   "] {
+        let empty_item_line = format!("      -{trailing_spaces}\n");
+        let input = format!(
+            "groups:\n  - name: alpha\n    members:\n      - id: 1\n{empty_item_line}\nnext_section:\n  enabled: true\n"
+        );
+        let docs = parse_ok(&input);
+
+        let root_pairs = match &docs[0].value {
+            Value::Mapping(pairs) => pairs,
+            other => panic!("expected root mapping, got {other:?}"),
+        };
+        let groups = &root_pairs[0].value;
+        let group_items = match &groups.value {
+            Value::Sequence(items) => items,
+            other => panic!("expected groups sequence, got {other:?}"),
+        };
+        let group_pairs = match &group_items[0].node.value {
+            Value::Mapping(pairs) => pairs,
+            other => panic!("expected group mapping, got {other:?}"),
+        };
+        let members = &group_pairs[1].value;
+        let member_items = match &members.value {
+            Value::Sequence(items) => items,
+            other => panic!("expected members sequence, got {other:?}"),
+        };
+
+        let empty_item = &member_items[1];
+        assert_eq!(empty_item.node.value, Value::Null);
+        let insertion_offset = input
+            .find(&empty_item_line)
+            .expect("expected empty item line")
+            + 7
+            + trailing_spaces.len();
+        assert_eq!(
+            empty_item.node.span,
+            yaml_parser::Span::at(yaml_parser::usize_to_pos(insertion_offset)),
+        );
+        assert_eq!(
+            extract_span_text(
+                &input,
+                empty_item.item_span.start_usize(),
+                empty_item.item_span.end_usize(),
+            ),
+            format!("-{trailing_spaces}"),
+        );
+
+        assert_eq!(root_pairs.len(), 2, "next_section must remain a root key");
+        assert_eq!(
+            root_pairs[1].key.value,
+            Value::String("next_section".into())
+        );
+        assert!(empty_item.node.span.end <= root_pairs[1].key.span.start);
+    }
+}
+
+#[test]
 fn test_nested_structure_spans() {
     let input = "outer:\n  inner: value";
     let docs = parse_ok(input);

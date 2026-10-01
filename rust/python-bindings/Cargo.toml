@@ -1,0 +1,46 @@
+[package]
+name = "python-bindings"
+version.workspace = true
+edition = "2024"
+license.workspace = true
+
+[lints]
+workspace = true
+
+[build-dependencies]
+pyo3-build-config = { workspace = true }
+
+[dev-dependencies]
+avdschema = { path = "../avdschema", features = ["dump_load_files"] }
+criterion = { version = "=0.8.2" }
+test_schema_store = { path = "../test_schema_store" }
+
+[dependencies]
+avdschema = { path = "../avdschema", default-features = false, features = [
+    "mmap",
+    "regex-perf",
+] }
+log = { workspace = true }
+passwords = { path = "../passwords", default-features = false, optional = true }
+pyo3 = { workspace = true, features = ["abi3-py310"] }
+pyo3-log = { workspace = true }
+serde_json = { workspace = true, features = [
+    "arbitrary_precision",
+    "preserve_order",
+] }
+validation = { path = "../validation", default-features = false, features = [
+    "regex-perf",
+] }
+
+[features]
+default = ["cbc", "sha512", "simple-7"]
+cbc = ["dep:passwords", "passwords/cbc"]
+sha512 = ["dep:passwords", "passwords/sha512"]
+simple-7 = ["dep:passwords", "passwords/simple-7"]
+
+[lib]
+crate-type = ["cdylib", "lib"]
+
+[[bench]]
+name = "performance"
+harness = false
