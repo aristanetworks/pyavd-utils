@@ -325,7 +325,6 @@ mod tests {
     fn path_navigation_reports_invalid_roots_and_traversal() {
         let store = Store::from_json(
             r#"{
-                "scalar_root": {"type": "str"},
                 "test": {
                     "type": "dict",
                     "keys": {
@@ -343,10 +342,6 @@ mod tests {
         assert!(matches!(
             store.get_schema_from_path("missing", &[], &mapping, None),
             Err(SchemaPathError::InvalidSchemaName(name)) if name == "missing"
-        ));
-        assert!(matches!(
-            store.get_schema_from_path("scalar_root", &["child".into()], &mapping, None),
-            Err(SchemaPathError::SchemaNotDict)
         ));
         assert!(matches!(
             store.get_schema_from_path("test", &["scalar".into()], &json!([]), None),

@@ -231,8 +231,6 @@ pub(crate) fn get_test_dict_schema() -> SourceSchema {
             "default": {"bool_key": false},
             "allow_other_keys": false,
             "relaxed_validation": true,
-            "$id": "foo",
-            "$schema": "myschema",
             "keys": {
                 "bool_key": {"type": "bool"},
                 "int_key": {"type": "int"},
@@ -245,8 +243,6 @@ pub(crate) fn get_test_dict_schema() -> SourceSchema {
                     "default":[{"inner": "dyn_key1_int"}]
                 }
             },
-            "dynamic_keys": {"outer.inner": {"type": "int"}},
-            "$defs": {"def_schema": {"type": "str"}},
             "deprecation": {
                 "warning": true,
                 "new_key": "new_bool",

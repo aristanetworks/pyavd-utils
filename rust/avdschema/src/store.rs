@@ -347,12 +347,13 @@ mod tests {
     #[cfg(feature = "gzip")]
     #[test]
     fn gzip_source_constructor_compiles_runtime_store() {
-        let source = json!({"test": {"type": "bool"}}).to_string();
+        let source =
+            json!({"test": {"type": "dict", "keys": {"value": {"type": "bool"}}}}).to_string();
         let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
         encoder.write_all(source.as_bytes()).unwrap();
         let bytes = encoder.finish().unwrap();
         let store = Store::from_gz_bytes(&bytes).unwrap();
-        assert!(matches!(store.get("test"), Some(SchemaView::Bool(_))));
+        assert!(matches!(store.get("test"), Some(SchemaView::Dict(_))));
     }
 
     #[cfg(feature = "mmap")]
@@ -361,7 +362,7 @@ mod tests {
         let archive =
             std::env::temp_dir().join(format!("archive-runtime-{}.rkyv", std::process::id()));
 
-        let source_model = StoreSource::from_json(r#"{"test":{"type":"bool"}}"#).unwrap();
+        let source_model = StoreSource::from_json(r#"{"test":{"type":"dict"}}"#).unwrap();
         let bytes = CompiledStore::compile(&source_model)
             .unwrap()
             .to_bytes()
@@ -370,7 +371,7 @@ mod tests {
         let mapped_store = Store::from_file(&archive).unwrap();
         assert!(matches!(
             mapped_store.get("test"),
-            Some(SchemaView::Bool(_))
+            Some(SchemaView::Dict(_))
         ));
 
         std::fs::remove_file(archive).unwrap();

@@ -256,12 +256,19 @@ fn validate_json_with_adhoc_schema_py_ok() {
             let args = ();
             let kwargs = pyo3::types::PyDict::new(py);
             kwargs
-                .set_item("data_as_json", serde_json::json!(1234).to_string())
+                .set_item(
+                    "data_as_json",
+                    serde_json::json!({"value": 1234}).to_string(),
+                )
                 .unwrap();
             kwargs
                 .set_item(
                     "schema_as_json",
-                    serde_json::json!({"type": "int", "max": 1233}).to_string(),
+                    serde_json::json!({
+                        "type": "dict",
+                        "keys": {"value": {"type": "int", "max": 1233}}
+                    })
+                    .to_string(),
                 )
                 .unwrap();
             module
@@ -271,7 +278,7 @@ fn validate_json_with_adhoc_schema_py_ok() {
         let violations = validation_result.getattr("violations").unwrap();
         assert!(violations.is_instance_of::<pyo3::types::PyList>());
         let expected_violations: [(Vec<String>, String); 1] = [(
-            vec![],
+            vec!["value".into()],
             "The value '1234' is above the maximum allowed '1233'.".into(),
         )];
 

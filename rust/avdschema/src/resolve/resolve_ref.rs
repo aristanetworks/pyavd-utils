@@ -8,7 +8,7 @@ use fancy_regex::Regex;
 
 use super::walker::Walker as _;
 use crate::StoreSource;
-use crate::any::SourceSchema;
+use crate::any::SourceLayer;
 use crate::resolve::errors::SchemaResolverError;
 
 /// Regex matching $ref syntax according the AVD metaschema.
@@ -21,7 +21,7 @@ static REF_REGEX: LazyLock<Regex> =
 pub(crate) fn resolve_ref<'a>(
     ref_: &str,
     store: &'a StoreSource,
-) -> Result<&'a SourceSchema, SchemaResolverError> {
+) -> Result<SourceLayer<'a>, SchemaResolverError> {
     let syntax_err = || SchemaResolverError::RefSyntax {
         schema_ref: ref_.to_owned(),
     };
@@ -43,6 +43,7 @@ mod tests {
     use super::resolve_ref;
     use crate::Load as _;
     use crate::StoreSource;
+    use crate::any::SourceLayer;
     use crate::resolve::errors::SchemaResolverError;
     use crate::resolve::walker::SchemaWalkError;
     use crate::str::SourceStr;
@@ -54,7 +55,9 @@ mod tests {
         let test_store = get_test_store();
         let result = resolve_ref("eos_cli_config_gen#/keys/key2", &test_store);
         assert!(result.is_ok());
-        let result_schema = result.unwrap();
+        let SourceLayer::Schema(result_schema) = result.unwrap() else {
+            panic!("key reference should resolve to a recursive schema")
+        };
         let str_schema_result: Result<&SourceStr, _> = result_schema.try_into();
         assert!(str_schema_result.is_ok());
         let str_schema = str_schema_result.unwrap();
@@ -71,7 +74,9 @@ mod tests {
         let test_store = get_test_store();
         let result = resolve_ref("eos_config#/keys/key2", &test_store);
         assert!(result.is_ok());
-        let result_schema = result.unwrap();
+        let SourceLayer::Schema(result_schema) = result.unwrap() else {
+            panic!("key reference should resolve to a recursive schema")
+        };
         let str_schema_result: Result<&SourceStr, _> = result_schema.try_into();
         assert!(str_schema_result.is_ok());
         let str_schema = str_schema_result.unwrap();
@@ -88,7 +93,9 @@ mod tests {
         let test_store = get_test_store();
         let result = resolve_ref("cv_deploy#/keys/key4", &test_store);
         assert!(result.is_ok());
-        let result_schema = result.unwrap();
+        let SourceLayer::Schema(result_schema) = result.unwrap() else {
+            panic!("key reference should resolve to a recursive schema")
+        };
         let str_schema_result: Result<&SourceStr, _> = result_schema.try_into();
         assert!(str_schema_result.is_ok());
         let str_schema = str_schema_result.unwrap();
@@ -155,15 +162,15 @@ mod tests {
 
         assert!(matches!(
             resolve_ref("test#/keys/list/items", &store),
-            Ok(crate::any::SourceSchema::Bool(_))
+            Ok(SourceLayer::Schema(crate::any::SourceSchema::Bool(_)))
         ));
         assert!(matches!(
             resolve_ref("test#/dynamic_keys/dynamic", &store),
-            Ok(crate::any::SourceSchema::Int(_))
+            Ok(SourceLayer::Schema(crate::any::SourceSchema::Int(_)))
         ));
         assert!(matches!(
             resolve_ref("test#/$defs/definition", &store),
-            Ok(crate::any::SourceSchema::Str(_))
+            Ok(SourceLayer::Schema(crate::any::SourceSchema::Str(_)))
         ));
     }
 
@@ -171,10 +178,10 @@ mod tests {
     fn resolve_ref_reports_structured_walk_errors() {
         let store = StoreSource::from_json(
             r#"{
-                "scalar": {"type": "str"},
                 "test": {
                     "type": "dict",
                     "keys": {
+                        "scalar": {"type": "str"},
                         "list": {"type": "list"}
                     },
                     "dynamic_keys": {"dynamic": {"type": "int"}},
@@ -205,7 +212,7 @@ mod tests {
             )) if element == "invalid"
         ));
         assert!(matches!(
-            resolve_ref("scalar#/keys/value", &store),
+            resolve_ref("test#/keys/scalar/keys/value", &store),
             Err(SchemaResolverError::SchemaWalk(
                 SchemaWalkError::NotDictOrList
             ))

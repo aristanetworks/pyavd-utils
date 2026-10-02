@@ -615,27 +615,32 @@ mod tests {
         Store::from_json(
             &json!({
                 "base_str": {
-                    "type": "str",
-                    "default": "base",
-                    "description": "base description",
-                    "required": true,
-                    "min_length": 2,
-                    "max_length": 20,
-                    "pattern": "[a-z]+",
-                    "format": "mac",
-                    "valid_values": ["base", "local"],
-                    "dynamic_valid_values": ["choices.names"],
-                    "convert_types": ["int"],
-                    "documentation_options": {"table": "base table"},
-                    "deprecation": {
-                        "warning": true,
-                        "new_key": "replacement",
-                        "allow_with_new_key": true,
-                        "removed": false,
-                        "remove_in_version": "6.0.0",
-                        "remove_after_date": "2030-01-01",
-                        "url": "https://example.test",
-                        "upgrade_handler": "rename"
+                    "type": "dict",
+                    "$defs": {
+                        "value": {
+                            "type": "str",
+                            "default": "base",
+                            "description": "base description",
+                            "required": true,
+                            "min_length": 2,
+                            "max_length": 20,
+                            "pattern": "[a-z]+",
+                            "format": "mac",
+                            "valid_values": ["base", "local"],
+                            "dynamic_valid_values": ["choices.names"],
+                            "convert_types": ["int"],
+                            "documentation_options": {"table": "base table"},
+                            "deprecation": {
+                                "warning": true,
+                                "new_key": "replacement",
+                                "allow_with_new_key": true,
+                                "removed": false,
+                                "remove_in_version": "6.0.0",
+                                "remove_after_date": "2030-01-01",
+                                "url": "https://example.test",
+                                "upgrade_handler": "rename"
+                            }
+                        }
                     }
                 },
                 "base_dict": {
@@ -657,7 +662,7 @@ mod tests {
                     "keys": {
                         "name": {
                             "type": "str",
-                            "$ref": "base_str#",
+                            "$ref": "base_str#/$defs/value",
                             "default": "local",
                             "display_name": "Name"
                         },
@@ -718,17 +723,25 @@ mod tests {
     fn compiled_patterns_preserve_full_match_and_ascii_contract() {
         let store = Store::from_json(
             &json!({
-                "alternation": {"type": "str", "pattern": "foo|bar"},
-                "perl_classes": {"type": "str", "pattern": r"\d+\s+\d+"},
-                "lookahead": {"type": "str", "pattern": "(?=[a-z])(?=.*[0-9])[a-z0-9]+"},
-                "variable_lookbehind": {"type": "str", "pattern": "(?<=a+)b"},
-                "unicode_property": {"type": "str", "pattern": r"\p{Greek}+"}
+                "patterns": {
+                    "type": "dict",
+                    "keys": {
+                        "alternation": {"type": "str", "pattern": "foo|bar"},
+                        "perl_classes": {"type": "str", "pattern": r"\d+\s+\d+"},
+                        "lookahead": {"type": "str", "pattern": "(?=[a-z])(?=.*[0-9])[a-z0-9]+"},
+                        "variable_lookbehind": {"type": "str", "pattern": "(?<=a+)b"},
+                        "unicode_property": {"type": "str", "pattern": r"\p{Greek}+"}
+                    }
+                }
             })
             .to_string(),
         )
         .expect("pattern schemas should compile");
 
-        let Some(SchemaView::Str(alternation)) = store.get("alternation") else {
+        let Some(SchemaView::Dict(patterns)) = store.get("patterns") else {
+            panic!("patterns root should compile as a dictionary")
+        };
+        let Some(SchemaView::Str(alternation)) = patterns.key("alternation") else {
             panic!("alternation schema should compile as a string")
         };
         let alternation = alternation.compiled_pattern().unwrap().unwrap();
@@ -737,13 +750,13 @@ mod tests {
         assert!(!alternation.is_match("foobar").unwrap());
 
         for name in ["perl_classes", "lookahead", "variable_lookbehind"] {
-            let Some(SchemaView::Str(schema)) = store.get(name) else {
+            let Some(SchemaView::Str(schema)) = patterns.key(name) else {
                 panic!("{name} schema should compile as a string")
             };
             assert!(schema.compiled_pattern().unwrap().is_ok());
         }
 
-        let Some(SchemaView::Str(unicode_property)) = store.get("unicode_property") else {
+        let Some(SchemaView::Str(unicode_property)) = patterns.key("unicode_property") else {
             panic!("unicode_property schema should compile as a string")
         };
         assert!(unicode_property.compiled_pattern().unwrap().is_err());

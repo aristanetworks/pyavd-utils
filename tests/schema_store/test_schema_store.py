@@ -37,7 +37,7 @@ def test_compile_schema_archive_rejects_invalid_source(tmp_path: Path) -> None:
 def test_compile_schema_archive_rejects_invalid_schema(tmp_path: Path) -> None:
     source = tmp_path / "schemas.json"
     destination = tmp_path / "schemas.rkyv"
-    source.write_text(r'{"test":{"type":"str","$ref":"missing#"}}', encoding="UTF-8")
+    source.write_text(r'{"test":{"type":"dict","$ref":"missing#"}}', encoding="UTF-8")
 
     with pytest.raises(RuntimeError, match="Unable to resolve schema reference 'missing#'"):
         compile_schema_archive(source, destination)

@@ -5,11 +5,12 @@
 //! AVD schema source models and compiled runtime views.
 //!
 //! [`StoreSource`] and the `Source*` schema types are the authoring representation
-//! deserialized from JSON, YAML, and compressed schema sources. Compilation resolves
-//! references and inherited layers into typed, deduplicated tables. [`Store`] owns or
-//! memory-maps those tables and is the canonical representation used by validation and
-//! schema navigation. Runtime nodes are exposed as borrowed [`SchemaView`] variants and
-//! typed child views; a view cannot outlive its store.
+//! deserialized from JSON, YAML, and compressed schema sources. Named schema roots use
+//! [`dict::SourceRootDict`], while recursive child schemas use [`any::SourceSchema`]. Compilation
+//! resolves references and inherited layers into typed, deduplicated tables. [`Store`] owns or
+//! memory-maps those tables and is the canonical representation used by validation and schema
+//! navigation. Runtime nodes are exposed as borrowed [`SchemaView`] variants and typed child
+//! views; a view cannot outlive its store.
 //!
 //! [`Store::from_file`] memory-maps compiled archives. [`Store::from_json`] and
 //! [`Store::from_gz_bytes`] compile ad-hoc schema sources into process-owned

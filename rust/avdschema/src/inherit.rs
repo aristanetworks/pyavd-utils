@@ -15,6 +15,7 @@ use crate::base::documentation_options::DocumentationOptionsDict;
 use crate::base::valid_values::ValidValues;
 use crate::boolean::SourceBool;
 use crate::dict::SourceDict;
+use crate::dict::SourceRootDict;
 use crate::int::SourceInt;
 use crate::list::SourceList;
 use crate::str::Format;
@@ -99,7 +100,23 @@ impl Inherit for SourceBool {
 }
 impl Inherit for SourceDict {
     fn inherit(&mut self, other: &Self) {
-        // Deep inherit each key in the maps (keys, dynamic_keys, defs) if it is set in both. Otherwise use regular option inheritance.
+        // Deep inherit each key if it is set in both. Otherwise use regular option inheritance.
+        if let (Some(keys), Some(other_keys)) = (self.keys.as_mut(), other.keys.as_ref()) {
+            keys.inherit(other_keys);
+        } else {
+            self.keys.inherit(&other.keys);
+        }
+        self.allow_other_keys.inherit(&other.allow_other_keys);
+        self.relaxed_validation.inherit(&other.relaxed_validation);
+        self.base.inherit(&other.base);
+        self.documentation_options
+            .inherit(&other.documentation_options);
+    }
+}
+impl Inherit for SourceRootDict {
+    fn inherit(&mut self, other: &Self) {
+        // Root schema fragments merge their child mappings recursively while scalar settings use
+        // the first fragment defining them.
         if let (Some(keys), Some(other_keys)) = (self.keys.as_mut(), other.keys.as_ref()) {
             keys.inherit(other_keys);
         } else {
@@ -207,6 +224,7 @@ mod tests {
     use crate::any::SourceSchema;
     use crate::boolean::SourceBool;
     use crate::dict::SourceDict;
+    use crate::dict::SourceRootDict;
     use crate::int::SourceInt;
     use crate::list::SourceList;
     use crate::str::SourceStr;
@@ -304,6 +322,23 @@ mod tests {
             serde_json::to_string(&schema_a).unwrap(),
             serde_json::to_string(&schema_b).unwrap()
         );
+    }
+
+    #[test]
+    fn inherit_root_dict() {
+        let mut schema = SourceRootDict::default();
+        let inherited: SourceRootDict = serde_json::from_value(serde_json::json!({
+            "$id": "test",
+            "$schema": "avd_meta_schema",
+            "keys": {"static_value": {"type": "str"}},
+            "dynamic_keys": {"names": {"type": "int"}},
+            "$defs": {"shared": {"type": "bool"}}
+        }))
+        .unwrap();
+
+        schema.inherit(&inherited);
+
+        assert_eq!(schema, inherited);
     }
 
     #[test]

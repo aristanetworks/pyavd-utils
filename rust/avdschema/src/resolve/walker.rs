@@ -6,21 +6,23 @@ use std::iter::Peekable;
 
 use ordermap::OrderMap;
 
+use crate::any::SourceLayer;
 use crate::any::SourceSchema;
+use crate::dict::SourceRootDict;
 
 pub(crate) trait Walker {
-    fn walk<'a, I>(&self, path: Peekable<I>) -> Result<&SourceSchema, SchemaWalkError>
+    fn walk<'a, I>(&self, path: Peekable<I>) -> Result<SourceLayer<'_>, SchemaWalkError>
     where
         I: Iterator<Item = &'a str> + std::fmt::Debug;
 }
 
 impl Walker for SourceSchema {
-    fn walk<'a, I>(&self, mut path: Peekable<I>) -> Result<&SourceSchema, SchemaWalkError>
+    fn walk<'a, I>(&self, mut path: Peekable<I>) -> Result<SourceLayer<'_>, SchemaWalkError>
     where
         I: Iterator<Item = &'a str> + std::fmt::Debug,
     {
         let Some(element) = path.next() else {
-            return Ok(self);
+            return Ok(SourceLayer::schema(self));
         };
         match self {
             Self::List(schema) => {
@@ -39,8 +41,6 @@ impl Walker for SourceSchema {
             }
             Self::Dict(schema) => match element {
                 "keys" => walk_mapping(schema.keys.as_ref(), element, path),
-                "dynamic_keys" => walk_mapping(schema.dynamic_keys.as_ref(), element, path),
-                "$defs" => walk_mapping(schema.schema_defs.as_ref(), element, path),
                 _ => Err(SchemaWalkError::InvalidPathElement {
                     element: element.to_owned(),
                 }),
@@ -50,11 +50,30 @@ impl Walker for SourceSchema {
     }
 }
 
+impl Walker for SourceRootDict {
+    fn walk<'a, I>(&self, mut path: Peekable<I>) -> Result<SourceLayer<'_>, SchemaWalkError>
+    where
+        I: Iterator<Item = &'a str> + std::fmt::Debug,
+    {
+        let Some(element) = path.next() else {
+            return Ok(SourceLayer::root(self));
+        };
+        match element {
+            "keys" => walk_mapping(self.keys.as_ref(), element, path),
+            "dynamic_keys" => walk_mapping(self.dynamic_keys.as_ref(), element, path),
+            "$defs" => walk_mapping(self.schema_defs.as_ref(), element, path),
+            _ => Err(SchemaWalkError::InvalidPathElement {
+                element: element.to_owned(),
+            }),
+        }
+    }
+}
+
 fn walk_mapping<'schema, 'path, I>(
     mapping: Option<&'schema OrderMap<String, SourceSchema>>,
     mapping_name: &str,
     mut path: Peekable<I>,
-) -> Result<&'schema SourceSchema, SchemaWalkError>
+) -> Result<SourceLayer<'schema>, SchemaWalkError>
 where
     I: Iterator<Item = &'path str> + std::fmt::Debug,
 {
