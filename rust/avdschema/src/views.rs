@@ -15,6 +15,7 @@ use crate::compiled::ArchivedCompiledValue;
 use crate::compiled::ArchivedDictSchema;
 use crate::compiled::ArchivedIntSchema;
 use crate::compiled::ArchivedListSchema;
+use crate::compiled::ArchivedPrefixKeySchema;
 use crate::compiled::ArchivedSchemaId;
 use crate::compiled::ArchivedStrSchema;
 use crate::compiled::SchemaId;
@@ -508,6 +509,47 @@ pub struct DictView<'a> {
     schema: &'a ArchivedDictSchema,
 }
 
+/// Borrowed view of one prefix-key configuration.
+#[derive(Clone, Copy, Debug)]
+pub struct PrefixKeyView<'a> {
+    cursor: SchemaCursor<'a>,
+    schema: &'a ArchivedPrefixKeySchema,
+}
+
+impl<'a> PrefixKeyView<'a> {
+    /// Return the sibling input key supplying prefixes, when configured.
+    pub fn prefixes_key(self) -> Option<&'a str> {
+        self.schema.prefixes_key.as_deref()
+    }
+
+    /// Iterate over statically configured prefixes, when configured.
+    pub fn prefixes(self) -> Option<impl Iterator<Item = &'a str> + 'a> {
+        self.schema
+            .prefixes
+            .as_deref()
+            .map(|prefixes| prefixes.iter().map(AsRef::as_ref))
+    }
+
+    /// Iterate over prefixes taken from the sibling key's schema default.
+    pub fn default_prefixes(self) -> impl Iterator<Item = &'a str> + 'a {
+        self.schema.default_prefixes.iter().map(AsRef::as_ref)
+    }
+
+    /// Return whether the matched suffix selects a key in the target dictionary schema.
+    pub fn include_suffix_in_data(self) -> bool {
+        self.schema.include_suffix_in_data
+    }
+
+    /// Return the schema targeted by this prefix-key configuration.
+    pub fn schema(self) -> SchemaView<'a> {
+        SchemaCursor {
+            store: self.cursor.store,
+            id: native_schema_id(self.schema.schema),
+        }
+        .view()
+    }
+}
+
 impl<'a> DictView<'a> {
     /// Return properties shared by every schema type.
     pub fn common(self) -> CommonView<'a> {
@@ -562,7 +604,17 @@ impl<'a> DictView<'a> {
             .get(path)
             .map(|values| values.iter().map(AsRef::as_ref))
     }
-    /// Return whether keys without a matching static or dynamic schema are permitted.
+    /// Iterate over prefix-key configurations in schema order.
+    pub fn prefix_keys(self) -> impl Iterator<Item = PrefixKeyView<'a>> + 'a {
+        self.schema
+            .prefix_keys
+            .iter()
+            .map(move |schema| PrefixKeyView {
+                cursor: self.cursor,
+                schema,
+            })
+    }
+    /// Return whether keys without any matching schema are permitted.
     pub fn allow_other_keys(self) -> bool {
         self.schema.allow_other_keys
     }
@@ -570,9 +622,11 @@ impl<'a> DictView<'a> {
     pub fn begin_relaxed_validation(self) -> bool {
         self.schema.begin_relaxed_validation
     }
-    /// Return whether the dictionary declares any static or dynamic keys.
+    /// Return whether the dictionary declares any static, dynamic, or prefix-based keys.
     pub fn has_schema_keys(self) -> bool {
-        !self.schema.keys.is_empty() || !self.schema.dynamic_keys.is_empty()
+        !self.schema.keys.is_empty()
+            || !self.schema.dynamic_keys.is_empty()
+            || !self.schema.prefix_keys.is_empty()
     }
 }
 

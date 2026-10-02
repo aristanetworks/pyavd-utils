@@ -278,26 +278,15 @@ impl<'context, 'store> Validator<'context, 'store> {
                 Some(key_schema)
             } else if let Some(key_schema) = resolved_dynamic_keys.get(input_schema_key).copied() {
                 Some(key_schema)
-            } else if input_schema_key.starts_with('_') {
-                None
             } else {
-                if !schema.allow_other_keys() {
-                    self.context.add_error_with_span(
-                        state,
-                        key_span.clone(),
-                        Violation::UnexpectedKey(),
-                    );
-                } else if let Some(eos_config_schema) = eos_config_schema
-                    && eos_config_schema.key(input_schema_key).is_some()
-                    && !EOS_CLI_CONFIG_GEN_ROLE_KEYS.contains(&input_schema_key)
-                {
-                    self.context.add_warning_with_span(
-                        state,
-                        key_span.clone(),
-                        IgnoredEosConfigKey {},
-                    );
-                }
-                None
+                self.resolve_prefix_key_or_report_unknown(
+                    schema,
+                    input,
+                    state,
+                    input_schema_key,
+                    key_span.clone(),
+                    eos_config_schema,
+                )
             };
             let coerced_value = key_schema.and_then(|key_schema| {
                 if dict::check_deprecation(key_schema, key_span, input, self.context, state) {
@@ -317,5 +306,42 @@ impl<'context, 'store> Validator<'context, 'store> {
             state.path.pop();
         }
         coerced_items
+    }
+
+    fn resolve_prefix_key_or_report_unknown<'data, M>(
+        &mut self,
+        schema: DictView<'store>,
+        input: &M,
+        state: &ValidationState,
+        input_key: &str,
+        key_span: Option<crate::feedback::SourceSpan>,
+        eos_config_schema: Option<DictView<'store>>,
+    ) -> Option<SchemaView<'store>>
+    where
+        M: crate::validatable::ValidatableMapping<'data>,
+    {
+        match avdschema::resolve_prefix_key(schema, input.as_schema_data_mapping(), input_key) {
+            Some(avdschema::PrefixKeyResolution::Schema(key_schema)) => Some(key_schema),
+            Some(avdschema::PrefixKeyResolution::InvalidSuffix) => {
+                self.context
+                    .add_error_with_span(state, key_span, Violation::UnexpectedKey());
+                None
+            }
+            Some(avdschema::PrefixKeyResolution::AllowedOtherSuffix) => None,
+            None if input_key.starts_with('_') => None,
+            None => {
+                if !schema.allow_other_keys() {
+                    self.context
+                        .add_error_with_span(state, key_span, Violation::UnexpectedKey());
+                } else if let Some(eos_config_schema) = eos_config_schema
+                    && eos_config_schema.key(input_key).is_some()
+                    && !EOS_CLI_CONFIG_GEN_ROLE_KEYS.contains(&input_key)
+                {
+                    self.context
+                        .add_warning_with_span(state, key_span, IgnoredEosConfigKey {});
+                }
+                None
+            }
+        }
     }
 }
