@@ -46,6 +46,87 @@
       }
     }
   },
+  "schema_documentation_fixture": {
+    "type": "dict",
+    "keys": {
+      "profiles": {
+        "type": "list",
+        "description": "Reusable profiles.\nSecond line.",
+        "primary_key": "name",
+        "min_length": 1,
+        "max_length": 5,
+        "default": [
+          {
+            "name": "default",
+            "settings": {
+              "long_value": "flexible exact-match 16384 l2-shared 98304 l3-shared 131072"
+            }
+          }
+        ],
+        "items": {
+          "type": "dict",
+          "keys": {
+            "name": {
+              "type": "str",
+              "description": "Profile name."
+            },
+            "priority": {
+              "type": "int",
+              "min": 1,
+              "max": 100,
+              "valid_values": [10, 20],
+              "default": 10
+            },
+            "mode": {
+              "type": "str",
+              "min_length": 2,
+              "max_length": 20,
+              "format": "ipv4",
+              "convert_to_lower_case": true,
+              "valid_values": ["active", "passive"],
+              "dynamic_valid_values": ["custom_modes"],
+              "pattern": "^[a-z]+$",
+              "deprecation": {
+                "warning": true,
+                "new_key": "state",
+                "remove_in_version": "7.0.0",
+                "url": "https://example.invalid/mode"
+              }
+            },
+            "removed": {
+              "type": "str",
+              "deprecation": {
+                "warning": true,
+                "removed": true,
+                "new_key": "state"
+              }
+            },
+            "opaque": {
+              "type": "dict",
+              "default": {"enabled": true},
+              "documentation_options": {"hide_keys": true},
+              "keys": {
+                "enabled": {"type": "bool"}
+              }
+            }
+          }
+        }
+      },
+      "standalone_value": {
+        "type": "str",
+        "required": true,
+        "default": "value",
+        "documentation_options": {"table": "standalone"}
+      }
+    },
+    "dynamic_keys": {
+      "profile_types.name": {
+        "type": "list",
+        "documentation_options": {"table": "dynamic-profiles"},
+        "items": {"type": "str"}
+      }
+    }
+  },
   "schema_generation_fixture": {
     "type": "dict",
     "allow_other_keys": true,

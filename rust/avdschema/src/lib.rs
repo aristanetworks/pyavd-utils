@@ -83,7 +83,11 @@ pub use self::compiled::SchemaDiagnostic;
 pub use self::compiled::SchemaDiagnostics;
 pub use self::compiled::SchemaId;
 #[cfg(feature = "generation")]
+pub use self::generation::DocumentationGenerationError;
+#[cfg(feature = "generation")]
 pub use self::generation::GenerationError;
+#[cfg(feature = "generation")]
+pub use self::generation::generate_markdown_documentation;
 #[cfg(feature = "generation")]
 pub use self::generation::generate_python_models;
 #[cfg(feature = "generation")]

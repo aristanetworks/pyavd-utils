@@ -5,6 +5,12 @@
 from collections.abc import Mapping
 from pathlib import Path
 
+def generate_schema_documentation(source: Path, schema_name: str, destination: Path) -> None:
+    """Generate Markdown schema documentation from a raw schema store."""
+
+def generate_schema_documentation_from_paths(sources: Mapping[str, Path], schema_name: str, destination: Path) -> None:
+    """Generate Markdown schema documentation from individually named schema files."""
+
 def generate_python_schema_models(
     source: Path,
     schema_name: str,

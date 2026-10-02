@@ -910,53 +910,33 @@ fn common(layers: &[&SourceSchema], schema_path: &[String]) -> Result<Common, Co
             .iter()
             .find_map(|schema| schema_deprecation(schema))
             .map(CompiledDeprecation::from),
-        documentation_options: layers.iter().find_map(|schema| match schema {
-            SourceSchema::Bool(schema) => {
-                schema
-                    .documentation_options
-                    .as_ref()
-                    .map(|options| CompiledDocumentationOptions {
-                        table: options.table.clone(),
-                        hide_keys: false,
-                    })
-            }
-            SourceSchema::Int(schema) => {
-                schema
-                    .documentation_options
-                    .as_ref()
-                    .map(|options| CompiledDocumentationOptions {
-                        table: options.table.clone(),
-                        hide_keys: false,
-                    })
-            }
-            SourceSchema::Str(schema) => {
-                schema
-                    .documentation_options
-                    .as_ref()
-                    .map(|options| CompiledDocumentationOptions {
-                        table: options.table.clone(),
-                        hide_keys: false,
-                    })
-            }
-            SourceSchema::List(schema) => {
-                schema
-                    .documentation_options
-                    .as_ref()
-                    .map(|options| CompiledDocumentationOptions {
-                        table: options.table.clone(),
-                        hide_keys: false,
-                    })
-            }
-            SourceSchema::Dict(schema) => {
-                schema
-                    .documentation_options
-                    .as_ref()
-                    .map(|options| CompiledDocumentationOptions {
-                        table: options.table.clone(),
-                        hide_keys: options.hide_keys.unwrap_or_default(),
-                    })
-            }
+        documentation_options: documentation_options(layers),
+    })
+}
+
+fn documentation_options(layers: &[&SourceSchema]) -> Option<CompiledDocumentationOptions> {
+    let has_options = layers.iter().any(|schema| match schema {
+        SourceSchema::Bool(schema) => schema.documentation_options.is_some(),
+        SourceSchema::Int(schema) => schema.documentation_options.is_some(),
+        SourceSchema::Str(schema) => schema.documentation_options.is_some(),
+        SourceSchema::List(schema) => schema.documentation_options.is_some(),
+        SourceSchema::Dict(schema) => schema.documentation_options.is_some(),
+    });
+    has_options.then(|| CompiledDocumentationOptions {
+        table: layers.iter().find_map(|schema| match schema {
+            SourceSchema::Bool(schema) => schema.documentation_options.as_ref()?.table.clone(),
+            SourceSchema::Int(schema) => schema.documentation_options.as_ref()?.table.clone(),
+            SourceSchema::Str(schema) => schema.documentation_options.as_ref()?.table.clone(),
+            SourceSchema::List(schema) => schema.documentation_options.as_ref()?.table.clone(),
+            SourceSchema::Dict(schema) => schema.documentation_options.as_ref()?.table.clone(),
         }),
+        hide_keys: layers
+            .iter()
+            .find_map(|schema| match schema {
+                SourceSchema::Dict(schema) => schema.documentation_options.as_ref()?.hide_keys,
+                _ => None,
+            })
+            .unwrap_or_default(),
     })
 }
 

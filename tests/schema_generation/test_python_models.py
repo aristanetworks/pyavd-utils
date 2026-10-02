@@ -9,10 +9,73 @@ from pathlib import Path
 
 import pytest
 
-from pyavd_utils_gen.schema_generation import generate_python_schema_models, generate_python_schema_models_from_paths
+from pyavd_utils_gen.schema_generation import (
+    generate_python_schema_models,
+    generate_python_schema_models_from_paths,
+    generate_schema_documentation,
+    generate_schema_documentation_from_paths,
+)
 from pyavd_utils_gen.schema_store import compile_schema_archive
 
 ARTIFACTS = Path(__file__).parent / "artifacts"
+
+
+def test_regenerate_schema_documentation_fixture() -> None:
+    """Regenerate committed documentation so a mismatch remains visible in git diff."""
+    destination = ARTIFACTS / "schema_documentation_fixture.expected"
+    expected = {path.name: path.read_bytes() for path in destination.glob("*.md")}
+
+    generate_schema_documentation(ARTIFACTS / "schemas.json", "schema_documentation_fixture", destination)
+
+    assert {path.name: path.read_bytes() for path in destination.glob("*.md")} == expected
+
+
+def test_schema_documentation_removes_obsolete_markdown(tmp_path: Path) -> None:
+    obsolete = tmp_path / "obsolete.md"
+    preserved = tmp_path / "preserved.txt"
+    obsolete.touch()
+    preserved.touch()
+
+    generate_schema_documentation(ARTIFACTS / "schemas.json", "schema_documentation_fixture", tmp_path)
+
+    assert not obsolete.exists()
+    assert preserved.exists()
+
+
+def test_schema_documentation_inherits_individual_options_across_references(tmp_path: Path) -> None:
+    shared = tmp_path / "shared.json"
+    shared.write_text(
+        dumps(
+            {
+                "type": "dict",
+                "documentation_options": {"table": "shared", "hide_keys": True},
+                "keys": {"hidden": {"type": "str"}},
+            }
+        ),
+        encoding="UTF-8",
+    )
+    model = tmp_path / "model.json"
+    model.write_text(
+        dumps(
+            {
+                "type": "dict",
+                "keys": {
+                    "visible": {
+                        "type": "dict",
+                        "$ref": "shared#",
+                        "documentation_options": {"table": "visible"},
+                    }
+                },
+            }
+        ),
+        encoding="UTF-8",
+    )
+
+    generate_schema_documentation_from_paths({"shared": shared, "model": model}, "model", tmp_path / "output")
+
+    output = (tmp_path / "output/visible.md").read_text(encoding="UTF-8")
+    assert "visible: <dict>" in output
+    assert "hidden" not in output
 
 
 def test_regenerate_python_model_fixture() -> None:

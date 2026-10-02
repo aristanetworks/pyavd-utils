@@ -3,10 +3,13 @@
 // that can be found in the LICENSE file.
 
 use std::collections::HashMap;
+use std::collections::HashSet;
+use std::path::Path;
 use std::path::PathBuf;
 
 use avdschema::Load as _;
 use avdschema::StoreSource;
+use avdschema::generate_markdown_documentation;
 use avdschema::generate_python_models;
 use avdschema::generate_python_models_projection;
 use pyo3::PyResult;
@@ -65,6 +68,34 @@ pub(crate) mod _schema_generation {
         )
     }
 
+    #[pyfunction]
+    pub(crate) fn generate_schema_documentation(
+        source: PathBuf,
+        schema_name: &str,
+        destination: PathBuf,
+    ) -> PyResult<()> {
+        let store = StoreSource::from_file(Some(&source)).map_err(|err| {
+            PyRuntimeError::new_err(format!(
+                "Error while loading the Schema Store from file: {err}"
+            ))
+        })?;
+        generate_documentation(&store, schema_name, &destination)
+    }
+
+    #[pyfunction]
+    pub(crate) fn generate_schema_documentation_from_paths(
+        sources: HashMap<String, PathBuf>,
+        schema_name: &str,
+        destination: PathBuf,
+    ) -> PyResult<()> {
+        let store = StoreSource::new_from_paths(sources).map_err(|err| {
+            PyRuntimeError::new_err(format!(
+                "Error while loading schemas from the given paths: {err}"
+            ))
+        })?;
+        generate_documentation(&store, schema_name, &destination)
+    }
+
     fn generate(
         store: &StoreSource,
         schema_name: &str,
@@ -97,5 +128,61 @@ pub(crate) mod _schema_generation {
                 destination.display()
             ))
         })
+    }
+
+    fn generate_documentation(
+        store: &StoreSource,
+        schema_name: &str,
+        destination: &Path,
+    ) -> PyResult<()> {
+        let generated = generate_markdown_documentation(store, schema_name).map_err(|err| {
+            PyRuntimeError::new_err(format!(
+                "Error while generating schema documentation: {err}"
+            ))
+        })?;
+        std::fs::create_dir_all(destination).map_err(|err| {
+            PyRuntimeError::new_err(format!(
+                "Error while creating schema documentation directory '{}': {err}",
+                destination.display()
+            ))
+        })?;
+        let expected_files = generated
+            .iter()
+            .map(|(table, _)| format!("{table}.md"))
+            .collect::<HashSet<_>>();
+        for entry in std::fs::read_dir(destination).map_err(|err| {
+            PyRuntimeError::new_err(format!(
+                "Error while reading schema documentation directory '{}': {err}",
+                destination.display()
+            ))
+        })? {
+            let entry = entry.map_err(|err| {
+                PyRuntimeError::new_err(format!(
+                    "Error while reading an entry in schema documentation directory '{}': {err}",
+                    destination.display()
+                ))
+            })?;
+            let path = entry.path();
+            if path.extension().is_some_and(|extension| extension == "md")
+                && !expected_files.contains(&entry.file_name().to_string_lossy().into_owned())
+            {
+                std::fs::remove_file(&path).map_err(|err| {
+                    PyRuntimeError::new_err(format!(
+                        "Error while removing obsolete schema documentation file '{}': {err}",
+                        path.display()
+                    ))
+                })?;
+            }
+        }
+        for (table, contents) in generated {
+            let path = destination.join(format!("{table}.md"));
+            std::fs::write(&path, contents).map_err(|err| {
+                PyRuntimeError::new_err(format!(
+                    "Error while writing generated schema documentation to '{}': {err}",
+                    path.display()
+                ))
+            })?;
+        }
+        Ok(())
     }
 }

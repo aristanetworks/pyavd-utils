@@ -7,7 +7,14 @@ from __future__ import annotations
 
 from ._bindings import _schema_generation  # pyright: ignore[reportMissingModuleSource]
 
+generate_schema_documentation = _schema_generation.generate_schema_documentation
+generate_schema_documentation_from_paths = _schema_generation.generate_schema_documentation_from_paths
 generate_python_schema_models = _schema_generation.generate_python_schema_models
 generate_python_schema_models_from_paths = _schema_generation.generate_python_schema_models_from_paths
 
-__all__ = ["generate_python_schema_models", "generate_python_schema_models_from_paths"]
+__all__ = [
+    "generate_python_schema_models",
+    "generate_python_schema_models_from_paths",
+    "generate_schema_documentation",
+    "generate_schema_documentation_from_paths",
+]

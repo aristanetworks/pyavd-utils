@@ -1,1 +1,2 @@
 *.py.expected text eol=lf
+tests/schema_generation/artifacts/schema_documentation_fixture.expected/*.md text eol=lf
