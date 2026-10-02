@@ -29,7 +29,9 @@ use rkyv::rancor::Error as RkyvError;
 use serde_json::Value;
 
 use crate::StoreSource;
+use crate::any::SourceLayer;
 use crate::any::SourceSchema;
+use crate::any::SourceType;
 use crate::base::Deprecation;
 use crate::resolve::resolve_ref::resolve_ref;
 use crate::str::Format;
@@ -494,8 +496,8 @@ struct Compiler<'a> {
     source: &'a StoreSource,
     output: CompiledStore,
     interned: HashMap<NodeKey, SchemaId>,
-    memoized_layers: HashMap<Vec<*const SourceSchema>, SchemaId>,
-    compiling_layers: HashMap<Vec<*const SourceSchema>, Vec<String>>,
+    memoized_layers: HashMap<Vec<*const ()>, SchemaId>,
+    compiling_layers: HashMap<Vec<*const ()>, Vec<String>>,
 }
 
 impl<'a> Compiler<'a> {
@@ -519,7 +521,7 @@ impl<'a> Compiler<'a> {
                     reference: format!("{name}#"),
                     error: error.into(),
                 })?;
-            let id = self.compile_layers(&[root], &[name.to_owned()])?;
+            let id = self.compile_layers(&[SourceLayer::root(root)], &[name.to_owned()])?;
             self.output.roots.insert(name.to_owned(), id);
         }
         Ok(self.output)
@@ -534,20 +536,20 @@ impl<'a> Compiler<'a> {
                 reference: format!("{schema_name}#"),
                 error: error.into(),
             })?;
-        let id = self.compile_layers(&[root], &[schema_name.to_owned()])?;
+        let id = self.compile_layers(&[SourceLayer::root(root)], &[schema_name.to_owned()])?;
         self.output.roots.insert(schema_name.to_owned(), id);
         Ok(self.output)
     }
 
     fn compile_layers(
         &mut self,
-        declared: &[&'a SourceSchema],
+        declared: &[SourceLayer<'a>],
         schema_path: &[String],
     ) -> Result<SchemaId, CompileError> {
         let layers = self.expand_layers(declared, schema_path)?;
         let memo_key = layers
             .iter()
-            .map(|schema| std::ptr::from_ref(*schema))
+            .map(|schema| schema.identity())
             .collect::<Vec<_>>();
         if let Some(id) = self.memoized_layers.get(&memo_key) {
             return Ok(*id);
@@ -561,16 +563,12 @@ impl<'a> Compiler<'a> {
         self.compiling_layers
             .insert(memo_key.clone(), schema_path.to_vec());
 
-        let node_result = match layers.first().copied() {
-            Some(SourceSchema::Bool(_)) => {
-                Self::compile_bool(&layers, schema_path).map(NodeKey::Bool)
-            }
-            Some(SourceSchema::Int(_)) => Self::compile_int(&layers, schema_path).map(NodeKey::Int),
-            Some(SourceSchema::Str(_)) => Self::compile_str(&layers, schema_path).map(NodeKey::Str),
-            Some(SourceSchema::List(_)) => {
-                self.compile_list(&layers, schema_path).map(NodeKey::List)
-            }
-            Some(SourceSchema::Dict(_)) => self
+        let node_result = match layers.first().map(|layer| layer.schema_type()) {
+            Some(SourceType::Bool) => Self::compile_bool(&layers, schema_path).map(NodeKey::Bool),
+            Some(SourceType::Int) => Self::compile_int(&layers, schema_path).map(NodeKey::Int),
+            Some(SourceType::Str) => Self::compile_str(&layers, schema_path).map(NodeKey::Str),
+            Some(SourceType::List) => self.compile_list(&layers, schema_path).map(NodeKey::List),
+            Some(SourceType::Dict) => self
                 .compile_dict(declared, &layers, schema_path)
                 .map(NodeKey::Dict),
             None => {
@@ -591,9 +589,9 @@ impl<'a> Compiler<'a> {
 
     fn expand_layers(
         &self,
-        declared: &[&'a SourceSchema],
+        declared: &[SourceLayer<'a>],
         schema_path: &[String],
-    ) -> Result<Vec<&'a SourceSchema>, CompileError> {
+    ) -> Result<Vec<SourceLayer<'a>>, CompileError> {
         let Some(first_declared) = declared.first().copied() else {
             return Err(SchemaDiagnostic::TypeMismatch {
                 expected: "schema",
@@ -606,16 +604,16 @@ impl<'a> Compiler<'a> {
             let mut layer = *declared_layer;
             let mut chain = Vec::new();
             loop {
-                if !same_type(first_declared, layer) {
+                if first_declared.schema_type() != layer.schema_type() {
                     return Err(SchemaDiagnostic::TypeMismatch {
-                        expected: schema_type(first_declared),
-                        found: schema_type(layer),
+                        expected: first_declared.schema_type().as_str(),
+                        found: layer.schema_type().as_str(),
                     }
                     .into());
                 }
-                chain.push(std::ptr::from_ref(layer));
+                chain.push(layer.identity());
                 result.push(layer);
-                let Some(reference) = schema_ref(layer) else {
+                let Some(reference) = layer.schema_ref() else {
                     break;
                 };
                 layer = resolve_ref(reference, self.source).map_err(|error| {
@@ -625,7 +623,7 @@ impl<'a> Compiler<'a> {
                         error,
                     }
                 })?;
-                if chain.contains(&std::ptr::from_ref(layer)) {
+                if chain.contains(&layer.identity()) {
                     return Err(SchemaDiagnostic::ReferenceCycle {
                         schema_path: schema_path.to_vec(),
                         reference: reference.to_owned(),
@@ -638,7 +636,7 @@ impl<'a> Compiler<'a> {
     }
 
     fn compile_bool(
-        layers: &[&SourceSchema],
+        layers: &[SourceLayer<'_>],
         schema_path: &[String],
     ) -> Result<BoolSchema, CompileError> {
         Ok(BoolSchema {
@@ -647,11 +645,11 @@ impl<'a> Compiler<'a> {
     }
 
     fn compile_int(
-        layers: &[&SourceSchema],
+        layers: &[SourceLayer<'_>],
         schema_path: &[String],
     ) -> Result<IntSchema, CompileError> {
-        let schemas = layers.iter().filter_map(|schema| match schema {
-            SourceSchema::Int(schema) => Some(schema),
+        let schemas = layers.iter().filter_map(|layer| match layer {
+            SourceLayer::Schema(SourceSchema::Int(schema)) => Some(schema),
             _ => None,
         });
         Ok(IntSchema {
@@ -671,11 +669,11 @@ impl<'a> Compiler<'a> {
     }
 
     fn compile_str(
-        layers: &[&SourceSchema],
+        layers: &[SourceLayer<'_>],
         schema_path: &[String],
     ) -> Result<StrSchema, CompileError> {
-        let schemas = layers.iter().filter_map(|schema| match schema {
-            SourceSchema::Str(schema) => Some(schema),
+        let schemas = layers.iter().filter_map(|layer| match layer {
+            SourceLayer::Schema(SourceSchema::Str(schema)) => Some(schema),
             _ => None,
         });
         Ok(StrSchema {
@@ -710,11 +708,11 @@ impl<'a> Compiler<'a> {
 
     fn compile_list(
         &mut self,
-        layers: &[&'a SourceSchema],
+        layers: &[SourceLayer<'a>],
         schema_path: &[String],
     ) -> Result<ListSchema, CompileError> {
-        let schemas = layers.iter().filter_map(|schema| match schema {
-            SourceSchema::List(schema) => Some(schema),
+        let schemas = layers.iter().filter_map(|layer| match layer {
+            SourceLayer::Schema(SourceSchema::List(schema)) => Some(schema),
             _ => None,
         });
         let item_layers = schemas
@@ -724,7 +722,14 @@ impl<'a> Compiler<'a> {
         Ok(ListSchema {
             common: common(layers, schema_path)?,
             items: (!item_layers.is_empty())
-                .then(|| self.compile_layers(&item_layers, &schema_path_with(schema_path, "items")))
+                .then(|| {
+                    let item_layers = item_layers
+                        .iter()
+                        .copied()
+                        .map(SourceLayer::schema)
+                        .collect::<Vec<_>>();
+                    self.compile_layers(&item_layers, &schema_path_with(schema_path, "items"))
+                })
                 .transpose()?,
             min_length: schemas.clone().find_map(|schema| schema.min_length),
             max_length: schemas.clone().find_map(|schema| schema.max_length),
@@ -743,39 +748,30 @@ impl<'a> Compiler<'a> {
 
     fn compile_dict(
         &mut self,
-        declared: &[&'a SourceSchema],
-        layers: &[&'a SourceSchema],
+        declared: &[SourceLayer<'a>],
+        layers: &[SourceLayer<'a>],
         schema_path: &[String],
     ) -> Result<DictSchema, CompileError> {
-        let schemas = layers.iter().filter_map(|schema| match schema {
-            SourceSchema::Dict(schema) => Some(schema),
-            _ => None,
-        });
         let keys = self.compile_dict_children(
-            schemas.clone().filter_map(|schema| schema.keys.as_ref()),
+            layers.iter().filter_map(|layer| dict_keys(*layer)),
             &schema_path_with(schema_path, "keys"),
         )?;
         let dynamic_keys = self.compile_dict_children(
-            schemas
-                .clone()
-                .filter_map(|schema| schema.dynamic_keys.as_ref()),
+            layers.iter().filter_map(|layer| dict_dynamic_keys(*layer)),
             &schema_path_with(schema_path, "dynamic_keys"),
         )?;
         let default_dynamic_keys = default_dynamic_keys(&dynamic_keys, self, layers, schema_path)?;
-        let begin_relaxed_validation = matches!(
-            declared.first(),
-            Some(SourceSchema::Dict(schema))
-                if schema.base.schema_ref.is_some()
-                    && schema.relaxed_validation.unwrap_or_default()
-        );
+        let begin_relaxed_validation = declared.first().is_some_and(|layer| {
+            layer.schema_ref().is_some() && dict_relaxed_validation(*layer).unwrap_or_default()
+        });
         Ok(DictSchema {
             common: common(layers, schema_path)?,
             keys,
             dynamic_keys,
             default_dynamic_keys,
-            allow_other_keys: schemas
-                .clone()
-                .find_map(|schema| schema.allow_other_keys)
+            allow_other_keys: layers
+                .iter()
+                .find_map(|layer| dict_allow_other_keys(*layer))
                 .unwrap_or_default(),
             begin_relaxed_validation,
         })
@@ -795,6 +791,11 @@ impl<'a> Compiler<'a> {
         child_layers
             .into_iter()
             .map(|(name, layers)| {
+                let layers = layers
+                    .iter()
+                    .copied()
+                    .map(SourceLayer::schema)
+                    .collect::<Vec<_>>();
                 self.compile_layers(&layers, &schema_path_with(schema_path, name))
                     .map(|id| (name.to_owned(), id))
             })
@@ -874,80 +875,75 @@ fn schema_path_with(schema_path: &[String], segment: &str) -> Vec<String> {
     child_path
 }
 
-fn common(layers: &[&SourceSchema], schema_path: &[String]) -> Result<Common, CompileError> {
+fn common(layers: &[SourceLayer<'_>], schema_path: &[String]) -> Result<Common, CompileError> {
     Ok(Common {
         required: layers
             .iter()
-            .find_map(|schema| match schema {
-                SourceSchema::Bool(schema) => schema.base.required,
-                SourceSchema::Int(schema) => schema.base.required,
-                SourceSchema::Str(schema) => schema.base.required,
-                SourceSchema::List(schema) => schema.base.required,
-                SourceSchema::Dict(schema) => schema.base.required,
+            .find_map(|layer| match layer {
+                SourceLayer::Root(schema) => schema.base.required,
+                SourceLayer::Schema(SourceSchema::Bool(schema)) => schema.base.required,
+                SourceLayer::Schema(SourceSchema::Int(schema)) => schema.base.required,
+                SourceLayer::Schema(SourceSchema::Str(schema)) => schema.base.required,
+                SourceLayer::Schema(SourceSchema::List(schema)) => schema.base.required,
+                SourceLayer::Schema(SourceSchema::Dict(schema)) => schema.base.required,
             })
             .unwrap_or_default(),
         default: layers
             .iter()
-            .find_map(|schema| schema_default(schema))
+            .find_map(|layer| schema_default(*layer))
             .as_ref()
             .map(|value| compile_default_value(value, schema_path, &[]))
             .transpose()?,
-        display_name: layers.iter().find_map(|schema| match schema {
-            SourceSchema::Bool(schema) => schema.base.display_name.clone(),
-            SourceSchema::Int(schema) => schema.base.display_name.clone(),
-            SourceSchema::Str(schema) => schema.base.display_name.clone(),
-            SourceSchema::List(schema) => schema.base.display_name.clone(),
-            SourceSchema::Dict(schema) => schema.base.display_name.clone(),
+        display_name: layers.iter().find_map(|layer| match layer {
+            SourceLayer::Root(schema) => schema.base.display_name.clone(),
+            SourceLayer::Schema(SourceSchema::Bool(schema)) => schema.base.display_name.clone(),
+            SourceLayer::Schema(SourceSchema::Int(schema)) => schema.base.display_name.clone(),
+            SourceLayer::Schema(SourceSchema::Str(schema)) => schema.base.display_name.clone(),
+            SourceLayer::Schema(SourceSchema::List(schema)) => schema.base.display_name.clone(),
+            SourceLayer::Schema(SourceSchema::Dict(schema)) => schema.base.display_name.clone(),
         }),
-        description: layers.iter().find_map(|schema| match schema {
-            SourceSchema::Bool(schema) => schema.base.description.clone(),
-            SourceSchema::Int(schema) => schema.base.description.clone(),
-            SourceSchema::Str(schema) => schema.base.description.clone(),
-            SourceSchema::List(schema) => schema.base.description.clone(),
-            SourceSchema::Dict(schema) => schema.base.description.clone(),
+        description: layers.iter().find_map(|layer| match layer {
+            SourceLayer::Root(schema) => schema.base.description.clone(),
+            SourceLayer::Schema(SourceSchema::Bool(schema)) => schema.base.description.clone(),
+            SourceLayer::Schema(SourceSchema::Int(schema)) => schema.base.description.clone(),
+            SourceLayer::Schema(SourceSchema::Str(schema)) => schema.base.description.clone(),
+            SourceLayer::Schema(SourceSchema::List(schema)) => schema.base.description.clone(),
+            SourceLayer::Schema(SourceSchema::Dict(schema)) => schema.base.description.clone(),
         }),
         deprecation: layers
             .iter()
-            .find_map(|schema| schema_deprecation(schema))
+            .find_map(|layer| schema_deprecation(*layer))
             .map(CompiledDeprecation::from),
-        documentation_options: layers.iter().find_map(|schema| match schema {
-            SourceSchema::Bool(schema) => {
-                schema
-                    .documentation_options
-                    .as_ref()
-                    .map(|options| CompiledDocumentationOptions {
-                        table: options.table.clone(),
-                        hide_keys: false,
-                    })
-            }
-            SourceSchema::Int(schema) => {
-                schema
-                    .documentation_options
-                    .as_ref()
-                    .map(|options| CompiledDocumentationOptions {
-                        table: options.table.clone(),
-                        hide_keys: false,
-                    })
-            }
-            SourceSchema::Str(schema) => {
-                schema
-                    .documentation_options
-                    .as_ref()
-                    .map(|options| CompiledDocumentationOptions {
-                        table: options.table.clone(),
-                        hide_keys: false,
-                    })
-            }
-            SourceSchema::List(schema) => {
-                schema
-                    .documentation_options
-                    .as_ref()
-                    .map(|options| CompiledDocumentationOptions {
-                        table: options.table.clone(),
-                        hide_keys: false,
-                    })
-            }
-            SourceSchema::Dict(schema) => {
+        documentation_options: layers.iter().find_map(|layer| match layer {
+            SourceLayer::Schema(SourceSchema::Bool(schema)) => schema
+                .documentation_options
+                .as_ref()
+                .map(|options| CompiledDocumentationOptions {
+                    table: options.table.clone(),
+                    hide_keys: false,
+                }),
+            SourceLayer::Schema(SourceSchema::Int(schema)) => schema
+                .documentation_options
+                .as_ref()
+                .map(|options| CompiledDocumentationOptions {
+                    table: options.table.clone(),
+                    hide_keys: false,
+                }),
+            SourceLayer::Schema(SourceSchema::Str(schema)) => schema
+                .documentation_options
+                .as_ref()
+                .map(|options| CompiledDocumentationOptions {
+                    table: options.table.clone(),
+                    hide_keys: false,
+                }),
+            SourceLayer::Schema(SourceSchema::List(schema)) => schema
+                .documentation_options
+                .as_ref()
+                .map(|options| CompiledDocumentationOptions {
+                    table: options.table.clone(),
+                    hide_keys: false,
+                }),
+            SourceLayer::Root(schema) => {
                 schema
                     .documentation_options
                     .as_ref()
@@ -956,6 +952,13 @@ fn common(layers: &[&SourceSchema], schema_path: &[String]) -> Result<Common, Co
                         hide_keys: options.hide_keys.unwrap_or_default(),
                     })
             }
+            SourceLayer::Schema(SourceSchema::Dict(schema)) => schema
+                .documentation_options
+                .as_ref()
+                .map(|options| CompiledDocumentationOptions {
+                    table: options.table.clone(),
+                    hide_keys: options.hide_keys.unwrap_or_default(),
+                }),
         }),
     })
 }
@@ -1022,7 +1025,7 @@ impl From<Format> for CompiledStringFormat {
 fn default_dynamic_keys(
     dynamic_keys: &IndexMap<String, SchemaId>,
     compiler: &Compiler<'_>,
-    layers: &[&SourceSchema],
+    layers: &[SourceLayer<'_>],
     schema_path: &[String],
 ) -> Result<IndexMap<String, Vec<String>>, CompileError> {
     let mut result = IndexMap::new();
@@ -1035,10 +1038,8 @@ fn default_dynamic_keys(
         };
         let child_layers = layers
             .iter()
-            .filter_map(|schema| match schema {
-                SourceSchema::Dict(schema) => schema.keys.as_ref()?.get(root_key),
-                _ => None,
-            })
+            .filter_map(|layer| dict_keys(*layer)?.get(root_key))
+            .map(SourceLayer::schema)
             .collect::<Vec<_>>();
         if child_layers.is_empty() {
             continue;
@@ -1047,7 +1048,7 @@ fn default_dynamic_keys(
         let expanded_child_layers = compiler.expand_layers(&child_layers, &child_schema_path)?;
         let Some(default) = expanded_child_layers
             .iter()
-            .find_map(|schema| schema_default(schema))
+            .find_map(|layer| schema_default(*layer))
         else {
             continue;
         };
@@ -1103,23 +1104,24 @@ fn values_at_path<'a>(
     )
 }
 
-fn schema_ref(schema: &SourceSchema) -> Option<&str> {
-    match schema {
-        SourceSchema::Bool(schema) => schema.base.schema_ref.as_deref(),
-        SourceSchema::Int(schema) => schema.base.schema_ref.as_deref(),
-        SourceSchema::Str(schema) => schema.base.schema_ref.as_deref(),
-        SourceSchema::List(schema) => schema.base.schema_ref.as_deref(),
-        SourceSchema::Dict(schema) => schema.base.schema_ref.as_deref(),
-    }
-}
-
-fn schema_default(schema: &SourceSchema) -> Option<Value> {
-    match schema {
-        SourceSchema::Bool(schema) => schema.base.default.map(Value::Bool),
-        SourceSchema::Int(schema) => schema.base.default.map(|value| Value::Number(value.into())),
-        SourceSchema::Str(schema) => schema.base.default.clone().map(Value::String),
-        SourceSchema::List(schema) => schema.base.default.clone().map(Value::Array),
-        SourceSchema::Dict(schema) => schema
+fn schema_default(layer: SourceLayer<'_>) -> Option<Value> {
+    match layer {
+        SourceLayer::Root(schema) => schema
+            .base
+            .default
+            .clone()
+            .map(|value| Value::Object(value.into_iter().collect())),
+        SourceLayer::Schema(SourceSchema::Bool(schema)) => schema.base.default.map(Value::Bool),
+        SourceLayer::Schema(SourceSchema::Int(schema)) => {
+            schema.base.default.map(|value| Value::Number(value.into()))
+        }
+        SourceLayer::Schema(SourceSchema::Str(schema)) => {
+            schema.base.default.clone().map(Value::String)
+        }
+        SourceLayer::Schema(SourceSchema::List(schema)) => {
+            schema.base.default.clone().map(Value::Array)
+        }
+        SourceLayer::Schema(SourceSchema::Dict(schema)) => schema
             .base
             .default
             .clone()
@@ -1127,34 +1129,45 @@ fn schema_default(schema: &SourceSchema) -> Option<Value> {
     }
 }
 
-fn schema_deprecation(schema: &SourceSchema) -> Option<&Deprecation> {
-    match schema {
-        SourceSchema::Bool(schema) => schema.base.deprecation.as_ref(),
-        SourceSchema::Int(schema) => schema.base.deprecation.as_ref(),
-        SourceSchema::Str(schema) => schema.base.deprecation.as_ref(),
-        SourceSchema::List(schema) => schema.base.deprecation.as_ref(),
-        SourceSchema::Dict(schema) => schema.base.deprecation.as_ref(),
+fn schema_deprecation(layer: SourceLayer<'_>) -> Option<&Deprecation> {
+    match layer {
+        SourceLayer::Root(schema) => schema.base.deprecation.as_ref(),
+        SourceLayer::Schema(SourceSchema::Bool(schema)) => schema.base.deprecation.as_ref(),
+        SourceLayer::Schema(SourceSchema::Int(schema)) => schema.base.deprecation.as_ref(),
+        SourceLayer::Schema(SourceSchema::Str(schema)) => schema.base.deprecation.as_ref(),
+        SourceLayer::Schema(SourceSchema::List(schema)) => schema.base.deprecation.as_ref(),
+        SourceLayer::Schema(SourceSchema::Dict(schema)) => schema.base.deprecation.as_ref(),
     }
 }
 
-fn same_type(left: &SourceSchema, right: &SourceSchema) -> bool {
-    matches!(
-        (left, right),
-        (SourceSchema::Bool(_), SourceSchema::Bool(_))
-            | (SourceSchema::Int(_), SourceSchema::Int(_))
-            | (SourceSchema::Str(_), SourceSchema::Str(_))
-            | (SourceSchema::List(_), SourceSchema::List(_))
-            | (SourceSchema::Dict(_), SourceSchema::Dict(_))
-    )
+fn dict_keys(layer: SourceLayer<'_>) -> Option<&ordermap::OrderMap<String, SourceSchema>> {
+    match layer {
+        SourceLayer::Root(schema) => schema.keys.as_ref(),
+        SourceLayer::Schema(SourceSchema::Dict(schema)) => schema.keys.as_ref(),
+        SourceLayer::Schema(_) => None,
+    }
 }
 
-fn schema_type(schema: &SourceSchema) -> &'static str {
-    match schema {
-        SourceSchema::Bool(_) => "bool",
-        SourceSchema::Int(_) => "int",
-        SourceSchema::Str(_) => "str",
-        SourceSchema::List(_) => "list",
-        SourceSchema::Dict(_) => "dict",
+fn dict_dynamic_keys(layer: SourceLayer<'_>) -> Option<&ordermap::OrderMap<String, SourceSchema>> {
+    match layer {
+        SourceLayer::Root(schema) => schema.dynamic_keys.as_ref(),
+        SourceLayer::Schema(_) => None,
+    }
+}
+
+fn dict_allow_other_keys(layer: SourceLayer<'_>) -> Option<bool> {
+    match layer {
+        SourceLayer::Root(schema) => schema.allow_other_keys,
+        SourceLayer::Schema(SourceSchema::Dict(schema)) => schema.allow_other_keys,
+        SourceLayer::Schema(_) => None,
+    }
+}
+
+fn dict_relaxed_validation(layer: SourceLayer<'_>) -> Option<bool> {
+    match layer {
+        SourceLayer::Root(schema) => schema.relaxed_validation,
+        SourceLayer::Schema(SourceSchema::Dict(schema)) => schema.relaxed_validation,
+        SourceLayer::Schema(_) => None,
     }
 }
 
@@ -1228,6 +1241,37 @@ mod tests {
     }
 
     #[test]
+    fn whole_root_reference_contributes_a_dictionary_layer() {
+        let source = StoreSource::from_json(
+            r#"{
+                "base": {
+                    "type": "dict",
+                    "keys": {"static_value": {"type": "str"}},
+                    "dynamic_keys": {"names": {"type": "int"}}
+                },
+                "test": {
+                    "type": "dict",
+                    "keys": {"nested": {"type": "dict", "$ref": "base#"}}
+                }
+            }"#,
+        )
+        .unwrap();
+
+        let compiled = CompiledStore::compile(&source).unwrap();
+        let Some(SchemaId::Dict(test_index)) = compiled.roots.get("test") else {
+            panic!("test root should be a dictionary")
+        };
+        let test = &compiled.dicts[usize::try_from(*test_index).unwrap()];
+        let Some(SchemaId::Dict(nested_index)) = test.keys.get("nested") else {
+            panic!("nested key should be a dictionary")
+        };
+        let nested = &compiled.dicts[usize::try_from(*nested_index).unwrap()];
+
+        assert!(nested.keys.contains_key("static_value"));
+        assert!(nested.dynamic_keys.contains_key("names"));
+    }
+
+    #[test]
     fn distinct_equivalent_nodes_share_an_interned_table_entry() {
         let source = StoreSource::from_json(
             r#"{
@@ -1259,7 +1303,7 @@ mod tests {
     #[test]
     fn schema_compilation_errors_expose_typed_diagnostics() {
         let invalid_reference =
-            StoreSource::from_json(r#"{"test":{"type":"str","$ref":"missing#"}}"#).unwrap();
+            StoreSource::from_json(r#"{"test":{"type":"dict","$ref":"missing#"}}"#).unwrap();
         let CompileError::InvalidSchema(invalid_reference_diagnostics) =
             CompiledStore::compile(&invalid_reference).unwrap_err()
         else {
@@ -1282,7 +1326,13 @@ mod tests {
         );
 
         let type_mismatch = StoreSource::from_json(
-            r#"{"base":{"type":"bool"},"test":{"type":"str","$ref":"base#"}}"#,
+            r#"{
+                "base": {"type":"dict"},
+                "test": {
+                    "type":"dict",
+                    "keys": {"value": {"type":"str","$ref":"base#"}}
+                }
+            }"#,
         )
         .unwrap();
         let CompileError::InvalidSchema(type_mismatch_diagnostics) =
@@ -1294,16 +1344,16 @@ mod tests {
             type_mismatch_diagnostics.iter().next(),
             Some(SchemaDiagnostic::TypeMismatch {
                 expected: "str",
-                found: "bool"
+                found: "dict"
             })
         ));
         assert_eq!(
             type_mismatch_diagnostics.to_string(),
-            "Schema layering combines incompatible types: expected str, found bool"
+            "Schema layering combines incompatible types: expected str, found dict"
         );
 
         let reference_cycle = StoreSource::from_json(
-            r#"{"a":{"type":"bool","$ref":"b#"},"b":{"type":"bool","$ref":"a#"}}"#,
+            r#"{"a":{"type":"dict","$ref":"b#"},"b":{"type":"dict","$ref":"a#"}}"#,
         )
         .unwrap();
         let CompileError::InvalidSchema(reference_cycle_diagnostics) =

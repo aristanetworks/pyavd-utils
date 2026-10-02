@@ -11,7 +11,7 @@ workspace = true
 pyo3-build-config = { workspace = true }
 
 [dependencies]
-avdschema = { path = "../avdschema", default-features = false, features = ["generation"] }
+avdschema = { path = "../avdschema", default-features = false, features = ["generation", "metaschema"] }
 log = { workspace = true }
 pyo3 = { workspace = true, features = ["abi3-py310"] }
 pyo3-log = { workspace = true }

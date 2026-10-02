@@ -8,6 +8,7 @@ use avdschema::StoreSource;
 use avdschema::any::SourceSchema;
 use avdschema::boolean::SourceBool;
 use avdschema::dict::SourceDict;
+use avdschema::dict::SourceRootDict;
 use avdschema::int::SourceInt;
 use avdschema::list::SourceList;
 use avdschema::str::SourceStr;
@@ -20,6 +21,7 @@ use crate::validatable::ValidatableValue;
 use crate::walker::Validator;
 
 const TEST_SCHEMA: &str = "__validation_test__";
+const TEST_KEY: &str = "value";
 
 pub(crate) trait TestValidate {
     fn validate<V: ValidatableValue>(&self, value: &V, context: &mut Context)
@@ -32,7 +34,7 @@ impl TestValidate for SourceSchema {
         value: &V,
         context: &mut Context,
     ) -> Option<V::Coerced> {
-        validate_test_schema(self.clone(), value, context)
+        validate_test_schema(self, value, context)
     }
 }
 
@@ -44,7 +46,7 @@ macro_rules! impl_test_validate {
                 value: &V,
                 context: &mut Context,
             ) -> Option<V::Coerced> {
-                validate_test_schema(SourceSchema::$variant(self.clone()), value, context)
+                validate_test_schema(&SourceSchema::$variant(self.clone()), value, context)
             }
         }
     };
@@ -56,8 +58,21 @@ impl_test_validate!(SourceStr, Str);
 impl_test_validate!(SourceList, List);
 impl_test_validate!(SourceDict, Dict);
 
+impl TestValidate for SourceRootDict {
+    fn validate<V: ValidatableValue>(
+        &self,
+        value: &V,
+        context: &mut Context,
+    ) -> Option<V::Coerced> {
+        let mut root = serialize_test_root(self);
+        root.insert("type".to_owned(), json!("dict"));
+        let archive = compile_test_root(serde_json::Value::Object(root));
+        validate_compiled_test_schema(&archive, get_compiled_test_root(&archive), value, context)
+    }
+}
+
 fn validate_test_schema<V: ValidatableValue>(
-    schema: SourceSchema,
+    schema: &SourceSchema,
     value: &V,
     context: &mut Context,
 ) -> Option<V::Coerced> {
@@ -65,19 +80,41 @@ fn validate_test_schema<V: ValidatableValue>(
 }
 
 pub(crate) fn validate_test_schema_with_state<V: ValidatableValue>(
-    schema: SourceSchema,
+    schema: &SourceSchema,
     value: &V,
     context: &mut Context,
     state: &mut ValidationState,
 ) -> Option<V::Coerced> {
     let archive = compile_test_schema(schema);
     let compiled_schema = get_compiled_test_schema(&archive);
-    let mut archived_context = Context::new(Some(&context.configuration));
-    let coerced = Validator::new(&archive, &mut archived_context).validate_with_state(
-        compiled_schema,
+    validate_compiled_test_schema_with_state(&archive, compiled_schema, value, context, state)
+}
+
+fn validate_compiled_test_schema<V: ValidatableValue>(
+    archive: &Store,
+    schema: SchemaView<'_>,
+    value: &V,
+    context: &mut Context,
+) -> Option<V::Coerced> {
+    validate_compiled_test_schema_with_state(
+        archive,
+        schema,
         value,
-        state,
-    );
+        context,
+        &mut ValidationState::default(),
+    )
+}
+
+fn validate_compiled_test_schema_with_state<V: ValidatableValue>(
+    archive: &Store,
+    schema: SchemaView<'_>,
+    value: &V,
+    context: &mut Context,
+    state: &mut ValidationState,
+) -> Option<V::Coerced> {
+    let mut archived_context = Context::new(Some(&context.configuration));
+    let coerced =
+        Validator::new(archive, &mut archived_context).validate_with_state(schema, value, state);
     context.result.errors.extend(archived_context.result.errors);
     context
         .result
@@ -87,25 +124,46 @@ pub(crate) fn validate_test_schema_with_state<V: ValidatableValue>(
     coerced
 }
 
-fn compile_test_schema(schema: SourceSchema) -> Store {
+fn serialize_test_root(root: &SourceRootDict) -> serde_json::Map<String, serde_json::Value> {
+    serde_json::to_value(root)
+        .expect("root test schema should serialize")
+        .as_object()
+        .expect("root test schema should serialize as an object")
+        .clone()
+}
+
+fn compile_test_schema(schema: &SourceSchema) -> Store {
+    compile_test_root(json!({
+        "type": "dict",
+        "keys": {(TEST_KEY): schema},
+    }))
+}
+
+fn compile_test_root(root: serde_json::Value) -> Store {
     let mut raw_store_json = serde_json::to_value(get_test_store())
         .expect("test schema store should serialize")
         .as_object()
         .expect("test schema store should serialize as an object")
         .clone();
-    raw_store_json.insert(
-        TEST_SCHEMA.to_owned(),
-        serde_json::to_value(schema).expect("test schema should serialize"),
-    );
+    raw_store_json.insert(TEST_SCHEMA.to_owned(), root);
     let raw_store = serde_json::from_value(serde_json::Value::Object(raw_store_json))
         .expect("test schema store should deserialize");
     Store::compile(&raw_store).expect("test schema should compile")
 }
 
 fn get_compiled_test_schema(archive: &Store) -> SchemaView<'_> {
+    let root = get_compiled_test_root(archive);
+    let SchemaView::Dict(root) = root else {
+        panic!("compiled test root should be a dictionary")
+    };
+    root.key(TEST_KEY)
+        .expect("compiled test schema should be present under the root")
+}
+
+fn get_compiled_test_root(archive: &Store) -> SchemaView<'_> {
     archive
         .get(TEST_SCHEMA)
-        .expect("compiled test schema should be present")
+        .expect("compiled test root should be present")
 }
 
 pub(crate) fn get_test_store() -> StoreSource {

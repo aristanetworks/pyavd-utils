@@ -22,12 +22,14 @@ use indexmap::IndexMap;
 use crate::CompileError;
 use crate::SchemaDiagnostic;
 use crate::StoreSource;
+use crate::any::SourceLayer;
 use crate::any::SourceSchema;
 use crate::compiled::Common;
 use crate::compiled::CompiledStore;
 use crate::compiled::DictSchema;
 use crate::compiled::ListSchema;
 use crate::compiled::SchemaId;
+use crate::dict::SourceRootDict;
 use crate::resolve::resolve_ref::resolve_ref;
 
 /// Identifies how an occurrence is connected to its parent schema.
@@ -142,7 +144,7 @@ pub(crate) struct SchemaTraverser<'a> {
     source: &'a StoreSource,
     compiled: CompiledStore,
     schema_name: &'a str,
-    root_source: &'a SourceSchema,
+    root_source: &'a SourceRootDict,
     root_id: SchemaId,
 }
 
@@ -184,7 +186,7 @@ impl<'a> SchemaTraverser<'a> {
     /// Visit the root and all descendants requested by `visitor`.
     pub(crate) fn traverse<V: SchemaVisitor>(&self, visitor: &mut V) -> Result<(), V::Error> {
         self.visit(
-            &[self.root_source],
+            &[SourceLayer::root(self.root_source)],
             self.root_id,
             vec![self.schema_name.to_owned()],
             SchemaRelation::Root,
@@ -194,7 +196,7 @@ impl<'a> SchemaTraverser<'a> {
 
     fn visit<V: SchemaVisitor>(
         &self,
-        declared_layers: &[&'a SourceSchema],
+        declared_layers: &[SourceLayer<'a>],
         schema_id: SchemaId,
         path: Vec<String>,
         relation: SchemaRelation<'_>,
@@ -205,7 +207,7 @@ impl<'a> SchemaTraverser<'a> {
             .iter()
             .copied()
             .take_while(|schema| is_pure_reference(schema))
-            .filter_map(schema_ref)
+            .filter_map(SourceLayer::schema_ref)
             .collect();
         let occurrence = SchemaOccurrence {
             compiled: &self.compiled,
@@ -223,7 +225,7 @@ impl<'a> SchemaTraverser<'a> {
 
     fn visit_children<V: SchemaVisitor>(
         &self,
-        layers: &[&'a SourceSchema],
+        layers: &[SourceLayer<'a>],
         schema_id: SchemaId,
         path: &[String],
         visitor: &mut V,
@@ -234,10 +236,11 @@ impl<'a> SchemaTraverser<'a> {
                 let list = &self.compiled.lists[index as usize];
                 let item_layers = layers
                     .iter()
-                    .filter_map(|schema| match schema {
-                        SourceSchema::List(schema) => schema.items.as_deref(),
+                    .filter_map(|layer| match layer {
+                        SourceLayer::Schema(SourceSchema::List(schema)) => schema.items.as_deref(),
                         _ => None,
                     })
+                    .map(SourceLayer::schema)
                     .collect::<Vec<_>>();
                 if let Some(item_id) = list.items
                     && !item_layers.is_empty()
@@ -291,25 +294,24 @@ impl<'a> SchemaTraverser<'a> {
 }
 
 fn dict_child_layers<'a>(
-    layers: &[&'a SourceSchema],
+    layers: &[SourceLayer<'a>],
     dynamic: bool,
-) -> IndexMap<&'a str, Vec<&'a SourceSchema>> {
+) -> IndexMap<&'a str, Vec<SourceLayer<'a>>> {
     let mut children = IndexMap::new();
-    for schema in layers {
-        let SourceSchema::Dict(schema) = schema else {
-            continue;
-        };
-        let map = if dynamic {
-            schema.dynamic_keys.as_ref()
-        } else {
-            schema.keys.as_ref()
+    for layer in layers {
+        let map = match layer {
+            SourceLayer::Root(schema) if dynamic => schema.dynamic_keys.as_ref(),
+            SourceLayer::Root(schema) => schema.keys.as_ref(),
+            SourceLayer::Schema(SourceSchema::Dict(_)) if dynamic => None,
+            SourceLayer::Schema(SourceSchema::Dict(schema)) => schema.keys.as_ref(),
+            SourceLayer::Schema(_) => None,
         };
         if let Some(map) = map {
             for (name, child) in map {
                 children
                     .entry(name.as_str())
                     .or_insert_with(Vec::new)
-                    .push(child);
+                    .push(SourceLayer::schema(child));
             }
         }
     }
@@ -318,9 +320,9 @@ fn dict_child_layers<'a>(
 
 fn expand_layers<'a>(
     store: &'a StoreSource,
-    declared_layers: &[&'a SourceSchema],
+    declared_layers: &[SourceLayer<'a>],
     path: &[String],
-) -> Result<Vec<&'a SourceSchema>, CompileError> {
+) -> Result<Vec<SourceLayer<'a>>, CompileError> {
     let Some(first) = declared_layers.first().copied() else {
         return Err(SchemaDiagnostic::StructuralCycle {
             schema_path: path.to_vec(),
@@ -332,16 +334,16 @@ fn expand_layers<'a>(
         let mut layer = *declared;
         let mut chain = Vec::new();
         loop {
-            if schema_type(first) != schema_type(layer) {
+            if first.schema_type() != layer.schema_type() {
                 return Err(SchemaDiagnostic::TypeMismatch {
-                    expected: schema_type(first),
-                    found: schema_type(layer),
+                    expected: first.schema_type().as_str(),
+                    found: layer.schema_type().as_str(),
                 }
                 .into());
             }
-            chain.push(std::ptr::from_ref(layer));
+            chain.push(layer.identity());
             result.push(layer);
-            let Some(reference) = schema_ref(layer) else {
+            let Some(reference) = layer.schema_ref() else {
                 break;
             };
             layer = resolve_ref(reference, store).map_err(|error| SchemaDiagnostic::Reference {
@@ -349,7 +351,7 @@ fn expand_layers<'a>(
                 reference: reference.to_owned(),
                 error,
             })?;
-            if chain.contains(&std::ptr::from_ref(layer)) {
+            if chain.contains(&layer.identity()) {
                 return Err(SchemaDiagnostic::ReferenceCycle {
                     schema_path: path.to_vec(),
                     reference: reference.to_owned(),
@@ -361,10 +363,19 @@ fn expand_layers<'a>(
     Ok(result)
 }
 
-fn is_pure_reference(schema: &SourceSchema) -> bool {
-    match schema {
-        SourceSchema::Bool(schema) => base_is_pure(&schema.base),
-        SourceSchema::Int(schema) => {
+fn is_pure_reference(layer: &SourceLayer<'_>) -> bool {
+    match layer {
+        SourceLayer::Root(schema) => {
+            base_is_pure(&schema.base)
+                && schema.keys.is_none()
+                && schema.dynamic_keys.is_none()
+                && schema.allow_other_keys.is_none()
+                && schema.schema_defs.is_none()
+                && schema.schema_id.is_none()
+                && schema.schema_schema.is_none()
+        }
+        SourceLayer::Schema(SourceSchema::Bool(schema)) => base_is_pure(&schema.base),
+        SourceLayer::Schema(SourceSchema::Int(schema)) => {
             base_is_pure(&schema.base)
                 && schema.min.is_none()
                 && schema.max.is_none()
@@ -372,7 +383,7 @@ fn is_pure_reference(schema: &SourceSchema) -> bool {
                 && schema.valid_values.dynamic_valid_values.is_none()
                 && schema.convert_types.convert_types.is_none()
         }
-        SourceSchema::Str(schema) => {
+        SourceLayer::Schema(SourceSchema::Str(schema)) => {
             base_is_pure(&schema.base)
                 && schema.convert_to_lower_case.is_none()
                 && schema.format.is_none()
@@ -383,7 +394,7 @@ fn is_pure_reference(schema: &SourceSchema) -> bool {
                 && schema.valid_values.dynamic_valid_values.is_none()
                 && schema.convert_types.convert_types.is_none()
         }
-        SourceSchema::List(schema) => {
+        SourceLayer::Schema(SourceSchema::List(schema)) => {
             base_is_pure(&schema.base)
                 && schema.items.is_none()
                 && schema.min_length.is_none()
@@ -392,14 +403,8 @@ fn is_pure_reference(schema: &SourceSchema) -> bool {
                 && schema.unique_keys.is_none()
                 && schema.allow_duplicate_primary_key.is_none()
         }
-        SourceSchema::Dict(schema) => {
-            base_is_pure(&schema.base)
-                && schema.keys.is_none()
-                && schema.dynamic_keys.is_none()
-                && schema.allow_other_keys.is_none()
-                && schema.schema_defs.is_none()
-                && schema.schema_id.is_none()
-                && schema.schema_schema.is_none()
+        SourceLayer::Schema(SourceSchema::Dict(schema)) => {
+            base_is_pure(&schema.base) && schema.keys.is_none() && schema.allow_other_keys.is_none()
         }
     }
 }
@@ -409,26 +414,6 @@ fn base_is_pure<T: crate::base::DataValue>(base: &crate::base::Base<T>) -> bool 
         && base.display_name.is_none()
         && base.required.is_none()
         && base.schema_ref.is_some()
-}
-
-fn schema_ref(schema: &SourceSchema) -> Option<&str> {
-    match schema {
-        SourceSchema::Bool(schema) => schema.base.schema_ref.as_deref(),
-        SourceSchema::Int(schema) => schema.base.schema_ref.as_deref(),
-        SourceSchema::Str(schema) => schema.base.schema_ref.as_deref(),
-        SourceSchema::List(schema) => schema.base.schema_ref.as_deref(),
-        SourceSchema::Dict(schema) => schema.base.schema_ref.as_deref(),
-    }
-}
-
-fn schema_type(schema: &SourceSchema) -> &'static str {
-    match schema {
-        SourceSchema::Bool(_) => "bool",
-        SourceSchema::Int(_) => "int",
-        SourceSchema::Str(_) => "str",
-        SourceSchema::List(_) => "list",
-        SourceSchema::Dict(_) => "dict",
-    }
 }
 
 fn common(store: &CompiledStore, schema_id: SchemaId) -> &Common {

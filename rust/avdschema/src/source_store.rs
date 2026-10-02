@@ -8,18 +8,24 @@ use std::path::PathBuf;
 use serde::Deserialize;
 use serde::Serialize;
 
-use crate::schema::any::SourceSchema;
+use crate::dict::SourceRootDict;
+use crate::dict::root::SourceRootSchema;
 use crate::utils::dump::Dump;
 use crate::utils::load::Load;
 #[cfg(feature = "dump_load_files")]
 use crate::utils::load::LoadError;
+#[cfg(feature = "dump_load_files")]
+use crate::utils::load::LoadFromFragments as _;
 
-/// Schema store containing the AVD schemas.
-/// The store is used as entrypoint for validation and when resolving a $ref pointing to a specific schema.
+/// Source store containing named AVD schema roots.
+///
+/// Every named schema is a [`SourceRootDict`]. Recursive values below a root use
+/// [`crate::any::SourceSchema`] and therefore cannot declare document metadata, reusable
+/// definitions, or dynamic keys.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StoreSource {
     #[serde(flatten)]
-    schemas: HashMap<String, SourceSchema>,
+    schemas: HashMap<String, SourceRootSchema>,
 }
 
 impl StoreSource {
@@ -30,9 +36,9 @@ impl StoreSource {
         schema_names
     }
 
-    pub fn get(&self, schema_name: &str) -> Result<&SourceSchema, SchemaStoreError> {
+    pub fn get(&self, schema_name: &str) -> Result<&SourceRootDict, SchemaStoreError> {
         if let Some(schema) = self.schemas.get(schema_name) {
-            return Ok(schema);
+            return Ok(schema.as_dict());
         }
         // Either we have an invalid schema or we may be using an old schema name,
         // or tests using new schema names towards and old schema store.
@@ -45,12 +51,13 @@ impl StoreSource {
         };
         self.schemas
             .get(schema_alias)
+            .map(SourceRootSchema::as_dict)
             .ok_or_else(|| SchemaStoreError::InvalidSchemaName(schema_name.to_owned()))
     }
 
     /// Create a new store instance based on the schema files in the given paths.
-    /// If a path points to a directory, files matching *.yml will be read and combined
-    /// with a shallow merge, so avoid overlapping keys.
+    /// If a path points to a directory, files matching `*.yml` are read in filename order and
+    /// inherited into one root schema.
     /// If a path points to a single .yml or .json file it will be used directly.
     /// If a path points to a .gz file it will decompressed and the inner file,
     /// which must be a json file, will then be used.
@@ -58,7 +65,12 @@ impl StoreSource {
     pub fn new_from_paths(schema_paths: HashMap<String, PathBuf>) -> Result<Self, LoadError> {
         let mut schemas = HashMap::new();
         for (schema_name, schema_path) in schema_paths {
-            schemas.insert(schema_name, SourceSchema::new_from_path(schema_path)?);
+            let schema = if schema_path.is_dir() {
+                SourceRootSchema::from_fragments(&schema_path)?
+            } else {
+                SourceRootSchema::from_file(Some(&schema_path))?
+            };
+            schemas.insert(schema_name, schema);
         }
         Ok(StoreSource { schemas })
     }
@@ -74,8 +86,6 @@ pub enum SchemaStoreError {
 
 #[cfg(test)]
 mod tests {
-
-    #[cfg(feature = "dump_load_files")]
     use super::Load as _;
     #[cfg(feature = "dump_load_files")]
     use crate::Dump as _;
@@ -174,5 +184,90 @@ mod tests {
             store.schema_names(),
             ["avd_design", "cv_deploy", "eos_config"]
         );
+    }
+
+    #[test]
+    fn source_store_requires_dictionary_roots() {
+        for invalid_root in [r#"{"type":"str"}"#, r#"{"keys":{}}"#] {
+            let json = format!(r#"{{"test":{invalid_root}}}"#);
+            assert!(StoreSource::from_json(&json).is_err());
+        }
+    }
+
+    #[test]
+    fn root_only_properties_are_rejected_on_nested_dictionaries() {
+        for (property, value) in [
+            (
+                "dynamic_keys",
+                serde_json::json!({"names": {"type": "str"}}),
+            ),
+            ("$defs", serde_json::json!({"shared": {"type": "str"}})),
+            ("$id", serde_json::json!("nested")),
+            ("$schema", serde_json::json!("avd_meta_schema")),
+        ] {
+            let mut nested = serde_json::json!({"type": "dict"});
+            nested
+                .as_object_mut()
+                .unwrap()
+                .insert(property.to_owned(), value);
+            let json = serde_json::json!({
+                "test": {"type": "dict", "keys": {"nested": nested}}
+            })
+            .to_string();
+            assert!(
+                StoreSource::from_json(&json).is_err(),
+                "accepted {property}"
+            );
+        }
+    }
+
+    #[test]
+    fn root_dictionary_accepts_root_metadata_and_dynamic_keys() {
+        let store = StoreSource::from_json(
+            r#"{
+                "test": {
+                    "type": "dict",
+                    "$id": "test",
+                    "$schema": "avd_meta_schema",
+                    "dynamic_keys": {"names": {"type": "str"}},
+                    "$defs": {"shared": {"type": "int"}}
+                }
+            }"#,
+        )
+        .unwrap();
+        let root = store.get("test").unwrap();
+        assert_eq!(root.schema_id.as_deref(), Some("test"));
+        assert_eq!(root.schema_schema.as_deref(), Some("avd_meta_schema"));
+        assert_eq!(
+            root.dynamic_keys.as_ref().map(ordermap::OrderMap::len),
+            Some(1)
+        );
+        assert_eq!(
+            root.schema_defs.as_ref().map(ordermap::OrderMap::len),
+            Some(1)
+        );
+    }
+
+    #[test]
+    fn source_store_accepts_null_for_historical_optional_fields() {
+        let store = StoreSource::from_json(
+            r#"{
+                "test": {
+                    "type": "dict",
+                    "description": null,
+                    "required": null,
+                    "keys": {"value": {"type": "str", "default": null}}
+                }
+            }"#,
+        )
+        .unwrap();
+
+        let root = store.get("test").unwrap();
+        assert!(root.base.description.is_none());
+        assert!(root.base.required.is_none());
+        assert!(matches!(
+            root.keys.as_ref().and_then(|keys| keys.get("value")),
+            Some(crate::any::SourceSchema::Str(value)) if value.base.default.is_none()
+        ));
     }
 }

@@ -191,6 +191,7 @@ mod tests {
     use avdschema::base::Base;
     use avdschema::dict::DynamicKeyOverrides;
     use avdschema::dict::SourceDict;
+    use avdschema::dict::SourceRootDict;
     use avdschema::int::SourceInt;
     use avdschema::list::SourceList;
     use avdschema::str::SourceStr;
@@ -374,7 +375,7 @@ mod tests {
 
     #[test]
     fn validate_dynamic_keys_ok() {
-        let schema = SourceDict {
+        let schema = SourceRootDict {
             keys: Some(OrderMap::from_iter([(
                 "my_dynamic_keys".into(),
                 SourceList {
@@ -413,7 +414,7 @@ mod tests {
 
     #[test]
     fn validate_dynamic_keys_err() {
-        let schema = SourceDict {
+        let schema = SourceRootDict {
             keys: Some(OrderMap::from_iter([(
                 "my_dynamic_keys".into(),
                 SourceList {
@@ -474,7 +475,7 @@ mod tests {
 
     #[test]
     fn validate_dynamic_keys_from_overrides_ok() {
-        let schema = SourceDict {
+        let schema = SourceRootDict {
             dynamic_keys: Some(OrderMap::from_iter([(
                 "my_dynamic_keys.key".into(),
                 SourceInt {
@@ -503,7 +504,7 @@ mod tests {
 
     #[test]
     fn validate_static_key_beats_dynamic_key_override_collision() {
-        let schema = SourceDict {
+        let schema = SourceRootDict {
             keys: Some(OrderMap::from_iter([(
                 "dynkey1".into(),
                 SourceStr::default().into(),
@@ -535,7 +536,7 @@ mod tests {
 
     #[test]
     fn validate_dynamic_keys_from_defaults_ok() {
-        let schema = SourceDict {
+        let schema = SourceRootDict {
             keys: Some(OrderMap::from_iter([(
                 "my_dynamic_keys".into(),
                 SourceList {
@@ -568,7 +569,7 @@ mod tests {
 
     #[test]
     fn validate_dynamic_keys_from_defaults_err() {
-        let schema = SourceDict {
+        let schema = SourceRootDict {
             keys: Some(OrderMap::from_iter([(
                 "my_dynamic_keys".into(),
                 SourceList {
@@ -1399,7 +1400,7 @@ mod tests {
         // Using a deeper path and see that we still get the error even though we relax for the root dict.
         let mut state = ValidationState::with_path("deeper".into());
         let _ = crate::validation::test_utils::validate_test_schema_with_state(
-            SourceSchema::Dict(schema),
+            &SourceSchema::Dict(schema),
             &input,
             &mut ctx,
             &mut state,
@@ -1561,7 +1562,7 @@ mod tests {
 
     #[test]
     fn validate_dynamic_key_deprecated_ok() {
-        let schema: SourceDict = SourceDict::deserialize(serde_json::json!({
+        let schema: SourceRootDict = SourceRootDict::deserialize(serde_json::json!({
             "keys": {
                 "my_dynamic_keys": {
                     "type": "list",

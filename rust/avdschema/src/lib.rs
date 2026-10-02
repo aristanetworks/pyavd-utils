@@ -5,11 +5,12 @@
 //! AVD schema source models and compiled runtime views.
 //!
 //! [`StoreSource`] and the `Source*` schema types are the authoring representation
-//! deserialized from JSON, YAML, and compressed schema sources. Compilation resolves
-//! references and inherited layers into typed, deduplicated tables. [`Store`] owns or
-//! memory-maps those tables and is the canonical representation used by validation and
-//! schema navigation. Runtime nodes are exposed as borrowed [`SchemaView`] variants and
-//! typed child views; a view cannot outlive its store.
+//! deserialized from JSON, YAML, and compressed schema sources. Named schema roots use
+//! [`dict::SourceRootDict`], while recursive child schemas use [`any::SourceSchema`]. Compilation
+//! resolves references and inherited layers into typed, deduplicated tables. [`Store`] owns or
+//! memory-maps those tables and is the canonical representation used by validation and schema
+//! navigation. Runtime nodes are exposed as borrowed [`SchemaView`] variants and typed child
+//! views; a view cannot outlive its store.
 //!
 //! [`Store::from_file`] memory-maps compiled archives. [`Store::from_json`] and
 //! [`Store::from_gz_bytes`] compile ad-hoc schema sources into process-owned
@@ -54,6 +55,8 @@ mod generation;
     reason = "Legacy schema inheritance API predates missing-doc enforcement."
 )]
 mod inherit;
+#[cfg(feature = "metaschema")]
+mod metaschema;
 mod navigation;
 #[allow(
     missing_docs,
@@ -89,6 +92,8 @@ pub use self::generation::generate_python_models;
 #[cfg(feature = "generation")]
 pub use self::generation::generate_python_models_projection;
 pub use self::inherit::Inherit;
+#[cfg(feature = "metaschema")]
+pub use self::metaschema::generate_metaschema_json;
 pub use self::navigation::SchemaPathError;
 pub use self::navigation::resolve_dynamic_keys;
 pub use self::resolve::errors::SchemaResolverError;

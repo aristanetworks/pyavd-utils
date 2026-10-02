@@ -11,6 +11,7 @@
     reason = "PyO3-facing API names mirror the exported Python module contract"
 )]
 
+mod metaschema;
 mod schema_generation;
 mod schema_store;
 
@@ -28,6 +29,8 @@ pub mod _bindings {
         Ok(())
     }
 
+    #[pymodule_export]
+    use crate::metaschema::_metaschema;
     #[pymodule_export]
     use crate::schema_generation::_schema_generation;
     #[pymodule_export]

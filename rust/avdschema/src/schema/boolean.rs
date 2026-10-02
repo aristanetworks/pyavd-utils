@@ -13,6 +13,7 @@ use super::base::documentation_options::DocumentationOptions;
 /// AVD Schema for boolean data.
 #[skip_serializing_none]
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "metaschema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct SourceBool {
     #[serde(flatten)]

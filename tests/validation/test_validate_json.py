@@ -36,7 +36,10 @@ def test_validate_json_with_adhoc_schema() -> None:
 
 @pytest.mark.usefixtures("init_store")
 def test_validate_json_with_dot_wildcard_pattern() -> None:
-    validation_result = validate_json_with_adhoc_schema('"Etherneté"', '{"type": "str", "pattern": "Ethernet.*"}')
+    validation_result = validate_json_with_adhoc_schema(
+        '{"value": "Etherneté"}',
+        '{"type": "dict", "keys": {"value": {"type": "str", "pattern": "Ethernet.*"}}}',
+    )
 
     assert len(validation_result.violations) == 0
     assert len(validation_result.deprecations) == 0
@@ -45,7 +48,10 @@ def test_validate_json_with_dot_wildcard_pattern() -> None:
 
 @pytest.mark.usefixtures("init_store")
 def test_validate_json_with_unicode_digit_pattern() -> None:
-    validation_result = validate_json_with_adhoc_schema('"١٢٣"', r'{"type": "str", "pattern": "\\d+"}')
+    validation_result = validate_json_with_adhoc_schema(
+        '{"value": "١٢٣"}',
+        r'{"type": "dict", "keys": {"value": {"type": "str", "pattern": "\\d+"}}}',
+    )
 
     assert len(validation_result.violations) == 0
     assert len(validation_result.deprecations) == 0
@@ -62,6 +68,12 @@ def test_validate_json_with_adhoc_schema_invalid_json() -> None:
 def test_validate_json_with_adhoc_schema_invalid_schema() -> None:
     with pytest.raises(RuntimeError, match="Invalid JSON in adhoc schema"):
         validate_json_with_adhoc_schema("{}", '{"tpe": "dict"}')
+
+
+@pytest.mark.usefixtures("init_store")
+def test_validate_json_with_adhoc_schema_rejects_scalar_root() -> None:
+    with pytest.raises(RuntimeError, match="requires a dictionary root"):
+        validate_json_with_adhoc_schema('"value"', '{"type": "str"}')
 
 
 @pytest.mark.usefixtures("init_store")

@@ -9,6 +9,7 @@ use serde_with::skip_serializing_none;
 /// Settings used for generating documentation for all other types than dict.
 #[skip_serializing_none]
 #[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "metaschema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct DocumentationOptions {
     /// Setting `table` will allow for custom grouping of schema fields in the documentation.
@@ -21,6 +22,7 @@ pub struct DocumentationOptions {
 /// Settings options used for generating documentation for a dict.
 #[skip_serializing_none]
 #[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "metaschema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct DocumentationOptionsDict {
     /// Setting `table` will allow for custom grouping of schema fields in the documentation.

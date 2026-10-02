@@ -15,6 +15,7 @@ use crate::schema::base::Base;
 /// AVD Schema for integer data.
 #[skip_serializing_none]
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "metaschema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct SourceInt {
     pub min: Option<i64>,
@@ -22,6 +23,10 @@ pub struct SourceInt {
     #[serde(flatten)]
     pub base: Base<i64>,
     #[serde(flatten)]
+    #[cfg_attr(
+        feature = "metaschema",
+        schemars(with = "super::base::convert_types::IntConvertTypes")
+    )]
     pub convert_types: ConvertTypes,
     #[serde(flatten)]
     pub valid_values: ValidValues<i64>,

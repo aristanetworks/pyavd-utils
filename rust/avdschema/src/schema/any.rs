@@ -2,26 +2,21 @@
 // Use of this source code is governed by the Apache License 2.0
 // that can be found in the LICENSE file.
 
-#[cfg(feature = "dump_load_files")]
-use std::path::PathBuf;
-
 use serde::Deserialize;
 use serde::Serialize;
 
 use super::boolean::SourceBool;
 use super::dict::SourceDict;
+use super::dict::SourceRootDict;
 use super::int::SourceInt;
 use super::list::SourceList;
 use super::str::SourceStr;
 use crate::utils::dump::Dump;
 use crate::utils::load::Load;
-#[cfg(feature = "dump_load_files")]
-use crate::utils::load::LoadError;
-#[cfg(feature = "dump_load_files")]
-use crate::utils::load::LoadFromFragments;
 
-/// Enum covering all AVD Schema types.
+/// Enum covering recursive AVD schema types. Named schema roots use [`SourceRootDict`].
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, derive_more::From)]
+#[cfg_attr(feature = "metaschema", derive(schemars::JsonSchema))]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum SourceSchema {
     Bool(SourceBool),
@@ -30,23 +25,75 @@ pub enum SourceSchema {
     List(SourceList),
     Dict(SourceDict),
 }
-impl SourceSchema {
-    /// Create a new schema instance based on the schema file(s) in the given path.
-    /// If the path points to a directory, files matching *.yml will be read and combined
-    /// with a shallow merge, so avoid overlapping keys.
-    /// If the path points to a single .yml or .json file it will be used directly.
-    /// If the path points to a .gz file it will decompressed and the inner file must be a json file which will then be used.
-    #[cfg(feature = "dump_load_files")]
-    pub fn new_from_path(path: PathBuf) -> Result<Self, LoadError> {
-        if path.is_dir() {
-            Self::from_fragments(&path)
-        } else {
-            Self::from_file(Some(&path))
+
+/// Borrowed source-schema layer used while resolving and compiling references.
+///
+/// Named roots have a stricter authoring model than recursive schemas, but a reference to an
+/// entire named schema still contributes a dictionary layer at the reference occurrence.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum SourceLayer<'a> {
+    Root(&'a SourceRootDict),
+    Schema(&'a SourceSchema),
+}
+
+/// Discriminator shared by root and recursive source-schema layers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SourceType {
+    Bool,
+    Int,
+    Str,
+    List,
+    Dict,
+}
+
+impl SourceType {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Bool => "bool",
+            Self::Int => "int",
+            Self::Str => "str",
+            Self::List => "list",
+            Self::Dict => "dict",
         }
     }
 }
 
+impl<'a> SourceLayer<'a> {
+    pub(crate) fn root(schema: &'a SourceRootDict) -> Self {
+        Self::Root(schema)
+    }
+
+    pub(crate) fn schema(schema: &'a SourceSchema) -> Self {
+        Self::Schema(schema)
+    }
+
+    pub(crate) fn identity(self) -> *const () {
+        match self {
+            Self::Root(schema) => std::ptr::from_ref(schema).cast(),
+            Self::Schema(schema) => std::ptr::from_ref(schema).cast(),
+        }
+    }
+
+    pub(crate) fn schema_type(self) -> SourceType {
+        match self {
+            Self::Root(_) | Self::Schema(SourceSchema::Dict(_)) => SourceType::Dict,
+            Self::Schema(SourceSchema::Bool(_)) => SourceType::Bool,
+            Self::Schema(SourceSchema::Int(_)) => SourceType::Int,
+            Self::Schema(SourceSchema::Str(_)) => SourceType::Str,
+            Self::Schema(SourceSchema::List(_)) => SourceType::List,
+        }
+    }
+
+    pub(crate) fn schema_ref(self) -> Option<&'a str> {
+        match self {
+            Self::Root(schema) => schema.base.schema_ref.as_deref(),
+            Self::Schema(SourceSchema::Bool(schema)) => schema.base.schema_ref.as_deref(),
+            Self::Schema(SourceSchema::Int(schema)) => schema.base.schema_ref.as_deref(),
+            Self::Schema(SourceSchema::Str(schema)) => schema.base.schema_ref.as_deref(),
+            Self::Schema(SourceSchema::List(schema)) => schema.base.schema_ref.as_deref(),
+            Self::Schema(SourceSchema::Dict(schema)) => schema.base.schema_ref.as_deref(),
+        }
+    }
+}
 impl Dump for SourceSchema {}
 impl Load for SourceSchema {}
-#[cfg(feature = "dump_load_files")]
-impl LoadFromFragments for SourceSchema {}
