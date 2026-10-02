@@ -13,6 +13,7 @@ pyo3-build-config = { workspace = true }
 [dev-dependencies]
 avdschema = { path = "../avdschema", features = ["dump_load_files"] }
 criterion = { version = "=0.8.2" }
+getrandom = { version = "0.4", default-features = false }
 test_schema_store = { path = "../test_schema_store" }
 
 [dependencies]
@@ -20,6 +21,7 @@ avdschema = { path = "../avdschema", default-features = false, features = [
     "mmap",
     "regex-perf",
 ] }
+derive_more = { workspace = true, features = ["from"] }
 log = { workspace = true }
 passwords = { path = "../passwords", default-features = false, optional = true }
 pyo3 = { workspace = true, features = ["abi3-py310"] }

@@ -6,19 +6,19 @@ const SIMPLE_7_SEED: &[u8] = b"dsfd;kfoA,.iyewrkldJKDHSUBsgvca69834ncxv9873254k;
 
 #[derive(Debug, derive_more::Display, derive_more::From)]
 pub enum Simple7Error {
-    #[display("Invalid salt format in encrypted data")]
+    #[display("Invalid salt format in encrypted data.")]
     InvalidSaltFormat(std::num::ParseIntError),
-    #[display("Invalid hex encoding in encrypted data")]
+    #[display("Invalid hex encoding in encrypted data.")]
     InvalidHexEncoding(hex::FromHexError),
-    #[display("Failed to obtain random salt from the operating system")]
+    #[display("Failed to obtain random salt from the operating system.")]
     RandomSourceUnavailable(getrandom::Error),
-    #[display("Decrypted data is not valid UTF-8")]
+    #[display("Decrypted data is not valid UTF-8.")]
     InvalidUtf8(std::string::FromUtf8Error),
-    #[display("Salt must be in the range 0-15, got {_0}")]
+    #[display("Salt must be in the range 0-15, got {_0}.")]
     InvalidSaltValue(u8),
-    #[display("Encrypted data too short (minimum 2 characters required for salt)")]
+    #[display("Encrypted data too short (minimum 2 characters required for salt).")]
     DataTooShort,
-    #[display("Password must not be empty")]
+    #[display("Password must not be empty.")]
     EmptyPassword,
 }
 impl std::error::Error for Simple7Error {}

@@ -11,4 +11,22 @@ from ._bindings import _schema_store  # pyright: ignore[reportMissingModuleSourc
 get_list_primary_key = _schema_store.get_list_primary_key
 init_store_from_file = _schema_store.init_store_from_file
 
-__all__ = ["get_list_primary_key", "init_store_from_file"]
+ValidationError = _schema_store.ValidationError
+ValidationInvalidSchemaNameError = _schema_store.ValidationInvalidSchemaNameError
+ValidationSchemaPathError = _schema_store.ValidationSchemaPathError
+ValidationStoreNotInitializedError = _schema_store.ValidationStoreNotInitializedError
+ValidationStoreAlreadyInitializedError = _schema_store.ValidationStoreAlreadyInitializedError
+ValidationStoreLoadError = _schema_store.ValidationStoreLoadError
+ValidationStoreLoadIoError = _schema_store.ValidationStoreLoadIoError
+
+__all__ = [
+    "ValidationError",
+    "ValidationInvalidSchemaNameError",
+    "ValidationSchemaPathError",
+    "ValidationStoreAlreadyInitializedError",
+    "ValidationStoreLoadError",
+    "ValidationStoreLoadIoError",
+    "ValidationStoreNotInitializedError",
+    "get_list_primary_key",
+    "init_store_from_file",
+]

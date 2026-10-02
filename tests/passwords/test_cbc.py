@@ -2,12 +2,38 @@
 # Use of this source code is governed by the Apache License 2.0
 # that can be found in the LICENSE file.
 
+import pickle
 from contextlib import AbstractContextManager
 from contextlib import nullcontext as does_not_raise
 
 import pytest
 
-from pyavd_utils.passwords import cbc_decrypt, cbc_encrypt, cbc_verify
+from pyavd_utils.passwords import (
+    CBCDecryptionFailedError,
+    CBCInvalidBase64Error,
+    CBCInvalidSignatureError,
+    CBCInvalidUtf8Error,
+    PasswordError,
+    cbc_decrypt,
+    cbc_encrypt,
+    cbc_verify,
+)
+
+
+def test_cbc_error_hierarchy() -> None:
+    """Test that CBC errors inherit from the passwords base error."""
+    assert issubclass(CBCInvalidBase64Error, PasswordError)
+    assert issubclass(CBCDecryptionFailedError, PasswordError)
+
+
+def test_cbc_error_module_and_pickle() -> None:
+    """Test that CBC errors have the public Python module path and can be pickled."""
+    err = CBCInvalidBase64Error("boom")
+
+    assert CBCInvalidBase64Error.__module__ == "pyavd_utils.passwords"
+    # Trusted local round-trip: this verifies PyO3 exception pickling metadata.
+    assert type(pickle.loads(pickle.dumps(err))) is CBCInvalidBase64Error  # noqa: S301
+
 
 CBC_ENCRYPT_TEST_DATA = [
     pytest.param(
@@ -37,28 +63,28 @@ CBC_DECRYPT_TEST_DATA = [
         "any_key",
         "NotBase64!!!",
         "",
-        pytest.raises(ValueError, match="Invalid Base64 encoding"),
+        pytest.raises(CBCInvalidBase64Error, match="Invalid Base64 encoding"),
         id="Invalid base64 input",
     ),
     pytest.param(
         "wrong_password",
         "bM7t58t04qSqLHAfZR/Szg==",
         "",
-        pytest.raises(RuntimeError, match="Invalid Arista signature"),
+        pytest.raises(CBCInvalidSignatureError, match="Invalid Arista signature"),
         id="Wrong password (signature mismatch)",
     ),
     pytest.param(
         "any_key",
         "YWJjZA==",
         "",
-        pytest.raises(RuntimeError, match="Decryption failed"),
+        pytest.raises(CBCDecryptionFailedError, match="Decryption failed"),
         id="Block size / Alignment failure",
     ),
     pytest.param(
         "42.42.42.42_passwd",
         "Sh5yjV8SD2j//////////9pkhd5VI3SbQDy17ujMdko=",
         "",
-        pytest.raises(ValueError, match="Decrypted data is not valid UTF-8"),
+        pytest.raises(CBCInvalidUtf8Error, match="Decrypted data is not valid UTF-8"),
         id="Invalid UTF-8 sequence in decrypted data",
     ),
 ]

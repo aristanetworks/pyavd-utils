@@ -7,7 +7,12 @@ from typing import TYPE_CHECKING, Literal
 
 import pytest
 
-from pyavd_utils.schema_store import get_list_primary_key, init_store_from_file
+from pyavd_utils.schema_store import (
+    ValidationInvalidSchemaNameError,
+    ValidationStoreAlreadyInitializedError,
+    get_list_primary_key,
+    init_store_from_file,
+)
 from pyavd_utils_gen.schema_store import compile_schema_archive
 
 if TYPE_CHECKING:
@@ -19,7 +24,7 @@ def test_schema_store_init_store_from_file_twice_errors(tmp_path: Path) -> None:
     schema_file = tmp_path / "schemas.json"
     schema_file.write_text("{}", encoding="UTF-8")
 
-    with pytest.raises(RuntimeError, match="Initialization can only happen once"):
+    with pytest.raises(ValidationStoreAlreadyInitializedError, match="Initialization can only happen once"):
         init_store_from_file(schema_file)
 
 
@@ -66,6 +71,6 @@ def test_schema_store_get_list_primary_key(schema_name: Literal["eos_config", "a
 @pytest.mark.usefixtures("init_store")
 @pytest.mark.parametrize("schema_name", ["eos_cli_config_gen", "eos_designs", "cv_deploy"])
 def test_schema_store_get_list_primary_key_unsupported_schema_name_errors(schema_name: str) -> None:
-    with pytest.raises(RuntimeError, match="not supported"):
+    with pytest.raises(ValidationInvalidSchemaNameError, match="not supported"):
         # Intentionally violate the typed API contract to test runtime validation.
         get_list_primary_key(schema_name, [])  # pyright: ignore[reportArgumentType]

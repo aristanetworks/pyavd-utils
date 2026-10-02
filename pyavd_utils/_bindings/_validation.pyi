@@ -5,6 +5,18 @@
 # ruff: noqa: PYI021
 from typing import Literal
 
+class ValidationError(Exception): ...
+class ValidationStoreNotInitializedError(ValidationError): ...
+class ValidationInvalidSchemaNameError(ValidationError): ...
+class ValidationSchemaPathError(ValidationError): ...
+class ValidationInvalidJsonDataError(ValidationError): ...
+class ValidationInvalidAdhocSchemaJsonError(ValidationError): ...
+class ValidationInvalidCoercedDataJsonError(ValidationError): ...
+class ValidationInternalError(ValidationError): ...
+class ValidationStoreAlreadyInitializedError(ValidationError): ...
+class ValidationStoreLoadError(ValidationError): ...
+class ValidationStoreLoadIoError(ValidationStoreLoadError): ...
+
 class Configuration:
     """Configuration for validation behavior."""
 
@@ -91,6 +103,12 @@ def validate_json(
 
     Returns:
         ValidationResult holding lists of violations and deprecations.
+
+    Raises:
+        ValidationStoreNotInitializedError: If the schema store was not initialized.
+        ValidationInvalidSchemaNameError: If schema_name is not present in the schema store.
+        ValidationInvalidJsonDataError: If data_as_json is not valid JSON.
+        ValidationInternalError: If validation reports an internal error.
     """
 
 def get_validated_data(
@@ -110,6 +128,13 @@ def get_validated_data(
 
     Returns:
         ValidatedDataResult holding the validated data and the ValidationResult with lists of violations and deprecations.
+
+    Raises:
+        ValidationStoreNotInitializedError: If the schema store was not initialized.
+        ValidationInvalidSchemaNameError: If schema_name is not present in the schema store.
+        ValidationInvalidJsonDataError: If data_as_json is not valid JSON.
+        ValidationInvalidCoercedDataJsonError: If coerced data cannot be serialized as JSON.
+        ValidationInternalError: If validation reports an internal error.
     """
 
 def validate_json_with_adhoc_schema(
@@ -127,4 +152,11 @@ def validate_json_with_adhoc_schema(
 
     Returns:
         ValidationResult holding lists of violations and deprecations.
+
+    Raises:
+        ValidationStoreNotInitializedError: If the schema store was not initialized.
+        ValidationInvalidJsonDataError: If data_as_json is not valid JSON.
+        ValidationInvalidAdhocSchemaJsonError: If schema_as_json is not valid.
+        ValidationInvalidSchemaNameError: If the schema cannot be compiled.
+        ValidationInternalError: If validation reports an internal error.
     """

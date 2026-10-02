@@ -6,6 +6,14 @@
 from pathlib import Path
 from typing import Literal
 
+class ValidationError(Exception): ...
+class ValidationInvalidSchemaNameError(ValidationError): ...
+class ValidationSchemaPathError(ValidationError): ...
+class ValidationStoreNotInitializedError(ValidationError): ...
+class ValidationStoreAlreadyInitializedError(ValidationError): ...
+class ValidationStoreLoadError(ValidationError): ...
+class ValidationStoreLoadIoError(ValidationStoreLoadError): ...
+
 def get_list_primary_key(schema_name: Literal["eos_config", "avd_design"], data_path: list[str]) -> str | None:
     """
     Return the primary key for a list schema at the given data path.
@@ -19,9 +27,9 @@ def get_list_primary_key(schema_name: Literal["eos_config", "avd_design"], data_
         data_path: Path to the data model list.
 
     Raises:
-        RuntimeError: If the shared schema store has not been initialized, if the schema name is
-            not supported, or if schema resolution fails for reasons other than an unresolved
-            schema path. Schema walk failures, such as unresolved nested-list paths, return None.
+        ValidationStoreNotInitializedError: If the shared schema store has not been initialized.
+        ValidationInvalidSchemaNameError: If the schema name is not supported.
+        ValidationSchemaPathError: If schema resolution fails.
     """
 
 def init_store_from_file(file: Path) -> None:
@@ -40,5 +48,7 @@ def init_store_from_file(file: Path) -> None:
         file: Path to the compiled schema archive.
 
     Raises:
-        RuntimeError: If the store was already initialized or the archive cannot be opened or validated.
+        ValidationStoreAlreadyInitializedError: If the store was already initialized.
+        ValidationStoreLoadError: If the archive cannot be validated or loaded.
+        ValidationStoreLoadIoError: If the archive cannot be opened.
     """
