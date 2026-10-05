@@ -4,6 +4,7 @@
 
 use pyo3::types::PyAnyMethods as _;
 
+use crate::passwords::exceptions;
 use crate::tests::setup_python;
 
 #[test]
@@ -45,7 +46,8 @@ fn sha512_crypt_empty_salt_err() {
             .call_method1("sha512_crypt", ("arista", ""))
             .unwrap_err();
 
-        assert!(err.is_instance_of::<pyo3::exceptions::PyValueError>(py));
+        assert!(err.is_instance_of::<exceptions::Sha512CryptInvalidSaltEmptyError>(py));
+        assert!(err.is_instance_of::<exceptions::PasswordError>(py));
         assert_eq!(
             err.value(py).to_string(),
             "Invalid Salt: Salt cannot be empty."
@@ -66,10 +68,11 @@ fn sha512_crypt_invalid_character_in_salt_err() {
             .call_method1("sha512_crypt", ("arista", "#"))
             .unwrap_err();
 
-        assert!(err.is_instance_of::<pyo3::exceptions::PyValueError>(py));
+        assert!(err.is_instance_of::<exceptions::Sha512CryptInvalidSaltCharacterError>(py));
+        assert!(err.is_instance_of::<exceptions::PasswordError>(py));
         assert_eq!(
             err.value(py).to_string(),
-            "Invalid Salt: Salt contains an invalid character: '#'"
+            "Invalid Salt: Salt contains an invalid character: '#'."
         );
     });
 }

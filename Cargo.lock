@@ -1553,6 +1553,8 @@ version = "0.0.10"
 dependencies = [
  "avdschema",
  "criterion",
+ "derive_more",
+ "getrandom",
  "log",
  "passwords",
  "pyo3",

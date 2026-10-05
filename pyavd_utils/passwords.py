@@ -15,7 +15,44 @@ sha512_crypt = _passwords.sha512_crypt
 simple_7_decrypt = _passwords.simple_7_decrypt
 simple_7_encrypt = _passwords.simple_7_encrypt
 
+PasswordError = _passwords.PasswordError
+Sha512CryptInvalidSaltEmptyError = _passwords.Sha512CryptInvalidSaltEmptyError
+Sha512CryptInvalidSaltCharacterError = _passwords.Sha512CryptInvalidSaltCharacterError
+Sha512CryptLibraryError = _passwords.Sha512CryptLibraryError
+Sha512CryptBase64Error = _passwords.Sha512CryptBase64Error
+CBCInvalidBase64Error = _passwords.CBCInvalidBase64Error
+CBCDecryptionFailedError = _passwords.CBCDecryptionFailedError
+CBCInvalidSignatureError = _passwords.CBCInvalidSignatureError
+CBCInvalidUtf8Error = _passwords.CBCInvalidUtf8Error
+CBCEncryptionFailedError = _passwords.CBCEncryptionFailedError
+CBCInvalidBase64Utf8Error = _passwords.CBCInvalidBase64Utf8Error
+Simple7InvalidSaltFormatError = _passwords.Simple7InvalidSaltFormatError
+Simple7InvalidHexEncodingError = _passwords.Simple7InvalidHexEncodingError
+Simple7RandomSourceUnavailableError = _passwords.Simple7RandomSourceUnavailableError
+Simple7InvalidUtf8Error = _passwords.Simple7InvalidUtf8Error
+Simple7InvalidSaltValueError = _passwords.Simple7InvalidSaltValueError
+Simple7DataTooShortError = _passwords.Simple7DataTooShortError
+Simple7EmptyPasswordError = _passwords.Simple7EmptyPasswordError
+
 __all__ = [
+    "CBCDecryptionFailedError",
+    "CBCEncryptionFailedError",
+    "CBCInvalidBase64Error",
+    "CBCInvalidBase64Utf8Error",
+    "CBCInvalidSignatureError",
+    "CBCInvalidUtf8Error",
+    "PasswordError",
+    "Sha512CryptBase64Error",
+    "Sha512CryptInvalidSaltCharacterError",
+    "Sha512CryptInvalidSaltEmptyError",
+    "Sha512CryptLibraryError",
+    "Simple7DataTooShortError",
+    "Simple7EmptyPasswordError",
+    "Simple7InvalidHexEncodingError",
+    "Simple7InvalidSaltFormatError",
+    "Simple7InvalidSaltValueError",
+    "Simple7InvalidUtf8Error",
+    "Simple7RandomSourceUnavailableError",
     "cbc_decrypt",
     "cbc_encrypt",
     "cbc_verify",
