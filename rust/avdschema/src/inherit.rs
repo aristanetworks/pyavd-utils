@@ -119,6 +119,7 @@ impl Inherit for SourceDict {
         } else {
             self.schema_defs.inherit(&other.schema_defs);
         }
+        self.prefix_keys.inherit(&other.prefix_keys);
         self.allow_other_keys.inherit(&other.allow_other_keys);
         self.relaxed_validation.inherit(&other.relaxed_validation);
         self.schema_id.inherit(&other.schema_id);

@@ -89,8 +89,10 @@ pub use self::generation::generate_python_models;
 #[cfg(feature = "generation")]
 pub use self::generation::generate_python_models_projection;
 pub use self::inherit::Inherit;
+pub use self::navigation::PrefixKeyResolution;
 pub use self::navigation::SchemaPathError;
 pub use self::navigation::resolve_dynamic_keys;
+pub use self::navigation::resolve_prefix_key;
 pub use self::resolve::errors::SchemaResolverError;
 pub use self::resolve::walker::SchemaWalkError;
 pub use self::schema::any;
@@ -121,6 +123,7 @@ pub use self::views::DictView;
 pub use self::views::DocumentationOptionsView;
 pub use self::views::IntView;
 pub use self::views::ListView;
+pub use self::views::PrefixKeyView;
 pub use self::views::SchemaListValueView;
 pub use self::views::SchemaObjectValueView;
 pub use self::views::SchemaValueView;
