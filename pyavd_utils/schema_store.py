@@ -8,7 +8,8 @@ from __future__ import annotations
 # The native Rust module is not built in CI, so this suppression is required there.
 from ._bindings import _schema_store  # pyright: ignore[reportMissingModuleSource]
 
-get_list_primary_key = _schema_store.get_list_primary_key
+SchemaInfo = _schema_store.SchemaInfo
+get_schema_info = _schema_store.get_schema_info
 init_store_from_file = _schema_store.init_store_from_file
 
-__all__ = ["get_list_primary_key", "init_store_from_file"]
+__all__ = ["SchemaInfo", "get_schema_info", "init_store_from_file"]

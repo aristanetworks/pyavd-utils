@@ -20,18 +20,28 @@ use crate::SchemaDataValue as _;
 use crate::SchemaView;
 use crate::Store;
 
+/// Minimal metadata for a resolved schema node.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SchemaInfo<'a> {
+    /// Schema type: `bool`, `int`, `str`, `list`, or `dict`.
+    pub schema_type: &'static str,
+    /// Primary key for a list schema, if configured; `None` for other types.
+    pub primary_key: Option<&'a str>,
+}
+
 impl Store {
-    /// Return the primary key for the list schema at a data path.
+    /// Return minimal schema metadata at a data path.
     ///
     /// Path resolution is performed without caller-provided data or dynamic-key overrides.
-    /// For `avd_design`, schema-default dynamic keys are disabled and only static schema paths
-    /// are supported. Schema-defined default dynamic keys remain available for other schemas.
+    /// For `avd_design`, empty `node_type_keys`, `connected_endpoints_keys`, and
+    /// `network_services_keys` lists suppress the corresponding dynamic-key defaults.
+    /// Other schema-default resolution follows the existing navigation rules.
     /// Numeric path components traverse list items.
-    pub fn get_list_primary_key(
+    pub fn get_schema_info(
         &self,
         schema_name: &str,
         data_path: &[String],
-    ) -> Result<Option<&str>, SchemaPathError> {
+    ) -> Result<Option<SchemaInfo<'_>>, SchemaPathError> {
         let empty_data = if schema_name == "avd_design" {
             serde_json::json!({
                 "node_type_keys": [],
@@ -45,12 +55,17 @@ impl Store {
         else {
             return Ok(None);
         };
-        Ok(match view {
-            SchemaView::List(schema) => schema.primary_key(),
-            SchemaView::Bool(_) | SchemaView::Int(_) | SchemaView::Str(_) | SchemaView::Dict(_) => {
-                None
-            }
-        })
+        let (schema_type, primary_key) = match view {
+            SchemaView::Bool(_) => ("bool", None),
+            SchemaView::Int(_) => ("int", None),
+            SchemaView::Str(_) => ("str", None),
+            SchemaView::List(schema) => ("list", schema.primary_key()),
+            SchemaView::Dict(_) => ("dict", None),
+        };
+        Ok(Some(SchemaInfo {
+            schema_type,
+            primary_key,
+        }))
     }
 
     /// Return the effective schema covering a data path.
@@ -277,23 +292,122 @@ mod tests {
     }
 
     #[test]
-    fn list_primary_key_supports_avd_design_static_paths_without_dynamic_defaults() {
+    fn schema_info_reports_all_types_and_unkeyed_lists() {
+        let store = Store::from_json(
+            &json!({
+                "test": {
+                    "type": "dict",
+                    "keys": {
+                        "enabled": {"type": "bool"},
+                        "count": {"type": "int"},
+                        "name": {"type": "str"},
+                        "settings": {"type": "dict"},
+                        "values": {"type": "list", "items": {"type": "str"}},
+                        "keyed": {
+                            "type": "list", "primary_key": "name",
+                            "items": {"type": "dict", "keys": {"name": {"type": "str"}}}
+                        }
+                    }
+                }
+            })
+            .to_string(),
+        )
+        .unwrap();
+        for (path, schema_type, primary_key) in [
+            (vec![], "dict", None),
+            (vec!["enabled"], "bool", None),
+            (vec!["count"], "int", None),
+            (vec!["name"], "str", None),
+            (vec!["settings"], "dict", None),
+            (vec!["values"], "list", None),
+            (vec!["values", "0"], "str", None),
+            (vec!["keyed"], "list", Some("name")),
+            (vec!["keyed", "0"], "dict", None),
+            (vec!["keyed", "0", "name"], "str", None),
+        ] {
+            let path = path.into_iter().map(ToOwned::to_owned).collect::<Vec<_>>();
+            assert_eq!(
+                store.get_schema_info("test", &path).unwrap(),
+                Some(SchemaInfo {
+                    schema_type,
+                    primary_key
+                }),
+                "path: {path:?}"
+            );
+        }
+        for path in [vec!["missing"], vec!["keyed", "name"]] {
+            let path = path.into_iter().map(ToOwned::to_owned).collect::<Vec<_>>();
+            assert_eq!(store.get_schema_info("test", &path).unwrap(), None);
+        }
+        assert!(matches!(
+            store.get_schema_info("missing", &[]),
+            Err(SchemaPathError::InvalidSchemaName(_))
+        ));
+        assert!(matches!(
+            store.get_schema_info("test", &["name".into(), "invalid".into()]),
+            Err(SchemaPathError::InvalidTraversal)
+        ));
+    }
+
+    #[test]
+    fn schema_info_supports_avd_design_static_paths_without_dynamic_defaults() {
         let store = avd_design_navigation_store();
         assert_eq!(
             store
-                .get_list_primary_key("avd_design", &["node_type_keys".into()])
+                .get_schema_info("avd_design", &["node_type_keys".into()])
                 .unwrap(),
-            Some("key")
+            Some(SchemaInfo {
+                schema_type: "list",
+                primary_key: Some("key")
+            })
         );
 
         for dynamic_key in ["l3leaf", "servers", "tenants"] {
             assert_eq!(
                 store
-                    .get_list_primary_key("avd_design", &[dynamic_key.into()])
+                    .get_schema_info("avd_design", &[dynamic_key.into()])
                     .unwrap(),
                 None
             );
         }
+    }
+
+    #[test]
+    fn schema_info_preserves_defaults_outside_original_blank_overrides() {
+        let store = Store::from_json(
+            &json!({
+                "avd_design": {
+                    "type": "dict",
+                    "keys": {
+                        "node_type_keys": {
+                            "type": "list",
+                            "default": [{"key": "custom_nodes"}],
+                            "items": {"type": "dict", "keys": {"key": {"type": "str"}}}
+                        },
+                        "custom_node_type_keys": {
+                            "type": "list", "$ref": "avd_design#/keys/node_type_keys"
+                        }
+                    },
+                    "dynamic_keys": {
+                        "custom_node_type_keys.key": {
+                            "type": "list", "primary_key": "name",
+                            "items": {"type": "dict", "keys": {"name": {"type": "str"}}}
+                        }
+                    }
+                }
+            })
+            .to_string(),
+        )
+        .unwrap();
+        assert_eq!(
+            store
+                .get_schema_info("avd_design", &["custom_nodes".into()])
+                .unwrap(),
+            Some(SchemaInfo {
+                schema_type: "list",
+                primary_key: Some("name")
+            })
+        );
     }
 
     #[test]

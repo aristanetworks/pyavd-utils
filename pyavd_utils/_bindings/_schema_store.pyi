@@ -6,17 +6,32 @@
 from pathlib import Path
 from typing import Literal
 
-def get_list_primary_key(schema_name: Literal["eos_config", "avd_design"], data_path: list[str]) -> str | None:
+class SchemaInfo:
+    """Minimal metadata for a resolved schema node."""
+
+    @property
+    def schema_type(self) -> Literal["bool", "int", "str", "list", "dict"]:
+        """Type of the resolved schema node."""
+
+    @property
+    def primary_key(self) -> str | None:
+        """Primary key for a list schema, if configured; None for other types."""
+
+def get_schema_info(schema_name: Literal["eos_config", "avd_design"], data_path: list[str]) -> SchemaInfo | None:
     """
-    Return the primary key for a list schema at the given data path.
+    Return minimal metadata for the schema at the given data path, or None if unresolved.
 
     Limitation:
-        Dynamic keys in the AVD design schema are not supported today; only static schema paths
-        can be inspected. The supported schema names are "eos_config" and "avd_design".
+        General data-aware dynamic-key resolution is not supported. For "avd_design", the
+        existing empty-list inputs for node_type_keys, connected_endpoints_keys, and
+        network_services_keys suppress their corresponding defaults. Other schema-default
+        resolution follows the existing traversal rules.
+        The supported schema names are "eos_config" and "avd_design".
 
     Args:
         schema_name: The name of the schema to inspect.
-        data_path: Path to the data model list.
+        data_path: Path to the data model node. Numeric strings traverse list items;
+            an empty path returns metadata for the root dictionary.
 
     Raises:
         RuntimeError: If the shared schema store has not been initialized, if the schema name is

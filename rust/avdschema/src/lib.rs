@@ -94,6 +94,7 @@ pub use self::generation::generate_python_models;
 #[cfg(feature = "generation")]
 pub use self::generation::generate_python_models_projection;
 pub use self::inherit::Inherit;
+pub use self::navigation::SchemaInfo;
 pub use self::navigation::SchemaPathError;
 pub use self::navigation::resolve_dynamic_keys;
 pub use self::resolve::errors::SchemaResolverError;

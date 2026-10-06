@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Literal
 
 import pytest
 
-from pyavd_utils.schema_store import get_list_primary_key, init_store_from_file
+from pyavd_utils.schema_store import SchemaInfo, get_schema_info, init_store_from_file
 from pyavd_utils_gen.schema_store import compile_schema_archive
 
 if TYPE_CHECKING:
@@ -47,25 +47,44 @@ def test_compile_schema_archive_rejects_invalid_schema(tmp_path: Path) -> None:
 
 @pytest.mark.usefixtures("init_store")
 @pytest.mark.parametrize(
-    ("schema_name", "data_path", "expected_primary_key"),
+    ("schema_name", "data_path", "expected_schema_type", "expected_primary_key"),
     [
-        pytest.param("eos_config", ["ethernet_interfaces"], "name", id="eos_config_top_level_list"),
-        pytest.param("eos_config", ["access_lists", "0", "sequence_numbers"], "sequence", id="eos_config_nested_list"),
-        pytest.param("eos_config", ["access_lists", "sequence_numbers"], None, id="eos_config_nested_list_without_index"),
-        pytest.param("eos_config", ["hostname"], None, id="eos_config_non_list_path"),
-        pytest.param("eos_config", ["not_a_schema_key"], None, id="eos_config_unknown_path"),
-        pytest.param("avd_design", ["node_type_keys"], "key", id="avd_design_node_type_keys"),
-        pytest.param("avd_design", ["connected_endpoints_keys"], "key", id="avd_design_connected_endpoints_keys"),
-        pytest.param("avd_design", ["network_services_keys"], "name", id="avd_design_network_services_keys"),
+        pytest.param("eos_config", [], "dict", None, id="eos_config_root"),
+        pytest.param("eos_config", ["ethernet_interfaces"], "list", "name", id="eos_config_top_level_list"),
+        pytest.param("eos_config", ["ethernet_interfaces", "0"], "dict", None, id="eos_config_list_item"),
+        pytest.param("eos_config", ["access_lists", "0", "sequence_numbers"], "list", "sequence", id="eos_config_nested_list"),
+        pytest.param("eos_config", ["access_lists", "sequence_numbers"], None, None, id="eos_config_nested_list_without_index"),
+        pytest.param("eos_config", ["hostname"], "str", None, id="eos_config_scalar_path"),
+        pytest.param("eos_config", ["config_end"], "bool", None, id="eos_config_bool_path"),
+        pytest.param("eos_config", ["ip_access_lists_max_entries"], "int", None, id="eos_config_int_path"),
+        pytest.param("eos_config", ["custom_templates"], "list", None, id="eos_config_list_without_primary_key"),
+        pytest.param("eos_config", ["not_a_schema_key"], None, None, id="eos_config_unknown_path"),
+        pytest.param("avd_design", ["node_type_keys"], "list", "key", id="avd_design_node_type_keys"),
+        pytest.param("avd_design", ["connected_endpoints_keys"], "list", "key", id="avd_design_connected_endpoints_keys"),
+        pytest.param("avd_design", ["network_services_keys"], "list", "name", id="avd_design_network_services_keys"),
     ],
 )
-def test_schema_store_get_list_primary_key(schema_name: Literal["eos_config", "avd_design"], data_path: list[str], expected_primary_key: str | None) -> None:
-    assert get_list_primary_key(schema_name, data_path) == expected_primary_key
+def test_schema_store_get_schema_info(
+    schema_name: Literal["eos_config", "avd_design"], data_path: list[str], expected_schema_type: str | None, expected_primary_key: str | None
+) -> None:
+    info = get_schema_info(schema_name, data_path)
+    if expected_schema_type is None:
+        assert info is None
+    else:
+        assert isinstance(info, SchemaInfo)
+        assert info.schema_type == expected_schema_type
+        assert info.primary_key == expected_primary_key
 
 
 @pytest.mark.usefixtures("init_store")
 @pytest.mark.parametrize("schema_name", ["eos_cli_config_gen", "eos_designs", "cv_deploy"])
-def test_schema_store_get_list_primary_key_unsupported_schema_name_errors(schema_name: str) -> None:
+def test_schema_store_get_schema_info_unsupported_schema_name_errors(schema_name: str) -> None:
     with pytest.raises(RuntimeError, match="not supported"):
         # Intentionally violate the typed API contract to test runtime validation.
-        get_list_primary_key(schema_name, [])  # pyright: ignore[reportArgumentType]
+        get_schema_info(schema_name, [])  # pyright: ignore[reportArgumentType]
+
+
+@pytest.mark.usefixtures("init_store")
+def test_schema_store_get_schema_info_invalid_traversal_errors() -> None:
+    with pytest.raises(RuntimeError, match="Data path cannot be traversed through this schema node"):
+        get_schema_info("eos_config", ["hostname", "INVALID"])

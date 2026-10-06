@@ -34,6 +34,8 @@ fn already_initialized_error() -> pyo3::PyErr {
 /// Shared schema store helpers.
 #[pyo3::pymodule]
 pub(crate) mod _schema_store {
+    use pyo3::pyclass;
+
     use super::PathBuf;
     use super::PyResult;
     use super::PyRuntimeError;
@@ -43,6 +45,13 @@ pub(crate) mod _schema_store {
     use super::get_store;
     use super::info;
     use super::pyfunction;
+
+    /// Minimal metadata for a resolved schema node.
+    #[pyclass(frozen, get_all)]
+    pub(crate) struct SchemaInfo {
+        pub schema_type: &'static str,
+        pub primary_key: Option<String>,
+    }
 
     #[pyfunction]
     /// Validate and memory-map the process-wide compiled schema store.
@@ -67,22 +76,27 @@ pub(crate) mod _schema_store {
     }
 
     #[pyfunction]
-    /// Return the primary key for a list schema at the given data path.
+    /// Return minimal schema metadata at the given data path.
     ///
-    /// Dynamic keys in the AVD design schema are not supported today; only
-    /// static schema paths can be inspected.
-    pub(crate) fn get_list_primary_key(
+    /// General data-aware dynamic-key resolution is not supported. Lookup retains
+    /// the existing empty-input behavior and its schema-default resolution rules.
+    pub(crate) fn get_schema_info(
         schema_name: &str,
         data_path: Vec<String>,
-    ) -> PyResult<Option<String>> {
+    ) -> PyResult<Option<SchemaInfo>> {
         if !matches!(schema_name, "eos_config" | "avd_design") {
             return Err(PyRuntimeError::new_err(format!(
-                "Schema name '{schema_name}' is not supported by get_list_primary_key. Supported schema names are 'eos_config' and 'avd_design'."
+                "Schema name '{schema_name}' is not supported by get_schema_info. Supported schema names are 'eos_config' and 'avd_design'."
             )));
         }
         get_store()?
-            .get_list_primary_key(schema_name, &data_path)
-            .map(|primary_key| primary_key.map(ToOwned::to_owned))
+            .get_schema_info(schema_name, &data_path)
+            .map(|info| {
+                info.map(|info| SchemaInfo {
+                    schema_type: info.schema_type,
+                    primary_key: info.primary_key.map(ToOwned::to_owned),
+                })
+            })
             .map_err(|err| {
                 PyRuntimeError::new_err(format!("Error while resolving schema path: {err}"))
             })
