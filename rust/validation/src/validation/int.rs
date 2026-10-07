@@ -42,8 +42,8 @@ pub(crate) fn validate_node<V: ValidatableValue>(
                 },
             );
         }
-        validate_min(schema, value, &integer, ctx, state);
-        validate_max(schema, value, &integer, ctx, state);
+        validate_min(schema, value, integer, ctx, state);
+        validate_max(schema, value, integer, ctx, state);
         NodeValidation::Valid(integer)
     } else if value.is_int() {
         ctx.add_error_for(
@@ -65,19 +65,19 @@ pub(crate) fn validate_node<V: ValidatableValue>(
 fn validate_min<V: ValidatableValue>(
     schema: IntView<'_>,
     value: &V,
-    input: &i64,
+    input: i64,
     ctx: &mut Context,
     state: &ValidationState,
 ) {
     if let Some(min) = schema.min()
-        && min > *input
+        && min > input
     {
         ctx.add_error_for(
             state,
             value,
             Violation::ValueBelowMinimum {
                 minimum: min,
-                found: *input,
+                found: input,
             },
         );
     }
@@ -86,19 +86,19 @@ fn validate_min<V: ValidatableValue>(
 fn validate_max<V: ValidatableValue>(
     schema: IntView<'_>,
     value: &V,
-    input: &i64,
+    input: i64,
     ctx: &mut Context,
     state: &ValidationState,
 ) {
     if let Some(max) = schema.max()
-        && max < *input
+        && max < input
     {
         ctx.add_error_for(
             state,
             value,
             Violation::ValueAboveMaximum {
                 maximum: max,
-                found: *input,
+                found: input,
             },
         );
     }

@@ -94,7 +94,7 @@ impl<'context, 'store> Validator<'context, 'store> {
         value: &V,
         state: &mut ValidationState,
     ) -> Option<V::Coerced> {
-        match boolean::validate_node(&schema, value, self.context, state) {
+        match boolean::validate_node(schema, value, self.context, state) {
             NodeValidation::Valid(value_) => self
                 .context
                 .configuration

@@ -11,11 +11,9 @@
     clippy::empty_structs_with_brackets,
     clippy::field_scoped_visibility_modifiers,
     clippy::float_cmp,
-    clippy::match_wildcard_for_single_variants,
     clippy::option_option,
     clippy::partial_pub_fields,
     clippy::struct_excessive_bools,
-    clippy::trivially_copy_pass_by_ref,
     reason = "Existing validation models and tests predate workspace lint inheritance"
 )]
 #![deny(unused_crate_dependencies)]

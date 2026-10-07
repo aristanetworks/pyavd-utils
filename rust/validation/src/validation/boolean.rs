@@ -10,7 +10,7 @@ use crate::feedback::Type;
 use crate::validatable::ValidatableValue;
 
 pub(crate) fn validate_node<V: ValidatableValue>(
-    schema: &avdschema::BoolView,
+    schema: avdschema::BoolView<'_>,
     value: &V,
     ctx: &mut Context,
     state: &mut ValidationState,

@@ -528,7 +528,7 @@ mod tests {
                     "message should include the offending pattern: {message}"
                 );
             }
-            other => panic!("expected InternalError, got {other:?}"),
+            other @ ErrorIssue::Violation(_) => panic!("expected InternalError, got {other:?}"),
         }
     }
 }
