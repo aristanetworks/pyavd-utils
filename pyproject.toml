@@ -59,7 +59,7 @@ args = ["--locked"]
 [dependency-groups]
 pytest = [
     "pytest>=8.2.0",
-    "ruff==0.16.9",
+    "ruff==0.16.10",
 ]
 coverage = [
     "coverage[toml]==7.16.2",
