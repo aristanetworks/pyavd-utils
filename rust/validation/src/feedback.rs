@@ -70,6 +70,9 @@ impl Path {
     pub(crate) fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
+    pub(crate) fn len(&self) -> usize {
+        self.0.len()
+    }
     pub(crate) fn clone_with_slice(&self, slice: &[String]) -> Self {
         let mut new = self.clone();
         new.0.extend_from_slice(slice);

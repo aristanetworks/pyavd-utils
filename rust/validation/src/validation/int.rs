@@ -58,7 +58,7 @@ pub(crate) fn validate_node<V: ValidatableValue>(
         );
         NodeValidation::Invalid
     } else {
-        invalid_type(value, ctx, state, Type::Int)
+        invalid_type(value, schema.common().required(), ctx, state, Type::Int)
     }
 }
 
