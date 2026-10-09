@@ -10,6 +10,7 @@ use crate::feedback::Type;
 use crate::validatable::ValidatableValue;
 
 pub(crate) fn validate_node<V: ValidatableValue>(
+    schema: &avdschema::BoolView,
     value: &V,
     ctx: &mut Context,
     state: &mut ValidationState,
@@ -18,7 +19,7 @@ pub(crate) fn validate_node<V: ValidatableValue>(
         // Boolean schemas have no constraints to validate beyond type checking.
         NodeValidation::Valid(boolean)
     } else {
-        invalid_type(value, ctx, state, Type::Bool)
+        invalid_type(value, schema.common().required(), ctx, state, Type::Bool)
     }
 }
 

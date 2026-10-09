@@ -184,7 +184,7 @@ pub struct Configuration {
     /// Stored behind Arc so cloning Configuration for each new Context stays cheap.
     pub dynamic_key_overrides: Option<Arc<DynamicKeyOverrides>>,
     pub ignore_required_keys_on_root_dict: bool,
-    /// By default Null/None values are ignored no matter which data type is expected.
+    /// By default Null/None values are ignored on optional fields no matter which data type is expected.
     /// Setting this will instead emit type errors for Null values.
     pub restrict_null_values: bool,
     /// When true, validation returns coerced data with types adjusted according to the schema.

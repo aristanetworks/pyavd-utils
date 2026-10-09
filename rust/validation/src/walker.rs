@@ -79,29 +79,22 @@ impl<'context, 'store> Validator<'context, 'store> {
         value: &V,
         state: &mut ValidationState,
     ) -> Option<V::Coerced> {
-        let previous_relaxed_validation = state.relaxed_validation;
-        let coerced = match schema {
-            SchemaView::Bool(_) => self.visit_bool(value, state),
+        match schema {
+            SchemaView::Bool(schema) => self.visit_bool(schema, value, state),
             SchemaView::Int(schema) => self.visit_int(schema, value, state),
             SchemaView::Str(schema) => self.visit_str(schema, value, state),
             SchemaView::List(schema) => self.visit_list(schema, value, state),
-            SchemaView::Dict(schema) => {
-                if schema.begin_relaxed_validation() {
-                    state.relaxed_validation = true;
-                }
-                self.visit_dict(schema, value, state)
-            }
-        };
-        state.relaxed_validation = previous_relaxed_validation;
-        coerced
+            SchemaView::Dict(schema) => self.visit_dict(schema, value, state),
+        }
     }
 
     fn visit_bool<V: ValidatableValue>(
         &mut self,
+        schema: avdschema::BoolView<'_>,
         value: &V,
         state: &mut ValidationState,
     ) -> Option<V::Coerced> {
-        match boolean::validate_node(value, self.context, state) {
+        match boolean::validate_node(&schema, value, self.context, state) {
             NodeValidation::Valid(value_) => self
                 .context
                 .configuration
@@ -203,7 +196,7 @@ impl<'context, 'store> Validator<'context, 'store> {
         value: &V,
         state: &mut ValidationState,
     ) -> Option<V::Coerced> {
-        let mapping = match dict::validate_node(value, self.context, state) {
+        let mapping = match dict::validate_node(schema, value, self.context, state) {
             NodeValidation::Valid(mapping) => mapping,
             NodeValidation::Null => {
                 return self
@@ -214,8 +207,15 @@ impl<'context, 'store> Validator<'context, 'store> {
             }
             NodeValidation::Invalid => return None,
         };
+        // Relaxed validation only applies to the children of the node that declares it.
+        let previous_relaxed_validation = state.relaxed_validation;
+        if schema.begin_relaxed_validation() {
+            state.relaxed_validation = true;
+        }
         let coerced_items = self.visit_mapping(schema, &mapping, state);
         dict::finish_node_validation(schema, value, &mapping, self.context, state);
+        state.relaxed_validation = previous_relaxed_validation;
+
         coerced_items.map(|items| value.coerce_mapping(items))
     }
 

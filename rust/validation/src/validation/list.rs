@@ -6,13 +6,14 @@ use std::collections::HashMap;
 
 use avdschema::ListView;
 
+use super::NodeValidation;
+use super::invalid_type;
 use crate::context::Context;
 use crate::context::ValidationState;
 use crate::feedback::Type;
 use crate::feedback::Violation;
 use crate::validatable::ValidatableSequence;
 use crate::validatable::ValidatableValue;
-use crate::validation::NodeValidation;
 
 /// Validate list-wide constraints without recursively validating item bodies.
 ///
@@ -30,18 +31,8 @@ pub(crate) fn validate_node<'a, V: ValidatableValue>(
         validate_max_length(schema, value, &sequence, ctx, state);
         validate_unique_keys(schema, &sequence, ctx, state);
         NodeValidation::Valid(sequence)
-    } else if value.is_null() && !ctx.configuration.restrict_null_values {
-        NodeValidation::Null
     } else {
-        ctx.add_error_for(
-            state,
-            value,
-            Violation::InvalidType {
-                expected: Type::List,
-                found: value.value_type(),
-            },
-        );
-        NodeValidation::Invalid
+        invalid_type(value, schema.common().required(), ctx, state, Type::List)
     }
 }
 

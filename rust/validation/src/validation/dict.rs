@@ -7,6 +7,7 @@ use avdschema::DictView;
 use avdschema::SchemaView;
 
 use super::NodeValidation;
+use super::invalid_type;
 use crate::context::Context;
 use crate::context::ValidationState;
 use crate::feedback::Deprecated;
@@ -25,6 +26,7 @@ use crate::validatable::ValidatableValue;
 /// continue, [`NodeValidation::Null`] for an accepted null, or
 /// [`NodeValidation::Invalid`] after recording an invalid-type diagnostic.
 pub(crate) fn validate_node<'a, V: ValidatableValue>(
+    schema: DictView<'_>,
     value: &'a V,
     ctx: &mut Context,
     state: &mut ValidationState,
@@ -32,18 +34,8 @@ pub(crate) fn validate_node<'a, V: ValidatableValue>(
     if let Some(mapping) = value.as_mapping() {
         validate_duplicate_keys(&mapping, ctx, state);
         NodeValidation::Valid(mapping)
-    } else if value.is_null() && !ctx.configuration.restrict_null_values {
-        NodeValidation::Null
     } else {
-        ctx.add_error_for(
-            state,
-            value,
-            Violation::InvalidType {
-                expected: Type::Dict,
-                found: value.value_type(),
-            },
-        );
-        NodeValidation::Invalid
+        invalid_type(value, schema.common().required(), ctx, state, Type::Dict)
     }
 }
 
