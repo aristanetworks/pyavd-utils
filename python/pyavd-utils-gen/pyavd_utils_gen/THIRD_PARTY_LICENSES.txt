@@ -219,8 +219,8 @@ Apache License 2.0
 ================================================================================
 
 Used by:
-  - avdschema 0.0.11
-  - python-generation-bindings 0.0.11
+  - avdschema 0.0.12
+  - python-generation-bindings 0.0.12
   - ryu 1.0.23
 
 License text:

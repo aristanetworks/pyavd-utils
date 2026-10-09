@@ -19,7 +19,7 @@ classifiers = [
     "Topic :: Software Development :: Build Tools",
 ]
 requires-python = ">=3.10"
-dependencies = ["pyavd-utils==0.0.11"]
+dependencies = ["pyavd-utils==0.0.12"]
 
 [project.urls]
 homepage = "https://avd.arista.com"
