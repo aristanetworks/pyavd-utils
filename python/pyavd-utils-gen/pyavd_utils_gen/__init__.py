@@ -7,6 +7,6 @@ from . import metaschema, schema_generation, schema_store
 __author__ = "Arista Networks"
 __copyright__ = "Copyright 2026 Arista Networks"
 __license__ = "Apache 2.0"
-__version__ = "0.0.10"
+__version__ = "0.0.11"
 
 __all__ = ["metaschema", "schema_generation", "schema_store"]
