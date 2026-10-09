@@ -150,7 +150,7 @@ jobs:
         shell: bash
         run: |-
           pip install -i https://test.pypi.org/simple/ "pyavd-utils==${TARGET_VERSION}" --group pytest --extra-index-url https://pypi.org/simple
-          python -c "import importlib.util, pyavd_utils.schema_store, pyavd_utils.validation; \
+          python -I -c "import importlib.util, pyavd_utils.schema_store, pyavd_utils.validation; \
             assert importlib.util.find_spec('pyavd_utils_gen') is None; \
             assert not hasattr(pyavd_utils.schema_store, 'compile_schema_archive')"
           pip install -i https://test.pypi.org/simple/ "pyavd-utils-gen==${TARGET_VERSION}" --extra-index-url https://pypi.org/simple
@@ -201,7 +201,7 @@ jobs:
         run: |-
           pip install --upgrade "pip>=25.1.0"
           pip install -i https://test.pypi.org/simple/ "pyavd-utils==${TARGET_VERSION}" --group pytest --extra-index-url https://pypi.org/simple
-          python -c "import importlib.util, pyavd_utils.schema_store, pyavd_utils.validation; \
+          python -I -c "import importlib.util, pyavd_utils.schema_store, pyavd_utils.validation; \
             assert importlib.util.find_spec('pyavd_utils_gen') is None; \
             assert not hasattr(pyavd_utils.schema_store, 'compile_schema_archive')"
           pip install -i https://test.pypi.org/simple/ "pyavd-utils-gen==${TARGET_VERSION}" --extra-index-url https://pypi.org/simple
