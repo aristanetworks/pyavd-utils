@@ -65,6 +65,10 @@ def test_generate_metaschema(tmp_path: Path) -> None:
     int_convert_type = schema["definitions"]["IntConvertType"]
     assert int_convert_type["enum"] == ["bool", "str", "float"]
     assert schema["definitions"]["StrConvertType"]["enum"] == ["bool", "int", "float"]
+    for schema_type in ("int", "str"):
+        variant = _variant(recursive_schema, schema_type)
+        assert variant["required"] == ["type"]
+        assert variant["properties"]["convert_types"]["type"] == "array"
     assert schema["definitions"]["Pattern"]["format"] == "regex"
     for definition in ("DocumentationOptions", "DocumentationOptionsDict"):
         assert schema["definitions"][definition]["properties"]["table"]["pattern"] == "^[a-z0-9_-]+$"
