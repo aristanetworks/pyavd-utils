@@ -28,6 +28,9 @@ jobs:
   python_coverage:
     name: Python coverage
     runs-on: ubuntu-latest
+    env:
+      # Avoid partially installed toolchains from the runner image.
+      RUSTUP_HOME: ${{ runner.temp }}/rustup
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -57,6 +60,9 @@ jobs:
   cargo_build_and_test:
     name: Cargo build, test and linting on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
+    env:
+      # Avoid partially installed toolchains from the runner image.
+      RUSTUP_HOME: ${{ runner.temp }}/rustup
     strategy:
       fail-fast: false
       matrix:
@@ -114,6 +120,9 @@ jobs:
   cargo_wasm:
     name: Check AVD LSP support WASM contract
     runs-on: ubuntu-latest
+    env:
+      # Avoid partially installed toolchains from the runner image.
+      RUSTUP_HOME: ${{ runner.temp }}/rustup
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
