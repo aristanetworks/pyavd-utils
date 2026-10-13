@@ -29,6 +29,9 @@ jobs:
   pyavd_utils_build_wheels:
     name: Build pyavd-utils wheel on ${{ inputs.runner }}
     runs-on: ${{ inputs.runner }}
+    env:
+      # Isolate host toolchains; Linux cibuildwheel containers do not inherit this variable.
+      RUSTUP_HOME: ${{ runner.temp }}/rustup
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -67,6 +70,9 @@ jobs:
   pyavd_utils_gen_build_wheels:
     name: Build pyavd-utils-gen wheel on ${{ inputs.runner }}
     runs-on: ${{ inputs.runner }}
+    env:
+      # Isolate host toolchains; Linux cibuildwheel containers do not inherit this variable.
+      RUSTUP_HOME: ${{ runner.temp }}/rustup
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

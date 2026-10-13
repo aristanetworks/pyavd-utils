@@ -18,6 +18,9 @@ jobs:
   autofix:
     name: Run pre-commit and commit back any changes
     runs-on: ubuntu-latest
+    env:
+      # Avoid partially installed toolchains from the runner image.
+      RUSTUP_HOME: ${{ runner.temp }}/rustup
     steps:
       - name: Checkout the repo
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -28,6 +31,12 @@ jobs:
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.14"
+
+      - name: Install Rust toolchain from rust-toolchain.toml
+        run: |
+          rustup show
+          # Pre-commit builds hook binaries outside the repository's toolchain override.
+          rustup default "$(rustup show active-toolchain | cut -d ' ' -f1)"
 
       # Needed until we move to prek and get proper support for toolchain profile - preferably per hook.
       - name: Install Rust nightly formatter
