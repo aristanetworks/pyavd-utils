@@ -21,6 +21,9 @@
 use std::collections::BTreeSet;
 use std::fmt::Write as _;
 
+use serde::Serialize;
+use serde::Serializer;
+
 use crate::CompileError;
 use crate::StoreSource;
 use crate::compiled::Common;
@@ -1004,63 +1007,29 @@ fn render_python_value(value: &CompiledValue) -> String {
 }
 
 fn render_yaml_mapping(key: &str, value: &CompiledValue) -> String {
-    let mut mapping = serde_yaml::Mapping::new();
-    mapping.insert(serde_yaml::Value::String(key.to_owned()), yaml_value(value));
-    wrap_yaml_plain_scalars(&serde_yaml::to_string(&mapping).unwrap_or_default())
+    let mapping = ordermap::OrderMap::<_, _>::from_iter([(key, YamlValue(value))]);
+    yaml_parser::serde::to_string(&mapping).unwrap_or_default()
 }
 
-fn wrap_yaml_plain_scalars(yaml: &str) -> String {
-    let mut output = String::new();
-    for line in yaml.split_inclusive('\n') {
-        let physical_line = line.trim_end_matches('\n');
-        let Some((prefix, value)) = physical_line.split_once(": ") else {
-            output.push_str(line);
-            continue;
-        };
-        if physical_line.len() <= 80
-            || value.starts_with(['\'', '"', '[', '{', '|', '>'])
-            || !value.contains(' ')
-        {
-            output.push_str(line);
-            continue;
-        }
-        let indentation = physical_line.len() - physical_line.trim_start().len();
-        let continuation = " ".repeat(indentation + 2);
-        let mut current = format!("{prefix}: ");
-        for word in value.split(' ') {
-            if current.trim_end().len() > 80 {
-                let _ = writeln!(output, "{}", current.trim_end());
-                current.clone_from(&continuation);
+/// Serialize compiled defaults as data rather than as enum variants.
+struct YamlValue<'a>(&'a CompiledValue);
+
+impl Serialize for YamlValue<'_> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match self.0 {
+            CompiledValue::Null => serializer.serialize_unit(),
+            CompiledValue::Bool(value) => serializer.serialize_bool(*value),
+            CompiledValue::I64(value) => serializer.serialize_i64(*value),
+            CompiledValue::U64(value) => serializer.serialize_u64(*value),
+            CompiledValue::String(value) => serializer.serialize_str(value),
+            CompiledValue::List(values) => serializer.collect_seq(values.iter().map(YamlValue)),
+            CompiledValue::Object(values) => {
+                serializer.collect_map(values.iter().map(|(key, value)| (key, YamlValue(value))))
             }
-            current.push_str(word);
-            current.push(' ');
         }
-        let _ = writeln!(output, "{}", current.trim_end());
-    }
-    output
-}
-
-fn yaml_value(value: &CompiledValue) -> serde_yaml::Value {
-    match value {
-        CompiledValue::Null => serde_yaml::Value::Null,
-        CompiledValue::Bool(value) => serde_yaml::Value::Bool(*value),
-        CompiledValue::I64(value) => serde_yaml::Value::Number((*value).into()),
-        CompiledValue::U64(value) => serde_yaml::Value::Number((*value).into()),
-        CompiledValue::String(value) => serde_yaml::Value::String(value.clone()),
-        CompiledValue::List(values) => {
-            serde_yaml::Value::Sequence(values.iter().map(yaml_value).collect())
-        }
-        CompiledValue::Object(values) => serde_yaml::Value::Mapping(
-            values
-                .iter()
-                .map(|(key, nested_value)| {
-                    (
-                        serde_yaml::Value::String(key.clone()),
-                        yaml_value(nested_value),
-                    )
-                })
-                .collect(),
-        ),
     }
 }
 

@@ -94,4 +94,36 @@ mod tests {
         assert_eq!(schema["title"], "Arista AVD Schema");
         assert!(schema["definitions"].is_object());
     }
+
+    #[test]
+    fn generated_metaschema_keeps_convert_types_optional() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let schema: Value = serde_json::from_str(&generate_metaschema_json()?)?;
+        let variants = schema["definitions"]["SourceSchema"]["oneOf"]
+            .as_array()
+            .ok_or("Missing source-schema variants")?;
+
+        for schema_type in ["int", "str"] {
+            let variant = variants
+                .iter()
+                .find(|variant| variant["properties"]["type"]["const"] == schema_type)
+                .ok_or_else(|| format!("Missing {schema_type} schema variant"))?;
+
+            if variant["required"] != serde_json::json!(["type"]) {
+                return Err(std::io::Error::other(format!(
+                    "Unexpected required properties for {schema_type}: {}",
+                    variant["required"]
+                ))
+                .into());
+            }
+            if variant["properties"]["convert_types"]["type"] != "array" {
+                return Err(std::io::Error::other(format!(
+                    "Expected convert_types for {schema_type} to be an array, got {}",
+                    variant["properties"]["convert_types"]["type"]
+                ))
+                .into());
+            }
+        }
+        Ok(())
+    }
 }

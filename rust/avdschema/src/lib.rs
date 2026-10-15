@@ -121,9 +121,6 @@ pub use self::utils::load::Load;
 pub use self::utils::load::LoadError;
 #[cfg(feature = "dump_load_files")]
 pub use self::utils::load::LoadFromFragments;
-pub use self::utils::schema_data::SchemaDataMapping;
-pub use self::utils::schema_data::SchemaDataSequence;
-pub use self::utils::schema_data::SchemaDataValue;
 pub use self::views::BoolView;
 pub use self::views::CommonView;
 pub use self::views::DeprecationView;

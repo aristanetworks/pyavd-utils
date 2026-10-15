@@ -1,0 +1,13 @@
+[package]
+name = "schema-data"
+version.workspace = true
+edition = "2024"
+license.workspace = true
+description = "Storage-neutral data views for AVD schema navigation"
+
+[dependencies]
+ordermap = { workspace = true }
+serde_json = { workspace = true, features = ["arbitrary_precision", "preserve_order"] }
+
+[lints]
+workspace = true

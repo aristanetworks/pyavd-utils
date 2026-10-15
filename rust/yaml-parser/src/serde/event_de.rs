@@ -1177,6 +1177,36 @@ mod tests {
     }
 
     #[test]
+    fn unsigned_integer_deserialization_accepts_the_full_u64_range() {
+        let i64_max_u64 = u64::try_from(i64::MAX).unwrap();
+
+        for number in [42, i64_max_u64, i64_max_u64 + 1, u64::MAX] {
+            for input in [
+                number.to_string(),
+                format!("+{number}"),
+                format!("0x{number:x}"),
+                format!("0o{number:o}"),
+            ] {
+                for yaml in [input.clone(), format!("!!int {input}")] {
+                    let value: u64 = from_str_internal(&yaml).expect("u64 should deserialize");
+                    assert_eq!(value, number, "unexpected value for {yaml}");
+                }
+            }
+        }
+        for input in [
+            "18446744073709551616",
+            "0x10000000000000000",
+            "0o2000000000000000000000",
+            "-1",
+        ] {
+            assert!(
+                from_str_internal::<u64>(input).is_err(),
+                "out-of-range u64 accepted: {input}"
+            );
+        }
+    }
+
+    #[test]
     fn deserialize_any_and_typed_deserialization_agree_on_scalar_meaning() {
         let value: Value<'_> = from_str_internal("0x2A").expect("Value should deserialize");
         assert!(matches!(value, Value::Int(Integer::I64(42))));

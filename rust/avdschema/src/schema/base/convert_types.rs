@@ -36,6 +36,7 @@ pub(crate) enum IntConvertType {
 #[cfg(feature = "metaschema")]
 #[derive(schemars::JsonSchema)]
 pub(crate) struct IntConvertTypes {
+    #[schemars(skip_serializing_if = "Option::is_none")]
     convert_types: Option<Vec<IntConvertType>>,
 }
 
@@ -53,5 +54,6 @@ pub(crate) enum StrConvertType {
 #[cfg(feature = "metaschema")]
 #[derive(schemars::JsonSchema)]
 pub(crate) struct StrConvertTypes {
+    #[schemars(skip_serializing_if = "Option::is_none")]
     convert_types: Option<Vec<StrConvertType>>,
 }

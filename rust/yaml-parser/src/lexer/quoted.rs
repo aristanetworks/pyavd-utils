@@ -378,12 +378,22 @@ impl<'input> Lexer<'input> {
         start: usize,
         ch: char,
     ) -> Option<Spanned<Token<'input>>> {
-        if ch == '\'' {
-            return Some(self.consume_single_quoted(start));
+        if !matches!(ch, '\'' | '"') {
+            return None;
         }
-        if ch == '"' {
-            return Some(self.consume_double_quoted(start));
+        if self.plain_continuation.is_some_and(|context| {
+            self.current_line.start > context.line_start
+                && self.current_line.indent >= context.min_indent
+        }) && self.quote_line_can_continue_plain()
+        {
+            // YAML 1.2 ns-plain-char permits quotes after the first character.
+            // Tokenize as plain text so unmatched quotes and backslashes remain literal.
+            return Some(self.consume_plain_scalar(start));
         }
-        None
+        Some(if ch == '\'' {
+            self.consume_single_quoted(start)
+        } else {
+            self.consume_double_quoted(start)
+        })
     }
 }

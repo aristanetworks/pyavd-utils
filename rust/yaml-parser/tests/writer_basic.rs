@@ -13,6 +13,8 @@
     reason = "panic is expected in test assertions for mismatched value kinds"
 )]
 
+use yaml_parser::CollectionStyle;
+use yaml_parser::Event;
 use yaml_parser::Node;
 use yaml_parser::Properties;
 use yaml_parser::Property;
@@ -152,8 +154,84 @@ fn writer_roundtrip_simple_mapping() {
 }
 
 #[test]
+fn writer_uses_flow_syntax_for_empty_block_collections() {
+    for input in [
+        "[]\n",
+        "{}\n",
+        "items: []\nsettings: {}\n",
+        "- []\n- {}\n",
+        "items: &items []\nsettings: !settings {}\n",
+        "? []\n: {}\n",
+    ] {
+        let (before, parse_errors) = parse(input);
+        assert!(
+            parse_errors.is_empty(),
+            "unexpected parse errors: {parse_errors:?}"
+        );
+        let (mut events, event_errors) = emit_events(input);
+        assert!(
+            event_errors.is_empty(),
+            "unexpected event errors: {event_errors:?}"
+        );
+        for event in &mut events {
+            if let Event::MappingStart { style, .. } | Event::SequenceStart { style, .. } = event {
+                *style = CollectionStyle::Block;
+            }
+        }
+        let mut output = Vec::new();
+        writer::write_yaml_from_events(&mut output, &events)
+            .expect("writing empty block collections should succeed");
+        let output = String::from_utf8(output).expect("writer must produce UTF-8");
+        let (after, roundtrip_errors) = parse(&output);
+        assert!(
+            roundtrip_errors.is_empty(),
+            "parse errors: {roundtrip_errors:?}; output: {output:?}"
+        );
+        assert_eq!(after.len(), before.len(), "output: {output:?}");
+        for (expected, actual) in before.iter().zip(&after) {
+            assert_node_eq_ignoring_spans(expected, actual);
+        }
+        if input == "[]\n" || input == "{}\n" {
+            assert_eq!(output, input);
+        }
+    }
+}
+
+#[test]
 fn writer_roundtrip_sequence() {
     roundtrip_value("- a\n- b\n- c\n");
+}
+
+#[test]
+fn writer_keeps_simple_mapping_sequence_items_on_marker_line() {
+    for input in [
+        "- name: first\n  enabled: true\n- name: second\n  enabled: false\n",
+        "profiles:\n  - name: default\n    settings:\n      mode: test\n",
+        "- items:\n    - name: inner\n      value: 42\n  next: after\n",
+        "- 'a: b': \"yes\"\n  empty:\n    []\n",
+    ] {
+        let (events, errors) = emit_events(input);
+        assert!(errors.is_empty(), "unexpected event errors: {errors:?}");
+        let mut output = Vec::new();
+        writer::write_yaml_from_events(&mut output, &events)
+            .expect("writing sequence mappings should succeed");
+        let output = String::from_utf8(output).expect("writer must produce UTF-8");
+        assert_eq!(output, input, "mapping should start beside its list marker");
+        roundtrip_value(input);
+    }
+}
+
+#[test]
+fn writer_preserves_sequence_mapping_properties_and_complex_keys() {
+    for input in [
+        "- &entry\n  name: default\n- *entry\n",
+        "- !custom\n  name: default\n",
+        "- ? [first, second]\n  : value\n  next: after\n",
+        "key: &key name\nitems:\n  - ?\n      *key\n    : value\n    next: after\n",
+        "- {}\n- {name: default}\n",
+    ] {
+        roundtrip_value(input);
+    }
 }
 
 #[test]
