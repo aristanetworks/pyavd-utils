@@ -18,7 +18,7 @@
 
 use std::borrow::Cow;
 
-use avdschema::SchemaDataMapping;
+use schema_data::SchemaDataMapping;
 
 use crate::feedback::SourceSpan;
 use crate::feedback::Type;

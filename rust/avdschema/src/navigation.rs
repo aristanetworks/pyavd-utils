@@ -10,13 +10,13 @@
 //! archived in [`Store`].
 
 use ordermap::OrderMap;
+use schema_data::SchemaDataMapping;
+use schema_data::SchemaDataSequence as _;
+use schema_data::SchemaDataValue;
 
 use crate::DeprecationView;
 use crate::DictView;
 use crate::DynamicKeyOverrides;
-use crate::SchemaDataMapping;
-use crate::SchemaDataSequence as _;
-use crate::SchemaDataValue as _;
 use crate::SchemaView;
 use crate::Store;
 
@@ -81,7 +81,7 @@ impl Store {
         dynamic_key_overrides: Option<&DynamicKeyOverrides>,
     ) -> Result<Option<SchemaView<'store>>, SchemaPathError>
     where
-        V: crate::SchemaDataValue<'input>,
+        V: SchemaDataValue<'input>,
     {
         let Some(mut view) = self.get(schema_name) else {
             return Err(SchemaPathError::InvalidSchemaName(schema_name.to_owned()));

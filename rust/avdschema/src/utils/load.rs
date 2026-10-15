@@ -46,13 +46,13 @@ where
     #[cfg(feature = "dump_load_files")]
     fn from_stdin() -> Result<Self, LoadError> {
         let reader = io::stdin();
-        Ok(serde_yaml::from_reader(reader)?)
+        Ok(yaml_parser::serde::from_reader(reader)?)
     }
     #[cfg(feature = "dump_load_files")]
     fn from_yaml_file(path: &Path) -> Result<Self, LoadError> {
         let file = File::open(path)?;
         let reader = BufReader::new(file);
-        Ok(serde_yaml::from_reader(reader)?)
+        Ok(yaml_parser::serde::from_reader(reader)?)
     }
     #[cfg(feature = "xz2")]
     fn from_xz2_file(path: &Path) -> Result<Self, LoadError> {
@@ -119,7 +119,7 @@ where
 pub enum LoadError {
     JsonError(serde_json::Error),
     #[cfg(feature = "yaml")]
-    YamlError(serde_yaml::Error),
+    YamlError(yaml_parser::serde::DeError),
     #[cfg(feature = "dump_load_files")]
     IoError(io::Error),
     #[cfg(feature = "dump_load_files")]
@@ -147,6 +147,86 @@ mod tests {
         let result = SourceSchema::from_file(Some(&file_path));
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), schema);
+    }
+
+    #[test]
+    fn yaml_description_continuation_survives_file_load_and_compilation() {
+        use crate::SchemaView;
+        use crate::Store;
+
+        let path = get_tmp_file("test_plain_description_continuation.yml");
+        std::fs::write(
+            &path,
+            "probe:\n  type: dict\n  keys:\n    stateless:\n      type: bool\n      description: Take action, regardless of state. Should be set to\n        'true' for MSS-G.\n      default: true\n",
+        ).unwrap();
+        let source = StoreSource::from_yaml_file(&path).unwrap();
+        let store = Store::compile(&source).unwrap();
+        let SchemaView::Dict(root) = store.get("probe").unwrap() else {
+            panic!("expected root dictionary");
+        };
+        assert_eq!(
+            root.key("stateless").unwrap().description(),
+            Some("Take action, regardless of state. Should be set to 'true' for MSS-G."),
+        );
+    }
+
+    #[test]
+    fn unsigned_integer_defaults_survive_recursive_yaml_load_and_compilation() {
+        use crate::SchemaValueView;
+        use crate::SchemaView;
+        use crate::Store;
+
+        let i64_max_u64 = u64::try_from(i64::MAX).unwrap();
+
+        for number in [i64_max_u64 + 1, u64::MAX] {
+            for scalar in [
+                number.to_string(),
+                format!("+{number}"),
+                format!("0x{number:x}"),
+                format!("0o{number:o}"),
+                format!("!!int {number}"),
+            ] {
+                let yaml = format!(
+                    "probe:\n  type: dict\n  keys:\n    child:\n      type: dict\n      default:\n        big: {scalar}\n"
+                );
+                let source: StoreSource = yaml_parser::serde::from_str(&yaml).unwrap();
+                let store = Store::compile(&source).unwrap();
+                let SchemaView::Dict(root) = store.get("probe").unwrap() else {
+                    panic!("expected root dictionary");
+                };
+                let child = root.key("child").unwrap();
+                let Some(SchemaValueView::Object(default)) = child.default() else {
+                    panic!("expected dictionary default");
+                };
+                let value = default
+                    .iter()
+                    .find_map(|(key, value)| (key == "big").then_some(value));
+                let Some(SchemaValueView::U64(value)) = value else {
+                    panic!("expected unsigned compiled default for {scalar}, found {value:?}");
+                };
+                assert_eq!(value, number, "compiled default changed for {scalar}");
+            }
+        }
+    }
+
+    #[test]
+    fn yaml_dump_roundtrips_empty_defaults() {
+        use crate::Dump as _;
+
+        for (name, input) in [
+            ("empty_list", r#"{"type":"list","default":[]}"#),
+            ("empty_dict", r#"{"type":"dict","default":{}}"#),
+            (
+                "nested_empty",
+                r#"{"type":"dict","default":{"items":[],"settings":{}}}"#,
+            ),
+        ] {
+            let schema = SourceSchema::from_json(input).unwrap();
+            let path = get_tmp_file(&format!("test_dump_{name}_default.yml"));
+            schema.to_yaml_file(&path).unwrap();
+            let reloaded = SourceSchema::from_yaml_file(&path).unwrap();
+            assert_eq!(reloaded, schema, "schema default changed for {name}");
+        }
     }
     #[test]
     fn load_json() {

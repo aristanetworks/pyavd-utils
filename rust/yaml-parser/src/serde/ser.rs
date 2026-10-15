@@ -503,10 +503,6 @@ where
 }
 
 /// Serialize any `T: Serialize` to a YAML string.
-// TODO: Fix inconsistent behavior for various examples like
-//       yaml_parser::serde::to_string(&Vec::::new())
-//       yaml_parser::serde::to_string(&BTreeMap::<String, i32>::new())
-//       yaml_parser::serde::to_string(&EmptySeqField { items: vec![] })
 pub fn to_string<T>(value: &T) -> Result<String, SerError>
 where
     T: Serialize,
@@ -554,6 +550,74 @@ mod tests {
         let decoded: SimpleConfig = crate::serde::from_str(&yaml)
             .expect("deserialization from YAML via yaml-parser::serde should succeed");
         assert_eq!(decoded, value);
+    }
+
+    #[test]
+    fn empty_collections_roundtrip_via_serde() {
+        use std::collections::BTreeMap;
+
+        #[derive(Debug, Serialize, Deserialize, PartialEq)]
+        struct EmptyCollections {
+            items: Vec<String>,
+            settings: BTreeMap<String, String>,
+            nested: Vec<BTreeMap<String, Vec<String>>>,
+        }
+
+        let items = Vec::<String>::new();
+        let settings = BTreeMap::<String, String>::new();
+        assert_eq!(
+            to_string(&items).expect("empty list should serialize"),
+            "[]\n"
+        );
+        assert_eq!(
+            to_string(&settings).expect("empty map should serialize"),
+            "{}\n"
+        );
+        let value = EmptyCollections {
+            items,
+            settings,
+            nested: vec![
+                BTreeMap::new(),
+                BTreeMap::from([("items".to_owned(), Vec::new())]),
+            ],
+        };
+        let yaml = to_string(&value).expect("nested empty collections should serialize");
+        let decoded: EmptyCollections = crate::serde::from_str(&yaml)
+            .expect("empty collections should deserialize with their original types");
+        assert_eq!(decoded, value);
+    }
+
+    #[test]
+    fn null_sequence_items_survive_compact_mapping_layout() {
+        #[derive(Debug, Serialize, Deserialize, PartialEq)]
+        struct Entry {
+            name: Option<String>,
+            note: Option<String>,
+        }
+
+        for (items, expected_yaml) in [
+            (vec![None], "- null\n"),
+            (
+                vec![
+                    None,
+                    Some(Entry {
+                        name: None,
+                        note: Some("present".to_owned()),
+                    }),
+                    None,
+                ],
+                "- null\n- name: null\n  note: present\n- null\n",
+            ),
+        ] {
+            let yaml = to_string(&items).expect("nullable sequence should serialize");
+            assert_eq!(yaml, expected_yaml);
+            let parser_items: Vec<Option<Entry>> = crate::serde::from_str(&yaml)
+                .expect("yaml-parser should preserve null sequence items");
+            assert_eq!(parser_items, items);
+            let reference_items: Vec<Option<Entry>> = yaml_serde::from_str(&yaml)
+                .expect("the reference reader should preserve null sequence items");
+            assert_eq!(reference_items, items);
+        }
     }
 
     #[test]

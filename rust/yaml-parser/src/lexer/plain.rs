@@ -47,8 +47,6 @@ impl<'input> Lexer<'input> {
 
         if Self::is_newline(ch)
             || ch == '#'
-            || ch == '\''
-            || ch == '"'
             || ch == '|'
             || ch == '>'
             || (self.mode() == LexMode::Flow && Self::is_flow_indicator(ch))
@@ -86,6 +84,71 @@ impl<'input> Lexer<'input> {
             .chars()
             .next()
             .map(|ch| (ch, ch.len_utf8()))
+    }
+
+    /// A quote-prefixed continuation cannot contain a plain mapping separator.
+    /// Compact sequences can make the tracked parent indentation conservative;
+    /// leave quoted sibling keys to the ordinary quoted scanner in that case.
+    pub(super) fn quote_line_can_continue_plain(&self) -> bool {
+        let bytes = self.input.as_bytes();
+        let flow = self.mode() == LexMode::Flow;
+        let mut pos = self.byte_pos;
+        // A quoted key may itself contain comment/flow punctuation. Locate its
+        // closing quote before applying the plain-content boundary rules below.
+        let Some(&quote) = bytes.get(pos) else {
+            return false;
+        };
+        pos += 1;
+        while let Some(&byte) = bytes.get(pos) {
+            if matches!(byte, b'\n' | b'\r') {
+                break;
+            }
+            if quote == b'"' && byte == b'\\' {
+                pos += 2;
+                continue;
+            }
+            if byte == quote {
+                if quote == b'\'' && bytes.get(pos + 1) == Some(&quote) {
+                    pos += 2;
+                    continue;
+                }
+                pos += 1;
+                while matches!(bytes.get(pos), Some(b' ' | b'\t')) {
+                    pos += 1;
+                }
+                if bytes.get(pos) == Some(&b':') {
+                    let next = bytes.get(pos + 1).copied();
+                    if next.is_none()
+                        || matches!(next, Some(b' ' | b'\t' | b'\n' | b'\r'))
+                        || (flow && matches!(next, Some(b',' | b'[' | b']' | b'{' | b'}')))
+                    {
+                        return false;
+                    }
+                }
+                break;
+            }
+            pos += 1;
+        }
+        pos = self.byte_pos;
+        while let Some(&byte) = bytes.get(pos) {
+            if matches!(byte, b'\n' | b'\r')
+                || (flow && matches!(byte, b',' | b'[' | b']' | b'{' | b'}'))
+                || (matches!(byte, b' ' | b'\t') && bytes.get(pos + 1) == Some(&b'#'))
+            {
+                break;
+            }
+            if byte == b':' {
+                let next = bytes.get(pos + 1).copied();
+                if next.is_none()
+                    || matches!(next, Some(b' ' | b'\t' | b'\n' | b'\r'))
+                    || (flow && matches!(next, Some(b',' | b'[' | b']' | b'{' | b'}')))
+                {
+                    return false;
+                }
+            }
+            pos += 1;
+        }
+        true
     }
 
     /// Consume a plain scalar, respecting the current mode.

@@ -17,6 +17,10 @@ avd_lsp_support --->|lean dependency| avdschema
 avd_lsp_support --->|lean dependency| validation
 avd_lsp_support --->|lean dependency| yaml_parser
 yaml_parser["crate yaml-parser"]
+schema_data["crate schema-data"]
+avdschema --->|depends on| schema_data
+validation --->|depends on| schema_data
+yaml_parser --->|optional dependency| schema_data
 passwords["crate passwords"]
 python_bindings["crate python-bindings"]
 python_bindings --->|depends on| avdschema
@@ -46,7 +50,9 @@ avd-lsp-support = { version = "0.0.8", default-features = false }
 Native LSP consumers can enable its `gzip` feature when needed. The browser
 WASM build should retain the empty default feature set.
 
-The existing `yaml-parser` feature named `avdschema` retains the default
-`avdschema` feature set, including performance accelerators, gzip, and YAML.
-Use `avdschema-core` for the lean path. Unicode-aware Perl classes and
-variable-length lookbehinds are always enabled.
+The optional `schema-data` feature on `yaml-parser` implements the shared
+`schema-data` views for YAML values. Validation and the LSP enable this feature;
+standalone parsing does not need it. It does not enable `avdschema` features.
+Consumers select gzip, YAML file support, and performance accelerators directly
+on their `avdschema` dependency. Unicode-aware Perl classes and variable-length
+lookbehinds are always enabled.

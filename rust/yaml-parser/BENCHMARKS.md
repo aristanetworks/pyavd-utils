@@ -48,16 +48,20 @@ cargo bench --bench parser_bench --features serde
 
 - `yaml_parser`: this crate
 - `saphyr_marked`: Saphyr with span tracking
-- `serde_yaml`: serde_yaml reference implementation
+- `yaml_serde`: maintained YAML Organization fork used by current benchmarks
 
 Notes:
 
-- `parse_throughput` compares parse-oriented APIs, so `serde_yaml` is included
+- `parse_throughput` compares parse-oriented APIs, so `yaml_serde` is included
   as a useful reference rather than a perfect apples-to-apples parser match.
 - `serde_deserialize_throughput` compares deserialization into the same logical
   target type, `OwnedYamlValue(yaml_parser::Value<'static>)`.
 - Absolute numbers vary with host and load. The remote host mainly reduces
   variance; relative comparisons are still the main signal.
+
+The measurements below are the original `serde_yaml` snapshot. They have not
+been rerun with `yaml_serde`. Current runs use the `yaml_serde` benchmark ID;
+the scripts also recognize `serde_yaml` IDs in historical baselines.
 
 ## Current Takeaways
 

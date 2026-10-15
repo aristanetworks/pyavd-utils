@@ -211,8 +211,8 @@ fn test_bench_corpora_have_no_parse_errors() {
 fn tags_corpus_serde_deserializes_across_backends() {
     let input = include_str!("../benches/data/tags.yml");
 
-    let yaml_parser_result: Result<serde_yaml::Value, _> = yaml_parser::serde::from_str(input);
-    let serde_yaml_result: Result<serde_yaml::Value, _> = serde_yaml::from_str(input);
+    let yaml_parser_result: Result<yaml_serde::Value, _> = yaml_parser::serde::from_str(input);
+    let yaml_serde_result: Result<yaml_serde::Value, _> = yaml_serde::from_str(input);
 
     // Also check how saphyr interprets the same document.
     let saphyr_docs = Yaml::load_from_str(input).expect("saphyr failed to parse tags.yml");
@@ -225,14 +225,14 @@ fn tags_corpus_serde_deserializes_across_backends() {
     // This test now asserts the harmonised behaviour across libraries on
     // our `tags.yml` benchmark corpus:
     // - yaml-parser's serde integration successfully deserializes `tags.yml`.
-    // - serde_yaml also successfully deserializes `tags.yml`.
+    // - yaml_serde also successfully deserializes `tags.yml`.
     // - saphyr parses the document and classifies `nulls.empty` as a real
     //   null value (not `BadValue`).
     //
     // If any of these libraries start rejecting `tags.yml` in the future,
     // this test will catch that regression.
     assert!(yaml_parser_result.is_ok());
-    assert!(serde_yaml_result.is_ok());
+    assert!(yaml_serde_result.is_ok());
     assert!(empty.is_null());
 }
 
@@ -266,7 +266,7 @@ fn numbers_semantically_equal(left: &Integer<'static>, right: &Integer<'static>)
 ///
 /// This intentionally:
 /// - Ignores span information and node properties (anchors/tags), since
-///   serde-based paths (including `serde_yaml`) do not preserve them.
+///   serde-based paths (including `yaml_serde`) do not preserve them.
 /// - Treats integers as equal when their decimal representations match,
 ///   even if they use different `Integer` variants (e.g. `I64` vs `U64`).
 #[cfg(feature = "serde")]
@@ -418,7 +418,7 @@ fn first_difference_path(
 }
 
 /// For each benchmark corpus, verify that yaml-parser's serde API and
-/// `serde_yaml` deserialize into the same logical `OwnedYamlValue` tree.
+/// `yaml_serde` deserialize into the same logical `OwnedYamlValue` tree.
 #[cfg(feature = "serde")]
 #[test]
 fn bench_corpora_serde_equivalence_against_serde_yaml() {
@@ -454,13 +454,13 @@ fn bench_corpora_serde_equivalence_against_serde_yaml() {
         let parsed: OwnedYamlValue = yaml_parser::serde::from_str(input)
             .unwrap_or_else(|err| panic!("yaml_parser::serde::from_str failed on {name}: {err:?}"));
 
-        // serde_yaml using the same logical target type. This ensures that the
+        // yaml_serde using the same logical target type. This ensures that the
         // `serde_deserialize` throughput benchmarks are comparing equivalent
         // trees across both libraries.
-        let sy: OwnedYamlValue = serde_yaml::from_str(input)
-            .unwrap_or_else(|err| panic!("serde_yaml::from_str failed on {name}: {err:?}"));
+        let sy: OwnedYamlValue = yaml_serde::from_str(input)
+            .unwrap_or_else(|err| panic!("yaml_serde::from_str failed on {name}: {err:?}"));
 
-        // For most corpora we expect serde_yaml to produce a value tree that is
+        // For most corpora we expect yaml_serde to produce a value tree that is
         // *semantically* equivalent to yaml-parser's serde backend when
         // deserializing into `OwnedYamlValue`. Two corpora still contain
         // implementation-defined areas where different libraries may
@@ -470,7 +470,7 @@ fn bench_corpora_serde_equivalence_against_serde_yaml() {
         //   combinations.
         // - `tags`: generic-value deserialization of custom tags such as
         //   `!timestamp 2024-01-15T10:30:00Z`. Our serde path preserves these
-        //   as tagged string-like scalars, while `serde_yaml` may deserialize
+        //   as tagged string-like scalars, while `yaml_serde` may deserialize
         //   them through tagged-value machinery into a different generic
         //   representation.
         //
@@ -482,18 +482,18 @@ fn bench_corpora_serde_equivalence_against_serde_yaml() {
 
         if !owned_semantically_equal(&parsed, &sy) {
             eprintln!(
-                "yaml_parser::serde::from_str and serde_yaml produced semantically different values on {name}; locating first differing path...",
+                "yaml_parser::serde::from_str and yaml_serde produced semantically different values on {name}; locating first differing path...",
             );
             if let Some(path) = first_difference_path("root", &parsed.0, &sy.0) {
                 panic!(
-                    "serde_yaml produced a semantically different value on {name}; first differing path: {path}",
+                    "yaml_serde produced a semantically different value on {name}; first differing path: {path}",
                 );
             }
             // Fallback assertion if the debug helper somehow failed to locate
             // a difference but the semantic check still says they differ.
             assert!(
                 owned_semantically_equal(&parsed, &sy),
-                "serde_yaml produced a semantically different value on {name}",
+                "yaml_serde produced a semantically different value on {name}",
             );
         }
     }
@@ -541,9 +541,9 @@ fn stream_from_str_docs_resets_anchors_between_documents() {
     // First document defines &a, second document reuses &a independently.
     let input = "&a 1\n---\n&a 2\n";
 
-    let iter = yaml_parser::serde::stream_from_str_docs::<serde_yaml::Value>(input)
+    let iter = yaml_parser::serde::stream_from_str_docs::<yaml_serde::Value>(input)
         .expect("failed to create streaming deserializer");
-    let docs: Vec<Result<serde_yaml::Value, DeError>> = iter.collect();
+    let docs: Vec<Result<yaml_serde::Value, DeError>> = iter.collect();
 
     // Both documents should deserialize successfully; if anchors leaked
     // across documents, we'd see incorrect alias behaviour or errors.
@@ -558,12 +558,12 @@ fn serde_to_string_preserves_string_scalars_that_look_typed() {
     for input in ["true", "null", "42"] {
         let yaml = yaml_parser::serde::to_string(&input.to_owned())
             .expect("serializing string scalar should succeed");
-        let reparsed: serde_yaml::Value =
-            serde_yaml::from_str(&yaml).expect("serde_yaml should parse emitted YAML");
+        let reparsed: yaml_serde::Value =
+            yaml_serde::from_str(&yaml).expect("yaml_serde should parse emitted YAML");
 
         assert_eq!(
             reparsed,
-            serde_yaml::Value::String(input.to_owned()),
+            yaml_serde::Value::String(input.to_owned()),
             "serialized YAML should roundtrip as a string for input {input:?}, got YAML {yaml:?}"
         );
     }

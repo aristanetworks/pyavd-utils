@@ -4,7 +4,6 @@
 
 pub(crate) mod dump;
 pub(crate) mod load;
-pub(crate) mod schema_data;
 
 #[cfg(test)]
 pub(crate) mod test_utils;

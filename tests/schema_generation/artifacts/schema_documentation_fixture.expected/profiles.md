@@ -36,7 +36,7 @@
 
         ```yaml
         profiles:
-        - name: default
-          settings:
-            long_value: flexible exact-match 16384 l2-shared 98304 l3-shared 131072
+          - name: default
+            settings:
+              long_value: flexible exact-match 16384 l2-shared 98304 l3-shared 131072
         ```

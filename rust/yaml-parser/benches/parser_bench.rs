@@ -12,13 +12,13 @@
 //! Parse-oriented groups compare:
 //! - `yaml_parser`: Our parser (always includes spans)
 //! - `saphyr_marked`: Saphyr with span tracking (`MarkedYaml` type)
-//! - `serde_yaml`: `serde_yaml` as an additional reference parser
+//! - `yaml_serde`: `yaml_serde` as an additional reference parser
 //!
 //! The yaml-parser vs saphyr comparison is the closest parse-only comparison
 //! because both include span tracking.
 //!
 //! When the `serde` feature is enabled on `yaml-parser`, we also compare
-//! its serde-based deserialization performance against `serde_yaml`.
+//! its serde-based deserialization performance against `yaml_serde`.
 //!
 //! To make this a fair comparison, **all** serde-based benchmarks deserialize
 //! into the same logical target type: our own `yaml_parser::Value<'static>`,
@@ -28,7 +28,7 @@
 //! calling `into_owned()` to obtain `yaml_parser::Value<'static>`.
 //!
 //! Both serde implementations in the benchmark (`yaml_parser::serde::from_str`
-//! and `serde_yaml`) therefore build the same `OwnedYamlValue` tree.
+//! and `yaml_serde`) therefore build the same `OwnedYamlValue` tree.
 
 use std::hint::black_box;
 use std::time::Duration;
@@ -98,11 +98,11 @@ fn bench_saphyr_marked_parse(bench: &mut criterion::Bencher<'_>, input: &str) {
 
 #[expect(
     clippy::unwrap_used,
-    reason = "benchmark corpora must remain valid serde_yaml input; panic preserves that precondition"
+    reason = "benchmark corpora must remain valid yaml_serde input; panic preserves that precondition"
 )]
-fn bench_serde_yaml_value_parse(bench: &mut criterion::Bencher<'_>, input: &str) {
+fn bench_yaml_serde_value_parse(bench: &mut criterion::Bencher<'_>, input: &str) {
     bench.iter(|| {
-        let value: serde_yaml::Value = serde_yaml::from_str(black_box(input)).unwrap();
+        let value: yaml_serde::Value = yaml_serde::from_str(black_box(input)).unwrap();
         black_box(value);
     });
 }
@@ -142,15 +142,15 @@ fn bench_parse_throughput(criterion: &mut Criterion) {
             |bench, data| bench_saphyr_marked_parse(bench, data),
         );
 
-        // Benchmark serde_yaml as an additional reference parser using its
-        // native `serde_yaml::Value` representation. This is not a strict
-        // apples-to-apples comparison (serde_yaml does parse+serde in one
+        // Benchmark yaml_serde as an additional reference parser using its
+        // native `yaml_serde::Value` representation. This is not a strict
+        // apples-to-apples comparison (yaml_serde does parse+serde in one
         // step), but it provides a useful baseline alongside yaml_parser and
         // saphyr_marked.
         group.bench_with_input(
-            BenchmarkId::new("serde_yaml", name),
+            BenchmarkId::new("yaml_serde", name),
             input,
-            |bench, data| bench_serde_yaml_value_parse(bench, data),
+            |bench, data| bench_yaml_serde_value_parse(bench, data),
         );
     }
 
@@ -272,15 +272,15 @@ fn bench_serde_deserialize_throughput(criterion: &mut Criterion) {
             },
         );
 
-        // Benchmark serde_yaml deserialization into the same logical
+        // Benchmark yaml_serde deserialization into the same logical
         // `OwnedYamlValue` tree via the generic `Deserialize`
         // implementation for `OwnedYamlValue`.
         group.bench_with_input(
-            BenchmarkId::new("serde_yaml", name),
+            BenchmarkId::new("yaml_serde", name),
             input,
             |bench, data| {
                 bench.iter(|| {
-                    let value: OwnedYamlValue = serde_yaml::from_str(black_box(data)).unwrap();
+                    let value: OwnedYamlValue = yaml_serde::from_str(black_box(data)).unwrap();
                     black_box(value);
                 });
             },

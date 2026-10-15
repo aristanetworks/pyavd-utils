@@ -21,6 +21,7 @@
 //! - formatting is chosen by the writer and is not intended to be a
 //!   presentation-perfect reproduction of the original source.
 
+use std::fmt::Write as _;
 use std::io::Write;
 
 use crate::event::CollectionStyle;
@@ -182,8 +183,14 @@ impl<'a, 'input, W: Write> WriterState<'a, 'input, W> {
         properties: Option<&Properties<'input>>,
     ) -> std::io::Result<()> {
         let mapping_props = Self::properties_or_empty(properties);
+        if matches!(
+            self.events.get(self.pos.saturating_add(1)),
+            Some(Event::MappingEnd { .. })
+        ) {
+            return self.write_flow_mapping(mapping_props);
+        }
         match style {
-            CollectionStyle::Block => self.write_block_mapping(mapping_props),
+            CollectionStyle::Block => self.write_block_mapping(mapping_props, false),
             CollectionStyle::Flow => self.write_flow_mapping(mapping_props),
         }
     }
@@ -194,18 +201,27 @@ impl<'a, 'input, W: Write> WriterState<'a, 'input, W> {
         properties: Option<&Properties<'input>>,
     ) -> std::io::Result<()> {
         let sequence_props = Self::properties_or_empty(properties);
+        if matches!(
+            self.events.get(self.pos.saturating_add(1)),
+            Some(Event::SequenceEnd { .. })
+        ) {
+            return self.write_flow_sequence(sequence_props);
+        }
         match style {
             CollectionStyle::Block => self.write_block_sequence(sequence_props),
             CollectionStyle::Flow => self.write_flow_sequence(sequence_props),
         }
     }
 
-    // TODO: Add representation for empty map.
     #[allow(
         clippy::too_many_lines,
         reason = "block mapping writer is intentionally monolithic for now; refactoring would be non-trivial"
     )]
-    fn write_block_mapping(&mut self, mapping_props: &Properties<'input>) -> std::io::Result<()> {
+    fn write_block_mapping(
+        &mut self,
+        mapping_props: &Properties<'input>,
+        mut compact_first_key: bool,
+    ) -> std::io::Result<()> {
         // Simple block-style mapping with scalar keys and scalar/collection values.
         self.advance(); // consume MappingStart
         let base_indent = self.indent;
@@ -375,11 +391,17 @@ impl<'a, 'input, W: Write> WriterState<'a, 'input, W> {
                 }
                 // Simple key: scalar or alias.
                 _ => {
-                    if !self.at_line_start {
-                        self.out.write_all(b"\n")?;
-                        self.at_line_start = true;
+                    if compact_first_key {
+                        // The sequence writer already emitted the indentation and
+                        // `- ` prefix. Only the first key continues on that line.
+                        compact_first_key = false;
+                    } else {
+                        if !self.at_line_start {
+                            self.out.write_all(b"\n")?;
+                            self.at_line_start = true;
+                        }
+                        self.write_indent()?;
                     }
-                    self.write_indent()?;
                     match self.peek().cloned() {
                         Some(Event::Scalar {
                             style: key_style,
@@ -463,7 +485,6 @@ impl<'a, 'input, W: Write> WriterState<'a, 'input, W> {
         Ok(())
     }
 
-    // TODO: Add representation for empty sequence.
     fn write_block_sequence(&mut self, sequence_props: &Properties<'input>) -> std::io::Result<()> {
         self.advance(); // consume SequenceStart
         let base_indent = self.indent;
@@ -501,7 +522,19 @@ impl<'a, 'input, W: Write> WriterState<'a, 'input, W> {
                             ..
                         }) => {
                             self.indent = base_indent + 2;
-                            self.write_mapping(map_style, map_props.as_deref())?;
+                            let mapping_props = Self::properties_or_empty(map_props.as_deref());
+                            if map_style == CollectionStyle::Block
+                                && mapping_props.is_empty()
+                                && matches!(
+                                    self.events.get(self.pos.saturating_add(1)),
+                                    Some(Event::Scalar { properties, .. })
+                                        if Self::properties_or_empty(properties.as_deref()).is_empty()
+                                )
+                            {
+                                self.write_block_mapping(mapping_props, true)?;
+                            } else {
+                                self.write_mapping(map_style, map_props.as_deref())?;
+                            }
                             // Restore indentation for the next sequence item.
                             self.indent = base_indent;
                         }
@@ -681,6 +714,16 @@ impl<'a, 'input, W: Write> WriterState<'a, 'input, W> {
                             '\n' => buf.push_str("\\n"),
                             '\r' => buf.push_str("\\r"),
                             '\t' => buf.push_str("\\t"),
+                            ch if ch.is_control()
+                                || matches!(
+                                    ch,
+                                    '\u{2028}' | '\u{2029}' | '\u{fffe}' | '\u{ffff}'
+                                ) =>
+                            {
+                                // These characters cannot be emitted literally without
+                                // invalid YAML or line folding changing the string.
+                                let _ = write!(buf, "\\u{:04X}", u32::from(ch));
+                            }
                             _ => buf.push(ch),
                         }
                     }
