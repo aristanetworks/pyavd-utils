@@ -221,7 +221,8 @@ Apache License 2.0
 Used by:
   - avdschema 0.0.12
   - python-generation-bindings 0.0.12
-  - ryu 1.0.23
+  - schema-data 0.0.12
+  - yaml-parser 0.0.12
 
 License text:
 --------------------------------------------------------------------------------
@@ -1206,11 +1207,9 @@ Used by:
   - serde_derive 1.0.229
   - serde_derive_internals 0.30.0
   - serde_json 1.0.151
-  - serde_yaml 0.9.34+deprecated
   - syn 2.0.119
   - syn 3.0.6
   - unicode-ident 1.0.26
-  - unsafe-libyaml 0.2.11
   - zmij 1.0.23
 
 License text:

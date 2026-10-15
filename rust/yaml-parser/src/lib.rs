@@ -167,20 +167,22 @@
 //! - `ARCHITECTURE.md` for implementation details
 
 mod ast_event;
-#[cfg(feature = "avdschema-core")]
-mod avdschema_data_impl;
 mod emitter;
 mod error;
 mod event;
 mod lexer;
 mod parser;
 mod scalar_resolver;
+#[cfg(feature = "schema-data")]
+mod schema_data_impl;
 mod span;
 mod stream;
 mod value;
 
 #[cfg(feature = "serde")]
 mod ast_to_events;
+#[cfg(feature = "serde")]
+mod string_style;
 
 pub mod writer;
 
@@ -188,13 +190,13 @@ pub mod writer;
 pub mod serde;
 
 // Public API: high-level parsing, AST, spans, and errors.
-#[cfg(feature = "avdschema-core")]
-pub use avdschema_data_impl::YamlMapping;
 pub use error::ErrorKind;
 pub use error::ParseError;
 pub use event::CollectionStyle;
 pub use event::Event;
 pub use event::ScalarStyle;
+#[cfg(feature = "schema-data")]
+pub use schema_data_impl::YamlMapping;
 pub use span::BytePosition;
 pub use span::IndentLevel;
 pub use span::Position;

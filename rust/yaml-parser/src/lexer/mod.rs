@@ -112,6 +112,13 @@ struct PendingValueIndentContext {
     min_auto_indent: usize,
 }
 
+/// An unfinished plain scalar that may continue on a later physical line.
+#[derive(Debug, Clone, Copy)]
+struct PlainContinuation {
+    min_indent: usize,
+    line_start: usize,
+}
+
 /// YAML lexer state.
 ///
 /// The lifetime `'input` refers to the input string being tokenized.
@@ -151,6 +158,8 @@ pub(crate) struct Lexer<'input> {
     /// Value indentation context established by the latest structural token
     /// (`:`, `-`, or `---`) and consumed by a following block scalar token.
     pending_value_indent: Option<PendingValueIndentContext>,
+    /// Quotes on an indented plain continuation are content, not string delimiters.
+    plain_continuation: Option<PlainContinuation>,
     /// Current phase of the iterator state machine
     phase: IteratorPhase,
     /// Collected errors during lexing
@@ -183,6 +192,7 @@ impl<'input> Lexer<'input> {
             },
             current_line_compact_value_indent: None,
             pending_value_indent: None,
+            plain_continuation: None,
             phase: IteratorPhase::Initial,
             errors: Vec::new(),
             phase_state: LexerPhase::DirectivePrologue, // Start in directive prologue
@@ -428,12 +438,14 @@ impl<'input> Lexer<'input> {
                 self.current_line_compact_value_indent = None;
             }
             Token::DocStart => {
+                self.plain_continuation = None;
                 self.pending_value_indent = Some(PendingValueIndentContext {
                     base_indent: 0,
                     min_auto_indent: 0,
                 });
             }
             Token::BlockSeqIndicator => {
+                self.plain_continuation = None;
                 self.pending_value_indent = Some(PendingValueIndentContext {
                     base_indent: self.current_line.indent,
                     min_auto_indent: self.current_line.indent.saturating_add(1),
@@ -446,6 +458,7 @@ impl<'input> Lexer<'input> {
                 });
             }
             Token::Colon => {
+                self.plain_continuation = None;
                 self.pending_value_indent = Some(self.current_line_compact_value_indent.unwrap_or(
                     PendingValueIndentContext {
                         base_indent: self.current_line.indent,
@@ -453,15 +466,50 @@ impl<'input> Lexer<'input> {
                     },
                 ));
             }
-            Token::Whitespace
-            | Token::WhitespaceWithTabs
-            | Token::Comment(_)
+            Token::Plain(plain) => {
+                let meta = plain.meta();
+                self.plain_continuation = if meta.terminated_by_colon || meta.terminated_by_comment
+                {
+                    None
+                } else {
+                    // Keep the original parent indentation across continuation lines.
+                    // All positions are already tracked; no source rescanning is needed.
+                    let min_indent = if let Some(context) = self.pending_value_indent {
+                        // A mapping/sequence value is the common path. Its parent
+                        // already gives us the continuation indentation directly.
+                        if self.mode() == LexMode::Flow || context.min_auto_indent == 0 {
+                            0
+                        } else {
+                            context.base_indent.saturating_add(1)
+                        }
+                    } else if let Some(context) = self.plain_continuation.filter(|context| {
+                        self.current_line.start > context.line_start
+                            && self.current_line.indent >= context.min_indent
+                    }) {
+                        context.min_indent
+                    } else if self.mode() == LexMode::Flow {
+                        0
+                    } else {
+                        self.current_line.indent
+                    };
+                    Some(PlainContinuation {
+                        min_indent,
+                        line_start: self.current_line.start,
+                    })
+                };
+                self.pending_value_indent = None;
+            }
+            Token::Whitespace | Token::WhitespaceWithTabs => {}
+            Token::Comment(_)
             | Token::Anchor(_)
             | Token::Tag(_)
             | Token::YamlDirective(_)
             | Token::TagDirective(..)
-            | Token::ReservedDirective(_) => {}
+            | Token::ReservedDirective(_) => {
+                self.plain_continuation = None;
+            }
             _ => {
+                self.plain_continuation = None;
                 self.pending_value_indent = None;
             }
         }

@@ -11,12 +11,13 @@ workspace = true
 avdschema = { path = "../avdschema", default-features = false }
 derive_more = { workspace = true, features = ["display", "from"] }
 log = { workspace = true }
+schema-data = { path = "../schema-data" }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true, features = [
     "arbitrary_precision", # To support very big numbers
     "preserve_order",
 ] }
-yaml-parser = { path = "../yaml-parser", default-features = false, features = ["avdschema-core"] }
+yaml-parser = { path = "../yaml-parser", default-features = false, features = ["schema-data"] }
 
 [features]
 default = ["gzip", "regex-perf", "yaml"]

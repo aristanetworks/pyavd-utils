@@ -400,6 +400,9 @@ fn parse_decimal_int(input: Cow<'_, str>, sign: Sign) -> Integer<'_> {
             if let Ok(value) = input.parse::<i64>() {
                 return Integer::I64(value);
             }
+            if let Ok(value) = input.parse::<u64>() {
+                return Integer::U64(value);
+            }
             if let Ok(value) = input.parse::<i128>() {
                 return Integer::I128(value);
             }
@@ -438,6 +441,9 @@ fn parse_prefixed_int(sign: Sign, digits: &str, radix: u32) -> Option<Integer<'s
         Sign::Positive => {
             if let Ok(value) = i64::from_str_radix(digits, radix) {
                 return Some(Integer::I64(value));
+            }
+            if let Ok(value) = u64::from_str_radix(digits, radix) {
+                return Some(Integer::U64(value));
             }
             if let Ok(value) = i128::from_str_radix(digits, radix) {
                 return Some(Integer::I128(value));
@@ -641,6 +647,47 @@ mod tests {
     use super::resolve_untagged_scalar;
     use crate::event::ScalarStyle;
     use crate::value::Integer;
+
+    #[test]
+    fn unsigned_integer_boundaries_resolve_without_losing_width() {
+        let i64_max_u64 = u64::try_from(i64::MAX).unwrap();
+        let i64_max_u128 = u128::try_from(i64::MAX).unwrap();
+        let i128_max_u128 = u128::try_from(i128::MAX).unwrap();
+
+        for (number, expected) in [
+            (42, Integer::I64(42)),
+            (i64_max_u128, Integer::I64(i64::MAX)),
+            (i64_max_u128 + 1, Integer::U64(i64_max_u64 + 1)),
+            (u128::from(u64::MAX), Integer::U64(u64::MAX)),
+            (
+                u128::from(u64::MAX) + 1,
+                Integer::I128(i128::from(u64::MAX) + 1),
+            ),
+            (i128_max_u128, Integer::I128(i128::MAX)),
+            (i128_max_u128 + 1, Integer::U128(i128_max_u128 + 1)),
+            (u128::MAX, Integer::U128(u128::MAX)),
+        ] {
+            for input in [
+                number.to_string(),
+                format!("+{number}"),
+                format!("0x{number:x}"),
+                format!("+0x{number:x}"),
+                format!("0o{number:o}"),
+                format!("+0o{number:o}"),
+            ] {
+                assert_eq!(
+                    resolve_untagged_scalar(Cow::Borrowed(&input), ScalarStyle::Plain),
+                    ResolvedScalar::Int(expected.clone()),
+                    "unexpected implicit resolution for {input}"
+                );
+                assert_eq!(
+                    resolve_tagged_scalar(Cow::Borrowed(&input), "!!int"),
+                    Ok(ResolvedScalar::Int(expected.clone())),
+                    "unexpected explicit resolution for {input}"
+                );
+            }
+        }
+    }
 
     #[test]
     fn resolves_plain_core_schema_scalars() {

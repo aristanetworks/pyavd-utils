@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from statistics import median
 
-PREFERRED_BACKEND_ORDER = ("yaml_parser", "saphyr_marked", "serde_yaml")
+PREFERRED_BACKEND_ORDER = ("yaml_parser", "saphyr_marked", "yaml_serde", "serde_yaml")
 
 
 @dataclass(frozen=True)

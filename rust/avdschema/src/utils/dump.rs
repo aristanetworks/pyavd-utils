@@ -45,7 +45,7 @@ where
     fn to_yaml_file(&self, path: &PathBuf) -> Result<(), DumpError> {
         let file = File::create(path)?;
         let writer = BufWriter::new(file);
-        Ok(serde_yaml::to_writer(writer, self)?)
+        Ok(yaml_parser::serde::to_writer(writer, &self)?)
     }
     #[cfg(feature = "xz2")]
     fn to_xz2_file(&self, path: &PathBuf) -> Result<(), DumpError> {
@@ -73,7 +73,7 @@ where
 pub enum DumpError {
     JsonError(serde_json::Error),
     #[cfg(feature = "yaml")]
-    YamlError(serde_yaml::Error),
+    YamlError(yaml_parser::serde::SerError),
     #[cfg(feature = "dump_load_files")]
     IoError(std::io::Error),
     #[cfg(feature = "dump_load_files")]

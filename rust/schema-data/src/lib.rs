@@ -2,23 +2,36 @@
 // Use of this source code is governed by the Apache License 2.0
 // that can be found in the LICENSE file.
 
+//! Storage-neutral data views used by schema navigation.
+//!
+//! These traits are shared by schema consumers and data backends so neither
+//! needs to depend on the other. JSON views are provided here; YAML views live
+//! in `yaml-parser`.
+
 use std::borrow::Cow;
 
 use ordermap::OrderMap;
 use serde_json::Map;
 use serde_json::Value;
 
+/// A borrowed value supporting dictionary and list navigation.
 pub trait SchemaDataValue<'a>: Sized + Copy {
+    /// Borrowed dictionary view for this value backend.
     type Mapping: SchemaDataMapping<'a, Value = Self> + Copy;
 
+    /// Borrowed list view for this value backend.
     type Sequence: SchemaDataSequence<'a, Value = Self>;
 
+    /// Return a dictionary view, if this value is a dictionary.
     fn as_mapping(self) -> Option<Self::Mapping>;
 
+    /// Return a list view, if this value is a list.
     fn as_sequence(self) -> Option<Self::Sequence>;
 
+    /// Return the string contents, if this value is a string.
     fn as_str(self) -> Option<&'a str>;
 
+    /// Walk a key path, branching across lists and optionally recording each trail.
     fn walk<'s>(
         self,
         mut path: impl Iterator<Item = &'s str> + Clone,
@@ -65,19 +78,28 @@ pub trait SchemaDataValue<'a>: Sized + Copy {
     }
 }
 
+/// A borrowed dictionary with string keys.
 pub trait SchemaDataMapping<'a>: Copy {
+    /// Borrowed value returned by this view.
     type Value: SchemaDataValue<'a> + 'a;
+    /// Iterator over dictionary keys.
     type Keys: Iterator<Item = Cow<'a, str>>;
 
+    /// Return the value associated with a key.
     fn get(&self, key: &str) -> Option<Self::Value>;
 
+    /// Iterate over the dictionary keys.
     fn keys(&self) -> Self::Keys;
 }
 
+/// A borrowed list of data values.
 pub trait SchemaDataSequence<'a> {
+    /// Borrowed value returned by this view.
     type Value: SchemaDataValue<'a> + 'a;
+    /// Iterator over list values.
     type Iter: Iterator<Item = Self::Value>;
 
+    /// Iterate over the list values.
     fn iter(&self) -> Self::Iter;
 }
 

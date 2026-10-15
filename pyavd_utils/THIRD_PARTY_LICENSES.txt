@@ -222,6 +222,7 @@ Used by:
   - avdschema 0.0.12
   - passwords 0.0.12
   - python-bindings 0.0.12
+  - schema-data 0.0.12
   - validation 0.0.12
   - yaml-parser 0.0.12
 

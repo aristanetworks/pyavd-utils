@@ -7,19 +7,20 @@ description = "A YAML 1.2 parser with error recovery, span tracking, and multipl
 readme = "README.md"
 
 [dependencies]
-avdschema = { path = "../avdschema", default-features = false, optional = true }
+schema-data = { path = "../schema-data", optional = true }
 derive_more = { workspace = true, features = ["display"] }
 serde = { workspace = true, optional = true }
 
 [dev-dependencies]
+avdschema = { path = "../avdschema" }
 criterion = "=0.8.2" # Used for benchmarking
 saphyr = "=0.1.0"   # Used for benchmarking
-serde_yaml = { workspace = true } # Used for serde benchmarking
+yaml_serde = { workspace = true } # Reference backend for compatibility tests and benchmarks
 
 [features]
 default = []
-avdschema = ["avdschema-core", "avdschema/default"]
-avdschema-core = ["dep:avdschema"]
+# Optional storage-neutral data views for schema navigation and validation.
+schema-data = ["dep:schema-data"]
 serde = ["dep:serde"]
 
 [[bench]]
