@@ -14,13 +14,14 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  # Avoid runner-provided toolchains; each hosted job has its own workspace.
+  RUSTUP_HOME: ${{ github.workspace }}/../rustup
+
 jobs:
   autofix:
     name: Run pre-commit and commit back any changes
     runs-on: ubuntu-latest
-    env:
-      # Avoid partially installed toolchains from the runner image.
-      RUSTUP_HOME: ${{ runner.temp }}/rustup
     steps:
       - name: Checkout the repo
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
