@@ -36,14 +36,14 @@ def test_generate_metaschema(tmp_path: Path) -> None:
 
     schema = json.loads(destination.read_text(encoding="UTF-8"))
     assert not _contains_null_type(schema)
-    assert schema["$schema"] == "http://json-schema.org/draft-07/schema#"
+    assert schema["$schema"] == "https://json-schema.org/draft/2020-12/schema"
     assert schema["$id"] == "http://avd.sh/development/schema-schema.json"
     assert schema["title"] == "Arista AVD Schema"
 
     root_schema_types = {variant["properties"]["type"]["const"] for variant in schema["oneOf"]}
     assert root_schema_types == {"dict"}
 
-    recursive_schema = schema["definitions"]["SourceSchema"]
+    recursive_schema = schema["$defs"]["SourceSchema"]
     recursive_schema_types = {variant["properties"]["type"]["const"] for variant in recursive_schema["oneOf"]}
     assert recursive_schema_types == {"bool", "dict", "int", "list", "str"}
     root_dict_properties = _variant(schema, "dict")["properties"]
@@ -58,20 +58,24 @@ def test_generate_metaschema(tmp_path: Path) -> None:
     recursive_dict_properties = _variant(recursive_schema, "dict")["properties"]
     assert {"dynamic_keys", "$defs", "$id", "$schema"}.isdisjoint(recursive_dict_properties)
 
-    deprecation = schema["definitions"]["Deprecation"]
+    deprecation = schema["$defs"]["Deprecation"]
     assert deprecation["properties"]["upgrade_handler"]["type"] == "string"
     assert "upgrade_handler" not in deprecation["required"]
 
-    int_convert_type = schema["definitions"]["IntConvertType"]
+    int_convert_type = schema["$defs"]["IntConvertType"]
     assert int_convert_type["enum"] == ["bool", "str", "float"]
-    assert schema["definitions"]["StrConvertType"]["enum"] == ["bool", "int", "float"]
+    assert schema["$defs"]["StrConvertType"]["enum"] == ["bool", "int", "float"]
     for schema_type in ("int", "str"):
         variant = _variant(recursive_schema, schema_type)
         assert variant["required"] == ["type"]
         assert variant["properties"]["convert_types"]["type"] == "array"
-    assert schema["definitions"]["Pattern"]["format"] == "regex"
+        assert variant["properties"]["convert_types"]["deprecated"] is True
+        assert variant["properties"]["convert_types"]["description"] == "Deprecated. Do not use `convert_types` in new schema definitions."
+        assert "deprecated" not in variant
+    assert "deprecated" not in _variant(recursive_schema, "str")["properties"]["convert_to_lower_case"]
+    assert schema["$defs"]["Pattern"]["format"] == "regex"
     for definition in ("DocumentationOptions", "DocumentationOptionsDict"):
-        assert schema["definitions"][definition]["properties"]["table"]["pattern"] == "^[a-z0-9_-]+$"
+        assert schema["$defs"][definition]["properties"]["table"]["pattern"] == "^[a-z0-9_-]+$"
 
 
 def test_generate_metaschema_errors_for_missing_parent(tmp_path: Path) -> None:
