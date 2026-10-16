@@ -48,7 +48,7 @@ impl Transform for DisallowExplicitNull {
     }
 }
 
-/// Generate a formatted Draft 7 JSON Schema describing an AVD schema document root.
+/// Generate a formatted Draft 2020-12 JSON Schema describing an AVD schema document root.
 ///
 /// The schema is intended for authoring assistance and validation of AVD source-schema
 /// documents. Its field definitions are derived from the same Rust types used to deserialize
@@ -57,7 +57,7 @@ pub fn generate_metaschema_json() -> Result<String, serde_json::Error> {
     // Source models omit `None` when serialized, so the serialization contract represents their
     // canonical authored form. Schemars still makes `Option<T>` nullable; the transform narrows
     // those fields without changing Serde's deliberately tolerant historical deserialization.
-    let mut schema = SchemaSettings::draft07()
+    let mut schema = SchemaSettings::draft2020_12()
         .for_serialize()
         .with_transform(DisallowExplicitNull)
         .into_generator()
@@ -88,18 +88,21 @@ mod tests {
         let json = generate_metaschema_json().unwrap();
         let schema: Value = serde_json::from_str(&json).unwrap();
 
-        assert_eq!(schema["$schema"], "http://json-schema.org/draft-07/schema#");
+        assert_eq!(
+            schema["$schema"],
+            "https://json-schema.org/draft/2020-12/schema"
+        );
         assert_eq!(schema["$id"], METASCHEMA_ID);
         assert_eq!(schema["$comment"], COPYRIGHT);
         assert_eq!(schema["title"], "Arista AVD Schema");
-        assert!(schema["definitions"].is_object());
+        assert!(schema["$defs"].is_object());
     }
 
     #[test]
     fn generated_metaschema_keeps_convert_types_optional() -> Result<(), Box<dyn std::error::Error>>
     {
         let schema: Value = serde_json::from_str(&generate_metaschema_json()?)?;
-        let variants = schema["definitions"]["SourceSchema"]["oneOf"]
+        let variants = schema["$defs"]["SourceSchema"]["oneOf"]
             .as_array()
             .ok_or("Missing source-schema variants")?;
 
@@ -120,6 +123,34 @@ mod tests {
                 return Err(std::io::Error::other(format!(
                     "Expected convert_types for {schema_type} to be an array, got {}",
                     variant["properties"]["convert_types"]["type"]
+                ))
+                .into());
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn generated_metaschema_deprecates_convert_types() -> Result<(), Box<dyn std::error::Error>> {
+        let schema: Value = serde_json::from_str(&generate_metaschema_json()?)?;
+        let variants = schema["$defs"]["SourceSchema"]["oneOf"]
+            .as_array()
+            .ok_or("Missing source-schema variants")?;
+
+        for schema_type in ["int", "str"] {
+            let variant = variants
+                .iter()
+                .find(|variant| variant["properties"]["type"]["const"] == schema_type)
+                .ok_or_else(|| format!("Missing {schema_type} schema variant"))?;
+            let convert_types = &variant["properties"]["convert_types"];
+
+            if convert_types["deprecated"] != true
+                || convert_types["description"]
+                    != "Deprecated. Do not use `convert_types` in new schema definitions."
+                || variant.get("deprecated").is_some()
+            {
+                return Err(std::io::Error::other(format!(
+                    "Unexpected deprecation annotations for {schema_type}: {variant}"
                 ))
                 .into());
             }
