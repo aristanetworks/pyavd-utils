@@ -626,7 +626,7 @@ MIT License
 ================================================================================
 
 Used by:
-  - equivalent 1.0.2
+  - equivalent 1.0.3
 
 License text:
 --------------------------------------------------------------------------------
@@ -696,7 +696,7 @@ MIT License
 ================================================================================
 
 Used by:
-  - sha2 0.11.0
+  - sha2 0.11.1
 
 License text:
 --------------------------------------------------------------------------------
@@ -1091,7 +1091,7 @@ MIT License
 ================================================================================
 
 Used by:
-  - inout 0.2.2
+  - inout 0.2.3
 
 License text:
 --------------------------------------------------------------------------------
@@ -1535,10 +1535,10 @@ Used by:
   - serde 1.0.229
   - serde_core 1.0.229
   - serde_derive 1.0.229
-  - serde_json 1.0.151
+  - serde_json 1.0.154
   - syn 2.0.119
-  - syn 3.0.6
-  - unicode-ident 1.0.26
+  - syn 3.0.9
+  - unicode-ident 1.0.27
   - zmij 1.0.23
 
 License text:
@@ -1762,7 +1762,7 @@ Unicode License v3
 ================================================================================
 
 Used by:
-  - unicode-ident 1.0.26
+  - unicode-ident 1.0.27
 
 License text:
 --------------------------------------------------------------------------------
@@ -1805,3 +1805,32 @@ Except as contained in this notice, the name of a copyright holder shall
 not be used in advertising or otherwise to promote the sale, use or other
 dealings in these Data Files or Software without prior written
 authorization of the copyright holder.
+
+================================================================================
+zlib License
+================================================================================
+
+Used by:
+  - foldhash 0.2.0
+
+License text:
+--------------------------------------------------------------------------------
+Copyright (c) 2024 Orson Peters
+
+This software is provided &#x27;as-is&#x27;, without any express or implied warranty. In
+no event will the authors be held liable for any damages arising from the use of
+this software.
+
+Permission is granted to anyone to use this software for any purpose, including
+commercial applications, and to alter it and redistribute it freely, subject to
+the following restrictions:
+
+1. The origin of this software must not be misrepresented; you must not claim
+    that you wrote the original software. If you use this software in a product,
+    an acknowledgment in the product documentation would be appreciated but is
+    not required.
+
+2. Altered source versions must be plainly marked as such, and must not be
+    misrepresented as being the original software.
+
+3. This notice may not be removed or altered from any source distribution.
