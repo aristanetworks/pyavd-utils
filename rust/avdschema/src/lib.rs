@@ -91,11 +91,15 @@ pub use self::generation::DocumentationGenerationError;
 #[cfg(feature = "generation")]
 pub use self::generation::GenerationError;
 #[cfg(feature = "generation")]
+pub use self::generation::SchemaExplorerRow;
+#[cfg(feature = "generation")]
 pub use self::generation::generate_markdown_documentation;
 #[cfg(feature = "generation")]
 pub use self::generation::generate_python_models;
 #[cfg(feature = "generation")]
 pub use self::generation::generate_python_models_projection;
+#[cfg(feature = "generation")]
+pub use self::generation::generate_schema_explorer_rows;
 pub use self::inherit::Inherit;
 #[cfg(feature = "metaschema")]
 pub use self::metaschema::generate_metaschema_json;

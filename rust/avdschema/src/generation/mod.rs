@@ -4,10 +4,13 @@
 
 //! Schema traversal and artifact generators.
 
+mod explorer;
 mod legacy_python;
 mod markdown;
 mod traversal;
 
+pub use self::explorer::SchemaExplorerRow;
+pub use self::explorer::generate_schema_explorer_rows;
 pub use self::legacy_python::GenerationError;
 pub use self::legacy_python::generate_python_models;
 pub use self::legacy_python::generate_python_models_projection;

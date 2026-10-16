@@ -12,6 +12,7 @@ use avdschema::StoreSource;
 use avdschema::generate_markdown_documentation;
 use avdschema::generate_python_models;
 use avdschema::generate_python_models_projection;
+use avdschema::generate_schema_explorer_rows;
 use pyo3::PyResult;
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::exceptions::PyValueError;
@@ -21,6 +22,75 @@ use pyo3::pyfunction;
 #[pyo3::pymodule]
 pub(crate) mod _schema_generation {
     use super::*;
+
+    /// Export a source store's selected field occurrences as JSON Lines.
+    #[pyfunction]
+    pub(crate) fn generate_schema_explorer_jsonl(
+        source: PathBuf,
+        schema_names: Vec<String>,
+        destination: PathBuf,
+    ) -> PyResult<HashMap<String, usize>> {
+        let store = StoreSource::from_file(Some(&source)).map_err(|err| {
+            PyRuntimeError::new_err(format!(
+                "Error while loading the Schema Store from file: {err}"
+            ))
+        })?;
+        generate_explorer_jsonl(&store, &schema_names, &destination)
+    }
+
+    /// Export individually named schemas' selected field occurrences as JSON Lines.
+    #[pyfunction]
+    pub(crate) fn generate_schema_explorer_jsonl_from_paths(
+        sources: HashMap<String, PathBuf>,
+        schema_names: Vec<String>,
+        destination: PathBuf,
+    ) -> PyResult<HashMap<String, usize>> {
+        let store = StoreSource::new_from_paths(sources).map_err(|err| {
+            PyRuntimeError::new_err(format!(
+                "Error while loading schemas from the given paths: {err}"
+            ))
+        })?;
+        generate_explorer_jsonl(&store, &schema_names, &destination)
+    }
+
+    fn generate_explorer_jsonl(
+        store: &StoreSource,
+        schema_names: &[String],
+        destination: &Path,
+    ) -> PyResult<HashMap<String, usize>> {
+        let mut counts = HashMap::new();
+        for name in schema_names {
+            if counts.insert(name.clone(), 0).is_some() {
+                return Err(PyValueError::new_err(
+                    "Schema Explorer schema names must be unique",
+                ));
+            }
+        }
+        let rows = generate_schema_explorer_rows(store, schema_names).map_err(|err| {
+            PyRuntimeError::new_err(format!(
+                "Error while generating Schema Explorer rows: {err}"
+            ))
+        })?;
+        let mut encoded = Vec::new();
+        for row in rows {
+            if let Some(count) = counts.get_mut(&row.module) {
+                *count += 1;
+            }
+            serde_json::to_writer(&mut encoded, &row).map_err(|err| {
+                PyRuntimeError::new_err(format!("Error while encoding Schema Explorer rows: {err}"))
+            })?;
+            encoded.push(b'\n');
+        }
+        // Complete schema analysis and encoding before opening the output.
+        // These are build artifacts, not the runtime validation archive.
+        std::fs::write(destination, encoded).map_err(|err| {
+            PyRuntimeError::new_err(format!(
+                "Error while writing Schema Explorer JSONL to '{}': {err}",
+                destination.display()
+            ))
+        })?;
+        Ok(counts)
+    }
 
     #[pyfunction]
     #[pyo3(signature = (source, schema_name, destination, generated_class_name=None, root_keys=None))]

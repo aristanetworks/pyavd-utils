@@ -62,6 +62,8 @@ pub(crate) enum TraversalControl {
 pub(crate) enum HiddenKeysPolicy {
     /// Visit children regardless of dictionary documentation settings.
     Expand,
+    /// Visit the dictionary itself, but not children when `hide_keys` is set.
+    Prune,
     /// Preserve Markdown's direct rendering of nonempty dictionary item keys.
     PruneExceptDictionaryItems,
 }
@@ -95,6 +97,7 @@ impl TraversalConfig {
         }
         match self.hidden_keys {
             HiddenKeysPolicy::Expand => true,
+            HiddenKeysPolicy::Prune => false,
             HiddenKeysPolicy::PruneExceptDictionaryItems => {
                 occurrence.relation() == SchemaRelation::Items
                     && occurrence.dict().is_some_and(|dict| !dict.keys.is_empty())
@@ -115,6 +118,7 @@ pub(crate) struct SchemaOccurrence<'a> {
     relation: SchemaRelation<'a>,
     schema_id: SchemaId,
     pure_references: Vec<&'a str>,
+    references: Vec<&'a str>,
 }
 
 impl<'a> SchemaOccurrence<'a> {
@@ -139,6 +143,14 @@ impl<'a> SchemaOccurrence<'a> {
     /// whether traversal should continue into its effective children.
     pub(crate) fn pure_references(&self) -> &[&str] {
         &self.pure_references
+    }
+
+    /// References contributing to this occurrence, in layer precedence order.
+    ///
+    /// Unlike `pure_references`, this includes layers with local overrides.
+    /// References belong to a use-site, not to an interned runtime schema ID.
+    pub(crate) fn references(&self) -> &[&str] {
+        &self.references
     }
 
     /// Properties shared by every effective schema type.
@@ -284,6 +296,11 @@ impl<'a> SchemaTraverser<'a> {
             relation,
             schema_id,
             pure_references,
+            references: layers
+                .iter()
+                .copied()
+                .filter_map(SourceLayer::schema_ref)
+                .collect(),
         };
 
         if visitor.enter(&occurrence)? == TraversalControl::Descend
