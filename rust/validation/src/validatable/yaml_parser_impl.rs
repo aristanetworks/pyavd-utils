@@ -207,6 +207,7 @@ impl<'input> ValidatableValue for Node<'input> {
 ///
 /// Note: YAML mappings can have non-string keys, but only string keys
 /// participate in schema lookups.
+#[derive(Debug)]
 pub struct NodeMapping<'a, 'input> {
     pairs: &'a [MappingPair<'input>],
 }
@@ -307,6 +308,7 @@ impl<'a, 'input: 'a> ValidatableMapping<'a> for NodeMapping<'a, 'input> {
 }
 
 /// Iterator over `yaml_parser` mapping entries.
+#[derive(Debug)]
 pub struct NodeMappingIter<'a, 'input> {
     inner: std::slice::Iter<'a, MappingPair<'input>>,
 }
@@ -324,6 +326,7 @@ impl<'a, 'input: 'a> Iterator for NodeMappingIter<'a, 'input> {
 ///
 /// Keeps access to the original key node so validation can distinguish schema
 /// lookup keys from display keys and preserve non-string keys in coerced output.
+#[derive(Debug)]
 pub struct NodeMappingPair<'a, 'input> {
     pair: &'a MappingPair<'input>,
 }
@@ -397,6 +400,7 @@ impl<'a, 'input: 'a> ValidatableSequence<'a> for &'a [SequenceItem<'input>] {
     }
 }
 
+#[derive(Debug)]
 pub struct SequenceIter<'a, 'input> {
     inner: std::slice::Iter<'a, SequenceItem<'input>>,
 }

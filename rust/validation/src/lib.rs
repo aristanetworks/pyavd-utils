@@ -4,7 +4,6 @@
 // TODO: Reevaluate the allow
 #![allow(
     missing_docs,
-    missing_debug_implementations,
     clippy::as_conversions,
     clippy::cast_possible_truncation,
     clippy::cast_precision_loss,

@@ -170,6 +170,7 @@ impl<'a> ValidatableMapping<'a> for &'a Map<String, Value> {
 }
 
 /// Iterator adapter for `serde_json` Map.
+#[derive(Debug)]
 pub struct MapIter<'a> {
     inner: serde_json::map::Iter<'a>,
 }
@@ -192,6 +193,7 @@ impl ExactSizeIterator for MapIter<'_> {}
 ///
 /// JSON object keys are always strings, so the schema, display, and coerced
 /// key representations are all the same string key.
+#[derive(Debug)]
 pub struct MapPair<'a> {
     key: &'a String,
     value: &'a Value,
