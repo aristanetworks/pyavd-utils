@@ -169,7 +169,7 @@ eos_config:
     key2:
       type: str
       description: this is from key2
-    dynamic:
+    node_type_keys:
       type: list
       items:
         type: dict
@@ -177,7 +177,7 @@ eos_config:
           key:
             type: str
   dynamic_keys:
-    dynamic.key:
+    node_type_keys.key:
       type: int
       max: 10
 ",
@@ -328,14 +328,14 @@ items:
     #[test]
     fn get_dynamic_keys_handles_string_sequence_wrong_type_and_missing_root() {
         let store = Store::from_json(
-            r#"{"test":{"type":"dict","dynamic_keys":{"name":{"type":"int"},"names":{"type":"bool"},"wrong":{"type":"str"}}}}"#,
+            r#"{"test":{"type":"dict","dynamic_keys":{"node_type_keys.key":{"type":"int"},"network_services_keys.name":{"type":"bool"},"custom_node_type_keys.key":{"type":"str"}}}}"#,
         )
         .unwrap();
         let Some(SchemaView::Dict(schema)) = store.get("test") else {
             panic!("test schema should be a dictionary")
         };
 
-        let string_doc = parse_single_document("name: single\n");
+        let string_doc = parse_single_document("node_type_keys: [{key: single}]\n");
         let string_dynamic_keys =
             resolve_dynamic_keys(schema, (&string_doc.value).as_mapping().unwrap(), None);
         assert_eq!(
@@ -343,7 +343,8 @@ items:
             vec!["single".to_owned()]
         );
 
-        let sequence_doc = parse_single_document("names: [one, two]\n");
+        let sequence_doc =
+            parse_single_document("network_services_keys: [{name: one}, {name: two}]\n");
         let sequence_dynamic_keys =
             resolve_dynamic_keys(schema, (&sequence_doc.value).as_mapping().unwrap(), None);
         assert_eq!(
@@ -351,7 +352,7 @@ items:
             vec!["one".to_owned(), "two".to_owned()]
         );
 
-        let wrong_type_doc = parse_single_document("wrong: 7\n");
+        let wrong_type_doc = parse_single_document("custom_node_type_keys: [{key: 7}]\n");
         let wrong_type_dynamic_keys =
             resolve_dynamic_keys(schema, (&wrong_type_doc.value).as_mapping().unwrap(), None);
         assert!(wrong_type_dynamic_keys.is_empty());
@@ -373,7 +374,7 @@ items:
         };
         let doc = parse_single_document(
             "
-dynamic:
+node_type_keys:
   - key: one
   - key: two
 key2: value
@@ -384,7 +385,7 @@ key2: value
 
         assert_eq!(schema.keys().count() + dynamic_keys.len(), 4);
         assert!(schema.key("key2").is_some());
-        assert!(schema.key("dynamic").is_some());
+        assert!(schema.key("node_type_keys").is_some());
         assert!(dynamic_keys.contains_key("one"));
         assert!(dynamic_keys.contains_key("two"));
     }
@@ -394,7 +395,7 @@ key2: value
         let store = test_store();
         let doc = parse_single_document(
             "
-dynamic:
+node_type_keys:
   - key: one
   - key: two
 key2: value

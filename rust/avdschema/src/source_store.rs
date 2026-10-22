@@ -213,7 +213,7 @@ mod tests {
         for (property, value) in [
             (
                 "dynamic_keys",
-                serde_json::json!({"names": {"type": "str"}}),
+                serde_json::json!({"node_type_keys.key": {"type": "str"}}),
             ),
             ("$defs", serde_json::json!({"shared": {"type": "str"}})),
             ("$id", serde_json::json!("nested")),
@@ -243,7 +243,7 @@ mod tests {
                     "type": "dict",
                     "$id": "test",
                     "$schema": "avd_meta_schema",
-                    "dynamic_keys": {"names": {"type": "str"}},
+                    "dynamic_keys": {"node_type_keys.key": {"type": "str"}},
                     "$defs": {"shared": {"type": "int"}}
                 }
             }"#,

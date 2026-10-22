@@ -55,16 +55,6 @@ struct MetaStaticSchemaKey(#[schemars(regex(pattern = "^(?:[a-z][a-z0-9_]*|Vxlan
 )]
 struct MetaDefinitionKey(#[schemars(regex(pattern = "^[a-z][a-z0-9_]*$"))] String);
 
-/// Schema-only key type for data paths declaring dynamic schema keys.
-#[cfg(feature = "metaschema")]
-#[derive(schemars::JsonSchema)]
-#[schemars(transparent)]
-#[allow(
-    dead_code,
-    reason = "This type supplies the property-name pattern for the generated metaschema"
-)]
-struct MetaDynamicSchemaKey(#[schemars(regex(pattern = "^[a-z][a-z0-9_.]*$"))] String);
-
 /// AVD schema for dictionary data.
 #[skip_serializing_none]
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]

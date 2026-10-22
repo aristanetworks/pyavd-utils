@@ -23,7 +23,10 @@
 use indexmap::IndexMap;
 
 use crate::CompileError;
+use crate::DynamicKeySource;
 use crate::SchemaDiagnostic;
+use crate::SchemaPath;
+use crate::SchemaPathElement;
 use crate::StoreSource;
 use crate::any::SourceLayer;
 use crate::any::SourceSchema;
@@ -43,7 +46,7 @@ pub(crate) enum SchemaRelation<'a> {
     /// A statically named dictionary key.
     Key(&'a str),
     /// A dictionary key selected through a dynamic-key path.
-    DynamicKey(&'a str),
+    DynamicKey(DynamicKeySource),
     /// The item schema of a list.
     Items,
 }
@@ -114,16 +117,16 @@ impl TraversalConfig {
 #[derive(Debug)]
 pub(crate) struct SchemaOccurrence<'a> {
     compiled: &'a CompiledStore,
-    path: &'a [String],
+    path: &'a SchemaPath,
     relation: SchemaRelation<'a>,
     schema_id: SchemaId,
-    pure_references: Vec<&'a str>,
-    references: Vec<&'a str>,
+    pure_reference_count: usize,
+    references: Vec<SchemaPath>,
 }
 
 impl<'a> SchemaOccurrence<'a> {
     /// Absolute source-schema path of this use-site.
-    pub(crate) fn path(&self) -> &[String] {
+    pub(crate) fn path(&self) -> &SchemaPath {
         self.path
     }
 
@@ -141,15 +144,15 @@ impl<'a> SchemaOccurrence<'a> {
     ///
     /// Consumers decide whether a reference has an existing representation or
     /// whether traversal should continue into its effective children.
-    pub(crate) fn pure_references(&self) -> &[&str] {
-        &self.pure_references
+    pub(crate) fn pure_references(&self) -> &[SchemaPath] {
+        &self.references[..self.pure_reference_count]
     }
 
     /// References contributing to this occurrence, in layer precedence order.
     ///
     /// Unlike `pure_references`, this includes layers with local overrides.
     /// References belong to a use-site, not to an interned runtime schema ID.
-    pub(crate) fn references(&self) -> &[&str] {
+    pub(crate) fn references(&self) -> &[SchemaPath] {
         &self.references
     }
 
@@ -219,7 +222,7 @@ impl<'a> SchemaTraverser<'a> {
         let root_source = source
             .get(schema_name)
             .map_err(|error| SchemaDiagnostic::Reference {
-                schema_path: vec![schema_name.to_owned()],
+                schema_path: SchemaPath::root(schema_name),
                 reference: format!("{schema_name}#"),
                 error: error.into(),
             })?;
@@ -228,7 +231,7 @@ impl<'a> SchemaTraverser<'a> {
                 .roots
                 .get(schema_name)
                 .ok_or_else(|| SchemaDiagnostic::StructuralCycle {
-                    schema_path: vec![schema_name.to_owned()],
+                    schema_path: SchemaPath::root(schema_name),
                 })?;
         Ok(Self {
             source,
@@ -253,7 +256,7 @@ impl<'a> SchemaTraverser<'a> {
         self.visit(
             &[SourceLayer::root(self.root_source)],
             self.root_id,
-            vec![self.schema_name.to_owned()],
+            SchemaPath::root(self.schema_name),
             SchemaRelation::Root,
             visitor,
             config,
@@ -269,7 +272,7 @@ impl<'a> SchemaTraverser<'a> {
         &self,
         declared_layers: &[SourceLayer<'a>],
         schema_id: SchemaId,
-        path: Vec<String>,
+        path: SchemaPath,
         relation: SchemaRelation<'_>,
         visitor: &mut V,
         config: TraversalConfig,
@@ -283,24 +286,21 @@ impl<'a> SchemaTraverser<'a> {
         {
             return Ok(());
         }
-        let layers = expand_layers(self.source, declared_layers, &path)?;
-        let pure_references = layers
+        let expanded = expand_layers(self.source, declared_layers, &path)?;
+        let layers = expanded.layers;
+        let pure_reference_count = layers
             .iter()
             .copied()
-            .take_while(|schema| is_pure_reference(schema))
-            .filter_map(SourceLayer::schema_ref)
-            .collect();
+            .take_while(is_pure_reference)
+            .filter(|schema| schema.schema_ref().is_some())
+            .count();
         let occurrence = SchemaOccurrence {
             compiled: &self.compiled,
             path: &path,
             relation,
             schema_id,
-            pure_references,
-            references: layers
-                .iter()
-                .copied()
-                .filter_map(SourceLayer::schema_ref)
-                .collect(),
+            pure_reference_count,
+            references: expanded.references,
         };
 
         if visitor.enter(&occurrence)? == TraversalControl::Descend
@@ -319,7 +319,7 @@ impl<'a> SchemaTraverser<'a> {
         &self,
         layers: &[SourceLayer<'a>],
         schema_id: SchemaId,
-        path: &[String],
+        path: &SchemaPath,
         visitor: &mut V,
         config: TraversalConfig,
     ) -> Result<(), V::Error> {
@@ -341,7 +341,7 @@ impl<'a> SchemaTraverser<'a> {
                     self.visit(
                         &item_layers,
                         item_id,
-                        path_with(path, "items"),
+                        path.child(SchemaPathElement::Items),
                         SchemaRelation::Items,
                         visitor,
                         config,
@@ -351,34 +351,35 @@ impl<'a> SchemaTraverser<'a> {
             }
             SchemaId::Dict(index) => {
                 let dict = &self.compiled.dicts[index as usize];
-                let key_layers = dict_child_layers(layers, false);
+                let key_layers = dict_child_layers(layers);
                 for (name, child_id) in &dict.keys {
                     let declared = key_layers.get(name.as_str()).ok_or_else(|| {
                         CompileError::from(SchemaDiagnostic::StructuralCycle {
-                            schema_path: path_with(path, name),
+                            schema_path: path.child(SchemaPathElement::Key { key: name.clone() }),
                         })
                     })?;
                     self.visit(
                         declared,
                         *child_id,
-                        path_with(&path_with(path, "keys"), name),
+                        path.child(SchemaPathElement::Key { key: name.clone() }),
                         SchemaRelation::Key(name),
                         visitor,
                         config,
                     )?;
                 }
-                let dynamic_key_layers = dict_child_layers(layers, true);
+                let dynamic_key_layers = dynamic_child_layers(layers);
                 for (name, child_id) in &dict.dynamic_keys {
-                    let declared = dynamic_key_layers.get(name.as_str()).ok_or_else(|| {
-                        CompileError::from(SchemaDiagnostic::StructuralCycle {
-                            schema_path: path_with(path, name),
-                        })
-                    })?;
+                    let (source, declared) =
+                        dynamic_key_layers.get(name.as_str()).ok_or_else(|| {
+                            CompileError::from(SchemaDiagnostic::StructuralCycle {
+                                schema_path: path.clone(),
+                            })
+                        })?;
                     self.visit(
                         declared,
                         *child_id,
-                        path_with(&path_with(path, "dynamic_keys"), name),
-                        SchemaRelation::DynamicKey(name),
+                        path.child(SchemaPathElement::DynamicKey { source: *source }),
+                        SchemaRelation::DynamicKey(*source),
                         visitor,
                         config,
                     )?;
@@ -389,24 +390,35 @@ impl<'a> SchemaTraverser<'a> {
     }
 }
 
-fn dict_child_layers<'a>(
-    layers: &[SourceLayer<'a>],
-    dynamic: bool,
-) -> IndexMap<&'a str, Vec<SourceLayer<'a>>> {
+fn dict_child_layers<'a>(layers: &[SourceLayer<'a>]) -> IndexMap<&'a str, Vec<SourceLayer<'a>>> {
     let mut children = IndexMap::new();
     for layer in layers {
         let map = match layer {
-            SourceLayer::Root(schema) if dynamic => schema.dynamic_keys.as_ref(),
             SourceLayer::Root(schema) => schema.keys.as_ref(),
-            SourceLayer::Schema(SourceSchema::Dict(_)) if dynamic => None,
             SourceLayer::Schema(SourceSchema::Dict(schema)) => schema.keys.as_ref(),
             SourceLayer::Schema(_) => None,
         };
-        if let Some(map) = map {
-            for (name, child) in map {
+        for (name, child) in map.into_iter().flat_map(|map| map.iter()) {
+            children
+                .entry(name.as_str())
+                .or_insert_with(Vec::new)
+                .push(SourceLayer::schema(child));
+        }
+    }
+    children
+}
+
+fn dynamic_child_layers<'a>(
+    layers: &[SourceLayer<'a>],
+) -> IndexMap<&'a str, (DynamicKeySource, Vec<SourceLayer<'a>>)> {
+    let mut children = IndexMap::new();
+    for layer in layers {
+        if let SourceLayer::Root(schema) = layer {
+            for (source, child) in schema.dynamic_keys.iter().flat_map(|map| map.iter()) {
                 children
-                    .entry(name.as_str())
-                    .or_insert_with(Vec::new)
+                    .entry(source.path())
+                    .or_insert_with(|| (*source, Vec::new()))
+                    .1
                     .push(SourceLayer::schema(child));
             }
         }
@@ -477,12 +489,6 @@ fn common(store: &CompiledStore, schema_id: SchemaId) -> &Common {
     }
 }
 
-fn path_with(path: &[String], element: &str) -> Vec<String> {
-    let mut result = path.to_vec();
-    result.push(element.to_owned());
-    result
-}
-
 #[cfg(test)]
 mod tests {
     use super::HiddenKeysPolicy;
@@ -493,11 +499,13 @@ mod tests {
     use super::TraversalConfig;
     use super::TraversalControl;
     use crate::Load as _;
+    use crate::SchemaPath;
+    use crate::SchemaPathElement;
     use crate::StoreSource;
 
     #[derive(Default)]
     struct RecordingVisitor {
-        visits: Vec<(Vec<String>, Vec<String>)>,
+        visits: Vec<(SchemaPath, Vec<String>)>,
     }
 
     impl SchemaVisitor for RecordingVisitor {
@@ -508,11 +516,11 @@ mod tests {
             occurrence: &SchemaOccurrence<'_>,
         ) -> Result<TraversalControl, Self::Error> {
             self.visits.push((
-                occurrence.path().to_vec(),
+                occurrence.path().clone(),
                 occurrence
                     .pure_references()
                     .iter()
-                    .map(ToString::to_string)
+                    .map(SchemaPath::to_reference)
                     .collect(),
             ));
             if occurrence.relation() == SchemaRelation::Key("first") {
@@ -561,23 +569,27 @@ mod tests {
         assert_eq!(
             visitor.visits,
             vec![
-                (vec!["model".to_owned()], Vec::new()),
+                (SchemaPath::root("model"), Vec::new()),
                 (
-                    vec!["model".to_owned(), "keys".to_owned(), "first".to_owned()],
+                    SchemaPath::root("model").child(SchemaPathElement::Key {
+                        key: "first".to_owned(),
+                    }),
                     vec!["shared#".to_owned()],
                 ),
                 (
-                    vec!["model".to_owned(), "keys".to_owned(), "second".to_owned()],
+                    SchemaPath::root("model").child(SchemaPathElement::Key {
+                        key: "second".to_owned(),
+                    }),
                     vec!["shared#".to_owned()],
                 ),
                 (
-                    vec![
-                        "model".to_owned(),
-                        "keys".to_owned(),
-                        "second".to_owned(),
-                        "keys".to_owned(),
-                        "value".to_owned(),
-                    ],
+                    SchemaPath::root("model")
+                        .child(SchemaPathElement::Key {
+                            key: "second".to_owned(),
+                        })
+                        .child(SchemaPathElement::Key {
+                            key: "value".to_owned(),
+                        }),
                     Vec::new(),
                 ),
             ]

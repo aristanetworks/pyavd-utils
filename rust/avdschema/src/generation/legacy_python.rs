@@ -25,6 +25,9 @@ use std::fmt::Write as _;
 use indexmap::IndexMap;
 
 use crate::CompileError;
+use crate::DynamicKeySource;
+use crate::SchemaPath;
+use crate::SchemaPathElement;
 use crate::StoreSource;
 use crate::compiled::CompiledStore;
 use crate::compiled::CompiledValue;
@@ -70,7 +73,7 @@ pub enum GenerationError {
     #[display("Python model generation does not yet support {feature} at '{schema_path}'")]
     Unsupported {
         /// Path of the schema occurrence using the unsupported feature.
-        schema_path: String,
+        schema_path: SchemaPath,
         /// Name of the unsupported schema feature.
         feature: &'static str,
     },
@@ -78,7 +81,7 @@ pub enum GenerationError {
     #[display("Python model generation requires '{metadata}' at '{schema_path}'")]
     MissingMetadata {
         /// Path of the schema occurrence missing required metadata.
-        schema_path: String,
+        schema_path: SchemaPath,
         /// Name of the missing metadata field.
         metadata: &'static str,
     },
@@ -147,22 +150,22 @@ pub fn generate_python_models_projection(
 #[derive(Clone, Debug)]
 struct PythonNode {
     relation: OwnedRelation,
-    path: Vec<String>,
+    path: SchemaPath,
     schema_id: SchemaId,
-    retained_model_reference: Option<String>,
+    retained_model_reference: Option<SchemaPath>,
     keys: IndexMap<String, PythonNode>,
-    dynamic_keys: IndexMap<String, PythonNode>,
+    dynamic_keys: IndexMap<DynamicKeySource, PythonNode>,
     items: Option<Box<PythonNode>>,
 }
 
 impl PythonNode {
     fn from_occurrence(
         occurrence: &SchemaOccurrence<'_>,
-        retained_model_reference: Option<String>,
+        retained_model_reference: Option<SchemaPath>,
     ) -> Self {
         Self {
             relation: occurrence.relation().into(),
-            path: occurrence.path().to_vec(),
+            path: occurrence.path().clone(),
             schema_id: occurrence.schema_id(),
             retained_model_reference,
             keys: IndexMap::new(),
@@ -178,7 +181,7 @@ impl PythonNode {
                 self.keys.insert(name.clone(), child);
             }
             OwnedRelation::DynamicKey(name) => {
-                self.dynamic_keys.insert(name.clone(), child);
+                self.dynamic_keys.insert(*name, child);
             }
             OwnedRelation::Items => self.items = Some(Box::new(child)),
         }
@@ -190,7 +193,7 @@ impl PythonNode {
 enum OwnedRelation {
     Root,
     Key(String),
-    DynamicKey(String),
+    DynamicKey(DynamicKeySource),
     Items,
 }
 
@@ -199,7 +202,7 @@ impl From<SchemaRelation<'_>> for OwnedRelation {
         match value {
             SchemaRelation::Root => Self::Root,
             SchemaRelation::Key(name) => Self::Key(name.to_owned()),
-            SchemaRelation::DynamicKey(name) => Self::DynamicKey(name.to_owned()),
+            SchemaRelation::DynamicKey(source) => Self::DynamicKey(source),
             SchemaRelation::Items => Self::Items,
         }
     }
@@ -234,7 +237,7 @@ impl<'a> PythonProjection<'a> {
 
     fn unsupported(occurrence: &SchemaOccurrence<'_>, feature: &'static str) -> GenerationError {
         GenerationError::Unsupported {
-            schema_path: occurrence.path().join("/"),
+            schema_path: occurrence.path().clone(),
             feature,
         }
     }
@@ -337,7 +340,7 @@ impl SchemaVisitor for PythonProjection<'_> {
 fn retained_model_reference(
     occurrence: &SchemaOccurrence<'_>,
     model_schema_name: &str,
-) -> Option<String> {
+) -> Option<SchemaPath> {
     let retain_reference = match occurrence.schema_id() {
         SchemaId::Dict(_) => true,
         SchemaId::List(_) => occurrence
@@ -349,14 +352,14 @@ fn retained_model_reference(
         occurrence
             .pure_references()
             .iter()
-            .copied()
             .find(|reference| {
-                reference
-                    .split_once('#')
-                    .is_some_and(|(schema_name, _)| schema_name != model_schema_name)
-                    && !reference.contains("/$defs/")
+                reference.schema_name() != model_schema_name
+                    && !reference
+                        .elements()
+                        .iter()
+                        .any(|element| matches!(element, SchemaPathElement::Definition { .. }))
             })
-            .map(ToOwned::to_owned)
+            .cloned()
     })?
 }
 
@@ -828,12 +831,13 @@ fn augment_eos_designs_root(
     let mut dynamic_classes = Vec::new();
     let mut dynamic_fields = Vec::new();
     let mut dynamic_key_maps = Vec::new();
-    for (dynamic_path, node) in &root_node.dynamic_keys {
+    for (source, node) in &root_node.dynamic_keys {
+        let dynamic_path = source.path();
         let display_name = common(compiled, node.schema_id)
             .display_name
             .as_deref()
             .ok_or_else(|| GenerationError::MissingMetadata {
-                schema_path: node.path.join("/"),
+                schema_path: node.path.clone(),
                 metadata: "display_name",
             })?;
         let dynamic_type = display_name.replace(' ', "_").to_lowercase();
@@ -1443,19 +1447,21 @@ fn field_name(value: &str) -> String {
     }
 }
 
-fn class_name_from_ref(reference: &str) -> String {
-    let (schema_name, path) = reference.split_once('#').unwrap_or((reference, ""));
-    let mut parts = vec![class_name(schema_name)];
-    let elements = path.split('/').collect::<Vec<_>>();
-    for (index, element) in elements.iter().enumerate() {
-        if element.is_empty() || matches!(*element, "keys" | "items") {
-            continue;
-        }
-        let suffix = (elements.get(index + 1) == Some(&"items")).then_some("_item");
-        parts.push(class_name(&format!(
-            "{element}{}",
-            suffix.unwrap_or_default()
-        )));
+fn class_name_from_ref(reference: &SchemaPath) -> String {
+    let mut parts = vec![class_name(reference.schema_name())];
+    for (index, element) in reference.elements().iter().enumerate() {
+        let name = match element {
+            SchemaPathElement::Key { key } => key.as_str(),
+            SchemaPathElement::DynamicKey { source } => source.path(),
+            SchemaPathElement::Definition { name } => name.as_str(),
+            SchemaPathElement::Items => continue,
+        };
+        let suffix = if reference.elements().get(index + 1) == Some(&SchemaPathElement::Items) {
+            "_item"
+        } else {
+            ""
+        };
+        parts.push(class_name(&format!("{name}{suffix}")));
     }
     parts.join(".")
 }

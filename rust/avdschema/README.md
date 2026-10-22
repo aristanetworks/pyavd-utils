@@ -46,6 +46,12 @@ validated separately with the metaschema shipped with that AVD version. In parti
 its acceptance by the loader or compiler. `Vxlan1` remains accepted by the generated
 metaschema because AVD 6.x still declares it as removed.
 
+Dynamic-key declaration sources are a closed source-model type, `DynamicKeySource`,
+covering the five supported node-type, connected-endpoint, and network-service paths.
+Both source deserialization and the generated metaschema reject other declaration paths;
+concrete dynamic key names supplied by input data remain unrestricted. This source-model
+contract is independent of authoring conventions such as static-key spelling.
+
 Compilation checks reference resolution, type compatibility, and cycles for declarations
 it traverses. It does not necessarily resolve references in unused definitions. This
 crate adds no standalone authoring-validation pass or JSON Schema validator dependency.

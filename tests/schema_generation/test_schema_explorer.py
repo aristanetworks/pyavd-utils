@@ -29,7 +29,7 @@ def test_documentation_tables_match_markdown_grouping(tmp_path: Path, root_table
         "nested.section.value": "section-table",
         "entries[].inherited": "item-table",
         "entries[].overridden": "child-table",
-        "<selector_names.key>.inherited": root_table or "selector-names.key",
+        "<node_type_keys.key>.inherited": root_table or "node-type-keys.key",
     }
 
     def leaf(path: str, table: str | None = None) -> dict:
@@ -67,7 +67,7 @@ def test_documentation_tables_match_markdown_grouping(tmp_path: Path, root_table
             },
         },
         "dynamic_keys": {
-            "selector_names.key": {"type": "dict", "keys": {"inherited": leaf("<selector_names.key>.inherited")}},
+            "node_type_keys.key": {"type": "dict", "keys": {"inherited": leaf("<node_type_keys.key>.inherited")}},
         },
     }
     if root_table_source == "explicit":
@@ -91,7 +91,7 @@ def test_documentation_tables_match_markdown_grouping(tmp_path: Path, root_table
         # Scalar non-primary fields are not repeated as ancestor/primary-key context.
         assert {name for name, content in markdown.items() if f"Marker for {path}." in content} == {table}
     assert rows["entries"]["doc_table"] == (root_table or "entries")
-    assert rows["<selector_names.key>"]["doc_table"] == (root_table or "selector-names.key")
+    assert rows["<node_type_keys.key>"]["doc_table"] == (root_table or "node-type-keys.key")
 
 
 @pytest.fixture
@@ -124,13 +124,13 @@ def test_occurrence_order_and_anonymous_items(rows: dict[str, dict]) -> None:
         "removed",
         "removed.child",
         "defaults",
-        "<selectors.key>",
-        "<selectors.key>.value",
+        "<node_type_keys.key>",
+        "<node_type_keys.key>.value",
     ]
     assert rows["entries[].name"]["parent_path"] == "entries"
     assert rows["entries[].name"]["depth"] == 2
-    assert rows["<selectors.key>"]["depth"] == 1
-    assert rows["<selectors.key>.value"]["depth"] == 2
+    assert rows["<node_type_keys.key>"]["depth"] == 1
+    assert rows["<node_type_keys.key>.value"]["depth"] == 2
     assert all(row["module"] == "model" for row in rows.values())
 
 

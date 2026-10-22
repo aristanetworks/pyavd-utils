@@ -17,11 +17,10 @@ use serde_with::skip_serializing_none;
 #[cfg(feature = "metaschema")]
 use super::MetaDefinitionKey;
 #[cfg(feature = "metaschema")]
-use super::MetaDynamicSchemaKey;
-#[cfg(feature = "metaschema")]
 use super::MetaObject;
 #[cfg(feature = "metaschema")]
 use super::MetaStaticSchemaKey;
+use super::dynamic_keys::DynamicKeySource;
 use crate::Inherit;
 use crate::any::SourceSchema;
 use crate::base::Base;
@@ -56,16 +55,19 @@ pub struct SourceRootDict {
     )]
     pub keys: Option<OrderMap<String, SourceSchema>>,
     /// Dictionary of dynamic keys in the format `{<variable.path>: <schema>}`.
-    /// The dot-notation path is relative to the input dictionary being validated and points to
+    /// The dot-notation path is relative to the root input dictionary being validated and points to
     /// values containing additional key names. When a path traverses a list, every list item
     /// is unpacked. Each resulting key is validated using the supplied schema.
     /// These key names come from the input data or, when the input path has no value,
     /// from schema-defined defaults if available.
+    /// Only supported node-type, connected-endpoint, and network-service source paths may be declared.
+    /// Unknown source paths are rejected during deserialization; concrete key names from the
+    /// input data are unrestricted.
     #[cfg_attr(
         feature = "metaschema",
-        schemars(with = "Option<std::collections::BTreeMap<MetaDynamicSchemaKey, SourceSchema>>")
+        schemars(with = "Option<std::collections::BTreeMap<DynamicKeySource, SourceSchema>>")
     )]
-    pub dynamic_keys: Option<OrderMap<String, SourceSchema>>,
+    pub dynamic_keys: Option<OrderMap<DynamicKeySource, SourceSchema>>,
     /// Whether input keys absent from `keys` and resolved `dynamic_keys` are accepted.
     /// Default is false.
     pub allow_other_keys: Option<bool>,

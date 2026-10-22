@@ -73,7 +73,7 @@ pub(crate) fn get_test_store() -> StoreSource {
                     }
                 },
                 "dynamic_keys": {
-                    "dynamic.key": {
+                    "node_type_keys.key": {
                         "type": "int",
                         "max": 10,
                     },

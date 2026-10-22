@@ -290,7 +290,7 @@ def test_generation_rejects_scalar_root(tmp_path: Path) -> None:
 def test_generation_rejects_unsupported_schema_feature(tmp_path: Path) -> None:
     source = tmp_path / "schemas.json"
     source.write_text(
-        '{"model": {"type": "dict", "dynamic_keys": {"selectors.names": {"type": "str"}}}}',
+        '{"model": {"type": "dict", "dynamic_keys": {"node_type_keys.key": {"type": "str"}}}}',
         encoding="UTF-8",
     )
 
@@ -331,6 +331,29 @@ def test_generate_from_individual_schema_paths_preserves_transitive_model_refere
 
     generate_python_schema_models_from_paths(sources, "eos_cli_config_gen", generated)
     assert "class EosCliConfigGen(EosCliConfigGenRootModel):" in generated.read_text(encoding="UTF-8")
+
+
+@pytest.mark.parametrize("literal_key", ["keys", "items"])
+def test_model_reference_preserves_literal_structural_key_names(tmp_path: Path, literal_key: str) -> None:
+    """A field's name must not be mistaken for a structural reference component."""
+    source = tmp_path / "schemas.json"
+    source.write_text(
+        dumps(
+            {
+                "shared": {"type": "dict", "keys": {literal_key: {"type": "dict", "keys": {"value": {"type": "str"}}}}},
+                "model": {"type": "dict", "keys": {"linked": {"type": "dict", "$ref": f"shared#/keys/{literal_key}"}}},
+            }
+        ),
+        encoding="UTF-8",
+    )
+    generated = tmp_path / "model.py"
+
+    generate_python_schema_models(source, "model", generated)
+
+    output = generated.read_text(encoding="UTF-8")
+    assert f'"linked": {{"type": Shared.{literal_key.title()}}}' in output
+    assert "class Linked(AvdModel):" not in output
+    ast.parse(output)
 
 
 def test_generation_supports_defaults_aliases_and_duplicate_primary_keys(tmp_path: Path) -> None:
@@ -404,11 +427,11 @@ def test_eos_designs_generation_adds_dynamic_and_custom_structured_configuration
 def test_eos_designs_dynamic_model_requires_display_name(tmp_path: Path) -> None:
     source = tmp_path / "eos_designs.json"
     source.write_text(
-        dumps({"type": "dict", "dynamic_keys": {"selectors.names": {"type": "str"}}}),
+        dumps({"type": "dict", "dynamic_keys": {"node_type_keys.key": {"type": "str"}}}),
         encoding="UTF-8",
     )
 
-    with pytest.raises(RuntimeError, match=r"requires 'display_name'.*eos_designs/dynamic_keys/selectors.names"):
+    with pytest.raises(RuntimeError, match=r"requires 'display_name'.*eos_designs/dynamic_keys/node_type_keys.key"):
         generate_python_schema_models_from_paths({"eos_designs": source}, "eos_designs", tmp_path / "eos_designs.py")
 
 

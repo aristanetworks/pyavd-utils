@@ -291,12 +291,12 @@ impl<'a> DocumentationProjection<'a> {
                     DocFrameKind::Ignored => None,
                 }
             }
-            SchemaRelation::DynamicKey(name) => {
+            SchemaRelation::DynamicKey(source) => {
                 let parent = self.stack.last()?;
                 let DocFrameKind::Node(parent) = &parent.kind else {
                     return None;
                 };
-                let key = format!("<{name}>");
+                let key = format!("<{}>", source.path());
                 Some(Self::draft_with_context(
                     occurrence,
                     Some(key.clone()),

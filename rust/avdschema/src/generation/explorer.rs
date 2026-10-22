@@ -175,7 +175,7 @@ impl SchemaVisitor for ExplorerProjection<'_> {
         }
         let name = match occurrence.relation() {
             SchemaRelation::Key(name) => name.to_owned(),
-            SchemaRelation::DynamicKey(name) => format!("<{name}>"),
+            SchemaRelation::DynamicKey(source) => format!("<{}>", source.path()),
             SchemaRelation::Root | SchemaRelation::Items => unreachable!("handled above"),
         };
         let path = if parent.path.is_empty() {
@@ -248,12 +248,8 @@ fn field_row(
         occurrence
             .references()
             .iter()
-            .find(|reference| {
-                reference
-                    .split_once('#')
-                    .is_some_and(|(target, _)| !target.is_empty() && target != module)
-            })
-            .map(|reference| (*reference).to_owned())
+            .find(|reference| reference.schema_name() != module)
+            .map(crate::SchemaPath::to_reference)
     } else {
         None
     };

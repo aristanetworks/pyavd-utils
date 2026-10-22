@@ -183,6 +183,7 @@ fn removed_from_view(path: &crate::feedback::Path, deprecation: DeprecationView<
 mod tests {
     use std::sync::Arc;
 
+    use avdschema::DynamicKeySource;
     use avdschema::any::SourceSchema;
     use avdschema::base::Base;
     use avdschema::dict::DynamicKeyOverrides;
@@ -379,7 +380,7 @@ mod tests {
     fn validate_dynamic_keys_ok() {
         let schema = SourceRootDict {
             keys: Some(OrderMap::from_iter([(
-                "my_dynamic_keys".into(),
+                "node_type_keys".into(),
                 SourceList {
                     items: Some(Box::new(
                         SourceDict {
@@ -396,7 +397,7 @@ mod tests {
                 .into(),
             )])),
             dynamic_keys: Some(OrderMap::from_iter([(
-                "my_dynamic_keys.key".into(),
+                DynamicKeySource::NodeTypes,
                 SourceInt {
                     max: Some(10),
                     ..Default::default()
@@ -407,7 +408,7 @@ mod tests {
             ..Default::default()
         };
         let input = serde_json::json!(
-            { "my_dynamic_keys": [{"key": "dynkey1"}, {"key": "dynkey2"}], "dynkey1": 5, "dynkey2": 9 });
+            { "node_type_keys": [{"key": "dynkey1"}, {"key": "dynkey2"}], "dynkey1": 5, "dynkey2": 9 });
         let mut ctx = Context::new(None);
         let _ = schema.validate(&input, &mut ctx);
         assert_eq!(ctx.result.errors, vec![]);
@@ -418,7 +419,7 @@ mod tests {
     fn validate_dynamic_keys_err() {
         let schema = SourceRootDict {
             keys: Some(OrderMap::from_iter([(
-                "my_dynamic_keys".into(),
+                "node_type_keys".into(),
                 SourceList {
                     items: Some(Box::new(
                         SourceDict {
@@ -435,7 +436,7 @@ mod tests {
                 .into(),
             )])),
             dynamic_keys: Some(OrderMap::from_iter([(
-                "my_dynamic_keys.key".into(),
+                DynamicKeySource::NodeTypes,
                 SourceInt {
                     max: Some(10),
                     ..Default::default()
@@ -446,7 +447,7 @@ mod tests {
             ..Default::default()
         };
         let input = serde_json::json!(
-            { "my_dynamic_keys": [{"key": "dynkey1"}, {"key": "dynkey2"}], "dynkey1": 11, "dynkey2": "wrong" });
+            { "node_type_keys": [{"key": "dynkey1"}, {"key": "dynkey2"}], "dynkey1": 11, "dynkey2": "wrong" });
         let mut ctx = Context::new(None);
         let _ = schema.validate(&input, &mut ctx);
         assert_eq!(ctx.result.infos, vec![]);
@@ -481,7 +482,7 @@ mod tests {
     fn validate_dynamic_keys_from_overrides_ok() {
         let schema = SourceRootDict {
             dynamic_keys: Some(OrderMap::from_iter([(
-                "my_dynamic_keys.key".into(),
+                DynamicKeySource::NodeTypes,
                 SourceInt {
                     max: Some(10),
                     ..Default::default()
@@ -496,7 +497,7 @@ mod tests {
         let configuration = Configuration {
             dynamic_key_overrides: Some(Arc::new(DynamicKeyOverrides::from_iter([(
                 "dynkey1".into(),
-                "my_dynamic_keys.key".into(),
+                "node_type_keys.key".into(),
             )]))),
             ..Default::default()
         };
@@ -514,7 +515,7 @@ mod tests {
                 SourceStr::default().into(),
             )])),
             dynamic_keys: Some(OrderMap::from_iter([(
-                "my_dynamic_keys.key".into(),
+                DynamicKeySource::NodeTypes,
                 SourceInt {
                     max: Some(10),
                     ..Default::default()
@@ -528,7 +529,7 @@ mod tests {
         let configuration = Configuration {
             dynamic_key_overrides: Some(Arc::new(DynamicKeyOverrides::from_iter([(
                 "dynkey1".into(),
-                "my_dynamic_keys.key".into(),
+                "node_type_keys.key".into(),
             )]))),
             ..Default::default()
         };
@@ -542,11 +543,23 @@ mod tests {
     fn validate_dynamic_keys_from_defaults_ok() {
         let schema = SourceRootDict {
             keys: Some(OrderMap::from_iter([(
-                "my_dynamic_keys".into(),
+                "node_type_keys".into(),
                 SourceList {
-                    items: Some(Box::new(SourceStr::default().into())),
+                    items: Some(Box::new(
+                        SourceDict {
+                            keys: Some(OrderMap::from_iter([(
+                                "key".into(),
+                                SourceStr::default().into(),
+                            )])),
+                            ..Default::default()
+                        }
+                        .into(),
+                    )),
                     base: Base {
-                        default: Some(vec!["dynkey1".into(), "dynkey2".into()]),
+                        default: Some(vec![
+                            serde_json::json!({"key": "dynkey1"}),
+                            serde_json::json!({"key": "dynkey2"}),
+                        ]),
                         ..Default::default()
                     },
                     ..Default::default()
@@ -554,7 +567,7 @@ mod tests {
                 .into(),
             )])),
             dynamic_keys: Some(OrderMap::from_iter([(
-                "my_dynamic_keys".into(),
+                DynamicKeySource::NodeTypes,
                 SourceInt {
                     max: Some(10),
                     ..Default::default()
@@ -575,11 +588,23 @@ mod tests {
     fn validate_dynamic_keys_from_defaults_err() {
         let schema = SourceRootDict {
             keys: Some(OrderMap::from_iter([(
-                "my_dynamic_keys".into(),
+                "node_type_keys".into(),
                 SourceList {
-                    items: Some(Box::new(SourceStr::default().into())),
+                    items: Some(Box::new(
+                        SourceDict {
+                            keys: Some(OrderMap::from_iter([(
+                                "key".into(),
+                                SourceStr::default().into(),
+                            )])),
+                            ..Default::default()
+                        }
+                        .into(),
+                    )),
                     base: Base {
-                        default: Some(vec!["dynkey1".into(), "dynkey2".into()]),
+                        default: Some(vec![
+                            serde_json::json!({"key": "dynkey1"}),
+                            serde_json::json!({"key": "dynkey2"}),
+                        ]),
                         ..Default::default()
                     },
                     ..Default::default()
@@ -587,7 +612,7 @@ mod tests {
                 .into(),
             )])),
             dynamic_keys: Some(OrderMap::from_iter([(
-                "my_dynamic_keys".into(),
+                DynamicKeySource::NodeTypes,
                 SourceDict {
                     keys: Some(OrderMap::from_iter([(
                         "sub_key".into(),
@@ -1597,7 +1622,7 @@ mod tests {
     fn validate_dynamic_key_deprecated_ok() {
         let schema: SourceRootDict = SourceRootDict::deserialize(serde_json::json!({
             "keys": {
-                "my_dynamic_keys": {
+            "node_type_keys": {
                     "type": "list",
                     "items": {
                         "type": "dict",
@@ -1610,7 +1635,7 @@ mod tests {
                 }
             },
             "dynamic_keys": {
-                "my_dynamic_keys.key": {
+                "node_type_keys.key": {
                     "type": "int",
                     "deprecation": {
                         "warning": true,
@@ -1623,7 +1648,7 @@ mod tests {
         .unwrap();
 
         let input = serde_json::json!({
-            "my_dynamic_keys": [{"key": "dynkey1"}],
+            "node_type_keys": [{"key": "dynkey1"}],
             "dynkey1": 5
         });
 
