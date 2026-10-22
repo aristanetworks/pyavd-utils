@@ -38,19 +38,6 @@ use crate::compiled::SchemaId;
 use crate::dict::SourceRootDict;
 use crate::source_layers::expand_layers;
 
-/// Identifies how an occurrence is connected to its parent schema.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum SchemaRelation<'a> {
-    /// The selected named schema.
-    Root,
-    /// A statically named dictionary key.
-    Key(&'a str),
-    /// A dictionary key selected through a dynamic-key path.
-    DynamicKey(DynamicKeySource),
-    /// The item schema of a list.
-    Items,
-}
-
 /// Controls whether traversal continues below the current occurrence.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum TraversalControl {
@@ -102,7 +89,7 @@ impl TraversalConfig {
             HiddenKeysPolicy::Expand => true,
             HiddenKeysPolicy::Prune => false,
             HiddenKeysPolicy::PruneExceptDictionaryItems => {
-                occurrence.relation() == SchemaRelation::Items
+                occurrence.relation() == Some(&SchemaPathElement::Items)
                     && occurrence.dict().is_some_and(|dict| !dict.keys.is_empty())
             }
         }
@@ -118,21 +105,22 @@ impl TraversalConfig {
 pub(crate) struct SchemaOccurrence<'a> {
     compiled: &'a CompiledStore,
     path: &'a SchemaPath,
-    relation: SchemaRelation<'a>,
     schema_id: SchemaId,
     pure_reference_count: usize,
     references: Vec<SchemaPath>,
 }
 
-impl<'a> SchemaOccurrence<'a> {
+impl SchemaOccurrence<'_> {
     /// Absolute source-schema path of this use-site.
     pub(crate) fn path(&self) -> &SchemaPath {
         self.path
     }
 
-    /// Relationship between this occurrence and its parent.
-    pub(crate) fn relation(&self) -> SchemaRelation<'a> {
-        self.relation
+    /// Edge from the parent to this occurrence, borrowed from its schema path.
+    /// The selected root has no parent edge and returns `None`.
+    /// Definitions are resolved as reference targets, not visited as child occurrences.
+    pub(crate) fn relation(&self) -> Option<&SchemaPathElement> {
+        self.path.elements().last()
     }
 
     /// Identity of the effective node in the compiled schema tables.
@@ -257,7 +245,6 @@ impl<'a> SchemaTraverser<'a> {
             &[SourceLayer::root(self.root_source)],
             self.root_id,
             SchemaPath::root(self.schema_name),
-            SchemaRelation::Root,
             visitor,
             config,
         )
@@ -273,12 +260,11 @@ impl<'a> SchemaTraverser<'a> {
         declared_layers: &[SourceLayer<'a>],
         schema_id: SchemaId,
         path: SchemaPath,
-        relation: SchemaRelation<'_>,
         visitor: &mut V,
         config: TraversalConfig,
     ) -> Result<(), V::Error> {
         if !config.include_removed
-            && relation != SchemaRelation::Root
+            && !path.elements().is_empty()
             && common(&self.compiled, schema_id)
                 .deprecation
                 .as_ref()
@@ -297,7 +283,6 @@ impl<'a> SchemaTraverser<'a> {
         let occurrence = SchemaOccurrence {
             compiled: &self.compiled,
             path: &path,
-            relation,
             schema_id,
             pure_reference_count,
             references: expanded.references,
@@ -342,7 +327,6 @@ impl<'a> SchemaTraverser<'a> {
                         &item_layers,
                         item_id,
                         path.child(SchemaPathElement::Items),
-                        SchemaRelation::Items,
                         visitor,
                         config,
                     )?;
@@ -362,7 +346,6 @@ impl<'a> SchemaTraverser<'a> {
                         declared,
                         *child_id,
                         path.child(SchemaPathElement::Key { key: name.clone() }),
-                        SchemaRelation::Key(name),
                         visitor,
                         config,
                     )?;
@@ -379,7 +362,6 @@ impl<'a> SchemaTraverser<'a> {
                         declared,
                         *child_id,
                         path.child(SchemaPathElement::DynamicKey { source: *source }),
-                        SchemaRelation::DynamicKey(*source),
                         visitor,
                         config,
                     )?;
@@ -493,7 +475,6 @@ fn common(store: &CompiledStore, schema_id: SchemaId) -> &Common {
 mod tests {
     use super::HiddenKeysPolicy;
     use super::SchemaOccurrence;
-    use super::SchemaRelation;
     use super::SchemaTraverser;
     use super::SchemaVisitor;
     use super::TraversalConfig;
@@ -523,7 +504,8 @@ mod tests {
                     .map(SchemaPath::to_reference)
                     .collect(),
             ));
-            if occurrence.relation() == SchemaRelation::Key("first") {
+            if matches!(occurrence.relation(), Some(SchemaPathElement::Key { key }) if key == "first")
+            {
                 Ok(TraversalControl::SkipChildren)
             } else {
                 Ok(TraversalControl::Descend)

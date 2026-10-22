@@ -34,7 +34,6 @@ use crate::compiled::CompiledValue;
 use crate::compiled::SchemaId;
 use crate::generation::traversal::HiddenKeysPolicy;
 use crate::generation::traversal::SchemaOccurrence;
-use crate::generation::traversal::SchemaRelation;
 use crate::generation::traversal::SchemaTraverser;
 use crate::generation::traversal::SchemaVisitor;
 use crate::generation::traversal::TraversalConfig;
@@ -149,7 +148,6 @@ pub fn generate_python_models_projection(
 /// existing referenced model are pruned while traversal is in progress.
 #[derive(Clone, Debug)]
 struct PythonNode {
-    relation: OwnedRelation,
     path: SchemaPath,
     schema_id: SchemaId,
     retained_model_reference: Option<SchemaPath>,
@@ -164,7 +162,6 @@ impl PythonNode {
         retained_model_reference: Option<SchemaPath>,
     ) -> Self {
         Self {
-            relation: occurrence.relation().into(),
             path: occurrence.path().clone(),
             schema_id: occurrence.schema_id(),
             retained_model_reference,
@@ -175,35 +172,18 @@ impl PythonNode {
     }
 
     fn attach(&mut self, child: Self) {
-        match &child.relation {
-            OwnedRelation::Root => unreachable!(),
-            OwnedRelation::Key(name) => {
-                self.keys.insert(name.clone(), child);
+        match child.path.elements().last() {
+            Some(SchemaPathElement::Key { key }) => {
+                self.keys.insert(key.clone(), child);
             }
-            OwnedRelation::DynamicKey(name) => {
-                self.dynamic_keys.insert(*name, child);
+            Some(SchemaPathElement::DynamicKey { source }) => {
+                self.dynamic_keys.insert(*source, child);
             }
-            OwnedRelation::Items => self.items = Some(Box::new(child)),
-        }
-    }
-}
-
-/// Owned form of [`SchemaRelation`] retained in the Python output plan.
-#[derive(Clone, Debug)]
-enum OwnedRelation {
-    Root,
-    Key(String),
-    DynamicKey(DynamicKeySource),
-    Items,
-}
-
-impl From<SchemaRelation<'_>> for OwnedRelation {
-    fn from(value: SchemaRelation<'_>) -> Self {
-        match value {
-            SchemaRelation::Root => Self::Root,
-            SchemaRelation::Key(name) => Self::Key(name.to_owned()),
-            SchemaRelation::DynamicKey(source) => Self::DynamicKey(source),
-            SchemaRelation::Items => Self::Items,
+            Some(SchemaPathElement::Items) => self.items = Some(Box::new(child)),
+            None => unreachable!("the root cannot be attached as a child"),
+            Some(SchemaPathElement::Definition { .. }) => {
+                unreachable!("generation traverses effective children, not definition declarations")
+            }
         }
     }
 }
@@ -250,7 +230,7 @@ impl SchemaVisitor for PythonProjection<'_> {
         &mut self,
         occurrence: &SchemaOccurrence<'_>,
     ) -> Result<TraversalControl, Self::Error> {
-        if occurrence.relation() == SchemaRelation::Root {
+        if occurrence.relation().is_none() {
             let Some(dict) = occurrence.dict() else {
                 return Err(GenerationError::RootType {
                     schema_name: self.schema_name.to_owned(),
@@ -268,7 +248,7 @@ impl SchemaVisitor for PythonProjection<'_> {
                 });
             }
         } else if self.stack.len() == 1
-            && let SchemaRelation::Key(name) = occurrence.relation()
+            && let Some(SchemaPathElement::Key { key: name }) = occurrence.relation()
             && !self.root_keys.is_empty()
             && !self.root_keys.iter().any(|selected| selected == name)
         {
@@ -300,7 +280,7 @@ impl SchemaVisitor for PythonProjection<'_> {
                     let Some(dict) = occurrence.dict() else {
                         unreachable!("SchemaId identifies a dictionary");
                     };
-                    let root_dynamic_keys = occurrence.relation() == SchemaRelation::Root
+                    let root_dynamic_keys = occurrence.relation().is_none()
                         && self.generated_class_name == "EosDesigns";
                     if !dict.dynamic_keys.is_empty() && !root_dynamic_keys {
                         return Err(Self::unsupported(occurrence, "dynamic keys"));
