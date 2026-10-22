@@ -25,6 +25,7 @@ use serde::Serialize;
 use serde::Serializer;
 
 use crate::CompileError;
+use crate::SchemaPathElement;
 use crate::StoreSource;
 use crate::compiled::Common;
 use crate::compiled::CompiledDeprecation;
@@ -35,7 +36,6 @@ use crate::compiled::SchemaId;
 use crate::generation::documentation_context::documentation_table;
 use crate::generation::traversal::HiddenKeysPolicy;
 use crate::generation::traversal::SchemaOccurrence;
-use crate::generation::traversal::SchemaRelation;
 use crate::generation::traversal::SchemaTraverser;
 use crate::generation::traversal::SchemaVisitor;
 use crate::generation::traversal::TraversalConfig;
@@ -197,8 +197,8 @@ impl DocFrame {
         }
     }
 
-    fn attach(&mut self, child: DocNode, relation: SchemaRelation<'_>) {
-        if matches!(relation, SchemaRelation::DynamicKey(_)) {
+    fn attach(&mut self, child: DocNode, relation: Option<&SchemaPathElement>) {
+        if matches!(relation, Some(SchemaPathElement::DynamicKey { .. })) {
             self.dynamic_children.push(child);
         } else {
             self.children.push(child);
@@ -233,7 +233,7 @@ impl<'a> DocumentationProjection<'a> {
 
     fn draft(&mut self, occurrence: &SchemaOccurrence<'_>) -> Option<DocDraft> {
         match occurrence.relation() {
-            SchemaRelation::Root => Some(Self::draft_with_context(
+            None => Some(Self::draft_with_context(
                 occurrence,
                 None,
                 Vec::new(),
@@ -242,7 +242,7 @@ impl<'a> DocumentationProjection<'a> {
                 false,
                 false,
             )),
-            SchemaRelation::Items => {
+            Some(SchemaPathElement::Items) => {
                 let parent = self.stack.last()?;
                 let DocFrameKind::Node(parent) = &parent.kind else {
                     return None;
@@ -257,7 +257,7 @@ impl<'a> DocumentationProjection<'a> {
                     true,
                 ))
             }
-            SchemaRelation::Key(name) => {
+            Some(SchemaPathElement::Key { key: name }) => {
                 let parent = self.stack.last_mut()?;
                 match &mut parent.kind {
                     DocFrameKind::Node(parent) => Some(Self::draft_with_context(
@@ -275,7 +275,7 @@ impl<'a> DocumentationProjection<'a> {
                         unique_primary_key,
                         visited_keys,
                     } => {
-                        let is_primary_key = primary_key.as_deref() == Some(name);
+                        let is_primary_key = primary_key.as_deref() == Some(name.as_str());
                         let draft = Self::draft_with_context(
                             occurrence,
                             Some(name.to_owned()),
@@ -291,12 +291,12 @@ impl<'a> DocumentationProjection<'a> {
                     DocFrameKind::Ignored => None,
                 }
             }
-            SchemaRelation::DynamicKey(name) => {
+            Some(SchemaPathElement::DynamicKey { source }) => {
                 let parent = self.stack.last()?;
                 let DocFrameKind::Node(parent) = &parent.kind else {
                     return None;
                 };
-                let key = format!("<{name}>");
+                let key = format!("<{}>", source.path());
                 Some(Self::draft_with_context(
                     occurrence,
                     Some(key.clone()),
@@ -306,6 +306,9 @@ impl<'a> DocumentationProjection<'a> {
                     false,
                     false,
                 ))
+            }
+            Some(SchemaPathElement::Definition { .. }) => {
+                unreachable!("generation traverses effective children, not definition declarations")
             }
         }
     }
@@ -347,14 +350,14 @@ impl SchemaVisitor for DocumentationProjection<'_> {
         &mut self,
         occurrence: &SchemaOccurrence<'_>,
     ) -> Result<TraversalControl, Self::Error> {
-        if occurrence.relation() == SchemaRelation::Root && occurrence.dict().is_none() {
+        if occurrence.relation().is_none() && occurrence.dict().is_none() {
             return Err(DocumentationGenerationError::RootType {
                 schema_name: self.schema_name.to_owned(),
                 found: runtime_type(occurrence.schema_id()),
             });
         }
 
-        if occurrence.relation() == SchemaRelation::Items
+        if occurrence.relation() == Some(&SchemaPathElement::Items)
             && occurrence.dict().is_some_and(|dict| !dict.keys.is_empty())
         {
             let Some(parent) = self.stack.last() else {

@@ -234,7 +234,7 @@ mod tests {
                 "test": {
                     "type": "dict",
                     "keys": {"name": {"type": "str"}},
-                    "dynamic_keys": {"names": {"type": "bool"}}
+                    "dynamic_keys": {"network_services_keys.name": {"type": "bool"}}
                 }
             })
             .to_string(),
@@ -413,7 +413,10 @@ mod tests {
     #[test]
     fn path_navigation_resolves_dynamic_keys_and_static_precedence() {
         let store = navigation_store();
-        let data = json!({"names": ["dynamic_name"], "name": "configured"});
+        let data = json!({
+            "network_services_keys": [{"name": "dynamic_name"}],
+            "name": "configured"
+        });
         assert!(matches!(
             store
                 .get_schema_from_path("test", &["dynamic_name".into()], &data, None)
@@ -426,7 +429,10 @@ mod tests {
                 .unwrap(),
             Some(SchemaView::Str(_))
         ));
-        let overrides = DynamicKeyOverrides::from_iter([("forced".into(), "names".into())]);
+        let overrides = DynamicKeyOverrides::from_iter([(
+            "forced".into(),
+            "network_services_keys.name".into(),
+        )]);
         assert!(matches!(
             store
                 .get_schema_from_path("test", &["forced".into()], &data, Some(&overrides))
@@ -496,8 +502,8 @@ mod tests {
                 "test": {
                     "type": "dict",
                     "dynamic_keys": {
-                        "active": {"type": "bool"},
-                        "removed": {
+                        "node_type_keys.key": {"type": "bool"},
+                        "custom_node_type_keys.key": {
                             "type": "bool",
                             "deprecation": {"warning": false, "removed": true}
                         }
@@ -509,10 +515,13 @@ mod tests {
         let Some(SchemaView::Dict(root)) = store.get("test") else {
             panic!("test root should be a dict")
         };
-        let input = json!({"active": ["live"], "removed": ["gone"]});
+        let input = json!({
+            "node_type_keys": [{"key": "live"}],
+            "custom_node_type_keys": [{"key": "gone"}]
+        });
         let overrides = DynamicKeyOverrides::from_iter([
-            ("forced".into(), "active".into()),
-            ("forced_removed".into(), "removed".into()),
+            ("forced".into(), "node_type_keys.key".into()),
+            ("forced_removed".into(), "custom_node_type_keys.key".into()),
             ("unknown".into(), "missing".into()),
         ]);
 

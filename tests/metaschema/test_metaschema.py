@@ -48,7 +48,16 @@ def test_generate_metaschema(tmp_path: Path) -> None:
     assert recursive_schema_types == {"bool", "dict", "int", "list", "str"}
     root_dict_properties = _variant(schema, "dict")["properties"]
     assert list(root_dict_properties["keys"]["patternProperties"]) == [r"^(?:[a-z][a-z0-9_]*|MIB_family_name|Vxlan1)$"]
-    assert list(root_dict_properties["dynamic_keys"]["patternProperties"]) == [r"^[a-z][a-z0-9_.]*$"]
+    dynamic_keys = root_dict_properties["dynamic_keys"]
+    assert set(dynamic_keys["properties"]) == {
+        "node_type_keys.key",
+        "custom_node_type_keys.key",
+        "connected_endpoints_keys.key",
+        "custom_connected_endpoints_keys.key",
+        "network_services_keys.name",
+    }
+    assert dynamic_keys["additionalProperties"] is False
+    assert "required" not in dynamic_keys
     assert list(root_dict_properties["$defs"]["patternProperties"]) == [r"^[a-z][a-z0-9_]*$"]
     assert root_dict_properties["description"]["type"] == "string"
     assert root_dict_properties["required"]["type"] == "boolean"

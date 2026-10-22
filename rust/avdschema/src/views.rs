@@ -690,7 +690,7 @@ mod tests {
                             "keys": {"local": {"type": "bool"}}
                         }
                     },
-                    "dynamic_keys": {"names": {"type": "bool"}}
+                    "dynamic_keys": {"node_type_keys.key": {"type": "bool"}}
                 }
             })
             .to_string(),

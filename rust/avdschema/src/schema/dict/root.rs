@@ -17,11 +17,10 @@ use serde_with::skip_serializing_none;
 #[cfg(feature = "metaschema")]
 use super::MetaDefinitionKey;
 #[cfg(feature = "metaschema")]
-use super::MetaDynamicSchemaKey;
-#[cfg(feature = "metaschema")]
 use super::MetaObject;
 #[cfg(feature = "metaschema")]
 use super::MetaStaticSchemaKey;
+use super::dynamic_keys::DynamicKeySource;
 use crate::Inherit;
 use crate::any::SourceSchema;
 use crate::base::Base;
@@ -47,12 +46,13 @@ pub struct SourceRootDict {
         schemars(with = "Option<std::collections::BTreeMap<MetaStaticSchemaKey, SourceSchema>>")
     )]
     pub keys: Option<OrderMap<String, SourceSchema>>,
-    /// Data paths whose values provide additional root key names.
+    /// Supported data sources whose values provide additional root key names.
+    /// Unknown sources are rejected during deserialization; concrete key names are unrestricted.
     #[cfg_attr(
         feature = "metaschema",
-        schemars(with = "Option<std::collections::BTreeMap<MetaDynamicSchemaKey, SourceSchema>>")
+        schemars(with = "Option<std::collections::BTreeMap<DynamicKeySource, SourceSchema>>")
     )]
-    pub dynamic_keys: Option<OrderMap<String, SourceSchema>>,
+    pub dynamic_keys: Option<OrderMap<DynamicKeySource, SourceSchema>>,
     /// Whether input keys absent from `keys` and resolved `dynamic_keys` are accepted.
     /// Default is false.
     pub allow_other_keys: Option<bool>,

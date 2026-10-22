@@ -22,6 +22,11 @@
 //! Schema defaults remain borrowed metadata and are never inserted into validated input data.
 //! Concrete dynamic keys depend on input data, so [`resolve_dynamic_keys`] resolves them per
 //! operation instead of storing them in the archive.
+//!
+//! [`SchemaPath`] addresses source declarations and effective occurrences using typed
+//! [`SchemaPathElement`] edges. It is distinct from a path through validated input data:
+//! list items have no index and dynamic edges identify a [`DynamicKeySource`], not a concrete
+//! input key. Authored `$ref` strings are parsed at the reference-resolution boundary.
 // TODO: Reevaluate the allow
 #![allow(
     clippy::empty_structs_with_brackets,
@@ -68,6 +73,7 @@ mod resolve;
     reason = "Legacy source schema model API predates missing-doc enforcement."
 )]
 mod schema;
+mod schema_path;
 mod source_layers;
 #[allow(
     missing_docs,
@@ -113,9 +119,14 @@ pub use self::schema::base;
 pub use self::schema::boolean;
 pub use self::schema::dict;
 pub use self::schema::dict::DynamicKeyOverrides;
+pub use self::schema::dict::dynamic_keys::DynamicKeySource;
+pub use self::schema::dict::dynamic_keys::UnsupportedDynamicKeySource;
 pub use self::schema::int;
 pub use self::schema::list;
 pub use self::schema::str;
+pub use self::schema_path::SchemaPath;
+pub use self::schema_path::SchemaPathElement;
+pub use self::schema_path::SchemaPathParseError;
 pub use self::source_store::SchemaStoreError;
 pub use self::source_store::StoreSource;
 pub use self::store::Store;

@@ -44,13 +44,13 @@ def test_validate_json_with_adhoc_schema_root_properties() -> None:
         "$schema": "avd_meta_schema",
         "$defs": {"value": {"type": "int", "max": 1233}},
         "keys": {
-            "selectors": {"type": "list", "items": {"type": "str"}},
+            "node_type_keys": {"type": "list", "items": {"type": "dict", "keys": {"key": {"type": "str"}}}},
             "value": {"type": "int", "$ref": "adhoc#/$defs/value"},
         },
-        "dynamic_keys": {"selectors": {"type": "int", "$ref": "adhoc#/$defs/value"}},
+        "dynamic_keys": {"node_type_keys.key": {"type": "int", "$ref": "adhoc#/$defs/value"}},
     }
 
-    result = validate_json_with_adhoc_schema(dumps({"selectors": ["dynamic"], "value": 1234, "dynamic": 1234}), dumps(schema))
+    result = validate_json_with_adhoc_schema(dumps({"node_type_keys": [{"key": "dynamic"}], "value": 1234, "dynamic": 1234}), dumps(schema))
 
     assert len(result.violations) == 2
     assert {(tuple(violation.path), violation.message) for violation in result.violations} == {
