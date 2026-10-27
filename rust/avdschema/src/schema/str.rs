@@ -20,6 +20,12 @@ use super::base::valid_values::ValidValues;
 /// Enum for string formats allowed by the [`SourceStr`] schema.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "metaschema", derive(schemars::JsonSchema))]
+#[cfg_attr(
+    feature = "metaschema",
+    schemars(
+        description = "Format used to validate a string, such as an IP address, prefix, address pool, or MAC address."
+    )
+)]
 #[serde(rename_all = "snake_case")]
 pub enum Format {
     Cidr,
@@ -47,10 +53,11 @@ pub struct SourceStr {
     pub max_length: Option<u64>,
     pub min_length: Option<u64>,
     /// An AVD regular expression which will be matched against the complete variable value.
-    /// Perl shorthand classes, wildcards, and explicit character classes operate on Unicode
-    /// strings. Unicode property and script tables beyond those needed by the Perl classes are
-    /// not supported.
-    /// Remember to use double escapes
+    /// The supported dialect includes Unicode-aware Perl shorthand classes (`\d`, `\s`, and
+    /// `\w`, including their uppercase complements) and word boundaries, Unicode-safe wildcards
+    /// and explicit character classes, lookarounds, and variable-length lookbehinds.
+    /// Broader Unicode properties and scripts such as `\p{Greek}` are not supported.
+    /// Remember to double backslashes when using a YAML double-quoted string or a JSON string.
     pub pattern: Option<Pattern>,
     #[serde(flatten)]
     pub base: Base<String>,

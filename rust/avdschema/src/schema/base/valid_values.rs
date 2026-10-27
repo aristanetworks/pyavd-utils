@@ -14,6 +14,9 @@ use serde_with::skip_serializing_none;
 pub struct ValidValues<T> {
     /// List of valid values
     pub valid_values: Option<Vec<T>>,
-    /// Path to variable under the parent dictionary containing valid values.
+    /// Dot-notation paths to variables under the parent input dictionary containing valid values.
+    /// For example, `interfaces.name` collects interface names from a list of dictionaries.
+    /// When a path traverses a list, every list item is unpacked.
+    /// Valid values are derived from the input data, not from the schema document.
     pub dynamic_valid_values: Option<Vec<String>>,
 }

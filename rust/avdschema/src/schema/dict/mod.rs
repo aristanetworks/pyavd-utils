@@ -35,8 +35,7 @@ impl DataValue for MetaObject {}
 
 /// Schema-only key type for statically named schema keys.
 ///
-/// Static keys use snake case. The two explicitly named exceptions are deprecated keys retained
-/// in supported AVD schemas for backwards compatibility.
+/// Static keys use snake case. The existing `Vxlan1` and `MIB_family_name` exceptions are retained.
 #[cfg(feature = "metaschema")]
 #[derive(schemars::JsonSchema)]
 #[schemars(transparent)]

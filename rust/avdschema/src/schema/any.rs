@@ -17,6 +17,12 @@ use crate::utils::load::Load;
 /// Enum covering recursive AVD schema types. Named schema roots use [`SourceRootDict`].
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, derive_more::From)]
 #[cfg_attr(feature = "metaschema", derive(schemars::JsonSchema))]
+#[cfg_attr(
+    feature = "metaschema",
+    schemars(
+        description = "Schema for an AVD value. The type selects the supported properties for booleans, integers, strings, lists, or dictionaries."
+    )
+)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum SourceSchema {
     Bool(SourceBool),

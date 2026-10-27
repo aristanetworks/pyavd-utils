@@ -3,6 +3,7 @@
 # that can be found in the LICENSE file.
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING, Literal
 
 import pytest
@@ -88,3 +89,56 @@ def test_schema_store_get_schema_info_unsupported_schema_name_errors(schema_name
 def test_schema_store_get_schema_info_invalid_traversal_errors() -> None:
     with pytest.raises(RuntimeError, match="Data path cannot be traversed through this schema node"):
         get_schema_info("eos_config", ["hostname", "INVALID"])
+
+
+@pytest.mark.parametrize(
+    ("field", "error_path"),
+    [
+        pytest.param({"type": "str", "pattern": "(["}, "pattern", id="invalid_regex"),
+        pytest.param({"type": "str", "pattern": r"\p{Greek}"}, "pattern", id="unsupported_regex_dialect"),
+        pytest.param({"type": "str", "display_name": "two\nlines"}, "display_name", id="multiline_display_name"),
+        pytest.param({"type": "str", "description": ""}, "description", id="empty_description"),
+        pytest.param({"type": "list", "primary_key": "BadKey"}, "primary_key", id="invalid_primary_key"),
+        pytest.param({"type": "list", "unique_keys": ["parent.Bad"]}, "unique_keys/0", id="invalid_unique_key"),
+    ],
+)
+def test_archive_build_rejects_invalid_authoring_without_replacing_output(tmp_path: Path, field: dict[str, object], error_path: str) -> None:
+    source = tmp_path / "schemas.json"
+    destination = tmp_path / "schemas.rkyv"
+    destination.write_bytes(b"existing archive")
+    source.write_text(json.dumps({"test": {"type": "dict", "keys": {"value": field}}}), encoding="UTF-8")
+
+    with pytest.raises(RuntimeError, match=f"test/keys/value/{error_path}"):
+        compile_schema_archive(source, destination)
+
+    assert destination.read_bytes() == b"existing archive"
+
+
+def test_archive_build_checks_unused_definitions(tmp_path: Path) -> None:
+    source = tmp_path / "schemas.json"
+    destination = tmp_path / "schemas.rkyv"
+    source.write_text(json.dumps({"test": {"type": "dict", "$defs": {"unused": {"type": "str", "pattern": "(["}}}}), encoding="UTF-8")
+
+    with pytest.raises(RuntimeError, match=r"test/\$defs/unused/pattern"):
+        compile_schema_archive(source, destination)
+
+    assert not destination.exists()
+
+
+def test_archive_build_accepts_supported_authoring(tmp_path: Path) -> None:
+    source = tmp_path / "schemas.json"
+    destination = tmp_path / "schemas.rkyv"
+    schema = {
+        "type": "dict",
+        "keys": {
+            "Vxlan1": {"type": "str", "pattern": r"(?<=a+)b|\w+"},
+            "MIB_family_name": {"type": "str"},
+            "entries": {"type": "list", "primary_key": "name", "unique_keys": ["parent.name"]},
+        },
+        "dynamic_keys": {"entries.name": {"type": "str"}},
+    }
+    source.write_text(json.dumps({"test": schema}), encoding="UTF-8")
+
+    compile_schema_archive(source, destination)
+
+    assert destination.is_file()

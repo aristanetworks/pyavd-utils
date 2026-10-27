@@ -19,6 +19,8 @@ pub(crate) mod _schema_store {
     #[pyfunction]
     /// Compile a source schema-store file into the archived runtime store.
     ///
+    /// Authoring checks include regex syntax and names, including
+    /// unused definitions. Existing destinations are preserved if validation fails.
     /// The destination is written atomically and can subsequently be memory-mapped by
     /// `pyavd_utils.schema_store.init_store_from_file`.
     pub(crate) fn compile_schema_archive(source: PathBuf, destination: PathBuf) -> PyResult<()> {
@@ -26,6 +28,9 @@ pub(crate) mod _schema_store {
             PyRuntimeError::new_err(format!(
                 "Error while loading the Schema Store from file: {err}"
             ))
+        })?;
+        store.validate_authoring().map_err(|err| {
+            PyRuntimeError::new_err(format!("Error while validating the Schema Store: {err}"))
         })?;
         Store::compile_to_file(&store, &destination).map_err(|err| {
             PyRuntimeError::new_err(format!("Error while compiling the Schema Store: {err}"))
