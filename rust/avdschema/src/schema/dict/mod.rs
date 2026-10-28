@@ -67,7 +67,7 @@ struct MetaDefinitionKey(#[schemars(regex(pattern = "^[a-z][a-z0-9_]*$"))] Strin
 )]
 struct MetaDynamicSchemaKey(#[schemars(regex(pattern = "^[a-z][a-z0-9_.]*$"))] String);
 
-/// Source model for a recursive AVD dictionary schema.
+/// AVD schema for dictionary data.
 #[skip_serializing_none]
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "metaschema", derive(schemars::JsonSchema))]
