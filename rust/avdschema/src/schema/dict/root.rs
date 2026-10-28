@@ -47,7 +47,9 @@ use crate::utils::load::LoadFromFragments;
 )]
 #[serde(deny_unknown_fields)]
 pub struct SourceRootDict {
-    /// Statically named dictionary keys.
+    /// Dictionary of dictionary-keys in the format `{<keyname>: {<schema>}}`.
+    /// `keyname` must use `snake_case`.
+    /// `schema` is the schema for each key. This is a recursive schema, so the value must conform to AVD Schema
     #[cfg_attr(
         feature = "metaschema",
         schemars(with = "Option<std::collections::BTreeMap<MetaStaticSchemaKey, SourceSchema>>")
