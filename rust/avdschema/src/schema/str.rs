@@ -22,9 +22,7 @@ use super::base::valid_values::ValidValues;
 #[cfg_attr(feature = "metaschema", derive(schemars::JsonSchema))]
 #[cfg_attr(
     feature = "metaschema",
-    schemars(
-        description = "Format used to validate a string, such as an IP address, prefix, address pool, or MAC address."
-    )
+    schemars(description = "Format used to validate a string.")
 )]
 #[serde(rename_all = "snake_case")]
 pub enum Format {
