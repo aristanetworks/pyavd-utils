@@ -3,6 +3,8 @@ name: "Build and Test Pull Request and main branch"
 
 "on":
   pull_request:
+  merge_group:
+    types: [checks_requested]
 
   push:
     branches:
@@ -25,6 +27,24 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  required-checks:
+    # Required in branch protection. Keep this name stable.
+    name: required-checks
+    needs:
+      - python_coverage
+      - cargo_build_and_test
+      - cargo_wasm
+      - build_and_test_pyavd_utils_wheels
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require all build and test jobs to succeed
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: |
+          echo "$NEEDS_JSON" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
+          echo "$NEEDS_JSON" | jq -e 'to_entries | all(.value.result == "success")'
+
   python_coverage:
     name: Python coverage
     runs-on: ubuntu-latest
