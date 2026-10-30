@@ -3,6 +3,8 @@ name: "Build and Test Pull Request and main branch"
 
 "on":
   pull_request:
+  merge_group:
+    types: [checks_requested]
 
   push:
     branches:
@@ -25,6 +27,24 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  required-checks:
+    # Required in branch protection. Keep this name stable.
+    name: required-checks
+    needs:
+      - python_coverage
+      - cargo_build_and_test
+      - cargo_wasm
+      - build_and_test_pyavd_utils_wheels
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require all build and test jobs to succeed
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: |
+          echo "$NEEDS_JSON" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
+          echo "$NEEDS_JSON" | jq -e 'to_entries | all(.value.result == "success")'
+
   python_coverage:
     name: Python coverage
     runs-on: ubuntu-latest
@@ -32,7 +52,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           python-version: "3.14"
       - name: Install Rust toolchain from rust-toolchain.toml
@@ -74,7 +94,7 @@ jobs:
         run: rustup show
       # This is needed because we have pyo3 tests and our minimum python version is 3.10.
       # On some test containers (looking at you windows-latest) the included Python is 3.9.
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.14"
       - name: Install YAML test suite fixture
@@ -85,7 +105,7 @@ jobs:
       - name: Run all tests
         run: cargo test --locked --all-targets --all-features
       - name: Install uv
-        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         if: |
           matrix.os == 'ubuntu-latest'
       - name: Generate coverage report with cargo llvm-cov

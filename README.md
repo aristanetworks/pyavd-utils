@@ -44,6 +44,16 @@ We welcome contributions to the `pyavd-utils` project. As this is a performance-
 
 Please refer to the main [AVD GitHub repository](https://github.com/aristanetworks/avd) for general contribution guidelines.
 
+### Merge queue
+
+Once the merge queue is enabled for `main`, maintainers can enqueue a pull request after its required reviews and checks pass.
+The queue runs `required-checks` and `Autofix - run pre-commit` on a temporary commit containing the latest `main` and preceding queued changes.
+Successful pull request checks do not replace this validation, and contributors do not need to update their branch just because `main` advances.
+
+If a pull request leaves the queue because validation fails, inspect the failed run, fix the cause, and enqueue it again after its checks pass.
+Pre-commit failures block the queue run; autofix commits are only submitted outside merge-group runs.
+Avoid routinely jumping to the front of the queue, because reordering rebuilds the entries behind it.
+
 ## License
 
 `pyavd-utils` is licensed under Apache2. See the [LICENSE](https://github.com/aristanetworks/pyavd-utils/blob/main/LICENSE) file for details.

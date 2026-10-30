@@ -140,6 +140,28 @@ def test_simple_7_decrypt(encrypted_data: str, expected_plain: str, expected_rai
         assert simple_7_decrypt(encrypted_data) == expected_plain
 
 
+@pytest.mark.parametrize(
+    "encrypted_data",
+    [
+        "é",
+        "€",
+        "🦀1234",
+        "0é1234",
+        "0€1234",
+        "é01234",
+        "\uff11\uff121234",
+        "+115090B",
+        "-11234",
+        " 11234",
+        "1 1234",
+    ],
+)
+def test_simple_7_decrypt_malformed_salt_prefix(encrypted_data: str) -> None:
+    """Malformed salt prefixes raise ValueError rather than a Rust panic."""
+    with pytest.raises(ValueError, match=r"^Invalid salt format in encrypted data$"):
+        simple_7_decrypt(encrypted_data)
+
+
 SIMPLE_7_ROUNDTRIP_TEST_DATA = [
     pytest.param(
         "test_password",
