@@ -16,6 +16,10 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  # Avoid runner-provided toolchains; each hosted job has its own workspace.
+  RUSTUP_HOME: ${{ github.workspace }}/../rustup
+
 jobs:
   autofix:
     # Required in branch protection. Keep this name stable.
@@ -31,6 +35,12 @@ jobs:
         uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.14"
+
+      - name: Install Rust toolchain from rust-toolchain.toml
+        run: |
+          rustup show
+          # Pre-commit builds hook binaries outside the repository's toolchain override.
+          rustup default "$(rustup show active-toolchain | cut -d ' ' -f1)"
 
       # Needed until we move to prek and get proper support for toolchain profile - preferably per hook.
       - name: Install Rust nightly formatter
