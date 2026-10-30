@@ -3,6 +3,8 @@ name: "Build and Test Pull Request and main branch"
 
 "on":
   pull_request:
+  merge_group:
+    types: [checks_requested]
 
   push:
     branches:
@@ -25,6 +27,24 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  required-checks:
+    # Required in branch protection. Keep this name stable.
+    name: required-checks
+    needs:
+      - python_coverage
+      - cargo_build_and_test
+      - cargo_wasm
+      - build_and_test_pyavd_utils_wheels
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require all build and test jobs to succeed
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: |
+          echo "$NEEDS_JSON" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
+          echo "$NEEDS_JSON" | jq -e 'to_entries | all(.value.result == "success")'
+
   python_coverage:
     name: Python coverage
     runs-on: ubuntu-latest
@@ -32,7 +52,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: astral-sh/setup-uv@18d369b23da25a81e9458561248e1aafff6a70fa # v10.3.1
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           python-version: "3.14"
       - name: Install Rust toolchain from rust-toolchain.toml
@@ -85,7 +105,7 @@ jobs:
       - name: Run all tests
         run: cargo test --locked --all-targets --all-features
       - name: Install uv
-        uses: astral-sh/setup-uv@18d369b23da25a81e9458561248e1aafff6a70fa # v10.3.1
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         if: |
           matrix.os == 'ubuntu-latest'
       - name: Generate coverage report with cargo llvm-cov
