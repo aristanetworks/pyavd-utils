@@ -2,40 +2,61 @@
 // Use of this source code is governed by the Apache License 2.0
 // that can be found in the LICENSE file.
 
-use std::sync::LazyLock;
-
-use fancy_regex::Regex;
+//! Parse authored references at the resolution boundary and follow typed schema edges.
 
 use super::walker::Walker as _;
+use crate::SchemaPath;
+use crate::SchemaPathParseError;
+use crate::SchemaWalkError;
 use crate::StoreSource;
 use crate::any::SourceLayer;
 use crate::resolve::errors::SchemaResolverError;
 
-/// Regex matching $ref syntax according the AVD metaschema.
-static REF_REGEX: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new("^([a-z][a-z_]*)#((/[a-z$][\\.a-z0-9_]*)*)$").unwrap());
+/// Decode a source reference while retaining the resolver's structured error categories.
+/// Invalid authored syntax remains a compiler diagnostic rather than a Serde load failure.
+pub(crate) fn parse_reference(reference: &str) -> Result<SchemaPath, SchemaResolverError> {
+    reference.parse().map_err(|error| match error {
+        SchemaPathParseError::InvalidSyntax {
+            reference: invalid_reference,
+        } => SchemaResolverError::RefSyntax {
+            schema_ref: invalid_reference,
+        },
+        SchemaPathParseError::InvalidElement { element } => {
+            SchemaWalkError::InvalidPathElement { element }.into()
+        }
+        SchemaPathParseError::IncompleteMapping { mapping } => {
+            SchemaWalkError::PointingToMapping { mapping }.into()
+        }
+        SchemaPathParseError::UnsupportedDynamicSource(error) => SchemaWalkError::PathNotFound {
+            element: error.path,
+        }
+        .into(),
+    })
+}
 
-/// Resolve the given ref by first finding the relevant schema in in the store
-/// and afterwards walk that schema according to the path.
-/// Returns the schema pointed to by the ref, or an error for invalid ref.
+/// A parsed reference paired with its authored declaration target.
+#[derive(Debug)]
+pub(crate) struct ResolvedReference<'a> {
+    /// Parsed address retained for generation and other downstream consumers.
+    #[cfg(any(test, feature = "generation"))]
+    pub path: SchemaPath,
+    /// Declaration before reference-layer expansion.
+    pub target: SourceLayer<'a>,
+}
+
+/// Parse and resolve an authored reference once, retaining its typed address.
 pub(crate) fn resolve_ref<'a>(
-    ref_: &str,
+    reference: &str,
     store: &'a StoreSource,
-) -> Result<SourceLayer<'a>, SchemaResolverError> {
-    let syntax_err = || SchemaResolverError::RefSyntax {
-        schema_ref: ref_.to_owned(),
-    };
-    // unwrap_or_default() cannot fail: the regex is compiled above and uses no lookarounds.
-    let captures = REF_REGEX
-        .captures(ref_)
-        .unwrap_or_default()
-        .ok_or_else(syntax_err)?;
-    let schema_name = captures.get(1).ok_or_else(syntax_err)?.as_str();
-    let schema_path = captures.get(2).ok_or_else(syntax_err)?.as_str();
-
-    let path_iter = schema_path.split('/').skip(1).peekable();
-    let schema = store.get(schema_name)?;
-    Ok(schema.walk(path_iter)?)
+) -> Result<ResolvedReference<'a>, SchemaResolverError> {
+    let path = parse_reference(reference)?;
+    let schema = store.get(path.schema_name())?;
+    let target = schema.walk(path.elements())?;
+    Ok(ResolvedReference {
+        #[cfg(any(test, feature = "generation"))]
+        path,
+        target,
+    })
 }
 
 #[cfg(test)]
@@ -55,7 +76,7 @@ mod tests {
         let test_store = get_test_store();
         let result = resolve_ref("eos_cli_config_gen#/keys/key2", &test_store);
         assert!(result.is_ok());
-        let SourceLayer::Schema(result_schema) = result.unwrap() else {
+        let SourceLayer::Schema(result_schema) = result.unwrap().target else {
             panic!("key reference should resolve to a recursive schema")
         };
         let str_schema_result: Result<&SourceStr, _> = result_schema.try_into();
@@ -74,7 +95,7 @@ mod tests {
         let test_store = get_test_store();
         let result = resolve_ref("eos_config#/keys/key2", &test_store);
         assert!(result.is_ok());
-        let SourceLayer::Schema(result_schema) = result.unwrap() else {
+        let SourceLayer::Schema(result_schema) = result.unwrap().target else {
             panic!("key reference should resolve to a recursive schema")
         };
         let str_schema_result: Result<&SourceStr, _> = result_schema.try_into();
@@ -93,7 +114,7 @@ mod tests {
         let test_store = get_test_store();
         let result = resolve_ref("cv_deploy#/keys/key4", &test_store);
         assert!(result.is_ok());
-        let SourceLayer::Schema(result_schema) = result.unwrap() else {
+        let SourceLayer::Schema(result_schema) = result.unwrap().target else {
             panic!("key reference should resolve to a recursive schema")
         };
         let str_schema_result: Result<&SourceStr, _> = result_schema.try_into();
@@ -153,24 +174,35 @@ mod tests {
                     "keys": {
                         "list": {"type": "list", "items": {"type": "bool"}}
                     },
-                    "dynamic_keys": {"dynamic": {"type": "int"}},
+                    "dynamic_keys": {"node_type_keys.key": {"type": "int"}},
                     "$defs": {"definition": {"type": "str"}}
                 }
             }"#,
         )
         .unwrap();
 
+        let list_item = resolve_ref("test#/keys/list/items", &store).unwrap();
+        assert_eq!(list_item.path.to_reference(), "test#/keys/list/items");
         assert!(matches!(
-            resolve_ref("test#/keys/list/items", &store),
-            Ok(SourceLayer::Schema(crate::any::SourceSchema::Bool(_)))
+            list_item.target,
+            SourceLayer::Schema(crate::any::SourceSchema::Bool(_))
         ));
+
+        let dynamic_key = resolve_ref("test#/dynamic_keys/node_type_keys.key", &store).unwrap();
+        assert_eq!(
+            dynamic_key.path.to_reference(),
+            "test#/dynamic_keys/node_type_keys.key"
+        );
         assert!(matches!(
-            resolve_ref("test#/dynamic_keys/dynamic", &store),
-            Ok(SourceLayer::Schema(crate::any::SourceSchema::Int(_)))
+            dynamic_key.target,
+            SourceLayer::Schema(crate::any::SourceSchema::Int(_))
         ));
+
+        let definition = resolve_ref("test#/$defs/definition", &store).unwrap();
+        assert_eq!(definition.path.to_reference(), "test#/$defs/definition");
         assert!(matches!(
-            resolve_ref("test#/$defs/definition", &store),
-            Ok(SourceLayer::Schema(crate::any::SourceSchema::Str(_)))
+            definition.target,
+            SourceLayer::Schema(crate::any::SourceSchema::Str(_))
         ));
     }
 
@@ -184,7 +216,7 @@ mod tests {
                         "scalar": {"type": "str"},
                         "list": {"type": "list"}
                     },
-                    "dynamic_keys": {"dynamic": {"type": "int"}},
+                    "dynamic_keys": {"node_type_keys.key": {"type": "int"}},
                     "$defs": {"definition": {"type": "str"}}
                 }
             }"#,

@@ -31,7 +31,7 @@ impl<T> InheritableWithClone for Vec<T> where T: Clone {}
 impl InheritableWithClone for Deprecation {}
 impl InheritableWithClone for DocumentationOptions {}
 impl InheritableWithClone for DocumentationOptionsDict {}
-impl InheritableWithClone for OrderMap<String, SourceSchema> {}
+impl<K: Clone> InheritableWithClone for OrderMap<K, SourceSchema> {}
 impl InheritableWithClone for OrderMap<String, Value> {}
 impl InheritableWithClone for Format {}
 impl InheritableWithClone for Box<SourceSchema> {}
@@ -54,7 +54,7 @@ where
         }
     }
 }
-impl Inherit for OrderMap<String, SourceSchema> {
+impl<K: Clone + Eq + std::hash::Hash> Inherit for OrderMap<K, SourceSchema> {
     fn inherit(&mut self, other: &Self) {
         other.iter().for_each(|(key, other_value)| {
             self.entry(key.clone())
@@ -331,7 +331,7 @@ mod tests {
             "$id": "test",
             "$schema": "avd_meta_schema",
             "keys": {"static_value": {"type": "str"}},
-            "dynamic_keys": {"names": {"type": "int"}},
+            "dynamic_keys": {"node_type_keys.key": {"type": "int"}},
             "$defs": {"shared": {"type": "bool"}}
         }))
         .unwrap();

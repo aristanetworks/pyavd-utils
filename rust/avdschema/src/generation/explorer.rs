@@ -24,6 +24,7 @@ use serde_json::Value;
 use serde_json::json;
 
 use crate::CompileError;
+use crate::SchemaPathElement;
 use crate::StoreSource;
 use crate::compiled::CompiledStore;
 use crate::compiled::CompiledStringFormat;
@@ -32,7 +33,6 @@ use crate::compiled::SchemaId;
 use crate::generation::documentation_context::documentation_table;
 use crate::generation::traversal::HiddenKeysPolicy;
 use crate::generation::traversal::SchemaOccurrence;
-use crate::generation::traversal::SchemaRelation;
 use crate::generation::traversal::SchemaTraverser;
 use crate::generation::traversal::SchemaVisitor;
 use crate::generation::traversal::TraversalConfig;
@@ -136,13 +136,13 @@ impl SchemaVisitor for ExplorerProjection<'_> {
 
     #[allow(
         clippy::unreachable,
-        reason = "Traversal visits Root first, Items only below List, and fields for other child relations"
+        reason = "Traversal visits the root first, items only below lists, and static or dynamic keys as children"
     )]
     fn enter(
         &mut self,
         occurrence: &SchemaOccurrence<'_>,
     ) -> Result<TraversalControl, Self::Error> {
-        if occurrence.relation() == SchemaRelation::Root {
+        if occurrence.relation().is_none() {
             self.stack.push(ExplorerFrame {
                 path: String::new(),
                 parent_field: String::new(),
@@ -157,7 +157,7 @@ impl SchemaVisitor for ExplorerProjection<'_> {
         let Some(parent) = self.stack.last() else {
             unreachable!("a non-root occurrence has an ancestor frame");
         };
-        if occurrence.relation() == SchemaRelation::Items {
+        if occurrence.relation() == Some(&SchemaPathElement::Items) {
             let list = match parent.schema_id {
                 SchemaId::List(index) => &self.compiled.lists[index as usize],
                 _ => unreachable!("items are visited only below a list"),
@@ -174,9 +174,12 @@ impl SchemaVisitor for ExplorerProjection<'_> {
             return Ok(TraversalControl::Descend);
         }
         let name = match occurrence.relation() {
-            SchemaRelation::Key(name) => name.to_owned(),
-            SchemaRelation::DynamicKey(name) => format!("<{name}>"),
-            SchemaRelation::Root | SchemaRelation::Items => unreachable!("handled above"),
+            Some(SchemaPathElement::Key { key }) => key.clone(),
+            Some(SchemaPathElement::DynamicKey { source }) => format!("<{}>", source.path()),
+            None | Some(SchemaPathElement::Items) => unreachable!("handled above"),
+            Some(SchemaPathElement::Definition { .. }) => {
+                unreachable!("generation traverses effective children, not definition declarations")
+            }
         };
         let path = if parent.path.is_empty() {
             name.clone()
@@ -248,12 +251,8 @@ fn field_row(
         occurrence
             .references()
             .iter()
-            .find(|reference| {
-                reference
-                    .split_once('#')
-                    .is_some_and(|(target, _)| !target.is_empty() && target != module)
-            })
-            .map(|reference| (*reference).to_owned())
+            .find(|reference| reference.schema_name() != module)
+            .map(crate::SchemaPath::to_reference)
     } else {
         None
     };
