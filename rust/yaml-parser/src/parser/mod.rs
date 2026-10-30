@@ -58,6 +58,8 @@ where
 {
     /// Underlying event iterator.
     events: I,
+    /// Shared origin identifier for all nodes built from this input.
+    source: Option<std::sync::Arc<str>>,
     /// Buffered lookahead event (result of the most recent `peek()`).
     peeked: Option<AstEvent<'input>>,
     /// Count of events that have been logically consumed via `advance()`.

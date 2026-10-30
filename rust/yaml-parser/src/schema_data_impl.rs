@@ -138,11 +138,11 @@ mod tests {
     }
 
     fn string_node(value: &'static str) -> Node<'static> {
-        Node::new(string_value(value), Span::default())
+        Node::new(string_value(value), Span::default(), None)
     }
 
     fn int_node(value: i64) -> Node<'static> {
-        Node::new(Value::Int(Integer::I64(value)), Span::default())
+        Node::new(Value::Int(Integer::I64(value)), Span::default(), None)
     }
 
     fn mapping_pair(key: Node<'static>, value: Node<'static>) -> MappingPair<'static> {
@@ -150,7 +150,7 @@ mod tests {
     }
 
     fn sequence_item(value: Value<'static>) -> SequenceItem<'static> {
-        SequenceItem::new(Span::default(), Node::new(value, Span::default()))
+        SequenceItem::new(Span::default(), Node::new(value, Span::default(), None))
     }
 
     fn parse_single_document(input: &str) -> Node<'static> {
@@ -190,7 +190,7 @@ eos_config:
     fn schema_data_value_views_match_value_variants() {
         let mapping = Value::Mapping(vec![mapping_pair(
             string_node("key"),
-            Node::new(Value::Bool(true), Span::default()),
+            Node::new(Value::Bool(true), Span::default(), None),
         )]);
         let sequence = Value::Sequence(vec![sequence_item(Value::Bool(true))]);
         let string = string_value("value");
@@ -218,11 +218,11 @@ eos_config:
         let mapping = vec![
             mapping_pair(
                 string_node("dup"),
-                Node::new(Value::Int(Integer::I64(1)), Span::default()),
+                Node::new(Value::Int(Integer::I64(1)), Span::default(), None),
             ),
             mapping_pair(
                 string_node("dup"),
-                Node::new(Value::Int(Integer::I64(2)), Span::default()),
+                Node::new(Value::Int(Integer::I64(2)), Span::default(), None),
             ),
         ];
         let slice = YamlMapping(mapping.as_slice());
@@ -240,7 +240,7 @@ eos_config:
     fn mapping_lookup_returns_none_for_missing_key() {
         let mapping = vec![mapping_pair(
             string_node("present"),
-            Node::new(Value::Bool(true), Span::default()),
+            Node::new(Value::Bool(true), Span::default(), None),
         )];
 
         assert_eq!(YamlMapping(mapping.as_slice()).get("missing"), None);
@@ -250,7 +250,7 @@ eos_config:
     fn mapping_lookup_ignores_non_string_keys() {
         let mapping = vec![mapping_pair(
             int_node(1),
-            Node::new(string_value("value"), Span::default()),
+            Node::new(string_value("value"), Span::default(), None),
         )];
 
         assert_eq!(YamlMapping(mapping.as_slice()).get("1"), None);

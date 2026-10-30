@@ -57,8 +57,8 @@ fn validate_duplicate_keys<'a, M: ValidatableMapping<'a>>(
 ) {
     for duplicate_key in input.duplicate_keys() {
         state.path.push(duplicate_key.key.to_owned());
-        for span in duplicate_key.spans {
-            ctx.add_error_with_span(state, span, Violation::DuplicateKey());
+        for (source, span) in duplicate_key.locations {
+            ctx.add_error_with_span(state, span, source, Violation::DuplicateKey());
         }
         state.path.pop();
     }
@@ -94,6 +94,7 @@ fn validate_required_keys<'a, M: ValidatableMapping<'a>>(
 pub(crate) fn check_deprecation<'a, M: ValidatableMapping<'a>>(
     key_schema: SchemaView<'_>,
     key_span: Option<crate::feedback::SourceSpan>,
+    key_source: Option<&str>,
     parent_dict_input: &M,
     ctx: &mut Context,
     state: &ValidationState,
@@ -105,6 +106,7 @@ pub(crate) fn check_deprecation<'a, M: ValidatableMapping<'a>>(
             ctx.add_error_with_span(
                 state,
                 key_span,
+                key_source,
                 Violation::Removed(removed_from_view(&state.path, deprecation)),
             );
             true
@@ -112,6 +114,7 @@ pub(crate) fn check_deprecation<'a, M: ValidatableMapping<'a>>(
             ctx.add_warning_with_span(
                 state,
                 key_span.clone(),
+                key_source,
                 deprecated_from_view(&state.path, deprecation),
             );
             if !deprecation.allow_with_new_key()
@@ -136,6 +139,7 @@ pub(crate) fn check_deprecation<'a, M: ValidatableMapping<'a>>(
                             ctx.add_error_with_span(
                                 state,
                                 key_span.clone(),
+                                key_source,
                                 Violation::DeprecatedConflict {
                                     other_path: new_key.into(),
                                     url: deprecation.url().map(ToOwned::to_owned).into(),
@@ -220,6 +224,7 @@ mod tests {
         assert_eq!(
             ctx.result.errors,
             vec![Feedback {
+                source: None,
                 path: vec![].into(),
                 span: None,
                 issue: Violation::InvalidType {
@@ -263,6 +268,7 @@ mod tests {
             ctx.result.errors,
             vec![
                 Feedback {
+                    source: None,
                     path: vec!["foo".into()].into(),
                     span: None,
                     issue: Violation::InvalidType {
@@ -272,6 +278,7 @@ mod tests {
                     .into()
                 },
                 Feedback {
+                    source: None,
                     path: vec!["bar".into()].into(),
                     span: None,
                     issue: Violation::InvalidType {
@@ -306,6 +313,7 @@ mod tests {
             ctx.result.infos,
             vec![
                 Feedback {
+                    source: None,
                     path: vec!["foo".into()].into(),
                     span: None,
                     issue: CoercionNote {
@@ -315,6 +323,7 @@ mod tests {
                     .into()
                 },
                 Feedback {
+                    source: None,
                     path: vec!["bar".into()].into(),
                     span: None,
                     issue: CoercionNote {
@@ -353,6 +362,7 @@ mod tests {
         assert_eq!(
             ctx.result.infos,
             vec![Feedback {
+                source: None,
                 path: vec!["key1".into()].into(),
                 span: None,
                 issue: CoercionNote {
@@ -444,6 +454,7 @@ mod tests {
             ctx.result.errors,
             vec![
                 Feedback {
+                    source: None,
                     path: vec!["dynkey1".into()].into(),
                     span: None,
                     issue: Violation::ValueAboveMaximum {
@@ -453,6 +464,7 @@ mod tests {
                     .into()
                 },
                 Feedback {
+                    source: None,
                     path: vec!["dynkey2".into()].into(),
                     span: None,
                     issue: Violation::InvalidType {
@@ -601,6 +613,7 @@ mod tests {
             ctx.result.errors,
             vec![
                 Feedback {
+                    source: None,
                     path: vec!["dynkey1".into(), "sub_key".into()].into(),
                     span: None,
                     issue: Violation::ValueAboveMaximum {
@@ -610,11 +623,13 @@ mod tests {
                     .into()
                 },
                 Feedback {
+                    source: None,
                     path: vec!["dynkey1".into(), "bad_key".into()].into(),
                     span: None,
                     issue: Violation::UnexpectedKey {}.into()
                 },
                 Feedback {
+                    source: None,
                     path: vec!["dynkey2".into()].into(),
                     span: None,
                     issue: Violation::InvalidType {
@@ -659,6 +674,7 @@ mod tests {
         assert_eq!(
             ctx.result.errors,
             vec![Feedback {
+                source: None,
                 path: vec!["foo1".into()].into(),
                 span: None,
                 issue: Violation::UnexpectedKey().into()
@@ -685,6 +701,7 @@ mod tests {
         assert_eq!(
             ctx.result.errors,
             vec![Feedback {
+                source: None,
                 path: vec!["bar".into()].into(),
                 span: Some(SourceSpan { start: 0, end: 3 }),
                 issue: Violation::UnexpectedKey().into()
@@ -712,11 +729,13 @@ mod tests {
             ctx.result.errors,
             vec![
                 Feedback {
+                    source: None,
                     path: vec!["foo".into()].into(),
                     span: Some(SourceSpan { start: 0, end: 3 }),
                     issue: Violation::DuplicateKey().into()
                 },
                 Feedback {
+                    source: None,
                     path: vec!["foo".into()].into(),
                     span: Some(SourceSpan { start: 9, end: 12 }),
                     issue: Violation::DuplicateKey().into()
@@ -752,11 +771,13 @@ mod tests {
             ctx.result.errors,
             vec![
                 Feedback {
+                    source: None,
                     path: vec!["outer".into(), "inner".into()].into(),
                     span: Some(SourceSpan { start: 9, end: 14 }),
                     issue: Violation::DuplicateKey().into()
                 },
                 Feedback {
+                    source: None,
                     path: vec!["outer".into(), "inner".into()].into(),
                     span: Some(SourceSpan { start: 22, end: 27 }),
                     issue: Violation::DuplicateKey().into()
@@ -785,26 +806,31 @@ mod tests {
             ctx.result.errors,
             vec![
                 Feedback {
+                    source: None,
                     path: vec!["foo".into()].into(),
                     span: Some(SourceSpan { start: 0, end: 3 }),
                     issue: Violation::DuplicateKey().into()
                 },
                 Feedback {
+                    source: None,
                     path: vec!["foo".into()].into(),
                     span: Some(SourceSpan { start: 9, end: 12 }),
                     issue: Violation::DuplicateKey().into()
                 },
                 Feedback {
+                    source: None,
                     path: vec!["baz".into()].into(),
                     span: Some(SourceSpan { start: 18, end: 21 }),
                     issue: Violation::DuplicateKey().into()
                 },
                 Feedback {
+                    source: None,
                     path: vec!["baz".into()].into(),
                     span: Some(SourceSpan { start: 27, end: 30 }),
                     issue: Violation::DuplicateKey().into()
                 },
                 Feedback {
+                    source: None,
                     path: vec!["bar".into()].into(),
                     span: Some(SourceSpan { start: 36, end: 39 }),
                     issue: Violation::UnexpectedKey().into()
@@ -832,6 +858,7 @@ mod tests {
         assert_eq!(
             ctx.result.errors,
             vec![Feedback {
+                source: None,
                 path: vec!["123".into()].into(),
                 span: Some(SourceSpan { start: 0, end: 3 }),
                 issue: Violation::UnexpectedKey().into()
@@ -929,6 +956,7 @@ mod tests {
         assert_eq!(
             ctx.result.warnings,
             vec![Feedback {
+                source: None,
                 path: vec!["foo".into()].into(),
                 span: None,
                 issue: WarningIssue::Deprecated(Deprecated {
@@ -944,6 +972,7 @@ mod tests {
         assert_eq!(
             ctx.result.errors,
             vec![Feedback {
+                source: None,
                 path: vec!["foo".into()].into(),
                 span: None,
                 issue: Violation::LengthBelowMinimum {
@@ -979,6 +1008,7 @@ mod tests {
         assert_eq!(
             ctx.result.warnings,
             vec![Feedback {
+                source: None,
                 path: vec!["foo".into()].into(),
                 span: Some(SourceSpan { start: 0, end: 3 }),
                 issue: WarningIssue::Deprecated(Deprecated {
@@ -1020,6 +1050,7 @@ mod tests {
         assert_eq!(
             ctx.result.errors,
             vec![Feedback {
+                source: None,
                 path: vec!["foo".into()].into(),
                 span: None,
                 issue: Violation::Removed(Removed {
@@ -1087,6 +1118,7 @@ mod tests {
         assert_eq!(
             ctx.result.warnings,
             vec![Feedback {
+                source: None,
                 path: vec!["old_key".into()].into(),
                 span: None,
                 issue: WarningIssue::Deprecated(Deprecated {
@@ -1130,6 +1162,7 @@ mod tests {
         assert_eq!(
             ctx.result.warnings,
             vec![Feedback {
+                source: None,
                 path: vec!["old_key".into()].into(),
                 span: None,
                 issue: WarningIssue::Deprecated(Deprecated {
@@ -1144,6 +1177,7 @@ mod tests {
         assert_eq!(
             ctx.result.errors,
             vec![Feedback {
+                source: None,
                 path: vec!["old_key".into()].into(),
                 span: None,
                 issue: Violation::DeprecatedConflict {
@@ -1184,6 +1218,7 @@ mod tests {
         assert_eq!(
             ctx.result.warnings,
             vec![Feedback {
+                source: None,
                 path: vec!["old_key".into()].into(),
                 span: None,
                 issue: WarningIssue::Deprecated(Deprecated {
@@ -1198,6 +1233,7 @@ mod tests {
         assert_eq!(
             ctx.result.errors,
             vec![Feedback {
+                source: None,
                 path: vec!["old_key".into()].into(),
                 span: None,
                 issue: Violation::DeprecatedConflict {
@@ -1245,6 +1281,7 @@ mod tests {
         assert_eq!(
             ctx.result.warnings,
             vec![Feedback {
+                source: None,
                 path: vec!["old_key".into()].into(),
                 span: None,
                 issue: WarningIssue::Deprecated(Deprecated {
@@ -1258,6 +1295,7 @@ mod tests {
         assert_eq!(
             ctx.result.errors,
             vec![Feedback {
+                source: None,
                 path: vec!["old_key".into()].into(),
                 span: None,
                 issue: Violation::DeprecatedConflict {
@@ -1298,6 +1336,7 @@ mod tests {
         assert_eq!(
             ctx.result.infos,
             vec![Feedback {
+                source: None,
                 path: vec!["foo".into()].into(),
                 span: None,
                 issue: CoercionNote {
@@ -1333,6 +1372,7 @@ mod tests {
         assert_eq!(
             ctx.result.errors,
             vec![Feedback {
+                source: None,
                 path: vec![].into(),
                 span: None,
                 issue: Violation::MissingRequiredKey { key: "foo".into() }.into()
@@ -1401,6 +1441,7 @@ mod tests {
         assert_eq!(
             ctx.result.errors,
             vec![Feedback {
+                source: None,
                 path: vec!["deeper".into()].into(),
                 span: None,
                 issue: Violation::MissingRequiredKey { key: "foo".into() }.into()
@@ -1593,6 +1634,7 @@ mod tests {
         assert_eq!(
             ctx.result.warnings,
             vec![Feedback {
+                source: None,
                 path: vec!["dynkey1".into()].into(),
                 span: None,
                 issue: WarningIssue::Deprecated(Deprecated {
