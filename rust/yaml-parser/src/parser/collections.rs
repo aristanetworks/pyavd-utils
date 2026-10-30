@@ -90,7 +90,9 @@ where
                 }
                 Some(_) => {
                     let consumed_before = self.events_consumed;
-                    let key = self.parse_node().unwrap_or_else(|| Node::null(start_span));
+                    let key = self
+                        .parse_node()
+                        .unwrap_or_else(|| Node::null(start_span, self.source.clone()));
                     if let Some(parsed_value) = self.parse_mapping_value_with_metadata() {
                         let value = parsed_value.node;
                         let pair_span = Span::new(key.span.start..value.span.end);
@@ -121,7 +123,10 @@ where
         };
         let span = Span::new(start_span.start..end);
 
-        let mapping_node = Self::apply_properties(Node::new(Value::Mapping(pairs), span), props);
+        let mapping_node = Self::apply_properties(
+            Node::new(Value::Mapping(pairs), span, self.source.clone()),
+            props,
+        );
         self.store_anchor_node(&mapping_node);
         mapping_node
     }
@@ -223,7 +228,10 @@ where
         };
         let span = Span::new(start_span.start..end);
 
-        let sequence_node = Self::apply_properties(Node::new(Value::Sequence(items), span), props);
+        let sequence_node = Self::apply_properties(
+            Node::new(Value::Sequence(items), span, self.source.clone()),
+            props,
+        );
         self.store_anchor_node(&sequence_node);
         sequence_node
     }

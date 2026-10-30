@@ -1305,8 +1305,8 @@ fn measure_type_sizes() {
         size_of::<Span>()
     );
     assert!(
-        size_of::<Node>() <= 64,
-        "Node should be 64 bytes or less with boxed properties, got {}",
+        size_of::<Node>() <= 64 + size_of::<Option<std::sync::Arc<str>>>(),
+        "Node should fit the 64-byte base plus a shared source handle, got {}",
         size_of::<Node>()
     );
     assert!(

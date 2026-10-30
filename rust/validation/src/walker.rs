@@ -260,12 +260,17 @@ impl<'context, 'store> Validator<'context, 'store> {
             let path_key = schema_key.as_deref().unwrap_or(&display_key);
             let input_value = pair.value();
             let key_span = pair.key_span();
+            let key_source = pair.key_source();
             state.path.push(path_key.to_owned());
 
             let Some(input_schema_key) = schema_key.as_deref() else {
                 if !schema.allow_other_keys() {
-                    self.context
-                        .add_error_with_span(state, key_span, Violation::UnexpectedKey());
+                    self.context.add_error_with_span(
+                        state,
+                        key_span,
+                        key_source,
+                        Violation::UnexpectedKey(),
+                    );
                 }
                 if let Some(ref mut items) = coerced_items {
                     items.push(pair.coerced_item(input_value.clone_to_coerced()));
@@ -285,6 +290,7 @@ impl<'context, 'store> Validator<'context, 'store> {
                     self.context.add_error_with_span(
                         state,
                         key_span.clone(),
+                        key_source,
                         Violation::UnexpectedKey(),
                     );
                 } else if let Some(eos_config_schema) = eos_config_schema
@@ -294,13 +300,21 @@ impl<'context, 'store> Validator<'context, 'store> {
                     self.context.add_warning_with_span(
                         state,
                         key_span.clone(),
+                        key_source,
                         IgnoredEosConfigKey {},
                     );
                 }
                 None
             };
             let coerced_value = key_schema.and_then(|key_schema| {
-                if dict::check_deprecation(key_schema, key_span, input, self.context, state) {
+                if dict::check_deprecation(
+                    key_schema,
+                    key_span,
+                    key_source,
+                    input,
+                    self.context,
+                    state,
+                ) {
                     None
                 } else {
                     self.visit(key_schema, input_value, state)

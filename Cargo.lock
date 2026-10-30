@@ -1409,6 +1409,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "schema-merge"
+version = "0.0.13"
+dependencies = [
+ "avdschema",
+ "criterion",
+ "serde_json",
+ "validation",
+ "yaml-parser",
+]
+
+[[package]]
 name = "schemars"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
