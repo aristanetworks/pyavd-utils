@@ -35,8 +35,7 @@ impl DataValue for MetaObject {}
 
 /// Schema-only key type for statically named schema keys.
 ///
-/// Static keys use snake case. The two explicitly named exceptions are deprecated keys retained
-/// in supported AVD schemas for backwards compatibility.
+/// Static keys use snake case. `Vxlan1` remains declared as removed in AVD 6.x schemas.
 #[cfg(feature = "metaschema")]
 #[derive(schemars::JsonSchema)]
 #[schemars(transparent)]
@@ -44,9 +43,7 @@ impl DataValue for MetaObject {}
     dead_code,
     reason = "This type supplies the property-name pattern for the generated metaschema"
 )]
-struct MetaStaticSchemaKey(
-    #[schemars(regex(pattern = "^(?:[a-z][a-z0-9_]*|MIB_family_name|Vxlan1)$"))] String,
-);
+struct MetaStaticSchemaKey(#[schemars(regex(pattern = "^(?:[a-z][a-z0-9_]*|Vxlan1)$"))] String);
 
 /// Schema-only key type for reusable schema definitions.
 #[cfg(feature = "metaschema")]
@@ -68,7 +65,7 @@ struct MetaDefinitionKey(#[schemars(regex(pattern = "^[a-z][a-z0-9_]*$"))] Strin
 )]
 struct MetaDynamicSchemaKey(#[schemars(regex(pattern = "^[a-z][a-z0-9_.]*$"))] String);
 
-/// Source model for a recursive AVD dictionary schema.
+/// AVD schema for dictionary data.
 #[skip_serializing_none]
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "metaschema", derive(schemars::JsonSchema))]

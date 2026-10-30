@@ -39,15 +39,27 @@ use crate::utils::load::LoadFromFragments;
 #[skip_serializing_none]
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "metaschema", derive(schemars::JsonSchema))]
+#[cfg_attr(
+    feature = "metaschema",
+    schemars(
+        description = "Root dictionary of a named AVD schema. It can define static keys, dynamic keys derived from input data, and reusable schema definitions."
+    )
+)]
 #[serde(deny_unknown_fields)]
 pub struct SourceRootDict {
-    /// Statically named dictionary keys.
+    /// Dictionary of dictionary-keys in the format `{<keyname>: {<schema>}}`.
+    /// `keyname` must use `snake_case`.
+    /// `schema` is the schema for each key. This is a recursive schema, so the value must conform to AVD Schema
     #[cfg_attr(
         feature = "metaschema",
         schemars(with = "Option<std::collections::BTreeMap<MetaStaticSchemaKey, SourceSchema>>")
     )]
     pub keys: Option<OrderMap<String, SourceSchema>>,
-    /// Data paths whose values provide additional root key names.
+    /// Dictionary of dynamic keys in the format `{<variable.path>: <schema>}`.
+    /// The dot-notation path is relative to the input dictionary being validated and points to
+    /// values containing additional key names. When a path traverses a list, every list item
+    /// is unpacked. Each resulting key is validated using the supplied schema.
+    /// These key names come from the input data, not from the schema document.
     #[cfg_attr(
         feature = "metaschema",
         schemars(with = "Option<std::collections::BTreeMap<MetaDynamicSchemaKey, SourceSchema>>")
@@ -86,6 +98,12 @@ pub struct SourceRootDict {
 /// model as the recursive schema structs while still requiring `type: dict` on the wire.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[cfg_attr(feature = "metaschema", derive(schemars::JsonSchema))]
+#[cfg_attr(
+    feature = "metaschema",
+    schemars(
+        description = "AVD schema document. A document must declare type: dict; its child schemas describe the supported input values."
+    )
+)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub(crate) enum SourceRootSchema {
     Dict(SourceRootDict),
