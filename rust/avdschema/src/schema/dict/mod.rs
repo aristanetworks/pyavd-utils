@@ -35,7 +35,7 @@ impl DataValue for MetaObject {}
 
 /// Schema-only key type for statically named schema keys.
 ///
-/// Static keys use snake case. The existing `Vxlan1` and `MIB_family_name` exceptions are retained.
+/// Static keys use snake case. `Vxlan1` remains declared as removed in AVD 6.x schemas.
 #[cfg(feature = "metaschema")]
 #[derive(schemars::JsonSchema)]
 #[schemars(transparent)]
@@ -43,9 +43,7 @@ impl DataValue for MetaObject {}
     dead_code,
     reason = "This type supplies the property-name pattern for the generated metaschema"
 )]
-struct MetaStaticSchemaKey(
-    #[schemars(regex(pattern = "^(?:[a-z][a-z0-9_]*|MIB_family_name|Vxlan1)$"))] String,
-);
+struct MetaStaticSchemaKey(#[schemars(regex(pattern = "^(?:[a-z][a-z0-9_]*|Vxlan1)$"))] String);
 
 /// Schema-only key type for reusable schema definitions.
 #[cfg(feature = "metaschema")]

@@ -48,7 +48,7 @@ def test_generate_metaschema(tmp_path: Path) -> None:
     recursive_schema_types = {variant["properties"]["type"]["const"] for variant in recursive_schema["oneOf"]}
     assert recursive_schema_types == {"bool", "dict", "int", "list", "str"}
     root_dict_properties = _variant(schema, "dict")["properties"]
-    assert list(root_dict_properties["keys"]["patternProperties"]) == [r"^(?:[a-z][a-z0-9_]*|MIB_family_name|Vxlan1)$"]
+    assert list(root_dict_properties["keys"]["patternProperties"]) == [r"^(?:[a-z][a-z0-9_]*|Vxlan1)$"]
     assert list(root_dict_properties["dynamic_keys"]["patternProperties"]) == [r"^[a-z][a-z0-9_.]*$"]
     assert list(root_dict_properties["$defs"]["patternProperties"]) == [r"^[a-z][a-z0-9_]*$"]
     assert root_dict_properties["description"]["type"] == "string"
@@ -93,7 +93,7 @@ def test_metaschema_descriptions_are_for_schema_authors(tmp_path: Path) -> None:
     root = _variant(schema, "dict")["properties"]
     key_pattern = re.compile(next(iter(root["keys"]["patternProperties"])))
     assert key_pattern.fullmatch("Vxlan1")
-    assert key_pattern.fullmatch("MIB_family_name")
+    assert not key_pattern.fullmatch("MIB_family_name")
     assert not key_pattern.fullmatch("Invalid_key")
     assert "input data" in root["dynamic_keys"]["description"]
     assert "list item" in root["dynamic_keys"]["description"]

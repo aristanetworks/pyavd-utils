@@ -31,23 +31,21 @@ descriptive doc comment to its schema field, gated by the `metaschema` feature w
 For `convert_types`, the annotations belong on the schema-only `IntConvertTypes` and
 `StrConvertTypes` fields. This keeps authoring deprecations separate from Rust API deprecations.
 
-## Build-time authoring checks
+## Source validation and compilation
 
-These authoring checks target AVD 6.x source schemas. Compatibility with all older source
-schema versions is not guaranteed. No new `convert_types` validation is introduced here.
+The generated metaschema targets AVD 6.x source authoring. Consumers can validate raw
+source documents against it separately, for example in an AVD pre-commit hook. Use a
+Draft 2020-12 validator and enable format validation explicitly to check `format: regex`.
+The validator's regex-format check does not guarantee compatibility with the runtime
+regex engine.
 
-With the `generation` feature, `StoreSource::validate_authoring()` checks every authored node,
-including unused `$defs` and declarations overridden by references. The archive generator
-`pyavd_utils_gen.schema_store.compile_schema_archive` runs this pass before compiling or
-replacing its output. Invalid source data leaves any existing archive untouched.
+Source loading and compilation do not apply the generated metaschema or enforce its
+authoring conventions. AVD 5.7.3 source schemas must remain compilable; they can be
+validated separately with the metaschema shipped with that AVD version. In particular,
+`MIB_family_name` is excluded from the generated 6.x metaschema without restricting
+its acceptance by the loader or compiler. `Vxlan1` remains accepted by the generated
+metaschema because AVD 6.x still declares it as removed.
 
-The pass checks regex syntax with the same AVD dialect used at runtime, nonempty single-line
-`display_name` values, nonempty descriptions, schema key names, `primary_key` and `unique_keys`
-names. Static keys use snake case, with the existing `Vxlan1` and `MIB_family_name`
-exceptions retained. Removing `MIB_family_name` is deferred pending a scope decision.
-
-These are checks on authored declarations. Reference resolution and type compatibility are
-still checked during compilation. This pass does not implement all JSON Schema constraints;
-for example, optional `null` values have already been deserialized as absent fields.
-Deserialization and direct runtime compilation retain their tolerance for historical source
-schemas. Other native build tools can call `validate_authoring()` explicitly.
+Compilation checks reference resolution, type compatibility, and cycles for declarations
+it traverses. It does not necessarily resolve references in unused definitions. This
+crate adds no standalone authoring-validation pass or JSON Schema validator dependency.

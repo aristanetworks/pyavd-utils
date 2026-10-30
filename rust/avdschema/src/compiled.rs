@@ -332,27 +332,9 @@ fn write_atomically(destination: &Path, bytes: &[u8]) -> std::io::Result<()> {
     result
 }
 
-/// A diagnostic describing an invalid source schema during authoring validation or compilation.
+/// A diagnostic describing an invalid schema encountered during compilation.
 #[derive(Debug)]
 pub enum SchemaDiagnostic {
-    /// A source-schema regular expression is invalid in the supported AVD dialect.
-    InvalidPattern {
-        /// Path to the pattern in the authored schema.
-        schema_path: Vec<String>,
-        /// Original regular expression.
-        pattern: String,
-        /// Regex compiler's explanation of the failure.
-        error: String,
-    },
-    /// An authored value does not satisfy a build-time schema convention.
-    InvalidAuthoringValue {
-        /// Path to the invalid value in the authored schema.
-        schema_path: Vec<String>,
-        /// Authored value that failed validation.
-        value: String,
-        /// Description of the accepted values.
-        expected: &'static str,
-    },
     /// A schema reference could not be resolved.
     Reference {
         /// Schema path being compiled.
@@ -395,25 +377,6 @@ pub enum SchemaDiagnostic {
 impl std::fmt::Display for SchemaDiagnostic {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::InvalidPattern {
-                schema_path,
-                pattern,
-                error,
-            } => write!(
-                f,
-                "Invalid regex pattern '{pattern}' at '{}': {error}",
-                schema_path.join("/")
-            ),
-            Self::InvalidAuthoringValue {
-                schema_path,
-                value,
-                expected,
-            } => write!(
-                f,
-                "Invalid authored value '{}' at '{}': expected {expected}",
-                value.escape_debug(),
-                schema_path.join("/")
-            ),
             Self::Reference {
                 schema_path,
                 reference,
@@ -461,7 +424,7 @@ impl std::fmt::Display for SchemaDiagnostic {
     }
 }
 
-/// One or more structured diagnostics produced during authoring validation or compilation.
+/// One or more structured schema diagnostics produced during compilation.
 ///
 /// The container is intentionally plural so compilation passes can report multiple independent
 /// problems without another API change. Individual compiler paths may still stop at their first
@@ -470,11 +433,6 @@ impl std::fmt::Display for SchemaDiagnostic {
 pub struct SchemaDiagnostics(Vec<SchemaDiagnostic>);
 
 impl SchemaDiagnostics {
-    #[cfg(feature = "generation")]
-    pub(crate) fn new(diagnostics: Vec<SchemaDiagnostic>) -> Self {
-        Self(diagnostics)
-    }
-
     fn single(diagnostic: SchemaDiagnostic) -> Self {
         Self(vec![diagnostic])
     }

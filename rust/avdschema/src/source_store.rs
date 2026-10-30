@@ -29,25 +29,6 @@ pub struct StoreSource {
 }
 
 impl StoreSource {
-    #[cfg(feature = "generation")]
-    /// Check authored schema conventions before generating a runtime archive.
-    ///
-    /// Visits every declared schema, including unused definitions and properties overridden by
-    /// references. Checks regex syntax using the runtime dialect, display names, nonempty
-    /// descriptions, schema key names, and primary/unique key names.
-    /// This does not resolve references or replace compilation, and is not a full JSON Schema
-    /// validation pass. Optional null fields have already been deserialized as absent values.
-    /// Runtime source loading and compilation remain tolerant of historical authoring conventions.
-    pub fn validate_authoring(&self) -> Result<(), crate::SchemaDiagnostics> {
-        let mut roots = self
-            .schemas
-            .iter()
-            .map(|(name, schema)| (name.as_str(), schema.as_dict()))
-            .collect::<Vec<_>>();
-        roots.sort_unstable_by_key(|(name, _)| *name);
-        crate::authoring::validate(&roots)
-    }
-
     /// Load one JSON schema document as a named dictionary root.
     ///
     /// Unlike [`Load::from_json`], the input is a schema document rather than a mapping of

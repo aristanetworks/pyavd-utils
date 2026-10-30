@@ -47,8 +47,6 @@ use regex_automata as _;
 #[cfg(test)]
 use test_schema_store as _;
 
-#[cfg(feature = "generation")]
-mod authoring;
 mod compiled;
 #[cfg(feature = "generation")]
 mod generation;
