@@ -59,7 +59,8 @@ pub struct SourceRootDict {
     /// The dot-notation path is relative to the input dictionary being validated and points to
     /// values containing additional key names. When a path traverses a list, every list item
     /// is unpacked. Each resulting key is validated using the supplied schema.
-    /// These key names come from the input data, not from the schema document.
+    /// These key names come from the input data or, when the input path has no value,
+    /// from schema-defined defaults if available.
     #[cfg_attr(
         feature = "metaschema",
         schemars(with = "Option<std::collections::BTreeMap<MetaDynamicSchemaKey, SourceSchema>>")
