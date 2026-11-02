@@ -11,6 +11,7 @@ from ._bindings import _validation  # pyright: ignore[reportMissingModuleSource]
 Configuration = _validation.Configuration
 Deprecation = _validation.Deprecation
 IgnoredEosConfigKey = _validation.IgnoredEosConfigKey
+SourceSpan = _validation.SourceSpan
 ValidatedDataResult = _validation.ValidatedDataResult
 ValidationResult = _validation.ValidationResult
 Violation = _validation.Violation
@@ -22,6 +23,7 @@ __all__ = [
     "Configuration",
     "Deprecation",
     "IgnoredEosConfigKey",
+    "SourceSpan",
     "ValidatedDataResult",
     "ValidationResult",
     "Violation",

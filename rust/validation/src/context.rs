@@ -37,18 +37,20 @@ impl Context {
         value: &V,
         error: impl Into<ErrorIssue>,
     ) {
-        self.add_error_with_span(state, value.source_span(), error);
+        self.add_error_with_span(state, value.source_span(), value.source(), error);
     }
 
     pub(crate) fn add_error_with_span(
         &mut self,
         state: &ValidationState,
         span: Option<SourceSpan>,
+        source: Option<&str>,
         error: impl Into<ErrorIssue>,
     ) {
         self.result.errors.push(Feedback {
             path: state.path.clone(),
             span,
+            source: source.map(str::to_owned),
             issue: error.into(),
         });
     }
@@ -57,11 +59,13 @@ impl Context {
         &mut self,
         state: &ValidationState,
         span: Option<SourceSpan>,
+        source: Option<&str>,
         warning: impl Into<WarningIssue>,
     ) {
         self.result.warnings.push(Feedback {
             path: state.path.clone(),
             span,
+            source: source.map(str::to_owned),
             issue: warning.into(),
         });
     }
@@ -75,6 +79,7 @@ impl Context {
         self.result.infos.push(Feedback {
             path: state.path.clone(),
             span: value.source_span(),
+            source: value.source().map(str::to_owned),
             issue: info.into(),
         });
     }
@@ -131,9 +136,11 @@ impl Context {
         let violation_a = Feedback {
             path: state.path.clone_with_slice(trail_a),
             span: value_a.source_span(),
+            source: value_a.source().map(str::to_owned),
             issue: Violation::ValueNotUnique {
                 other_path: state.path.clone_with_slice(trail_b),
                 other_span: value_b.source_span(),
+                other_source: value_b.source().map(str::to_owned),
             }
             .into(),
         };
@@ -142,9 +149,11 @@ impl Context {
         let violation_b = Feedback {
             path: state.path.clone_with_slice(trail_b),
             span: value_b.source_span(),
+            source: value_b.source().map(str::to_owned),
             issue: Violation::ValueNotUnique {
                 other_path: state.path.clone_with_slice(trail_a),
                 other_span: value_a.source_span(),
+                other_source: value_a.source().map(str::to_owned),
             }
             .into(),
         };
