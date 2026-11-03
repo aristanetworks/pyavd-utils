@@ -11,10 +11,14 @@ generate_schema_documentation = _schema_generation.generate_schema_documentation
 generate_schema_documentation_from_paths = _schema_generation.generate_schema_documentation_from_paths
 generate_python_schema_models = _schema_generation.generate_python_schema_models
 generate_python_schema_models_from_paths = _schema_generation.generate_python_schema_models_from_paths
+generate_schema_explorer_jsonl = _schema_generation.generate_schema_explorer_jsonl
+generate_schema_explorer_jsonl_from_paths = _schema_generation.generate_schema_explorer_jsonl_from_paths
 
 __all__ = [
     "generate_python_schema_models",
     "generate_python_schema_models_from_paths",
     "generate_schema_documentation",
     "generate_schema_documentation_from_paths",
+    "generate_schema_explorer_jsonl",
+    "generate_schema_explorer_jsonl_from_paths",
 ]

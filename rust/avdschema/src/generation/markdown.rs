@@ -32,6 +32,7 @@ use crate::compiled::CompiledStore;
 use crate::compiled::CompiledStringFormat;
 use crate::compiled::CompiledValue;
 use crate::compiled::SchemaId;
+use crate::generation::documentation_context::documentation_table;
 use crate::generation::traversal::HiddenKeysPolicy;
 use crate::generation::traversal::SchemaOccurrence;
 use crate::generation::traversal::SchemaRelation;
@@ -322,20 +323,11 @@ impl<'a> DocumentationProjection<'a> {
         is_unique: bool,
         is_first_list_key: bool,
     ) -> DocDraft {
-        let table = occurrence
-            .common()
-            .documentation_options
-            .as_ref()
-            .and_then(|options| options.table.clone())
-            .or_else(|| parent_table.map(ToOwned::to_owned))
-            .or_else(|| {
-                (path.len() == 1).then(|| {
-                    key.as_deref()
-                        .unwrap_or_default()
-                        .replace(['<', '>'], "")
-                        .replace('_', "-")
-                })
-            });
+        let table = documentation_table(
+            occurrence.common(),
+            parent_table,
+            (path.len() == 1).then_some(key.as_deref().unwrap_or_default()),
+        );
         DocDraft {
             schema_id: occurrence.schema_id(),
             key,

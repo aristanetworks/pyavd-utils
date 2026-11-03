@@ -1,0 +1,95 @@
+{
+  "shared": {
+    "type": "dict",
+    "keys": {
+      "base": {
+        "type": "dict",
+        "description": " inherited description ",
+        "documentation_options": {"table": "shared-table"},
+        "keys": {
+          "name": {"type": "str", "required": true, "convert_types": ["int"]},
+          "count": {"type": "int", "min": 0, "max": 10, "default": 0}
+        }
+      }
+    }
+  },
+  "model": {
+    "type": "dict",
+    "$defs": {
+      "concealed": {
+        "type": "dict",
+        "documentation_options": {"hide_keys": true},
+        "keys": {"secret": {"type": "str"}}
+      }
+    },
+    "keys": {
+      "visible": {
+        "type": "dict",
+        "$ref": "shared#/keys/base",
+        "keys": {"count": {"type": "int", "max": 5}}
+      },
+      "hidden": {
+        "type": "dict",
+        "$ref": "shared#/keys/base",
+        "documentation_options": {"hide_keys": true}
+      },
+      "hidden_same": {"type": "dict", "$ref": "model#/$defs/concealed"},
+      "plain_hidden": {
+        "type": "dict",
+        "documentation_options": {"hide_keys": true},
+        "keys": {"secret": {"type": "str"}}
+      },
+      "entries": {
+        "type": "list",
+        "primary_key": "name",
+        "default": [],
+        "items": {
+          "type": "dict",
+          "documentation_options": {"table": "item-table"},
+          "keys": {
+            "name": {"type": "str"},
+            "enabled": {"type": "bool", "default": false}
+          }
+        }
+      },
+      "duplicates": {
+        "type": "list",
+        "primary_key": "name",
+        "allow_duplicate_primary_key": true,
+        "unique_keys": ["name"],
+        "items": {"type": "dict", "keys": {"name": {"type": "str"}}}
+      },
+      "hidden_items": {
+        "type": "list",
+        "items": {
+          "type": "dict",
+          "documentation_options": {"hide_keys": true},
+          "keys": {"secret": {"type": "str"}}
+        }
+      },
+      "deprecated": {
+        "type": "list",
+        "deprecation": {"warning": true},
+        "min_length": 1,
+        "items": {"type": "str", "valid_values": ["one", "two"], "min_length": 1}
+      },
+      "removed": {
+        "type": "dict",
+        "deprecation": {"warning": false, "removed": true},
+        "keys": {"child": {"type": "str"}}
+      },
+      "defaults": {
+        "type": "dict",
+        "allow_other_keys": true,
+        "default": {"answer": 0, "enabled": false, "names": ["é"], "nested": {"nullable": null}}
+      }
+    },
+    "dynamic_keys": {
+      "selectors.key": {
+        "type": "dict",
+        "keys": {"value": {"type": "bool"}}
+      }
+    }
+  },
+  "empty": {"type": "dict"}
+}

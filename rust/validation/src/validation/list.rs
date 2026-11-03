@@ -204,6 +204,7 @@ mod tests {
         assert_eq!(
             ctx.result.errors,
             vec![Feedback {
+                source: None,
                 path: vec![].into(),
                 span: None,
                 issue: Violation::InvalidType {
@@ -241,6 +242,7 @@ mod tests {
             ctx.result.errors,
             vec![
                 Feedback {
+                    source: None,
                     path: vec!["0".into()].into(),
                     span: None,
                     issue: Violation::InvalidType {
@@ -250,6 +252,7 @@ mod tests {
                     .into()
                 },
                 Feedback {
+                    source: None,
                     path: vec!["1".into()].into(),
                     span: None,
                     issue: Violation::InvalidType {
@@ -280,6 +283,7 @@ mod tests {
         assert_eq!(
             ctx.result.infos,
             vec![Feedback {
+                source: None,
                 path: vec!["0".into()].into(),
                 span: None,
                 issue: CoercionNote {
@@ -293,6 +297,7 @@ mod tests {
         assert_eq!(
             ctx.result.errors,
             vec![Feedback {
+                source: None,
                 path: vec!["1".into()].into(),
                 span: None,
                 issue: Violation::InvalidType {
@@ -331,6 +336,7 @@ mod tests {
         assert_eq!(
             ctx.result.errors,
             vec![Feedback {
+                source: None,
                 path: vec![].into(),
                 span: None,
                 issue: Violation::LengthBelowMinimum {
@@ -367,6 +373,7 @@ mod tests {
         assert_eq!(
             ctx.result.errors,
             vec![Feedback {
+                source: None,
                 path: vec![].into(),
                 span: None,
                 issue: Violation::LengthAboveMaximum {
@@ -423,6 +430,7 @@ mod tests {
         assert_eq!(
             ctx.result.errors,
             vec![Feedback {
+                source: None,
                 path: vec!["0".into()].into(),
                 span: None,
                 issue: Violation::MissingRequiredKey { key: "foo".into() }.into()
@@ -454,20 +462,24 @@ mod tests {
             ctx.result.errors,
             vec![
                 Feedback {
+                    source: None,
                     path: vec!["0".into(), "foo".into()].into(),
                     span: None,
                     issue: Violation::ValueNotUnique {
                         other_path: vec!["2".into(), "foo".into()].into(),
                         other_span: None,
+                        other_source: None,
                     }
                     .into()
                 },
                 Feedback {
+                    source: None,
                     path: vec!["2".into(), "foo".into()].into(),
                     span: None,
                     issue: Violation::ValueNotUnique {
                         other_path: vec!["0".into(), "foo".into()].into(),
                         other_span: None,
+                        other_source: None,
                     }
                     .into()
                 }
@@ -539,22 +551,26 @@ mod tests {
             ctx.result.errors,
             vec![
                 Feedback {
+                    source: None,
                     path: vec!["0".into(), "aliases".into(), "0".into(), "name".into()].into(),
                     span: None,
                     issue: Violation::ValueNotUnique {
                         other_path: vec!["1".into(), "aliases".into(), "0".into(), "name".into()]
                             .into(),
                         other_span: None,
+                        other_source: None,
                     }
                     .into()
                 },
                 Feedback {
+                    source: None,
                     path: vec!["1".into(), "aliases".into(), "0".into(), "name".into()].into(),
                     span: None,
                     issue: Violation::ValueNotUnique {
                         other_path: vec!["0".into(), "aliases".into(), "0".into(), "name".into()]
                             .into(),
                         other_span: None,
+                        other_source: None,
                     }
                     .into()
                 }

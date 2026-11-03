@@ -163,12 +163,17 @@ fn simple_7_decrypt_invalid_salt_format_err() {
             .unwrap()
             .getattr("_passwords")
             .unwrap();
-        let err = module
-            .call_method1("simple_7_decrypt", ("XX1234",))
-            .unwrap_err();
+        for data in ["XX1234", "€1234", "0é1234", "１２1234", "+115090B"] {
+            let err = module
+                .call_method1("simple_7_decrypt", (data,))
+                .unwrap_err();
 
-        assert!(err.is_instance_of::<pyo3::exceptions::PyValueError>(py));
-        assert!(err.value(py).to_string().contains("Invalid salt format"));
+            assert!(err.is_instance_of::<pyo3::exceptions::PyValueError>(py));
+            assert_eq!(
+                err.value(py).to_string(),
+                "Invalid salt format in encrypted data"
+            );
+        }
     });
 }
 

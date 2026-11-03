@@ -36,7 +36,8 @@ pub(crate) enum IntConvertType {
 #[cfg(feature = "metaschema")]
 #[derive(schemars::JsonSchema)]
 pub(crate) struct IntConvertTypes {
-    #[schemars(skip_serializing_if = "Option::is_none")]
+    /// Deprecated. Do not use `convert_types` in new schema definitions.
+    #[schemars(skip_serializing_if = "Option::is_none", extend("deprecated" = true))]
     convert_types: Option<Vec<IntConvertType>>,
 }
 
@@ -54,6 +55,7 @@ pub(crate) enum StrConvertType {
 #[cfg(feature = "metaschema")]
 #[derive(schemars::JsonSchema)]
 pub(crate) struct StrConvertTypes {
-    #[schemars(skip_serializing_if = "Option::is_none")]
+    /// Deprecated. Do not use `convert_types` in new schema definitions.
+    #[schemars(skip_serializing_if = "Option::is_none", extend("deprecated" = true))]
     convert_types: Option<Vec<StrConvertType>>,
 }

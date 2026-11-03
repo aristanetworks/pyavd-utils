@@ -17,3 +17,10 @@ the same Ruff formatting step used by AVD. A changed generator therefore leaves
 the proposed output visible in `git diff` when the byte-for-byte comparison
 fails. The `.expected` suffix keeps the generated oracle out of Python source
 discovery because `pyavd` is intentionally not a dependency of pyavd-utils.
+
+## Schema Explorer
+
+`schema_explorer_fixture.json` exercises occurrence-based JSONL export: reference
+overrides, hidden dictionaries and reference links, list primary keys, dictionary
+item tables, defaults, deprecation, and dynamic-key paths. Tests inspect the JSONL
+contract directly; SQLite persistence and browser integration belong to AVD.
