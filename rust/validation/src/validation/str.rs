@@ -192,6 +192,7 @@ mod tests {
         assert_eq!(
             ctx.result.errors,
             vec![Feedback {
+                source: None,
                 path: vec![].into(),
                 span: None,
                 issue: Violation::InvalidType {
@@ -234,6 +235,7 @@ mod tests {
         assert_eq!(
             ctx.result.errors,
             vec![Feedback {
+                source: None,
                 path: vec![].into(),
                 span: None,
                 issue: Violation::InvalidValue {
@@ -267,6 +269,7 @@ mod tests {
         assert_eq!(
             ctx.result.infos,
             vec![Feedback {
+                source: None,
                 path: vec![].into(),
                 span: None,
                 issue: StringLoweredNote {
@@ -304,6 +307,7 @@ mod tests {
             ctx.result.infos,
             vec![
                 Feedback {
+                    source: None,
                     path: vec![].into(),
                     span: None,
                     issue: CoercionNote {
@@ -313,6 +317,7 @@ mod tests {
                     .into()
                 },
                 Feedback {
+                    source: None,
                     path: vec![].into(),
                     span: None,
                     issue: StringLoweredNote {
@@ -342,6 +347,7 @@ mod tests {
         assert_eq!(
             ctx.result.infos,
             vec![Feedback {
+                source: None,
                 path: vec![].into(),
                 span: None,
                 issue: CoercionNote {
@@ -381,6 +387,7 @@ mod tests {
         assert_eq!(
             ctx.result.errors,
             vec![Feedback {
+                source: None,
                 path: vec![].into(),
                 span: None,
                 issue: Violation::LengthBelowMinimum {
@@ -417,6 +424,7 @@ mod tests {
         assert_eq!(
             ctx.result.errors,
             vec![Feedback {
+                source: None,
                 path: vec![].into(),
                 span: None,
                 issue: Violation::LengthAboveMaximum {
@@ -453,6 +461,7 @@ mod tests {
         assert_eq!(
             ctx.result.errors,
             vec![Feedback {
+                source: None,
                 path: vec![].into(),
                 span: None,
                 issue: Violation::NotMatchingPattern {
@@ -493,6 +502,7 @@ mod tests {
         assert_eq!(
             ctx.result.errors,
             vec![Feedback {
+                source: None,
                 path: vec![].into(),
                 span: None,
                 issue: Violation::NotMatchingPattern {

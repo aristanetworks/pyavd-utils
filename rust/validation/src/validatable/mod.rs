@@ -132,6 +132,11 @@ pub trait ValidatableValue: Sized {
     /// This is used to record what value was coerced from.
     fn to_feedback_value(&self) -> crate::feedback::Value;
 
+    /// Get the opaque source identifier for this value, if available.
+    fn source(&self) -> Option<&str> {
+        None
+    }
+
     /// Get the source span for this value, if available.
     fn source_span(&self) -> Option<SourceSpan> {
         None
@@ -270,8 +275,8 @@ pub trait ValidatableMapping<'a> {
 pub struct MappingDuplicateKey<'a> {
     /// Duplicate key text used for validation paths.
     pub key: &'a str,
-    /// Spans of all matching key tokens, if available.
-    pub spans: Vec<Option<SourceSpan>>,
+    /// Source identifiers and spans of all matching key tokens, if available.
+    pub locations: Vec<(Option<&'a str>, Option<SourceSpan>)>,
 }
 
 /// A single mapping key/value pair.
@@ -306,6 +311,11 @@ pub trait ValidatableMappingPair<'a> {
         &self,
         value: <Self::Value as ValidatableValue>::Coerced,
     ) -> <Self::Value as ValidatableValue>::CoercedMappingItem;
+
+    /// Get the opaque source identifier of the key, if available.
+    fn key_source(&self) -> Option<&str> {
+        None
+    }
 
     /// Get the source span of the key, if available.
     ///
