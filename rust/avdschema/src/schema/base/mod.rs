@@ -43,6 +43,11 @@ where
     /// Default is false.
     pub required: Option<bool>,
     pub deprecation: Option<Deprecation>,
+    /// Reference to another AVD schema or schema fragment, inherited by this schema.
+    /// Use a named schema followed by a JSON Pointer, for example
+    /// `eos_cli_config_gen#/keys/hostname` or `eos_cli_config_gen#/$defs/shared`.
+    /// A reference ending in `#` imports the complete root dictionary. Local properties override
+    /// inherited properties, and the referenced schema must have the same type.
     #[serde(rename = "$ref")]
     #[cfg_attr(
         feature = "metaschema",
