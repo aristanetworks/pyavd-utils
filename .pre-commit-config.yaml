@@ -58,7 +58,7 @@ repos:
           - "//"
 
   - repo: https://github.com/arista-netdevops-community/pre-commit-hooks
-    rev: fa07710f3d2e1820da269e95fab69666bc9b1326  # frozen: v0.1.7
+    rev: 1a0dc25696b1c0b96180440aa36dee606de7e776  # frozen: v0.1.8
     hooks:
       - id: cargo-fmt-nightly
         args:
