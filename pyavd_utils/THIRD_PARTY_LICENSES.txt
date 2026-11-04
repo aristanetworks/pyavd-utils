@@ -444,7 +444,7 @@ MIT License
 
 Used by:
   - bitflags 2.13.2
-  - log 0.4.34
+  - log 0.4.35
   - regex-automata 0.4.18
   - regex-syntax 0.8.11
 
