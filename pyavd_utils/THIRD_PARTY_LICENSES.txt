@@ -219,12 +219,12 @@ Apache License 2.0
 ================================================================================
 
 Used by:
-  - avdschema 0.0.13
-  - passwords 0.0.13
-  - python-bindings 0.0.13
-  - schema-data 0.0.13
-  - validation 0.0.13
-  - yaml-parser 0.0.13
+  - avdschema 0.0.14
+  - passwords 0.0.14
+  - python-bindings 0.0.14
+  - schema-data 0.0.14
+  - validation 0.0.14
+  - yaml-parser 0.0.14
 
 License text:
 --------------------------------------------------------------------------------
