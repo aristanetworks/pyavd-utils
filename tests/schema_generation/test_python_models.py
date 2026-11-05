@@ -431,7 +431,7 @@ def test_eos_designs_dynamic_model_requires_display_name(tmp_path: Path) -> None
         encoding="UTF-8",
     )
 
-    with pytest.raises(RuntimeError, match=r"requires 'display_name'.*eos_designs/dynamic_keys/node_type_keys.key"):
+    with pytest.raises(RuntimeError, match=r"requires 'display_name'.*eos_designs#/dynamic_keys/node_type_keys.key"):
         generate_python_schema_models_from_paths({"eos_designs": source}, "eos_designs", tmp_path / "eos_designs.py")
 
 

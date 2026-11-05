@@ -114,10 +114,4 @@ pub enum SchemaWalkError {
     NotDictOrList,
     #[display("Invalid schema path. The element '{element}' was not found.")]
     PathNotFound { element: String },
-    /// The path ended at a mapping instead of selecting a schema from it.
-    #[display("Invalid schema path. A path cannot end at the '{mapping}' schema mapping.")]
-    PointingToMapping {
-        /// Name of the terminal mapping, such as `keys`, `dynamic_keys`, or `$defs`.
-        mapping: String,
-    },
 }

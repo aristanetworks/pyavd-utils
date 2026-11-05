@@ -331,7 +331,6 @@ fn retained_model_reference(
     retain_reference.then(|| {
         occurrence
             .pure_references()
-            .iter()
             .find(|reference| {
                 reference.schema_name() != model_schema_name
                     && !reference

@@ -250,9 +250,8 @@ fn field_row(
     let cross_ref = if hidden {
         occurrence
             .references()
-            .iter()
             .find(|reference| reference.schema_name() != module)
-            .map(crate::SchemaPath::to_reference)
+            .map(ToString::to_string)
     } else {
         None
     };

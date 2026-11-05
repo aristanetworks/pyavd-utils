@@ -24,6 +24,7 @@ use crate::str::SourceStr;
 
 trait InheritableWithClone {}
 impl InheritableWithClone for String {}
+impl InheritableWithClone for crate::SchemaPath {}
 impl InheritableWithClone for bool {}
 impl InheritableWithClone for i64 {}
 impl InheritableWithClone for u64 {}

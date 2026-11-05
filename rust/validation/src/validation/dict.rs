@@ -345,7 +345,7 @@ mod tests {
     fn any_schema_validation_returns_referenced_coercion_result() {
         let schema = SourceSchema::Dict(SourceDict {
             base: Base {
-                schema_ref: Some("eos_config#".into()),
+                schema_ref: Some("eos_config#".parse().unwrap()),
                 ..Default::default()
             },
             ..Default::default()

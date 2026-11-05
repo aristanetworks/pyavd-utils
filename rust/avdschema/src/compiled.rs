@@ -342,8 +342,8 @@ pub enum SchemaDiagnostic {
     Reference {
         /// Schema path being compiled.
         schema_path: SchemaPath,
-        /// Full reference string from the source schema.
-        reference: String,
+        /// Parsed reference from the source schema.
+        reference: SchemaPath,
         /// Structured resolver failure.
         error: crate::SchemaResolverError,
     },
@@ -359,7 +359,7 @@ pub enum SchemaDiagnostic {
         /// Schema path being compiled.
         schema_path: SchemaPath,
         /// Reference that closes the cycle.
-        reference: String,
+        reference: SchemaPath,
     },
     /// Nested schema structure directly or indirectly contains itself.
     StructuralCycle {
@@ -516,7 +516,7 @@ impl<'a> Compiler<'a> {
                 .get(name)
                 .map_err(|error| SchemaDiagnostic::Reference {
                     schema_path: SchemaPath::root(name),
-                    reference: format!("{name}#"),
+                    reference: SchemaPath::root(name),
                     error: error.into(),
                 })?;
             let id = self.compile_layers(&[SourceLayer::root(root)], &SchemaPath::root(name))?;
@@ -531,7 +531,7 @@ impl<'a> Compiler<'a> {
             .get(schema_name)
             .map_err(|error| SchemaDiagnostic::Reference {
                 schema_path: SchemaPath::root(schema_name),
-                reference: format!("{schema_name}#"),
+                reference: SchemaPath::root(schema_name),
                 error: error.into(),
             })?;
         let id = self.compile_layers(&[SourceLayer::root(root)], &SchemaPath::root(schema_name))?;
@@ -544,7 +544,7 @@ impl<'a> Compiler<'a> {
         declared: &[SourceLayer<'a>],
         schema_path: &SchemaPath,
     ) -> Result<SchemaId, CompileError> {
-        let layers = expand_layers(self.source, declared, schema_path)?.layers;
+        let layers = expand_layers(self.source, declared, schema_path)?;
         let memo_key = layers
             .iter()
             .map(|schema| schema.identity())
@@ -1030,7 +1030,7 @@ fn default_dynamic_keys(
             key: root_key.to_owned(),
         });
         let expanded_child_layers =
-            expand_layers(compiler.source, &child_layers, &child_schema_path)?.layers;
+            expand_layers(compiler.source, &child_layers, &child_schema_path)?;
         let Some(default) = expanded_child_layers
             .iter()
             .find_map(|layer| schema_default(*layer))
@@ -1307,11 +1307,11 @@ mod tests {
                 error: SchemaResolverError::SchemaStore(
                     SchemaStoreError::InvalidSchemaName(name)
                 ),
-            } if schema_path == &SchemaPath::root("test") && reference == "missing#" && name == "missing"
+            } if schema_path == &SchemaPath::root("test") && reference == &SchemaPath::root("missing") && name == "missing"
         ));
         assert_eq!(
             invalid_reference_diagnostic.to_string(),
-            "Unable to resolve schema reference 'missing#' while compiling 'test': Schema name 'missing' not found in the schema store."
+            "Unable to resolve schema reference 'missing#' while compiling 'test#': Schema name 'missing' not found in the schema store."
         );
 
         let type_mismatch = StoreSource::from_json(
@@ -1356,11 +1356,11 @@ mod tests {
             SchemaDiagnostic::ReferenceCycle {
                 schema_path,
                 reference,
-            } if schema_path == &SchemaPath::root("a") && reference == "a#"
+            } if schema_path == &SchemaPath::root("a") && reference == &SchemaPath::root("a")
         ));
         assert_eq!(
             reference_cycle_diagnostic.to_string(),
-            "Schema reference 'a#' forms a cycle while compiling 'a'"
+            "Schema reference 'a#' forms a cycle while compiling 'a#'"
         );
 
         let structural_cycle = StoreSource::from_json(
@@ -1380,7 +1380,7 @@ mod tests {
         ));
         assert_eq!(
             structural_cycle_diagnostic.to_string(),
-            "Schema contains a structural cycle while compiling 'root/keys/child'"
+            "Schema contains a structural cycle while compiling 'root#/keys/child'"
         );
     }
 
@@ -1418,7 +1418,7 @@ mod tests {
             assert_eq!(
                 diagnostics.to_string(),
                 format!(
-                    "Schema default at 'test/default/nested/0' contains unsupported number '{expected_value}'; AVD schema defaults only support integers representable as i64 or u64"
+                    "Schema default at 'test#/default/nested/0' contains unsupported number '{expected_value}'; AVD schema defaults only support integers representable as i64 or u64"
                 )
             );
         }

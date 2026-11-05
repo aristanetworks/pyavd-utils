@@ -48,12 +48,10 @@ where
     /// `eos_cli_config_gen#/keys/hostname` or `eos_cli_config_gen#/$defs/shared`.
     /// A reference ending in `#` imports the complete root dictionary. Local properties override
     /// inherited properties, and the referenced schema must have the same type.
+    /// Syntax and structural path steps are checked during source deserialization; compilation
+    /// checks whether the target exists and is compatible with the referring schema.
     #[serde(rename = "$ref")]
-    #[cfg_attr(
-        feature = "metaschema",
-        schemars(regex(pattern = r"^[a-z][a-z_]*#(/[a-z$][\.a-z0-9_]*)*$"))
-    )]
-    pub schema_ref: Option<String>,
+    pub schema_ref: Option<crate::SchemaPath>,
 }
 
 /// Deprecation settings

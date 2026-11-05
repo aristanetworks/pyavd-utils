@@ -52,6 +52,10 @@ Both source deserialization and the generated metaschema reject other declaratio
 concrete dynamic key names supplied by input data remain unrestricted. This source-model
 contract is independent of authoring conventions such as static-key spelling.
 
+Source deserialization parses each `$ref` string into a typed `SchemaPath`, rejecting invalid
+reference syntax and unsupported structural path steps even in unused definitions. Display
+and serialization retain the authored string form, such as `avd_design#/keys/devices/items`.
+
 Compilation checks reference resolution, type compatibility, and cycles for declarations
 it traverses. It does not necessarily resolve references in unused definitions. This
 crate adds no standalone authoring-validation pass or JSON Schema validator dependency.

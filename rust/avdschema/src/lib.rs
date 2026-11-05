@@ -26,7 +26,8 @@
 //! [`SchemaPath`] addresses source declarations and effective occurrences using typed
 //! [`SchemaPathElement`] edges. It is distinct from a path through validated input data:
 //! list items have no index and dynamic edges identify a [`DynamicKeySource`], not a concrete
-//! input key. Authored `$ref` strings are parsed at the reference-resolution boundary.
+//! input key. Authored `$ref` strings are parsed when source models are deserialized;
+//! compilation resolves the resulting typed addresses against the source store.
 // TODO: Reevaluate the allow
 #![allow(
     clippy::empty_structs_with_brackets,

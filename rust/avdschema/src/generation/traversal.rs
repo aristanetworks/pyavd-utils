@@ -106,8 +106,7 @@ pub(crate) struct SchemaOccurrence<'a> {
     compiled: &'a CompiledStore,
     path: &'a SchemaPath,
     schema_id: SchemaId,
-    pure_reference_count: usize,
-    references: Vec<SchemaPath>,
+    layers: &'a [SourceLayer<'a>],
 }
 
 impl SchemaOccurrence<'_> {
@@ -132,16 +131,23 @@ impl SchemaOccurrence<'_> {
     ///
     /// Consumers decide whether a reference has an existing representation or
     /// whether traversal should continue into its effective children.
-    pub(crate) fn pure_references(&self) -> &[SchemaPath] {
-        &self.references[..self.pure_reference_count]
+    pub(crate) fn pure_references(&self) -> impl Iterator<Item = &SchemaPath> {
+        self.layers
+            .iter()
+            .copied()
+            .take_while(is_pure_reference)
+            .filter_map(SourceLayer::schema_ref)
     }
 
     /// References contributing to this occurrence, in layer precedence order.
     ///
     /// Unlike `pure_references`, this includes layers with local overrides.
     /// References belong to a use-site, not to an interned runtime schema ID.
-    pub(crate) fn references(&self) -> &[SchemaPath] {
-        &self.references
+    pub(crate) fn references(&self) -> impl Iterator<Item = &SchemaPath> {
+        self.layers
+            .iter()
+            .copied()
+            .filter_map(SourceLayer::schema_ref)
     }
 
     /// Properties shared by every effective schema type.
@@ -211,7 +217,7 @@ impl<'a> SchemaTraverser<'a> {
             .get(schema_name)
             .map_err(|error| SchemaDiagnostic::Reference {
                 schema_path: SchemaPath::root(schema_name),
-                reference: format!("{schema_name}#"),
+                reference: SchemaPath::root(schema_name),
                 error: error.into(),
             })?;
         let root_id =
@@ -272,20 +278,12 @@ impl<'a> SchemaTraverser<'a> {
         {
             return Ok(());
         }
-        let expanded = expand_layers(self.source, declared_layers, &path)?;
-        let layers = expanded.layers;
-        let pure_reference_count = layers
-            .iter()
-            .copied()
-            .take_while(is_pure_reference)
-            .filter(|schema| schema.schema_ref().is_some())
-            .count();
+        let layers = expand_layers(self.source, declared_layers, &path)?;
         let occurrence = SchemaOccurrence {
             compiled: &self.compiled,
             path: &path,
             schema_id,
-            pure_reference_count,
-            references: expanded.references,
+            layers: &layers,
         };
 
         if visitor.enter(&occurrence)? == TraversalControl::Descend
@@ -500,8 +498,7 @@ mod tests {
                 occurrence.path().clone(),
                 occurrence
                     .pure_references()
-                    .iter()
-                    .map(SchemaPath::to_reference)
+                    .map(ToString::to_string)
                     .collect(),
             ));
             if matches!(occurrence.relation(), Some(SchemaPathElement::Key { key }) if key == "first")
