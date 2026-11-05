@@ -219,10 +219,10 @@ Apache License 2.0
 ================================================================================
 
 Used by:
-  - avdschema 0.0.13
-  - python-generation-bindings 0.0.13
-  - schema-data 0.0.13
-  - yaml-parser 0.0.13
+  - avdschema 0.0.14
+  - python-generation-bindings 0.0.14
+  - schema-data 0.0.14
+  - yaml-parser 0.0.14
 
 License text:
 --------------------------------------------------------------------------------
