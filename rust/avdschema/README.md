@@ -30,3 +30,22 @@ To deprecate another authoring property, add `#[schemars(extend("deprecated" = t
 descriptive doc comment to its schema field, gated by the `metaschema` feature when necessary.
 For `convert_types`, the annotations belong on the schema-only `IntConvertTypes` and
 `StrConvertTypes` fields. This keeps authoring deprecations separate from Rust API deprecations.
+
+## Source validation and compilation
+
+The generated metaschema targets AVD 6.x source authoring. Consumers can validate raw
+source documents against it separately, for example in an AVD pre-commit hook. Use a
+Draft 2020-12 validator and enable format validation explicitly to check `format: regex`.
+The validator's regex-format check does not guarantee compatibility with the runtime
+regex engine.
+
+Source loading and compilation do not apply the generated metaschema or enforce its
+authoring conventions. AVD 5.7.3 source schemas must remain compilable; they can be
+validated separately with the metaschema shipped with that AVD version. In particular,
+`MIB_family_name` is excluded from the generated 6.x metaschema without restricting
+its acceptance by the loader or compiler. `Vxlan1` remains accepted by the generated
+metaschema because AVD 6.x still declares it as removed.
+
+Compilation checks reference resolution, type compatibility, and cycles for declarations
+it traverses. It does not necessarily resolve references in unused definitions. This
+crate adds no standalone authoring-validation pass or JSON Schema validator dependency.

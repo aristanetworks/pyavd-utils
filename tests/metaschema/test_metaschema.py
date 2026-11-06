@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -47,7 +48,7 @@ def test_generate_metaschema(tmp_path: Path) -> None:
     recursive_schema_types = {variant["properties"]["type"]["const"] for variant in recursive_schema["oneOf"]}
     assert recursive_schema_types == {"bool", "dict", "int", "list", "str"}
     root_dict_properties = _variant(schema, "dict")["properties"]
-    assert list(root_dict_properties["keys"]["patternProperties"]) == [r"^(?:[a-z][a-z0-9_]*|MIB_family_name|Vxlan1)$"]
+    assert list(root_dict_properties["keys"]["patternProperties"]) == [r"^(?:[a-z][a-z0-9_]*|Vxlan1)$"]
     assert list(root_dict_properties["dynamic_keys"]["patternProperties"]) == [r"^[a-z][a-z0-9_.]*$"]
     assert list(root_dict_properties["$defs"]["patternProperties"]) == [r"^[a-z][a-z0-9_]*$"]
     assert root_dict_properties["description"]["type"] == "string"
@@ -81,3 +82,23 @@ def test_generate_metaschema(tmp_path: Path) -> None:
 def test_generate_metaschema_errors_for_missing_parent(tmp_path: Path) -> None:
     with pytest.raises(RuntimeError, match="Error while writing the AVD metaschema"):
         generate_metaschema(tmp_path / "missing" / "avd_meta_schema.json")
+
+
+def test_metaschema_descriptions_are_for_schema_authors(tmp_path: Path) -> None:
+    destination = tmp_path / "avd_meta_schema.json"
+    generate_metaschema(destination)
+    schema = json.loads(destination.read_text(encoding="UTF-8"))
+    assert "[`" not in json.dumps(schema)
+    assert "SourceRootDict" not in schema["description"]
+    root = _variant(schema, "dict")["properties"]
+    key_pattern = re.compile(next(iter(root["keys"]["patternProperties"])))
+    assert key_pattern.fullmatch("Vxlan1")
+    assert not key_pattern.fullmatch("MIB_family_name")
+    assert not key_pattern.fullmatch("Invalid_key")
+    assert "input data" in root["dynamic_keys"]["description"]
+    assert "list item" in root["dynamic_keys"]["description"]
+    assert "eos_cli_config_gen#/keys/hostname" in root["$ref"]["description"]
+    string = _variant(schema["$defs"]["SourceSchema"], "str")["properties"]
+    assert "variable-length lookbehinds" in string["pattern"]["description"]
+    assert "word boundaries" in string["pattern"]["description"]
+    assert "list item" in string["dynamic_valid_values"]["description"]

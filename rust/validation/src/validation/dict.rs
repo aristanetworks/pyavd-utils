@@ -99,10 +99,12 @@ pub(crate) fn check_deprecation<'a, M: ValidatableMapping<'a>>(
     ctx: &mut Context,
     state: &ValidationState,
 ) -> bool {
-    if let Some(deprecation) = key_schema.deprecation()
-        && deprecation.warning()
-    {
+    if let Some(deprecation) = key_schema.deprecation() {
         if deprecation.removed() {
+            // Preserve the existing warning gate for removed keys.
+            if !deprecation.warning() {
+                return false;
+            }
             ctx.add_error_with_span(
                 state,
                 key_span,
@@ -111,12 +113,14 @@ pub(crate) fn check_deprecation<'a, M: ValidatableMapping<'a>>(
             );
             true
         } else {
-            ctx.add_warning_with_span(
-                state,
-                key_span.clone(),
-                key_source,
-                deprecated_from_view(&state.path, deprecation),
-            );
+            if deprecation.warning() {
+                ctx.add_warning_with_span(
+                    state,
+                    key_span.clone(),
+                    key_source,
+                    deprecated_from_view(&state.path, deprecation),
+                );
+            }
             if !deprecation.allow_with_new_key()
                 && let Some(schema_new_key) = deprecation.new_key()
             {
@@ -185,6 +189,7 @@ mod tests {
 
     use avdschema::any::SourceSchema;
     use avdschema::base::Base;
+    use avdschema::base::Deprecation;
     use avdschema::dict::DynamicKeyOverrides;
     use avdschema::dict::SourceDict;
     use avdschema::dict::SourceRootDict;
@@ -1087,6 +1092,155 @@ mod tests {
         assert!(ctx.result.infos.is_empty());
         assert!(ctx.result.warnings.is_empty());
         assert!(ctx.result.errors.is_empty());
+    }
+
+    fn deprecated_no_warning_schema(new_key: &str, allow_with_new_key: Option<bool>) -> SourceDict {
+        SourceDict {
+            keys: Some(OrderMap::from_iter([
+                (
+                    "old_key".into(),
+                    SourceStr {
+                        base: Base {
+                            deprecation: Some(Deprecation {
+                                warning: false,
+                                new_key: Some(new_key.into()),
+                                allow_with_new_key,
+                                url: Some("https://example.com/migration".into()),
+                                ..Default::default()
+                            }),
+                            ..Default::default()
+                        },
+                        min_length: Some(5),
+                        ..Default::default()
+                    }
+                    .into(),
+                ),
+                ("new_key".into(), SourceStr::default().into()),
+                (
+                    "methods".into(),
+                    SourceList {
+                        items: Some(Box::new(
+                            SourceDict {
+                                keys: Some(OrderMap::from_iter([(
+                                    "group".into(),
+                                    SourceStr::default().into(),
+                                )])),
+                                ..Default::default()
+                            }
+                            .into(),
+                        )),
+                        ..Default::default()
+                    }
+                    .into(),
+                ),
+            ])),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn validate_key_deprecated_no_warning_conflicts() {
+        for allow_with_new_key in [None, Some(false), Some(true)] {
+            for (new_key, input, conflicts) in [
+                (
+                    "new_key",
+                    serde_json::json!({"old_key": "old_value", "new_key": "new_value"}),
+                    vec!["new_key"],
+                ),
+                (
+                    "new_key",
+                    serde_json::json!({"old_key": "old_value"}),
+                    vec![],
+                ),
+                (
+                    "new_key",
+                    serde_json::json!({"new_key": "new_value"}),
+                    vec![],
+                ),
+                (
+                    "methods.group",
+                    serde_json::json!({"old_key": "old_value", "methods": [{"group": "new_value"}]}),
+                    vec!["methods.group"],
+                ),
+                (
+                    "methods.group",
+                    serde_json::json!({"old_key": "old_value", "methods": [{}]}),
+                    vec![],
+                ),
+                (
+                    "new_key or methods.group",
+                    serde_json::json!({
+                        "old_key": "old_value",
+                        "new_key": "new_value",
+                        "methods": [{"group": "new_value"}]
+                    }),
+                    vec!["new_key", "methods.group"],
+                ),
+            ] {
+                let schema = deprecated_no_warning_schema(new_key, allow_with_new_key);
+                let mut ctx = Context::new(None);
+                let _ = schema.validate(&input, &mut ctx);
+
+                let expected_errors: Vec<_> = conflicts
+                    .into_iter()
+                    .filter(|_| allow_with_new_key != Some(true))
+                    .map(|other_path| Feedback {
+                        source: None,
+                        path: vec!["old_key".into()].into(),
+                        span: None,
+                        issue: Violation::DeprecatedConflict {
+                            other_path: other_path.into(),
+                            url: Some("https://example.com/migration".into()).into(),
+                        }
+                        .into(),
+                    })
+                    .collect();
+                assert!(ctx.result.infos.is_empty());
+                assert!(ctx.result.warnings.is_empty());
+                assert_eq!(
+                    ctx.result.errors, expected_errors,
+                    "allow_with_new_key={allow_with_new_key:?}, new_key={new_key}, input={input}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn validate_yaml_deprecated_no_warning_conflict_continues_validation() {
+        let schema = deprecated_no_warning_schema("new_key", Some(false));
+        let (docs, errors) = parse("old_key: abc\nnew_key: new_value\n");
+        assert!(errors.is_empty());
+        assert_eq!(docs.len(), 1);
+        let mut ctx = Context::new(None);
+        let _ = schema.validate(&docs[0], &mut ctx);
+
+        assert!(ctx.result.infos.is_empty());
+        assert!(ctx.result.warnings.is_empty());
+        assert_eq!(
+            ctx.result.errors,
+            vec![
+                Feedback {
+                    source: None,
+                    path: vec!["old_key".into()].into(),
+                    span: Some(SourceSpan { start: 0, end: 7 }),
+                    issue: Violation::DeprecatedConflict {
+                        other_path: "new_key".into(),
+                        url: Some("https://example.com/migration".into()).into(),
+                    }
+                    .into(),
+                },
+                Feedback {
+                    source: None,
+                    path: vec!["old_key".into()].into(),
+                    span: Some(SourceSpan { start: 9, end: 12 }),
+                    issue: Violation::LengthBelowMinimum {
+                        minimum: 5,
+                        found: 3,
+                    }
+                    .into(),
+                },
+            ]
+        );
     }
 
     // Tests that when allow_with_new_key is true, using both the deprecated key
