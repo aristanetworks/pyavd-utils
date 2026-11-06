@@ -25,7 +25,7 @@ use crate::utils::load::LoadFromFragments as _;
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StoreSource {
     #[serde(flatten)]
-    schemas: HashMap<String, SourceRootSchema>,
+    schemas: HashMap<crate::SchemaName, SourceRootSchema>,
 }
 
 impl StoreSource {
@@ -40,13 +40,16 @@ impl StoreSource {
     ) -> Result<Self, serde_json::Error> {
         let schema = serde_json::from_str::<SourceRootSchema>(schema_json)?;
         Ok(Self {
-            schemas: HashMap::from([(schema_name.to_owned(), schema)]),
+            schemas: HashMap::from([(
+                crate::SchemaName::new(schema_name).map_err(serde::de::Error::custom)?,
+                schema,
+            )]),
         })
     }
 
     /// Return the schema names present in this store.
-    pub fn schema_names(&self) -> Vec<&str> {
-        let mut schema_names: Vec<_> = self.schemas.keys().map(String::as_str).collect();
+    pub fn schema_names(&self) -> Vec<&crate::SchemaName> {
+        let mut schema_names: Vec<_> = self.schemas.keys().collect();
         schema_names.sort_unstable();
         schema_names
     }
@@ -80,6 +83,7 @@ impl StoreSource {
     pub fn new_from_paths(schema_paths: HashMap<String, PathBuf>) -> Result<Self, LoadError> {
         let mut schemas = HashMap::new();
         for (schema_name, schema_path) in schema_paths {
+            let schema_name = crate::SchemaName::new(schema_name)?;
             let schema = if schema_path.is_dir() {
                 SourceRootSchema::from_fragments(&schema_path)?
             } else {
@@ -195,7 +199,11 @@ mod tests {
         let store = get_test_store();
 
         assert_eq!(
-            store.schema_names(),
+            store
+                .schema_names()
+                .iter()
+                .map(|name| name.as_str())
+                .collect::<Vec<_>>(),
             ["avd_design", "cv_deploy", "eos_config"]
         );
     }

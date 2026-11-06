@@ -255,7 +255,10 @@ impl CompiledStore {
     }
 
     /// Compile one named root and only the schema nodes reachable from it.
-    pub fn compile_schema(store: &StoreSource, schema_name: &str) -> Result<Self, CompileError> {
+    pub fn compile_schema(
+        store: &StoreSource,
+        schema_name: &crate::SchemaName,
+    ) -> Result<Self, CompileError> {
         Compiler::new(store).compile_schema(schema_name)
     }
 
@@ -456,6 +459,8 @@ impl std::fmt::Display for SchemaDiagnostics {
 /// Error raised while compiling or archiving a schema store.
 #[derive(Debug, derive_more::Display)]
 pub enum CompileError {
+    /// A requested root name is outside the supported schema-name grammar.
+    InvalidSchemaName(crate::InvalidSchemaName),
     /// One or more source-schema diagnostics prevented compilation.
     #[display("{_0}")]
     InvalidSchema(SchemaDiagnostics),
@@ -511,31 +516,38 @@ impl<'a> Compiler<'a> {
 
     fn compile(mut self) -> Result<CompiledStore, CompileError> {
         for name in self.source.schema_names() {
-            let root = self
-                .source
-                .get(name)
-                .map_err(|error| SchemaDiagnostic::Reference {
-                    schema_path: SchemaPath::root(name),
-                    reference: SchemaPath::root(name),
-                    error: error.into(),
-                })?;
-            let id = self.compile_layers(&[SourceLayer::root(root)], &SchemaPath::root(name))?;
-            self.output.roots.insert(name.to_owned(), id);
+            let root =
+                self.source
+                    .get(name.as_str())
+                    .map_err(|error| SchemaDiagnostic::Reference {
+                        schema_path: SchemaPath::root(name.clone()),
+                        reference: SchemaPath::root(name.clone()),
+                        error: error.into(),
+                    })?;
+            let id =
+                self.compile_layers(&[SourceLayer::root(root)], &SchemaPath::root(name.clone()))?;
+            self.output.roots.insert(name.to_string(), id);
         }
         Ok(self.output)
     }
 
-    fn compile_schema(mut self, schema_name: &str) -> Result<CompiledStore, CompileError> {
-        let root = self
-            .source
-            .get(schema_name)
-            .map_err(|error| SchemaDiagnostic::Reference {
-                schema_path: SchemaPath::root(schema_name),
-                reference: SchemaPath::root(schema_name),
-                error: error.into(),
-            })?;
-        let id = self.compile_layers(&[SourceLayer::root(root)], &SchemaPath::root(schema_name))?;
-        self.output.roots.insert(schema_name.to_owned(), id);
+    fn compile_schema(
+        mut self,
+        schema_name: &crate::SchemaName,
+    ) -> Result<CompiledStore, CompileError> {
+        let root =
+            self.source
+                .get(schema_name.as_str())
+                .map_err(|error| SchemaDiagnostic::Reference {
+                    schema_path: SchemaPath::root(schema_name.clone()),
+                    reference: SchemaPath::root(schema_name.clone()),
+                    error: error.into(),
+                })?;
+        let id = self.compile_layers(
+            &[SourceLayer::root(root)],
+            &SchemaPath::root(schema_name.clone()),
+        )?;
+        self.output.roots.insert(schema_name.to_string(), id);
         Ok(self.output)
     }
 
@@ -1018,17 +1030,19 @@ fn default_dynamic_keys(
             continue;
         }
         let [root_key, value_key] = source.components();
-        let child_layers = layers
+        let mut child_declarations = layers
             .iter()
-            .filter_map(|layer| dict_keys(*layer)?.get(root_key))
-            .map(SourceLayer::schema)
-            .collect::<Vec<_>>();
-        if child_layers.is_empty() {
+            .filter_map(|layer| dict_keys(*layer)?.get_key_value(root_key))
+            .peekable();
+        let Some((schema_key, _)) = child_declarations.peek() else {
             continue;
-        }
+        };
         let child_schema_path = schema_path.child(SchemaPathElement::Key {
-            key: root_key.to_owned(),
+            key: (*schema_key).clone(),
         });
+        let child_layers = child_declarations
+            .map(|(_, schema)| SourceLayer::schema(schema))
+            .collect::<Vec<_>>();
         let expanded_child_layers =
             expand_layers(compiler.source, &child_layers, &child_schema_path)?;
         let Some(default) = expanded_child_layers
@@ -1125,7 +1139,9 @@ fn schema_deprecation(layer: SourceLayer<'_>) -> Option<&Deprecation> {
     }
 }
 
-fn dict_keys(layer: SourceLayer<'_>) -> Option<&ordermap::OrderMap<String, SourceSchema>> {
+fn dict_keys(
+    layer: SourceLayer<'_>,
+) -> Option<&ordermap::OrderMap<crate::SchemaKey, SourceSchema>> {
     match layer {
         SourceLayer::Root(schema) => schema.keys.as_ref(),
         SourceLayer::Schema(SourceSchema::Dict(schema)) => schema.keys.as_ref(),
@@ -1307,7 +1323,7 @@ mod tests {
                 error: SchemaResolverError::SchemaStore(
                     SchemaStoreError::InvalidSchemaName(name)
                 ),
-            } if schema_path == &SchemaPath::root("test") && reference == &SchemaPath::root("missing") && name == "missing"
+            } if schema_path == &SchemaPath::root("test".parse().unwrap()) && reference == &SchemaPath::root("missing".parse().unwrap()) && name == "missing"
         ));
         assert_eq!(
             invalid_reference_diagnostic.to_string(),
@@ -1356,7 +1372,7 @@ mod tests {
             SchemaDiagnostic::ReferenceCycle {
                 schema_path,
                 reference,
-            } if schema_path == &SchemaPath::root("a") && reference == &SchemaPath::root("a")
+            } if schema_path == &SchemaPath::root("a".parse().unwrap()) && reference == &SchemaPath::root("a".parse().unwrap())
         ));
         assert_eq!(
             reference_cycle_diagnostic.to_string(),
@@ -1376,7 +1392,7 @@ mod tests {
         assert!(matches!(
             structural_cycle_diagnostic,
             SchemaDiagnostic::StructuralCycle { schema_path }
-                if schema_path == &SchemaPath::root("root").child(SchemaPathElement::Key { key: "child".to_owned() })
+                if schema_path == &SchemaPath::root("root".parse().unwrap()).child(SchemaPathElement::Key { key: "child".parse().unwrap() })
         ));
         assert_eq!(
             structural_cycle_diagnostic.to_string(),
@@ -1412,7 +1428,7 @@ mod tests {
             else {
                 panic!("unsupported default number should return its typed diagnostic")
             };
-            assert_eq!(schema_path, &SchemaPath::root("test"));
+            assert_eq!(schema_path, &SchemaPath::root("test".parse().unwrap()));
             assert_eq!(default_path, &expected_path);
             assert_eq!(value, expected_value);
             assert_eq!(

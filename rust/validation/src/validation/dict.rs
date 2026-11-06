@@ -241,8 +241,8 @@ mod tests {
     fn validate_key_type_ok() {
         let schema = SourceDict {
             keys: Some(OrderMap::from_iter([
-                ("foo".into(), SourceStr::default().into()),
-                ("bar".into(), SourceInt::default().into()),
+                ("foo".parse().unwrap(), SourceStr::default().into()),
+                ("bar".parse().unwrap(), SourceInt::default().into()),
             ])),
             ..Default::default()
         };
@@ -256,8 +256,8 @@ mod tests {
     fn validate_key_type_err() {
         let schema = SourceDict {
             keys: Some(OrderMap::from_iter([
-                ("foo".into(), SourceStr::default().into()),
-                ("bar".into(), SourceInt::default().into()),
+                ("foo".parse().unwrap(), SourceStr::default().into()),
+                ("bar".parse().unwrap(), SourceInt::default().into()),
             ])),
             ..Default::default()
         };
@@ -296,8 +296,8 @@ mod tests {
     fn validate_key_type_coerced_ok() {
         let schema = SourceDict {
             keys: Some(OrderMap::from_iter([
-                ("foo".into(), SourceStr::default().into()),
-                ("bar".into(), SourceInt::default().into()),
+                ("foo".parse().unwrap(), SourceStr::default().into()),
+                ("bar".parse().unwrap(), SourceInt::default().into()),
             ])),
             ..Default::default()
         };
@@ -380,12 +380,12 @@ mod tests {
     fn validate_dynamic_keys_ok() {
         let schema = SourceRootDict {
             keys: Some(OrderMap::from_iter([(
-                "node_type_keys".into(),
+                "node_type_keys".parse().unwrap(),
                 SourceList {
                     items: Some(Box::new(
                         SourceDict {
                             keys: Some(OrderMap::from_iter([(
-                                "key".into(),
+                                "key".parse().unwrap(),
                                 SourceStr::default().into(),
                             )])),
                             ..Default::default()
@@ -419,12 +419,12 @@ mod tests {
     fn validate_dynamic_keys_err() {
         let schema = SourceRootDict {
             keys: Some(OrderMap::from_iter([(
-                "node_type_keys".into(),
+                "node_type_keys".parse().unwrap(),
                 SourceList {
                     items: Some(Box::new(
                         SourceDict {
                             keys: Some(OrderMap::from_iter([(
-                                "key".into(),
+                                "key".parse().unwrap(),
                                 SourceStr::default().into(),
                             )])),
                             ..Default::default()
@@ -511,7 +511,7 @@ mod tests {
     fn validate_static_key_beats_dynamic_key_override_collision() {
         let schema = SourceRootDict {
             keys: Some(OrderMap::from_iter([(
-                "dynkey1".into(),
+                "dynkey1".parse().unwrap(),
                 SourceStr::default().into(),
             )])),
             dynamic_keys: Some(OrderMap::from_iter([(
@@ -543,12 +543,12 @@ mod tests {
     fn validate_dynamic_keys_from_defaults_ok() {
         let schema = SourceRootDict {
             keys: Some(OrderMap::from_iter([(
-                "node_type_keys".into(),
+                "node_type_keys".parse().unwrap(),
                 SourceList {
                     items: Some(Box::new(
                         SourceDict {
                             keys: Some(OrderMap::from_iter([(
-                                "key".into(),
+                                "key".parse().unwrap(),
                                 SourceStr::default().into(),
                             )])),
                             ..Default::default()
@@ -588,12 +588,12 @@ mod tests {
     fn validate_dynamic_keys_from_defaults_err() {
         let schema = SourceRootDict {
             keys: Some(OrderMap::from_iter([(
-                "node_type_keys".into(),
+                "node_type_keys".parse().unwrap(),
                 SourceList {
                     items: Some(Box::new(
                         SourceDict {
                             keys: Some(OrderMap::from_iter([(
-                                "key".into(),
+                                "key".parse().unwrap(),
                                 SourceStr::default().into(),
                             )])),
                             ..Default::default()
@@ -615,7 +615,7 @@ mod tests {
                 DynamicKeySource::NodeTypes,
                 SourceDict {
                     keys: Some(OrderMap::from_iter([(
-                        "sub_key".into(),
+                        "sub_key".parse().unwrap(),
                         SourceInt {
                             max: Some(10),
                             ..Default::default()
@@ -671,7 +671,7 @@ mod tests {
     fn validate_key_allowed_ok() {
         let schema = SourceDict {
             keys: Some(OrderMap::from_iter([(
-                "foo".into(),
+                "foo".parse().unwrap(),
                 SourceStr::default().into(),
             )])),
             allow_other_keys: Some(true),
@@ -687,7 +687,7 @@ mod tests {
     fn validate_key_allowed_err() {
         let schema = SourceDict {
             keys: Some(OrderMap::from_iter([(
-                "foo".into(),
+                "foo".parse().unwrap(),
                 SourceStr::default().into(),
             )])),
             ..Default::default()
@@ -711,7 +711,7 @@ mod tests {
     fn validate_yaml_unexpected_key_uses_key_span() {
         let schema = SourceDict {
             keys: Some(OrderMap::from_iter([(
-                "foo".into(),
+                "foo".parse().unwrap(),
                 SourceStr::default().into(),
             )])),
             ..Default::default()
@@ -738,7 +738,7 @@ mod tests {
     fn validate_yaml_duplicate_key_err() {
         let schema = SourceDict {
             keys: Some(OrderMap::from_iter([(
-                "foo".into(),
+                "foo".parse().unwrap(),
                 SourceStr::default().into(),
             )])),
             ..Default::default()
@@ -773,10 +773,10 @@ mod tests {
     fn validate_yaml_duplicate_key_err_on_schema_validated_nested_dict() {
         let schema = SourceDict {
             keys: Some(OrderMap::from_iter([(
-                "outer".into(),
+                "outer".parse().unwrap(),
                 SourceDict {
                     keys: Some(OrderMap::from_iter([(
-                        "inner".into(),
+                        "inner".parse().unwrap(),
                         SourceStr::default().into(),
                     )])),
                     ..Default::default()
@@ -815,8 +815,8 @@ mod tests {
     fn validate_yaml_duplicate_key_restores_path_before_later_errors() {
         let schema = SourceDict {
             keys: Some(OrderMap::from_iter([
-                ("foo".into(), SourceStr::default().into()),
-                ("baz".into(), SourceStr::default().into()),
+                ("foo".parse().unwrap(), SourceStr::default().into()),
+                ("baz".parse().unwrap(), SourceStr::default().into()),
             ])),
             ..Default::default()
         };
@@ -868,7 +868,7 @@ mod tests {
     fn validate_yaml_non_string_key_does_not_match_schema_key() {
         let schema = SourceDict {
             keys: Some(OrderMap::from_iter([(
-                "123".into(),
+                "123".parse().unwrap(),
                 SourceStr::default().into(),
             )])),
             ..Default::default()
@@ -895,7 +895,7 @@ mod tests {
     fn validate_yaml_non_string_key_allowed_and_preserved_in_coerced_output() {
         let schema = SourceDict {
             keys: Some(OrderMap::from_iter([(
-                "foo".into(),
+                "foo".parse().unwrap(),
                 SourceStr::default().into(),
             )])),
             allow_other_keys: Some(true),
@@ -932,7 +932,7 @@ mod tests {
     fn validate_underscore_key_preserved() {
         let schema = SourceDict {
             keys: Some(OrderMap::from_iter([(
-                "foo".into(),
+                "foo".parse().unwrap(),
                 SourceStr::default().into(),
             )])),
             ..Default::default()
@@ -1336,7 +1336,7 @@ mod tests {
     fn validate_key_required_ok() {
         let schema = SourceDict {
             keys: Some(OrderMap::from_iter([(
-                "foo".into(),
+                "foo".parse().unwrap(),
                 SourceStr {
                     base: Base {
                         required: Some(true),
@@ -1378,7 +1378,7 @@ mod tests {
     fn validate_key_required_err() {
         let schema = SourceDict {
             keys: Some(OrderMap::from_iter([(
-                "foo".into(),
+                "foo".parse().unwrap(),
                 SourceStr {
                     base: Base {
                         required: Some(true),
@@ -1409,7 +1409,7 @@ mod tests {
     fn validate_key_required_relaxed_root_dict_ok() {
         let schema = SourceDict {
             keys: Some(OrderMap::from_iter([(
-                "foo".into(),
+                "foo".parse().unwrap(),
                 SourceStr {
                     base: Base {
                         required: Some(true),
@@ -1436,7 +1436,7 @@ mod tests {
     fn validate_key_required_relaxed_root_dict_err() {
         let schema = SourceDict {
             keys: Some(OrderMap::from_iter([(
-                "foo".into(),
+                "foo".parse().unwrap(),
                 SourceStr {
                     base: Base {
                         required: Some(true),

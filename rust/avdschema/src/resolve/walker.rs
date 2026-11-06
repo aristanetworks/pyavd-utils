@@ -36,7 +36,7 @@ impl Walker for SourceSchema {
             },
             Self::Dict(schema) => match element {
                 SchemaPathElement::Key { key } => {
-                    walk_mapping(schema.keys.as_ref(), key, "keys", key, remaining)
+                    walk_mapping(schema.keys.as_ref(), key, "keys", key.as_str(), remaining)
                 }
                 _ => Err(SchemaWalkError::InvalidPathElement {
                     element: element_name(element),
@@ -54,7 +54,7 @@ impl Walker for SourceRootDict {
         };
         match element {
             SchemaPathElement::Key { key } => {
-                walk_mapping(self.keys.as_ref(), key, "keys", key, remaining)
+                walk_mapping(self.keys.as_ref(), key, "keys", key.as_str(), remaining)
             }
             SchemaPathElement::DynamicKey { source } => walk_mapping(
                 self.dynamic_keys.as_ref(),
@@ -63,9 +63,13 @@ impl Walker for SourceRootDict {
                 source.path(),
                 remaining,
             ),
-            SchemaPathElement::Definition { name } => {
-                walk_mapping(self.schema_defs.as_ref(), name, "$defs", name, remaining)
-            }
+            SchemaPathElement::Definition { name } => walk_mapping(
+                self.schema_defs.as_ref(),
+                name,
+                "$defs",
+                name.as_str(),
+                remaining,
+            ),
             SchemaPathElement::Items => Err(SchemaWalkError::InvalidPathElement {
                 element: "items".to_owned(),
             }),

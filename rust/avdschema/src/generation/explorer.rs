@@ -174,7 +174,7 @@ impl SchemaVisitor for ExplorerProjection<'_> {
             return Ok(TraversalControl::Descend);
         }
         let name = match occurrence.relation() {
-            Some(SchemaPathElement::Key { key }) => key.clone(),
+            Some(SchemaPathElement::Key { key }) => key.to_string(),
             Some(SchemaPathElement::DynamicKey { source }) => format!("<{}>", source.path()),
             None | Some(SchemaPathElement::Items) => unreachable!("handled above"),
             Some(SchemaPathElement::Definition { .. }) => {

@@ -262,8 +262,8 @@ impl<'a> DocumentationProjection<'a> {
                 match &mut parent.kind {
                     DocFrameKind::Node(parent) => Some(Self::draft_with_context(
                         occurrence,
-                        Some(name.to_owned()),
-                        path_with(&parent.path, name),
+                        Some(name.to_string()),
+                        path_with(&parent.path, name.as_str()),
                         parent.table.as_deref(),
                         false,
                         false,
@@ -278,8 +278,8 @@ impl<'a> DocumentationProjection<'a> {
                         let is_primary_key = primary_key.as_deref() == Some(name.as_str());
                         let draft = Self::draft_with_context(
                             occurrence,
-                            Some(name.to_owned()),
-                            path_with(&parent.path, name),
+                            Some(name.to_string()),
+                            path_with(&parent.path, name.as_str()),
                             parent.table.as_deref(),
                             is_primary_key,
                             is_primary_key && *unique_primary_key,

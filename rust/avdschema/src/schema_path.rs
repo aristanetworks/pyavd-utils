@@ -30,7 +30,7 @@ pub enum SchemaPathElement {
     /// A statically named dictionary child, including keys literally named `keys` or `items`.
     Key {
         /// Name of the child.
-        key: String,
+        key: crate::SchemaKey,
     },
     /// A root dynamic-key declaration, not one of its concrete input key names.
     DynamicKey {
@@ -42,7 +42,7 @@ pub enum SchemaPathElement {
     /// A reusable definition on a named source-schema root.
     Definition {
         /// Name under `$defs`.
-        name: String,
+        name: crate::SchemaKey,
     },
 }
 
@@ -51,9 +51,9 @@ pub enum SchemaPathElement {
 /// Display and Serde use the absolute AVD `$ref` string syntax (`schema#/keys/name`).
 /// Deserialization checks the path grammar without resolving a schema store. Existence,
 /// node-type compatibility, and reference cycles are checked when compiling source schemas.
-/// Names are literal strings and are not checked against metaschema naming conventions.
-/// Parsed names must be nonempty. The wire format does not escape `/` or `#` within key
-/// or definition names.
+/// Schema names use [`crate::SchemaName`]; key and definition names use [`crate::SchemaKey`].
+/// These types enforce the compatibility grammar during both construction and loading.
+/// The authoring metaschema can impose stricter spelling conventions.
 ///
 /// ```
 /// use avdschema::{SchemaPath, SchemaPathElement};
@@ -66,15 +66,15 @@ pub enum SchemaPathElement {
 /// ```
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct SchemaPath {
-    schema: String,
+    schema: crate::SchemaName,
     elements: Vec<SchemaPathElement>,
 }
 
 impl SchemaPath {
-    /// Address the root of a named schema without parsing a reference string.
-    pub fn root(schema: impl Into<String>) -> Self {
+    /// Address the root of a schema whose name has already been validated.
+    pub fn root(schema: crate::SchemaName) -> Self {
         Self {
-            schema: schema.into(),
+            schema,
             elements: Vec::new(),
         }
     }
@@ -88,7 +88,7 @@ impl SchemaPath {
         )
     )]
     pub fn schema_name(&self) -> &str {
-        &self.schema
+        self.schema.as_str()
     }
 
     /// Structural edges from the named root to this location.
@@ -189,6 +189,12 @@ pub enum SchemaPathParseError {
         /// Unmodified authored reference.
         reference: String,
     },
+    /// The root name does not match the schema-name compatibility grammar.
+    #[display("{_0}")]
+    InvalidSchemaName(crate::InvalidSchemaName),
+    /// A static key or definition name does not match the key compatibility grammar.
+    #[display("{_0}")]
+    InvalidKey(crate::InvalidSchemaKey),
     /// A component is not a supported structural edge.
     #[display("Invalid schema path element '{element}'.")]
     InvalidElement {
@@ -228,7 +234,11 @@ impl FromStr for SchemaPath {
         if components.clone().any(str::is_empty) {
             return Err(invalid());
         }
-        let mut path = Self::root(schema);
+        let mut path = Self::root(
+            schema
+                .parse()
+                .map_err(SchemaPathParseError::InvalidSchemaName)?,
+        );
         while let Some(component) = components.next() {
             let element = match component {
                 "items" => SchemaPathElement::Items,
@@ -240,10 +250,10 @@ impl FromStr for SchemaPath {
                     })?;
                     match component {
                         "keys" => SchemaPathElement::Key {
-                            key: name.to_owned(),
+                            key: name.parse().map_err(SchemaPathParseError::InvalidKey)?,
                         },
                         "$defs" => SchemaPathElement::Definition {
-                            name: name.to_owned(),
+                            name: name.parse().map_err(SchemaPathParseError::InvalidKey)?,
                         },
                         _ => SchemaPathElement::DynamicKey {
                             source: DynamicKeySource::try_from(name)
@@ -302,7 +312,7 @@ mod tests {
         assert_eq!(
             reference.elements(),
             &[SchemaPathElement::Key {
-                key: "settings".into()
+                key: "settings".parse().unwrap()
             }]
         );
         assert_eq!(serde_json::to_value(source).unwrap(), json);
@@ -404,9 +414,11 @@ mod tests {
         assert_eq!(
             path.elements(),
             &[
-                SchemaPathElement::Key { key: "keys".into() },
                 SchemaPathElement::Key {
-                    key: "items".into()
+                    key: "keys".parse().unwrap()
+                },
+                SchemaPathElement::Key {
+                    key: "items".parse().unwrap()
                 },
                 SchemaPathElement::Items,
             ]
@@ -415,7 +427,7 @@ mod tests {
 
     #[test]
     fn programmatic_children_keep_their_parent_and_dynamic_source_identity() {
-        let root = SchemaPath::root("schema");
+        let root = SchemaPath::root("schema".parse().unwrap());
         let declaration = root.child(SchemaPathElement::DynamicKey {
             source: DynamicKeySource::NetworkServices,
         });
@@ -430,30 +442,26 @@ mod tests {
         );
         assert_ne!(
             declaration,
-            root.child(SchemaPathElement::Key {
-                key: "network_services_keys.name".into()
+            root.child(SchemaPathElement::DynamicKey {
+                source: DynamicKeySource::NodeTypes,
             })
         );
+        assert!(crate::SchemaKey::new(DynamicKeySource::NetworkServices.path()).is_err());
     }
 
     #[test]
-    fn programmatic_reference_names_round_trip_without_authoring_spelling_checks() {
-        for schema in ["Schema", "schema1", "shared-schema", "共有"] {
-            for name in [
-                "Vxlan1",
-                "MIB_family_name",
-                "1name",
-                "na-me",
-                "a$b",
-                "name\n",
-                "na~1me",
-                "é",
-            ] {
+    fn validated_reference_names_round_trip() {
+        for schema in ["Schema", "schema1", "shared-schema", "_schema", "123"] {
+            for name in ["Vxlan1", "MIB_family_name", "1name", "_private", "name_42"] {
                 for element in [
-                    SchemaPathElement::Key { key: name.into() },
-                    SchemaPathElement::Definition { name: name.into() },
+                    SchemaPathElement::Key {
+                        key: name.parse().unwrap(),
+                    },
+                    SchemaPathElement::Definition {
+                        name: name.parse().unwrap(),
+                    },
                 ] {
-                    let path = SchemaPath::root(schema).child(element);
+                    let path = SchemaPath::root(schema.parse().unwrap()).child(element);
                     assert_eq!(path.to_string().parse::<SchemaPath>().unwrap(), path);
                     let path_json = serde_json::to_string(&path).unwrap();
                     assert_eq!(
@@ -509,6 +517,22 @@ mod tests {
                 ),
                 "{reference:?}"
             );
+        }
+    }
+
+    #[test]
+    fn reference_names_use_the_same_validation_as_source_keys_and_roots() {
+        for name in ["with-dash", "with.dot", "space key", "é", "name\n"] {
+            for container in ["keys", "$defs"] {
+                let reference = format!("valid#/{container}/{name}");
+                assert!(matches!(reference.parse::<SchemaPath>(),
+                    Err(SchemaPathParseError::InvalidKey(error)) if error.value == name));
+            }
+        }
+        for name in ["with.dot", "space name", "é"] {
+            let reference = format!("{name}#");
+            assert!(matches!(reference.parse::<SchemaPath>(),
+                Err(SchemaPathParseError::InvalidSchemaName(error)) if error.value == name));
         }
     }
 

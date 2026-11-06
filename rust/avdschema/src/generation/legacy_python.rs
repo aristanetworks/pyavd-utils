@@ -174,7 +174,7 @@ impl PythonNode {
     fn attach(&mut self, child: Self) {
         match child.path.elements().last() {
             Some(SchemaPathElement::Key { key }) => {
-                self.keys.insert(key.clone(), child);
+                self.keys.insert(key.to_string(), child);
             }
             Some(SchemaPathElement::DynamicKey { source }) => {
                 self.dynamic_keys.insert(*source, child);
@@ -250,7 +250,10 @@ impl SchemaVisitor for PythonProjection<'_> {
         } else if self.stack.len() == 1
             && let Some(SchemaPathElement::Key { key: name }) = occurrence.relation()
             && !self.root_keys.is_empty()
-            && !self.root_keys.iter().any(|selected| selected == name)
+            && !self
+                .root_keys
+                .iter()
+                .any(|selected| selected == name.as_str())
         {
             self.stack.push(None);
             return Ok(TraversalControl::SkipChildren);

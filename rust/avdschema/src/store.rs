@@ -115,7 +115,9 @@ impl Store {
 
     /// Compile one named root and its reachable schema nodes into owned bytes.
     pub fn compile_schema(source: &StoreSource, schema_name: &str) -> Result<Self, StoreError> {
-        let bytes = CompiledStore::compile_schema(source, schema_name)?.to_bytes()?;
+        let schema_name =
+            crate::SchemaName::new(schema_name).map_err(crate::CompileError::InvalidSchemaName)?;
+        let bytes = CompiledStore::compile_schema(source, &schema_name)?.to_bytes()?;
         Self::from_bytes(ArchiveBytes::Owned(bytes))
     }
 

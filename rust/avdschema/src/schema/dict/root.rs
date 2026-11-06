@@ -47,13 +47,13 @@ use crate::utils::load::LoadFromFragments;
 #[serde(deny_unknown_fields)]
 pub struct SourceRootDict {
     /// Dictionary of dictionary-keys in the format `{<keyname>: {<schema>}}`.
-    /// `keyname` must use `snake_case`.
-    /// `schema` is the schema for each key. This is a recursive schema, so the value must conform to AVD Schema
+    /// Names must match `[A-Za-z0-9_]+` during loading. The authoring metaschema
+    /// restricts new schema keys to snake case (with documented exceptions).
     #[cfg_attr(
         feature = "metaschema",
         schemars(with = "Option<std::collections::BTreeMap<MetaStaticSchemaKey, SourceSchema>>")
     )]
-    pub keys: Option<OrderMap<String, SourceSchema>>,
+    pub keys: Option<OrderMap<crate::SchemaKey, SourceSchema>>,
     /// Dictionary of dynamic keys in the format `{<variable.path>: <schema>}`.
     /// The dot-notation path is relative to the root input dictionary being validated and points to
     /// values containing additional key names. When a path traverses a list, every list item
@@ -86,7 +86,7 @@ pub struct SourceRootDict {
         feature = "metaschema",
         schemars(with = "Option<std::collections::BTreeMap<MetaDefinitionKey, SourceSchema>>")
     )]
-    pub schema_defs: Option<OrderMap<String, SourceSchema>>,
+    pub schema_defs: Option<OrderMap<crate::SchemaKey, SourceSchema>>,
     /// Properties shared with every schema value.
     #[serde(flatten)]
     #[cfg_attr(feature = "metaschema", schemars(with = "Base<MetaObject>"))]

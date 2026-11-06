@@ -40,7 +40,7 @@ The validator's regex-format check does not guarantee compatibility with the run
 regex engine.
 
 Source loading and compilation do not apply the generated metaschema or enforce its
-authoring conventions. AVD 5.7.3 source schemas must remain compilable; they can be
+stricter authoring conventions. AVD 5.7.3 source schemas must remain compilable; they can be
 validated separately with the metaschema shipped with that AVD version. In particular,
 `MIB_family_name` is excluded from the generated 6.x metaschema without restricting
 its acceptance by the loader or compiler. `Vxlan1` remains accepted by the generated
@@ -55,9 +55,12 @@ contract is independent of authoring conventions such as static-key spelling.
 Source deserialization parses each `$ref` string into a typed `SchemaPath`, rejecting invalid
 reference syntax and unsupported structural path steps even in unused definitions. Display
 and serialization retain the authored string form, such as `avd_design#/keys/devices/items`.
-Reference parsing does not enforce the metaschema's naming conventions: uppercase and other
-literal names remain supported. `/` and `#` remain wire delimiters without an escape syntax
-for key or definition names.
+Static keys and definition names use `SchemaKey`, enforcing `[A-Za-z0-9_]+`. Schema root
+names use `SchemaName`, enforcing `[A-Za-z0-9_-]+`. Construction, reference parsing, and
+source deserialization share these checks; uppercase and digit-leading names remain
+supported. The private representations ensure every constructed schema path round-trips
+through its string representation. Dynamic declaration sources retain their separate enum,
+and concrete input keys and default-value dictionary keys remain unrestricted strings.
 
 Compilation checks reference resolution, type compatibility, and cycles for declarations
 it traverses. It does not necessarily resolve references in unused definitions. This

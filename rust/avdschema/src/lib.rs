@@ -74,6 +74,8 @@ mod resolve;
     reason = "Legacy source schema model API predates missing-doc enforcement."
 )]
 mod schema;
+mod schema_key;
+mod schema_name;
 mod schema_path;
 mod source_layers;
 #[allow(
@@ -125,6 +127,10 @@ pub use self::schema::dict::dynamic_keys::UnsupportedDynamicKeySource;
 pub use self::schema::int;
 pub use self::schema::list;
 pub use self::schema::str;
+pub use self::schema_key::InvalidSchemaKey;
+pub use self::schema_key::SchemaKey;
+pub use self::schema_name::InvalidSchemaName;
+pub use self::schema_name::SchemaName;
 pub use self::schema_path::SchemaPath;
 pub use self::schema_path::SchemaPathElement;
 pub use self::schema_path::SchemaPathParseError;

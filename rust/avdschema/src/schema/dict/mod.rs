@@ -63,13 +63,13 @@ struct MetaDefinitionKey(#[schemars(regex(pattern = "^[a-z][a-z0-9_]*$"))] Strin
 pub struct SourceDict {
     /// Dictionary of recursive dictionary keys in the format `{<keyname>: {<schema>}}`.
     ///
-    /// `keyname` must use snake case. `schema` is recursive and must conform
-    /// to the AVD schema format.
+    /// Names must match `[A-Za-z0-9_]+` during loading. The authoring metaschema
+    /// restricts new schema keys to snake case (with documented exceptions).
     #[cfg_attr(
         feature = "metaschema",
         schemars(with = "Option<std::collections::BTreeMap<MetaStaticSchemaKey, SourceSchema>>")
     )]
-    pub keys: Option<OrderMap<String, SourceSchema>>,
+    pub keys: Option<OrderMap<crate::SchemaKey, SourceSchema>>,
     /// Whether input keys absent from `keys` and resolved `dynamic_keys` are accepted.
     /// Default is false.
     pub allow_other_keys: Option<bool>,

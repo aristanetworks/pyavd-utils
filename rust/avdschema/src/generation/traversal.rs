@@ -201,7 +201,7 @@ pub(crate) trait SchemaVisitor {
 pub(crate) struct SchemaTraverser<'a> {
     source: &'a StoreSource,
     compiled: CompiledStore,
-    schema_name: &'a str,
+    schema_name: crate::SchemaName,
     root_source: &'a SourceRootDict,
     root_id: SchemaId,
 }
@@ -212,21 +212,22 @@ impl<'a> SchemaTraverser<'a> {
         source: &'a StoreSource,
         schema_name: &'a str,
     ) -> Result<Self, CompileError> {
-        let compiled = CompiledStore::compile_schema(source, schema_name)?;
-        let root_source = source
-            .get(schema_name)
-            .map_err(|error| SchemaDiagnostic::Reference {
-                schema_path: SchemaPath::root(schema_name),
-                reference: SchemaPath::root(schema_name),
-                error: error.into(),
-            })?;
-        let root_id =
-            *compiled
-                .roots
-                .get(schema_name)
-                .ok_or_else(|| SchemaDiagnostic::StructuralCycle {
-                    schema_path: SchemaPath::root(schema_name),
+        let schema_name =
+            crate::SchemaName::new(schema_name).map_err(CompileError::InvalidSchemaName)?;
+        let compiled = CompiledStore::compile_schema(source, &schema_name)?;
+        let root_source =
+            source
+                .get(schema_name.as_str())
+                .map_err(|error| SchemaDiagnostic::Reference {
+                    schema_path: SchemaPath::root(schema_name.clone()),
+                    reference: SchemaPath::root(schema_name.clone()),
+                    error: error.into(),
                 })?;
+        let root_id = *compiled.roots.get(schema_name.as_str()).ok_or_else(|| {
+            SchemaDiagnostic::StructuralCycle {
+                schema_path: SchemaPath::root(schema_name.clone()),
+            }
+        })?;
         Ok(Self {
             source,
             compiled,
@@ -250,7 +251,7 @@ impl<'a> SchemaTraverser<'a> {
         self.visit(
             &[SourceLayer::root(self.root_source)],
             self.root_id,
-            SchemaPath::root(self.schema_name),
+            SchemaPath::root(self.schema_name.clone()),
             visitor,
             config,
         )
@@ -335,15 +336,18 @@ impl<'a> SchemaTraverser<'a> {
                 let dict = &self.compiled.dicts[index as usize];
                 let key_layers = dict_child_layers(layers);
                 for (name, child_id) in &dict.keys {
-                    let declared = key_layers.get(name.as_str()).ok_or_else(|| {
-                        CompileError::from(SchemaDiagnostic::StructuralCycle {
-                            schema_path: path.child(SchemaPathElement::Key { key: name.clone() }),
-                        })
-                    })?;
+                    let (source_key, declared) =
+                        key_layers.get_key_value(name.as_str()).ok_or_else(|| {
+                            CompileError::from(SchemaDiagnostic::StructuralCycle {
+                                schema_path: path.clone(),
+                            })
+                        })?;
                     self.visit(
                         declared,
                         *child_id,
-                        path.child(SchemaPathElement::Key { key: name.clone() }),
+                        path.child(SchemaPathElement::Key {
+                            key: (*source_key).clone(),
+                        }),
                         visitor,
                         config,
                     )?;
@@ -370,7 +374,9 @@ impl<'a> SchemaTraverser<'a> {
     }
 }
 
-fn dict_child_layers<'a>(layers: &[SourceLayer<'a>]) -> IndexMap<&'a str, Vec<SourceLayer<'a>>> {
+fn dict_child_layers<'a>(
+    layers: &[SourceLayer<'a>],
+) -> IndexMap<&'a crate::SchemaKey, Vec<SourceLayer<'a>>> {
     let mut children = IndexMap::new();
     for layer in layers {
         let map = match layer {
@@ -380,7 +386,7 @@ fn dict_child_layers<'a>(layers: &[SourceLayer<'a>]) -> IndexMap<&'a str, Vec<So
         };
         for (name, child) in map.into_iter().flat_map(|map| map.iter()) {
             children
-                .entry(name.as_str())
+                .entry(name)
                 .or_insert_with(Vec::new)
                 .push(SourceLayer::schema(child));
         }
@@ -501,7 +507,7 @@ mod tests {
                     .map(ToString::to_string)
                     .collect(),
             ));
-            if matches!(occurrence.relation(), Some(SchemaPathElement::Key { key }) if key == "first")
+            if matches!(occurrence.relation(), Some(SchemaPathElement::Key { key }) if key.as_str() == "first")
             {
                 Ok(TraversalControl::SkipChildren)
             } else {
@@ -548,26 +554,26 @@ mod tests {
         assert_eq!(
             visitor.visits,
             vec![
-                (SchemaPath::root("model"), Vec::new()),
+                (SchemaPath::root("model".parse().unwrap()), Vec::new()),
                 (
-                    SchemaPath::root("model").child(SchemaPathElement::Key {
-                        key: "first".to_owned(),
+                    SchemaPath::root("model".parse().unwrap()).child(SchemaPathElement::Key {
+                        key: "first".parse().unwrap(),
                     }),
                     vec!["shared#".to_owned()],
                 ),
                 (
-                    SchemaPath::root("model").child(SchemaPathElement::Key {
-                        key: "second".to_owned(),
+                    SchemaPath::root("model".parse().unwrap()).child(SchemaPathElement::Key {
+                        key: "second".parse().unwrap(),
                     }),
                     vec!["shared#".to_owned()],
                 ),
                 (
-                    SchemaPath::root("model")
+                    SchemaPath::root("model".parse().unwrap())
                         .child(SchemaPathElement::Key {
-                            key: "second".to_owned(),
+                            key: "second".parse().unwrap(),
                         })
                         .child(SchemaPathElement::Key {
-                            key: "value".to_owned(),
+                            key: "value".parse().unwrap(),
                         }),
                     Vec::new(),
                 ),
