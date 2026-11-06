@@ -225,20 +225,16 @@ jobs:
       - name: Download pyavd-utils wheels
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          path: dist/pyavd-utils/
+          path: dist/
           merge-multiple: true
           pattern: pyavd-utils-wheels-*
       - name: Download pyavd-utils-gen wheels
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          path: dist/pyavd-utils-gen/
+          path: dist/
           merge-multiple: true
           pattern: pyavd-utils-gen-wheels-*
-      - name: Publish pyavd-utils to PyPI
+      - name: Publish pyavd-utils and pyavd-utils-gen to PyPI
         uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
         with:
-          packages-dir: dist/pyavd-utils/
-      - name: Publish pyavd-utils-gen to PyPI
-        uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
-        with:
-          packages-dir: dist/pyavd-utils-gen/
+          packages-dir: dist/
