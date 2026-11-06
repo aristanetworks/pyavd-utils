@@ -51,6 +51,9 @@ pub enum SchemaPathElement {
 /// Display and Serde use the absolute AVD `$ref` string syntax (`schema#/keys/name`).
 /// Deserialization checks the path grammar without resolving a schema store. Existence,
 /// node-type compatibility, and reference cycles are checked when compiling source schemas.
+/// Names are literal strings and are not checked against metaschema naming conventions.
+/// Parsed names must be nonempty. The wire format does not escape `/` or `#` within key
+/// or definition names.
 ///
 /// ```
 /// use avdschema::{SchemaPath, SchemaPathElement};
@@ -150,8 +153,8 @@ impl schemars::JsonSchema for SchemaPath {
     }
 
     fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
-        // Authoring tools see the wire string, never the internal path fields. The parser
-        // additionally checks structural edges; graph-dependent checks require a schema store.
+        // Authoring tools see the wire string, never the internal path fields. This naming
+        // pattern is authoring policy; runtime parsing checks delimiters and structural edges.
         schemars::json_schema!({
             "type": "string",
             "pattern": r"^[a-z][a-z_]*#(/[a-z$][\.a-z0-9_]*)*$",
@@ -213,33 +216,17 @@ impl FromStr for SchemaPath {
             reference: reference.to_owned(),
         };
         let (schema, suffix) = reference.split_once('#').ok_or_else(invalid)?;
-        // AVD references use a restricted grammar, not general JSON Pointer syntax.
-        if !schema
-            .as_bytes()
-            .first()
-            .is_some_and(u8::is_ascii_lowercase)
-            || !schema
-                .bytes()
-                .all(|byte| byte.is_ascii_lowercase() || byte == b'_')
+        // Validate delimiters, not naming conventions. Source dictionary keys are ordinary
+        // strings, including historical names excluded from the authoring metaschema.
+        if schema.is_empty()
+            || suffix.contains('#')
             || (!suffix.is_empty() && !suffix.starts_with('/'))
         {
             return Err(invalid());
         }
         let mut components = suffix.split('/').skip(1);
-        for component in components.clone() {
-            if !component
-                .as_bytes()
-                .first()
-                .is_some_and(|byte| byte.is_ascii_lowercase() || *byte == b'$')
-                || !component.bytes().all(|byte| {
-                    byte.is_ascii_lowercase()
-                        || byte.is_ascii_digit()
-                        || matches!(byte, b'_' | b'.' | b'$')
-                })
-                || component.bytes().skip(1).any(|byte| byte == b'$')
-            {
-                return Err(invalid());
-            }
+        if components.clone().any(str::is_empty) {
+            return Err(invalid());
         }
         let mut path = Self::root(schema);
         while let Some(component) = components.next() {
@@ -450,21 +437,70 @@ mod tests {
     }
 
     #[test]
+    fn programmatic_reference_names_round_trip_without_authoring_spelling_checks() {
+        for schema in ["Schema", "schema1", "shared-schema", "共有"] {
+            for name in [
+                "Vxlan1",
+                "MIB_family_name",
+                "1name",
+                "na-me",
+                "a$b",
+                "name\n",
+                "na~1me",
+                "é",
+            ] {
+                for element in [
+                    SchemaPathElement::Key { key: name.into() },
+                    SchemaPathElement::Definition { name: name.into() },
+                ] {
+                    let path = SchemaPath::root(schema).child(element);
+                    assert_eq!(path.to_string().parse::<SchemaPath>().unwrap(), path);
+                    let path_json = serde_json::to_string(&path).unwrap();
+                    assert_eq!(
+                        serde_json::from_str::<SchemaPath>(&path_json).unwrap(),
+                        path
+                    );
+
+                    let mut dict = crate::dict::SourceDict::default();
+                    dict.base.schema_ref = Some(path);
+                    let source = crate::any::SourceSchema::Dict(dict);
+                    let source_json = serde_json::to_string(&source).unwrap();
+                    assert_eq!(
+                        serde_json::from_str::<crate::any::SourceSchema>(&source_json).unwrap(),
+                        source
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn source_loading_and_compilation_accept_legacy_reference_names() {
+        for reference in [
+            "SharedSchema1#/keys/Vxlan1",
+            "SharedSchema1#/$defs/SharedType",
+        ] {
+            let json = serde_json::json!({
+                "Model1": {"type": "dict", "keys": {"copy": {"type": "str", "$ref": reference}}},
+                "SharedSchema1": {"type": "dict", "keys": {"Vxlan1": {"type": "str"}}, "$defs": {"SharedType": {"type": "str"}}}
+            });
+            let source = StoreSource::from_json(&json.to_string()).unwrap();
+            crate::Store::compile(&source).unwrap();
+        }
+    }
+
+    #[test]
     fn malformed_reference_syntax_is_rejected_at_the_boundary() {
         for reference in [
             "schema",
             "#",
-            "Schema#",
-            "schema1#",
             "schema#keys/name",
             "schema#/",
             "schema#/keys/",
-            "schema#/keys/na-me",
-            "schema#/keys/a$b",
             "schema##",
-            "schema#/keys/name\n",
-            "schema#/keys/na~1me",
-            "schema#/keys/é",
+            "schema#/keys/name#suffix",
+            "schema#/keys//items",
+            "schema#/items/",
         ] {
             assert!(
                 matches!(

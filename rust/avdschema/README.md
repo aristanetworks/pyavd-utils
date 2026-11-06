@@ -55,6 +55,9 @@ contract is independent of authoring conventions such as static-key spelling.
 Source deserialization parses each `$ref` string into a typed `SchemaPath`, rejecting invalid
 reference syntax and unsupported structural path steps even in unused definitions. Display
 and serialization retain the authored string form, such as `avd_design#/keys/devices/items`.
+Reference parsing does not enforce the metaschema's naming conventions: uppercase and other
+literal names remain supported. `/` and `#` remain wire delimiters without an escape syntax
+for key or definition names.
 
 Compilation checks reference resolution, type compatibility, and cycles for declarations
 it traverses. It does not necessarily resolve references in unused definitions. This
