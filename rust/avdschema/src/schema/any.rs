@@ -90,14 +90,14 @@ impl<'a> SourceLayer<'a> {
         }
     }
 
-    pub(crate) fn schema_ref(self) -> Option<&'a str> {
+    pub(crate) fn schema_ref(self) -> Option<&'a crate::SchemaPath> {
         match self {
-            Self::Root(schema) => schema.base.schema_ref.as_deref(),
-            Self::Schema(SourceSchema::Bool(schema)) => schema.base.schema_ref.as_deref(),
-            Self::Schema(SourceSchema::Int(schema)) => schema.base.schema_ref.as_deref(),
-            Self::Schema(SourceSchema::Str(schema)) => schema.base.schema_ref.as_deref(),
-            Self::Schema(SourceSchema::List(schema)) => schema.base.schema_ref.as_deref(),
-            Self::Schema(SourceSchema::Dict(schema)) => schema.base.schema_ref.as_deref(),
+            Self::Root(schema) => schema.base.schema_ref.as_ref(),
+            Self::Schema(SourceSchema::Bool(schema)) => schema.base.schema_ref.as_ref(),
+            Self::Schema(SourceSchema::Int(schema)) => schema.base.schema_ref.as_ref(),
+            Self::Schema(SourceSchema::Str(schema)) => schema.base.schema_ref.as_ref(),
+            Self::Schema(SourceSchema::List(schema)) => schema.base.schema_ref.as_ref(),
+            Self::Schema(SourceSchema::Dict(schema)) => schema.base.schema_ref.as_ref(),
         }
     }
 }

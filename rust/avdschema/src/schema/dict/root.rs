@@ -17,11 +17,10 @@ use serde_with::skip_serializing_none;
 #[cfg(feature = "metaschema")]
 use super::MetaDefinitionKey;
 #[cfg(feature = "metaschema")]
-use super::MetaDynamicSchemaKey;
-#[cfg(feature = "metaschema")]
 use super::MetaObject;
 #[cfg(feature = "metaschema")]
 use super::MetaStaticSchemaKey;
+use super::dynamic_keys::DynamicKeySource;
 use crate::Inherit;
 use crate::any::SourceSchema;
 use crate::base::Base;
@@ -48,24 +47,27 @@ use crate::utils::load::LoadFromFragments;
 #[serde(deny_unknown_fields)]
 pub struct SourceRootDict {
     /// Dictionary of dictionary-keys in the format `{<keyname>: {<schema>}}`.
-    /// `keyname` must use `snake_case`.
-    /// `schema` is the schema for each key. This is a recursive schema, so the value must conform to AVD Schema
+    /// Names must match `[A-Za-z0-9_]+` during loading. The authoring metaschema
+    /// restricts new schema keys to snake case (with documented exceptions).
     #[cfg_attr(
         feature = "metaschema",
         schemars(with = "Option<std::collections::BTreeMap<MetaStaticSchemaKey, SourceSchema>>")
     )]
-    pub keys: Option<OrderMap<String, SourceSchema>>,
+    pub keys: Option<OrderMap<crate::SchemaKey, SourceSchema>>,
     /// Dictionary of dynamic keys in the format `{<variable.path>: <schema>}`.
-    /// The dot-notation path is relative to the input dictionary being validated and points to
+    /// The dot-notation path is relative to the root input dictionary being validated and points to
     /// values containing additional key names. When a path traverses a list, every list item
     /// is unpacked. Each resulting key is validated using the supplied schema.
     /// These key names come from the input data or, when the input path has no value,
     /// from schema-defined defaults if available.
+    /// Only supported node-type, connected-endpoint, and network-service source paths may be declared.
+    /// Unknown source paths are rejected during deserialization; concrete key names from the
+    /// input data are unrestricted.
     #[cfg_attr(
         feature = "metaschema",
-        schemars(with = "Option<std::collections::BTreeMap<MetaDynamicSchemaKey, SourceSchema>>")
+        schemars(with = "Option<std::collections::BTreeMap<DynamicKeySource, SourceSchema>>")
     )]
-    pub dynamic_keys: Option<OrderMap<String, SourceSchema>>,
+    pub dynamic_keys: Option<OrderMap<DynamicKeySource, SourceSchema>>,
     /// Whether input keys absent from `keys` and resolved `dynamic_keys` are accepted.
     /// Default is false.
     pub allow_other_keys: Option<bool>,
@@ -84,7 +86,7 @@ pub struct SourceRootDict {
         feature = "metaschema",
         schemars(with = "Option<std::collections::BTreeMap<MetaDefinitionKey, SourceSchema>>")
     )]
-    pub schema_defs: Option<OrderMap<String, SourceSchema>>,
+    pub schema_defs: Option<OrderMap<crate::SchemaKey, SourceSchema>>,
     /// Properties shared with every schema value.
     #[serde(flatten)]
     #[cfg_attr(feature = "metaschema", schemars(with = "Base<MetaObject>"))]

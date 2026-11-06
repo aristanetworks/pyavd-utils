@@ -139,7 +139,7 @@
       }
     },
     "dynamic_keys": {
-      "profile_types.name": {
+      "network_services_keys.name": {
         "type": "list",
         "documentation_options": {
           "table": "dynamic-profiles"
