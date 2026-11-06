@@ -31,9 +31,33 @@ license = "MIT"
 path = "LICENSE-MIT.md"
 checksum = "799e9ca9d179295ef372f25d3769cdda7d25bb2668add6a6a1e22d1e4c678b8d"
 
+# PyO3 bundles a byte-identical copy under pyo3-runtime/. Select the root
+# notice to avoid duplicate usage entries: EmbarkStudios/cargo-about#327.
+[pyo3.clarify]
+license = "MIT"
+
+[[pyo3.clarify.files]]
+path = "LICENSE-MIT"
+checksum = "afcbe3b2e6b37172b5a9ca869ee4c0b8cdc09316e5d4384864154482c33e5af6"
+
 [self_cell.clarify]
 license = "Apache-2.0"
 
 [[self_cell.clarify.files]]
 path = "LICENSE-APACHE"
 checksum = "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+
+# Preserve schemars's own license and the notice for copied regex-syntax code,
+# without including the surrounding Rust source in the generated reports.
+[schemars.clarify]
+license = "MIT"
+
+[[schemars.clarify.files]]
+path = "LICENSE"
+checksum = "1954992a2b32e8a2af24a4c11b726902e344c1934b947a77f04d404908f8db30"
+
+[[schemars.clarify.files]]
+path = "src/_private/regex_syntax.rs"
+start = "// Copyright (c) 2014 The Rust Project Developers"
+end = "// DEALINGS IN THE SOFTWARE."
+checksum = "271f2624842bf6b1d1b3a78e7b82693ad2cd2741480da32117a5169e58843392"
