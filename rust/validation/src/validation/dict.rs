@@ -1123,7 +1123,7 @@ mod tests {
         SourceDict {
             keys: Some(OrderMap::from_iter([
                 (
-                    "old_key".into(),
+                    "old_key".parse().unwrap(),
                     SourceStr {
                         base: Base {
                             deprecation: Some(Deprecation {
@@ -1140,14 +1140,14 @@ mod tests {
                     }
                     .into(),
                 ),
-                ("new_key".into(), SourceStr::default().into()),
+                ("new_key".parse().unwrap(), SourceStr::default().into()),
                 (
-                    "methods".into(),
+                    "methods".parse().unwrap(),
                     SourceList {
                         items: Some(Box::new(
                             SourceDict {
                                 keys: Some(OrderMap::from_iter([(
-                                    "group".into(),
+                                    "group".parse().unwrap(),
                                     SourceStr::default().into(),
                                 )])),
                                 ..Default::default()
