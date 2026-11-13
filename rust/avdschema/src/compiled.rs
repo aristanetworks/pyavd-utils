@@ -28,6 +28,9 @@ use rkyv::Serialize;
 use rkyv::rancor::Error as RkyvError;
 use serde_json::Value;
 
+use crate::DynamicKeySource;
+use crate::SchemaPath;
+use crate::SchemaPathElement;
 use crate::StoreSource;
 use crate::any::SourceLayer;
 use crate::any::SourceSchema;
@@ -252,7 +255,10 @@ impl CompiledStore {
     }
 
     /// Compile one named root and only the schema nodes reachable from it.
-    pub fn compile_schema(store: &StoreSource, schema_name: &str) -> Result<Self, CompileError> {
+    pub fn compile_schema(
+        store: &StoreSource,
+        schema_name: &crate::SchemaName,
+    ) -> Result<Self, CompileError> {
         Compiler::new(store).compile_schema(schema_name)
     }
 
@@ -338,9 +344,9 @@ pub enum SchemaDiagnostic {
     /// A schema reference could not be resolved.
     Reference {
         /// Schema path being compiled.
-        schema_path: Vec<String>,
-        /// Full reference string from the source schema.
-        reference: String,
+        schema_path: SchemaPath,
+        /// Parsed reference from the source schema.
+        reference: SchemaPath,
         /// Structured resolver failure.
         error: crate::SchemaResolverError,
     },
@@ -354,19 +360,19 @@ pub enum SchemaDiagnostic {
     /// Following a reference would revisit a layer already being compiled.
     ReferenceCycle {
         /// Schema path being compiled.
-        schema_path: Vec<String>,
+        schema_path: SchemaPath,
         /// Reference that closes the cycle.
-        reference: String,
+        reference: SchemaPath,
     },
     /// Nested schema structure directly or indirectly contains itself.
     StructuralCycle {
         /// Schema path where the cycle was detected.
-        schema_path: Vec<String>,
+        schema_path: SchemaPath,
     },
     /// A schema default contains a number unsupported by AVD schema model types.
     UnsupportedDefaultNumber {
         /// Schema path whose effective default is invalid.
-        schema_path: Vec<String>,
+        schema_path: SchemaPath,
         /// Path from the default root to the invalid number.
         default_path: Vec<String>,
         /// Normalized JSON number representation.
@@ -383,8 +389,7 @@ impl std::fmt::Display for SchemaDiagnostic {
                 error,
             } => write!(
                 f,
-                "Unable to resolve schema reference '{reference}' while compiling '{}': {error}",
-                schema_path.join("/")
+                "Unable to resolve schema reference '{reference}' while compiling '{schema_path}': {error}"
             ),
             Self::TypeMismatch { expected, found } => write!(
                 f,
@@ -395,13 +400,11 @@ impl std::fmt::Display for SchemaDiagnostic {
                 reference,
             } => write!(
                 f,
-                "Schema reference '{reference}' forms a cycle while compiling '{}'",
-                schema_path.join("/")
+                "Schema reference '{reference}' forms a cycle while compiling '{schema_path}'"
             ),
             Self::StructuralCycle { schema_path } => write!(
                 f,
-                "Schema contains a structural cycle while compiling '{}'",
-                schema_path.join("/")
+                "Schema contains a structural cycle while compiling '{schema_path}'"
             ),
             Self::UnsupportedDefaultNumber {
                 schema_path,
@@ -415,9 +418,7 @@ impl std::fmt::Display for SchemaDiagnostic {
                 };
                 write!(
                     f,
-                    "Schema default at '{}/{}' contains unsupported number '{value}'; AVD schema defaults only support integers representable as i64 or u64",
-                    schema_path.join("/"),
-                    location
+                    "Schema default at '{schema_path}/{location}' contains unsupported number '{value}'; AVD schema defaults only support integers representable as i64 or u64"
                 )
             }
         }
@@ -458,6 +459,8 @@ impl std::fmt::Display for SchemaDiagnostics {
 /// Error raised while compiling or archiving a schema store.
 #[derive(Debug, derive_more::Display)]
 pub enum CompileError {
+    /// A requested root name is outside the supported schema-name grammar.
+    InvalidSchemaName(crate::InvalidSchemaName),
     /// One or more source-schema diagnostics prevented compilation.
     #[display("{_0}")]
     InvalidSchema(SchemaDiagnostics),
@@ -497,7 +500,7 @@ struct Compiler<'a> {
     output: CompiledStore,
     interned: HashMap<NodeKey, SchemaId>,
     memoized_layers: HashMap<Vec<*const ()>, SchemaId>,
-    compiling_layers: HashMap<Vec<*const ()>, Vec<String>>,
+    compiling_layers: HashMap<Vec<*const ()>, SchemaPath>,
 }
 
 impl<'a> Compiler<'a> {
@@ -513,38 +516,45 @@ impl<'a> Compiler<'a> {
 
     fn compile(mut self) -> Result<CompiledStore, CompileError> {
         for name in self.source.schema_names() {
-            let root = self
-                .source
-                .get(name)
-                .map_err(|error| SchemaDiagnostic::Reference {
-                    schema_path: vec![name.to_owned()],
-                    reference: format!("{name}#"),
-                    error: error.into(),
-                })?;
-            let id = self.compile_layers(&[SourceLayer::root(root)], &[name.to_owned()])?;
-            self.output.roots.insert(name.to_owned(), id);
+            let root =
+                self.source
+                    .get(name.as_str())
+                    .map_err(|error| SchemaDiagnostic::Reference {
+                        schema_path: SchemaPath::root(name.clone()),
+                        reference: SchemaPath::root(name.clone()),
+                        error: error.into(),
+                    })?;
+            let id =
+                self.compile_layers(&[SourceLayer::root(root)], &SchemaPath::root(name.clone()))?;
+            self.output.roots.insert(name.to_string(), id);
         }
         Ok(self.output)
     }
 
-    fn compile_schema(mut self, schema_name: &str) -> Result<CompiledStore, CompileError> {
-        let root = self
-            .source
-            .get(schema_name)
-            .map_err(|error| SchemaDiagnostic::Reference {
-                schema_path: vec![schema_name.to_owned()],
-                reference: format!("{schema_name}#"),
-                error: error.into(),
-            })?;
-        let id = self.compile_layers(&[SourceLayer::root(root)], &[schema_name.to_owned()])?;
-        self.output.roots.insert(schema_name.to_owned(), id);
+    fn compile_schema(
+        mut self,
+        schema_name: &crate::SchemaName,
+    ) -> Result<CompiledStore, CompileError> {
+        let root =
+            self.source
+                .get(schema_name.as_str())
+                .map_err(|error| SchemaDiagnostic::Reference {
+                    schema_path: SchemaPath::root(schema_name.clone()),
+                    reference: SchemaPath::root(schema_name.clone()),
+                    error: error.into(),
+                })?;
+        let id = self.compile_layers(
+            &[SourceLayer::root(root)],
+            &SchemaPath::root(schema_name.clone()),
+        )?;
+        self.output.roots.insert(schema_name.to_string(), id);
         Ok(self.output)
     }
 
     fn compile_layers(
         &mut self,
         declared: &[SourceLayer<'a>],
-        schema_path: &[String],
+        schema_path: &SchemaPath,
     ) -> Result<SchemaId, CompileError> {
         let layers = expand_layers(self.source, declared, schema_path)?;
         let memo_key = layers
@@ -561,7 +571,7 @@ impl<'a> Compiler<'a> {
             .into());
         }
         self.compiling_layers
-            .insert(memo_key.clone(), schema_path.to_vec());
+            .insert(memo_key.clone(), schema_path.clone());
 
         let node_result = match layers.first().map(|layer| layer.schema_type()) {
             Some(SourceType::Bool) => Self::compile_bool(&layers, schema_path).map(NodeKey::Bool),
@@ -589,7 +599,7 @@ impl<'a> Compiler<'a> {
 
     fn compile_bool(
         layers: &[SourceLayer<'_>],
-        schema_path: &[String],
+        schema_path: &SchemaPath,
     ) -> Result<BoolSchema, CompileError> {
         Ok(BoolSchema {
             common: common(layers, schema_path)?,
@@ -598,7 +608,7 @@ impl<'a> Compiler<'a> {
 
     fn compile_int(
         layers: &[SourceLayer<'_>],
-        schema_path: &[String],
+        schema_path: &SchemaPath,
     ) -> Result<IntSchema, CompileError> {
         let schemas = layers.iter().filter_map(|layer| match layer {
             SourceLayer::Schema(SourceSchema::Int(schema)) => Some(schema),
@@ -622,7 +632,7 @@ impl<'a> Compiler<'a> {
 
     fn compile_str(
         layers: &[SourceLayer<'_>],
-        schema_path: &[String],
+        schema_path: &SchemaPath,
     ) -> Result<StrSchema, CompileError> {
         let schemas = layers.iter().filter_map(|layer| match layer {
             SourceLayer::Schema(SourceSchema::Str(schema)) => Some(schema),
@@ -661,7 +671,7 @@ impl<'a> Compiler<'a> {
     fn compile_list(
         &mut self,
         layers: &[SourceLayer<'a>],
-        schema_path: &[String],
+        schema_path: &SchemaPath,
     ) -> Result<ListSchema, CompileError> {
         let schemas = layers.iter().filter_map(|layer| match layer {
             SourceLayer::Schema(SourceSchema::List(schema)) => Some(schema),
@@ -680,7 +690,7 @@ impl<'a> Compiler<'a> {
                         .copied()
                         .map(SourceLayer::schema)
                         .collect::<Vec<_>>();
-                    self.compile_layers(&item_layers, &schema_path_with(schema_path, "items"))
+                    self.compile_layers(&item_layers, &schema_path.child(SchemaPathElement::Items))
                 })
                 .transpose()?,
             min_length: schemas.clone().find_map(|schema| schema.min_length),
@@ -702,15 +712,37 @@ impl<'a> Compiler<'a> {
         &mut self,
         declared: &[SourceLayer<'a>],
         layers: &[SourceLayer<'a>],
-        schema_path: &[String],
+        schema_path: &SchemaPath,
     ) -> Result<DictSchema, CompileError> {
         let keys = self.compile_dict_children(
-            layers.iter().filter_map(|layer| dict_keys(*layer)),
-            &schema_path_with(schema_path, "keys"),
+            layers
+                .iter()
+                .filter_map(|layer| dict_keys(*layer))
+                .map(|map| {
+                    map.iter().map(|(name, schema)| {
+                        (
+                            name.as_str(),
+                            schema,
+                            SchemaPathElement::Key { key: name.clone() },
+                        )
+                    })
+                }),
+            schema_path,
         )?;
         let dynamic_keys = self.compile_dict_children(
-            layers.iter().filter_map(|layer| dict_dynamic_keys(*layer)),
-            &schema_path_with(schema_path, "dynamic_keys"),
+            layers
+                .iter()
+                .filter_map(|layer| dict_dynamic_keys(*layer))
+                .map(|map| {
+                    map.iter().map(|(source, schema)| {
+                        (
+                            source.path(),
+                            schema,
+                            SchemaPathElement::DynamicKey { source: *source },
+                        )
+                    })
+                }),
+            schema_path,
         )?;
         let default_dynamic_keys = default_dynamic_keys(&dynamic_keys, self, layers, schema_path)?;
         let begin_relaxed_validation = declared.first().is_some_and(|layer| {
@@ -731,24 +763,29 @@ impl<'a> Compiler<'a> {
 
     fn compile_dict_children(
         &mut self,
-        maps: impl Iterator<Item = &'a ordermap::OrderMap<String, SourceSchema>>,
-        schema_path: &[String],
+        maps: impl Iterator<Item = impl Iterator<Item = (&'a str, &'a SourceSchema, SchemaPathElement)>>,
+        schema_path: &SchemaPath,
     ) -> Result<IndexMap<String, SchemaId>, CompileError> {
-        let mut child_layers: IndexMap<&str, Vec<&SourceSchema>> = IndexMap::new();
+        let mut child_layers: IndexMap<&str, (SchemaPathElement, Vec<&SourceSchema>)> =
+            IndexMap::new();
         for map in maps {
-            for (name, schema) in map {
-                child_layers.entry(name).or_default().push(schema);
+            for (name, schema, element) in map {
+                child_layers
+                    .entry(name)
+                    .or_insert_with(|| (element, Vec::new()))
+                    .1
+                    .push(schema);
             }
         }
         child_layers
             .into_iter()
-            .map(|(name, layers)| {
+            .map(|(name, (element, layers))| {
                 let layers = layers
                     .iter()
                     .copied()
                     .map(SourceLayer::schema)
                     .collect::<Vec<_>>();
-                self.compile_layers(&layers, &schema_path_with(schema_path, name))
+                self.compile_layers(&layers, &schema_path.child(element))
                     .map(|id| (name.to_owned(), id))
             })
             .collect()
@@ -821,13 +858,13 @@ impl<'a> Compiler<'a> {
     }
 }
 
-fn schema_path_with(schema_path: &[String], segment: &str) -> Vec<String> {
+fn value_path_with(schema_path: &[String], segment: &str) -> Vec<String> {
     let mut child_path = schema_path.to_vec();
     child_path.push(segment.to_owned());
     child_path
 }
 
-fn common(layers: &[SourceLayer<'_>], schema_path: &[String]) -> Result<Common, CompileError> {
+fn common(layers: &[SourceLayer<'_>], schema_path: &SchemaPath) -> Result<Common, CompileError> {
     Ok(Common {
         required: layers
             .iter()
@@ -913,7 +950,7 @@ fn documentation_options(layers: &[SourceLayer<'_>]) -> Option<CompiledDocumenta
 
 fn compile_default_value(
     value: &Value,
-    schema_path: &[String],
+    schema_path: &SchemaPath,
     default_path: &[String],
 ) -> Result<CompiledValue, CompileError> {
     match value {
@@ -925,7 +962,7 @@ fn compile_default_value(
             .or_else(|| value.as_u64().map(CompiledValue::U64))
             .ok_or_else(|| {
                 SchemaDiagnostic::UnsupportedDefaultNumber {
-                    schema_path: schema_path.to_vec(),
+                    schema_path: schema_path.clone(),
                     default_path: default_path.to_vec(),
                     value: value.to_string(),
                 }
@@ -936,7 +973,7 @@ fn compile_default_value(
             .iter()
             .enumerate()
             .map(|(index, child)| {
-                let child_path = schema_path_with(default_path, &index.to_string());
+                let child_path = value_path_with(default_path, &index.to_string());
                 compile_default_value(child, schema_path, &child_path)
             })
             .collect::<Result<Vec<_>, _>>()
@@ -944,7 +981,7 @@ fn compile_default_value(
         Value::Object(values) => values
             .iter()
             .map(|(key, child)| {
-                let child_path = schema_path_with(default_path, key);
+                let child_path = value_path_with(default_path, key);
                 compile_default_value(child, schema_path, &child_path)
                     .map(|compiled| (key.clone(), compiled))
             })
@@ -974,25 +1011,38 @@ fn default_dynamic_keys(
     dynamic_keys: &IndexMap<String, SchemaId>,
     compiler: &Compiler<'_>,
     layers: &[SourceLayer<'_>],
-    schema_path: &[String],
+    schema_path: &SchemaPath,
 ) -> Result<IndexMap<String, Vec<String>>, CompileError> {
     let mut result = IndexMap::new();
-    for (path, dynamic_schema) in dynamic_keys {
+    for source in layers
+        .iter()
+        .filter_map(|layer| dict_dynamic_keys(*layer))
+        .flat_map(|map| map.keys())
+    {
+        let path = source.path();
+        if result.contains_key(path) {
+            continue;
+        }
+        let Some(dynamic_schema) = dynamic_keys.get(path) else {
+            continue;
+        };
         if compiler.is_removed(*dynamic_schema) {
             continue;
         }
-        let Some(root_key) = path.split('.').next() else {
+        let [root_key, value_key] = source.components();
+        let mut child_declarations = layers
+            .iter()
+            .filter_map(|layer| dict_keys(*layer)?.get_key_value(root_key))
+            .peekable();
+        let Some((schema_key, _)) = child_declarations.peek() else {
             continue;
         };
-        let child_layers = layers
-            .iter()
-            .filter_map(|layer| dict_keys(*layer)?.get(root_key))
-            .map(SourceLayer::schema)
+        let child_schema_path = schema_path.child(SchemaPathElement::Key {
+            key: (*schema_key).clone(),
+        });
+        let child_layers = child_declarations
+            .map(|(_, schema)| SourceLayer::schema(schema))
             .collect::<Vec<_>>();
-        if child_layers.is_empty() {
-            continue;
-        }
-        let child_schema_path = schema_path_with(&schema_path_with(schema_path, "keys"), root_key);
         let expanded_child_layers =
             expand_layers(compiler.source, &child_layers, &child_schema_path)?;
         let Some(default) = expanded_child_layers
@@ -1001,8 +1051,8 @@ fn default_dynamic_keys(
         else {
             continue;
         };
-        if let Some(values) = values_at_path(&default, path.split('.').skip(1)) {
-            result.insert(path.clone(), values);
+        if let Some(values) = values_at_path(&default, std::iter::once(value_key)) {
+            result.insert(path.to_owned(), values);
         }
     }
     Ok(result)
@@ -1089,7 +1139,9 @@ fn schema_deprecation(layer: SourceLayer<'_>) -> Option<&Deprecation> {
     }
 }
 
-fn dict_keys(layer: SourceLayer<'_>) -> Option<&ordermap::OrderMap<String, SourceSchema>> {
+fn dict_keys(
+    layer: SourceLayer<'_>,
+) -> Option<&ordermap::OrderMap<crate::SchemaKey, SourceSchema>> {
     match layer {
         SourceLayer::Root(schema) => schema.keys.as_ref(),
         SourceLayer::Schema(SourceSchema::Dict(schema)) => schema.keys.as_ref(),
@@ -1097,7 +1149,9 @@ fn dict_keys(layer: SourceLayer<'_>) -> Option<&ordermap::OrderMap<String, Sourc
     }
 }
 
-fn dict_dynamic_keys(layer: SourceLayer<'_>) -> Option<&ordermap::OrderMap<String, SourceSchema>> {
+fn dict_dynamic_keys(
+    layer: SourceLayer<'_>,
+) -> Option<&ordermap::OrderMap<DynamicKeySource, SourceSchema>> {
     match layer {
         SourceLayer::Root(schema) => schema.dynamic_keys.as_ref(),
         SourceLayer::Schema(_) => None,
@@ -1138,6 +1192,8 @@ mod tests {
     #[cfg(feature = "dump_load_files")]
     use super::write_atomically;
     use crate::Load as _;
+    use crate::SchemaPath;
+    use crate::SchemaPathElement;
     use crate::SchemaResolverError;
     use crate::SchemaStoreError;
     use crate::StoreSource;
@@ -1196,7 +1252,7 @@ mod tests {
                 "base": {
                     "type": "dict",
                     "keys": {"static_value": {"type": "str"}},
-                    "dynamic_keys": {"names": {"type": "int"}}
+                    "dynamic_keys": {"node_type_keys.key": {"type": "int"}}
                 },
                 "test": {
                     "type": "dict",
@@ -1217,7 +1273,7 @@ mod tests {
         let nested = &compiled.dicts[usize::try_from(*nested_index).unwrap()];
 
         assert!(nested.keys.contains_key("static_value"));
-        assert!(nested.dynamic_keys.contains_key("names"));
+        assert!(nested.dynamic_keys.contains_key("node_type_keys.key"));
     }
 
     #[test]
@@ -1267,11 +1323,11 @@ mod tests {
                 error: SchemaResolverError::SchemaStore(
                     SchemaStoreError::InvalidSchemaName(name)
                 ),
-            } if schema_path == &["test"] && reference == "missing#" && name == "missing"
+            } if schema_path == &SchemaPath::root("test".parse().unwrap()) && reference == &SchemaPath::root("missing".parse().unwrap()) && name == "missing"
         ));
         assert_eq!(
             invalid_reference_diagnostic.to_string(),
-            "Unable to resolve schema reference 'missing#' while compiling 'test': Schema name 'missing' not found in the schema store."
+            "Unable to resolve schema reference 'missing#' while compiling 'test#': Schema name 'missing' not found in the schema store."
         );
 
         let type_mismatch = StoreSource::from_json(
@@ -1316,11 +1372,11 @@ mod tests {
             SchemaDiagnostic::ReferenceCycle {
                 schema_path,
                 reference,
-            } if schema_path == &["a"] && reference == "a#"
+            } if schema_path == &SchemaPath::root("a".parse().unwrap()) && reference == &SchemaPath::root("a".parse().unwrap())
         ));
         assert_eq!(
             reference_cycle_diagnostic.to_string(),
-            "Schema reference 'a#' forms a cycle while compiling 'a'"
+            "Schema reference 'a#' forms a cycle while compiling 'a#'"
         );
 
         let structural_cycle = StoreSource::from_json(
@@ -1336,11 +1392,11 @@ mod tests {
         assert!(matches!(
             structural_cycle_diagnostic,
             SchemaDiagnostic::StructuralCycle { schema_path }
-                if schema_path == &["root", "keys", "child"]
+                if schema_path == &SchemaPath::root("root".parse().unwrap()).child(SchemaPathElement::Key { key: "child".parse().unwrap() })
         ));
         assert_eq!(
             structural_cycle_diagnostic.to_string(),
-            "Schema contains a structural cycle while compiling 'root/keys/child'"
+            "Schema contains a structural cycle while compiling 'root#/keys/child'"
         );
     }
 
@@ -1372,13 +1428,13 @@ mod tests {
             else {
                 panic!("unsupported default number should return its typed diagnostic")
             };
-            assert_eq!(schema_path, &["test"]);
+            assert_eq!(schema_path, &SchemaPath::root("test".parse().unwrap()));
             assert_eq!(default_path, &expected_path);
             assert_eq!(value, expected_value);
             assert_eq!(
                 diagnostics.to_string(),
                 format!(
-                    "Schema default at 'test/default/nested/0' contains unsupported number '{expected_value}'; AVD schema defaults only support integers representable as i64 or u64"
+                    "Schema default at 'test#/default/nested/0' contains unsupported number '{expected_value}'; AVD schema defaults only support integers representable as i64 or u64"
                 )
             );
         }
@@ -1388,30 +1444,60 @@ mod tests {
     fn compilation_resolves_dynamic_keys_from_layered_defaults() {
         let source = StoreSource::from_json(
             r#"{
-                "test": {
+                "base": {
                     "type": "dict",
                     "keys": {
-                        "selectors": {
-                            "type": "dict",
-                            "default": {"names": ["one", "two"]}
-                        },
-                        "groups": {
+                        "node_type_keys": {
                             "type": "list",
-                            "default": [{"name": "three"}, {"name": "four"}]
+                            "default": [{"key": "inherited"}],
+                            "items": {"type": "dict", "keys": {"key": {"type": "str"}}}
                         },
-                        "single": {"type": "str", "default": "five"},
-                        "without_default": {"type": "str"}
+                        "custom_node_type_keys": {
+                            "type": "list",
+                            "items": {"type": "dict", "keys": {"key": {"type": "str"}}}
+                        },
+                        "connected_endpoints_keys": {
+                            "type": "list",
+                            "default": [{"key": "server-a"}, {"key": "server-b"}],
+                            "items": {"type": "dict", "keys": {"key": {"type": "str"}}}
+                        },
+                        "custom_connected_endpoints_keys": {
+                            "type": "list",
+                            "default": [{"key": "removed-endpoint"}],
+                            "items": {"type": "dict", "keys": {"key": {"type": "str"}}}
+                        },
+                        "network_services_keys": {
+                            "type": "list",
+                            "default": [{"name": "tenant-a"}],
+                            "items": {"type": "dict", "keys": {"name": {"type": "str"}}}
+                        }
                     },
                     "dynamic_keys": {
-                        "selectors.names": {"type": "bool"},
-                        "groups.name": {"type": "bool"},
-                        "single": {"type": "bool"},
-                        "without_default": {"type": "bool"},
-                        "missing": {"type": "bool"},
-                        "removed": {
+                        "node_type_keys.key": {"type": "bool"},
+                        "custom_node_type_keys.key": {"type": "bool"},
+                        "connected_endpoints_keys.key": {"type": "bool"},
+                        "custom_connected_endpoints_keys.key": {
                             "type": "bool",
                             "deprecation": {"warning": false, "removed": true}
+                        },
+                        "network_services_keys.name": {"type": "bool"}
+                    }
+                },
+                "test": {
+                    "type": "dict",
+                    "$ref": "base#",
+                    "keys": {
+                        "node_type_keys": {
+                            "type": "list",
+                            "default": [{"key": "one"}, {"key": "two"}],
+                            "items": {"type": "dict", "keys": {"key": {"type": "str"}}}
                         }
+                    }
+                },
+                "missing_source": {
+                    "type": "dict",
+                    "dynamic_keys": {
+                        "node_type_keys.key": {"type": "bool"}
                     }
                 }
             }"#,
@@ -1424,20 +1510,61 @@ mod tests {
         let root = &compiled.dicts[usize::try_from(*root_index).unwrap()];
 
         assert_eq!(
-            root.default_dynamic_keys.get("selectors.names"),
+            root.default_dynamic_keys.get("node_type_keys.key"),
             Some(&vec!["one".to_owned(), "two".to_owned()])
         );
         assert_eq!(
-            root.default_dynamic_keys.get("groups.name"),
-            Some(&vec!["three".to_owned(), "four".to_owned()])
+            root.default_dynamic_keys
+                .get("connected_endpoints_keys.key"),
+            Some(&vec!["server-a".to_owned(), "server-b".to_owned()])
         );
         assert_eq!(
-            root.default_dynamic_keys.get("single"),
-            Some(&vec!["five".to_owned()])
+            root.default_dynamic_keys.get("network_services_keys.name"),
+            Some(&vec!["tenant-a".to_owned()])
         );
-        assert!(!root.default_dynamic_keys.contains_key("without_default"));
-        assert!(!root.default_dynamic_keys.contains_key("missing"));
-        assert!(!root.default_dynamic_keys.contains_key("removed"));
+        assert!(
+            !root
+                .default_dynamic_keys
+                .contains_key("custom_node_type_keys.key")
+        );
+        assert!(
+            !root
+                .default_dynamic_keys
+                .contains_key("custom_connected_endpoints_keys.key")
+        );
+
+        let Some(SchemaId::Dict(missing_source_root_index)) = compiled.roots.get("missing_source")
+        else {
+            panic!("missing_source root should be a dictionary")
+        };
+        let missing_source_root =
+            &compiled.dicts[usize::try_from(*missing_source_root_index).unwrap()];
+        assert!(missing_source_root.default_dynamic_keys.is_empty());
+    }
+
+    #[test]
+    fn default_dynamic_key_values_walk_objects_sequences_and_missing_fields() {
+        use serde_json::json;
+
+        assert_eq!(
+            super::values_at_path(&json!({"names": ["one", "two"]}), ["names"].into_iter()),
+            Some(vec!["one".to_owned(), "two".to_owned()])
+        );
+        assert_eq!(
+            super::values_at_path(
+                &json!([{"name": "three"}, {"name": "four"}]),
+                ["name"].into_iter()
+            ),
+            Some(vec!["three".to_owned(), "four".to_owned()])
+        );
+        assert_eq!(
+            super::values_at_path(&json!({"name": "five"}), ["name"].into_iter()),
+            Some(vec!["five".to_owned()])
+        );
+        assert_eq!(
+            super::values_at_path(&json!({}), ["missing"].into_iter()),
+            None
+        );
     }
 
     #[cfg(feature = "dump_load_files")]

@@ -117,6 +117,8 @@ where
 
 #[derive(Debug, derive_more::Display, derive_more::From)]
 pub enum LoadError {
+    /// A supplied schema root name is outside the supported compatibility grammar.
+    InvalidSchemaName(crate::InvalidSchemaName),
     JsonError(serde_json::Error),
     #[cfg(feature = "yaml")]
     YamlError(yaml_parser::serde::DeError),

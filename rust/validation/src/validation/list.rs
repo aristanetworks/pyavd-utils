@@ -391,7 +391,7 @@ mod tests {
             items: Some(Box::new(
                 SourceDict {
                     keys: Some(OrderMap::from_iter([(
-                        "foo".into(),
+                        "foo".parse().unwrap(),
                         SourceStr::default().into(),
                     )])),
                     ..Default::default()
@@ -413,7 +413,7 @@ mod tests {
             items: Some(Box::new(
                 SourceDict {
                     keys: Some(OrderMap::from_iter([(
-                        "foo".into(),
+                        "foo".parse().unwrap(),
                         SourceStr::default().into(),
                     )])),
                     ..Default::default()
@@ -444,7 +444,7 @@ mod tests {
             items: Some(Box::new(
                 SourceDict {
                     keys: Some(OrderMap::from_iter([(
-                        "foo".into(),
+                        "foo".parse().unwrap(),
                         SourceStr::default().into(),
                     )])),
                     ..Default::default()
@@ -493,7 +493,7 @@ mod tests {
             items: Some(Box::new(
                 SourceDict {
                     keys: Some(OrderMap::from_iter([(
-                        "foo".into(),
+                        "foo".parse().unwrap(),
                         SourceStr::default().into(),
                     )])),
                     ..Default::default()
@@ -517,12 +517,12 @@ mod tests {
             items: Some(Box::new(
                 SourceDict {
                     keys: Some(OrderMap::from_iter([(
-                        "aliases".into(),
+                        "aliases".parse().unwrap(),
                         SourceList {
                             items: Some(Box::new(
                                 SourceDict {
                                     keys: Some(OrderMap::from_iter([(
-                                        "name".into(),
+                                        "name".parse().unwrap(),
                                         SourceStr::default().into(),
                                     )])),
                                     ..Default::default()

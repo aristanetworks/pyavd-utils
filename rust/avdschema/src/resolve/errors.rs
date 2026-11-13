@@ -8,10 +8,6 @@ use crate::source_store::SchemaStoreError;
 /// Error encountered while resolving a schema reference.
 #[derive(Debug, derive_more::Display, derive_more::From)]
 pub enum SchemaResolverError {
-    #[display("Invalid syntax for schema $ref '{schema_ref}'.")]
-    RefSyntax {
-        schema_ref: String,
-    },
     SchemaStore(SchemaStoreError),
     SchemaWalk(SchemaWalkError),
 }

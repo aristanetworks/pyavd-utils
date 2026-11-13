@@ -11,15 +11,17 @@
 
 use crate::CompileError;
 use crate::SchemaDiagnostic;
+use crate::SchemaPath;
 use crate::StoreSource;
 use crate::any::SourceLayer;
 use crate::resolve::resolve_ref::resolve_ref;
 
 /// Expand reference chains without merging properties or visiting children.
+/// Each returned layer retains access to its parsed `$ref` through the source model.
 pub(crate) fn expand_layers<'a>(
     source: &'a StoreSource,
     declared: &[SourceLayer<'a>],
-    schema_path: &[String],
+    schema_path: &SchemaPath,
 ) -> Result<Vec<SourceLayer<'a>>, CompileError> {
     let Some(first_declared) = declared.first().copied() else {
         return Err(SchemaDiagnostic::TypeMismatch {
@@ -47,13 +49,13 @@ pub(crate) fn expand_layers<'a>(
             };
             layer =
                 resolve_ref(reference, source).map_err(|error| SchemaDiagnostic::Reference {
-                    schema_path: schema_path.to_vec(),
+                    schema_path: schema_path.clone(),
                     reference: reference.to_owned(),
                     error,
                 })?;
             if chain.contains(&layer.identity()) {
                 return Err(SchemaDiagnostic::ReferenceCycle {
-                    schema_path: schema_path.to_vec(),
+                    schema_path: schema_path.clone(),
                     reference: reference.to_owned(),
                 }
                 .into());
