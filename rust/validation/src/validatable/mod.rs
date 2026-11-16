@@ -16,6 +16,7 @@
 //! - [`as_i64()`](ValidatableValue::as_i64): Coerces string to int (if parseable)
 //! - [`as_bool()`](ValidatableValue::as_bool): No coercion (strict)
 
+use std::borrow::Borrow;
 use std::borrow::Cow;
 
 use schema_data::SchemaDataMapping;
@@ -44,6 +45,16 @@ pub(crate) fn integral_float_to_i64(float: f64) -> Option<i64> {
 /// This trait abstracts over the common operations needed during validation,
 /// allowing the same validation logic to work with different value representations.
 pub trait ValidatableValue: Sized {
+    /// A child value returned by structural access.
+    ///
+    /// Backends storing children directly can use `&'a Self`. Backends that
+    /// synthesize wrappers can return an owned wrapper instead. Call
+    /// [`Borrow::borrow`] to access the value while keeping its view alive.
+    /// The view itself does not need to implement `ValidatableValue`.
+    type View<'a>: Borrow<Self>
+    where
+        Self: 'a;
+
     /// The mapping type returned by [`as_mapping`](Self::as_mapping).
     type Mapping<'a>: ValidatableMapping<'a, Value = Self>
     where
@@ -121,7 +132,7 @@ pub trait ValidatableValue: Sized {
     /// This is a convenience method for quick lookups like checking if a
     /// primary key exists. Returns `None` if this is not a mapping or if
     /// the key doesn't exist.
-    fn get(&self, key: &str) -> Option<&Self>;
+    fn get(&self, key: &str) -> Option<Self::View<'_>>;
 
     // === Type information for error reporting ===
 
@@ -149,53 +160,54 @@ pub trait ValidatableValue: Sized {
     /// This is used for checking deprecation conflicts where we need to
     /// verify if a replacement key exists.
     fn path_exists(&self, path: &str) -> bool {
-        !self.walk_path(path).is_empty()
+        let mut found = false;
+        self.walk_path(path, &mut |_, _| found = true);
+        found
     }
 
-    /// Walk a dot-separated path and return all matching values.
+    /// Visit every value matching a dot-separated path.
     ///
     /// Path traversal expands through sequences automatically, so a path like
-    /// `items.name` will match the `name` key under every item in a list.
-    /// An empty path returns the value itself for scalars/mappings, and all
+    /// `items.name` matches the `name` key under every item in a list. An empty
+    /// path visits the value itself for scalars/mappings, and recursively visits
     /// sequence items for sequences.
     ///
-    /// Returns pairs of `(trail, value)` where `trail` is the concrete path
-    /// from `self` to the matched value, including list indexes.
-    fn walk_path<'a>(&'a self, path: &str) -> Vec<(Vec<String>, &'a Self)> {
+    /// The visitor receives the concrete path (including list indexes) and the
+    /// matched value. References are valid only during the call: a backend may
+    /// synthesize an owned child view that is dropped after it is visited.
+    fn walk_path(&self, path: &str, visitor: &mut impl FnMut(&[String], &Self)) {
         let components: Vec<&str> = if path.is_empty() {
             Vec::new()
         } else {
             path.split('.').collect()
         };
-        let mut results = Vec::new();
-        let mut trail = Vec::new();
-        self.walk(&components, &mut trail, &mut results);
-        results
+        self.walk(&components, &mut Vec::new(), visitor);
     }
 
-    fn walk<'a>(
-        &'a self,
+    /// Recursively visit a path while maintaining its concrete trail.
+    fn walk(
+        &self,
         components: &[&str],
         trail: &mut Vec<String>,
-        results: &mut Vec<(Vec<String>, &'a Self)>,
+        visitor: &mut impl FnMut(&[String], &Self),
     ) {
         if let Some(seq) = self.as_sequence() {
             for (index, item) in seq.iter().enumerate() {
                 trail.push(index.to_string());
-                item.walk(components, trail, results);
+                item.borrow().walk(components, trail, visitor);
                 trail.pop();
             }
             return;
         }
 
         let Some((component, rest)) = components.split_first() else {
-            results.push((trail.clone(), self));
+            visitor(trail, self);
             return;
         };
 
         if let Some(child) = self.get(component) {
             trail.push((*component).to_owned());
-            child.walk(rest, trail, results);
+            child.borrow().walk(rest, trail, visitor);
             trail.pop();
         }
     }
@@ -245,7 +257,7 @@ pub trait ValidatableMapping<'a> {
     type Iter: Iterator<Item = Self::Pair>;
 
     /// Get a value by key.
-    fn get(&self, key: &str) -> Option<&<Self as ValidatableMapping<'a>>::Value>;
+    fn get(&self, key: &str) -> Option<<Self::Value as ValidatableValue>::View<'a>>;
 
     /// Return duplicate keys found in this mapping.
     fn duplicate_keys(&self) -> Vec<MappingDuplicateKey<'a>> {
@@ -299,7 +311,7 @@ pub trait ValidatableMappingPair<'a> {
     fn display_key(&self) -> Cow<'a, str>;
 
     /// Get the mapped value.
-    fn value(&self) -> &'a Self::Value;
+    fn value(&self) -> <Self::Value as ValidatableValue>::View<'a>;
 
     /// Build a coerced mapping entry from this pair's original key and a
     /// coerced value.
@@ -332,7 +344,7 @@ pub trait ValidatableSequence<'a> {
     type Value: ValidatableValue + 'a;
 
     /// Iterator type for values.
-    type Iter: Iterator<Item = &'a Self::Value>;
+    type Iter: Iterator<Item = <Self::Value as ValidatableValue>::View<'a>>;
 
     /// Iterate over values.
     fn iter(&self) -> Self::Iter;

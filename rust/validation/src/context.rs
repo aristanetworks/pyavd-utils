@@ -121,44 +121,42 @@ impl Context {
         }
     }
 
-    pub(crate) fn add_duplicate_value_violation_pair_for<
-        A: ValidatableValue,
-        B: ValidatableValue,
-    >(
+    pub(crate) fn add_duplicate_value_violation_pair(
         &mut self,
-        state: &ValidationState,
-        value_a: &A,
-        trail_a: &[String],
-        value_b: &B,
-        trail_b: &[String],
+        location_a: &ValueLocation,
+        location_b: &ValueLocation,
     ) {
-        // Violation from A's perspective (A sees B as duplicate)
-        let violation_a = Feedback {
-            path: state.path.clone_with_slice(trail_a),
-            span: value_a.source_span(),
-            source: value_a.source().map(str::to_owned),
-            issue: Violation::ValueNotUnique {
-                other_path: state.path.clone_with_slice(trail_b),
-                other_span: value_b.source_span(),
-                other_source: value_b.source().map(str::to_owned),
-            }
-            .into(),
-        };
+        for (location, other) in [(location_a, location_b), (location_b, location_a)] {
+            self.result.errors.push(Feedback {
+                path: location.path.clone(),
+                span: location.span.clone(),
+                source: location.source.clone(),
+                issue: Violation::ValueNotUnique {
+                    other_path: other.path.clone(),
+                    other_span: other.span.clone(),
+                    other_source: other.source.clone(),
+                }
+                .into(),
+            });
+        }
+    }
+}
 
-        // Violation from B's perspective (B sees A as duplicate)
-        let violation_b = Feedback {
-            path: state.path.clone_with_slice(trail_b),
-            span: value_b.source_span(),
-            source: value_b.source().map(str::to_owned),
-            issue: Violation::ValueNotUnique {
-                other_path: state.path.clone_with_slice(trail_a),
-                other_span: value_a.source_span(),
-                other_source: value_a.source().map(str::to_owned),
-            }
-            .into(),
-        };
+/// Owned diagnostic location retained after a temporary value view is dropped.
+#[derive(Debug)]
+pub(crate) struct ValueLocation {
+    path: Path,
+    span: Option<SourceSpan>,
+    source: Option<String>,
+}
 
-        self.result.errors.extend([violation_a, violation_b]);
+impl ValueLocation {
+    pub(crate) fn new<V: ValidatableValue>(path: Path, value: &V) -> Self {
+        Self {
+            path,
+            span: value.source_span(),
+            source: value.source().map(str::to_owned),
+        }
     }
 }
 

@@ -19,6 +19,10 @@ use super::integral_float_to_i64;
 // === ValidatableValue for serde_json::Value ===
 
 impl ValidatableValue for Value {
+    type View<'a>
+        = &'a Self
+    where
+        Self: 'a;
     type Mapping<'a> = &'a Map<String, Value>;
     type Sequence<'a> = &'a Vec<Value>;
     type Coerced = Value;
@@ -71,7 +75,7 @@ impl ValidatableValue for Value {
         self.as_array()
     }
 
-    fn get(&self, key: &str) -> Option<&Self> {
+    fn get(&self, key: &str) -> Option<Self::View<'_>> {
         self.get(key)
     }
 
@@ -146,7 +150,7 @@ impl<'a> ValidatableMapping<'a> for &'a Map<String, Value> {
     type Pair = MapPair<'a>;
     type Iter = MapIter<'a>;
 
-    fn get(&self, key: &str) -> Option<&Self::Value> {
+    fn get(&self, key: &str) -> Option<<Self::Value as ValidatableValue>::View<'a>> {
         Map::get(self, key)
     }
 
@@ -213,7 +217,7 @@ impl<'a> ValidatableMappingPair<'a> for MapPair<'a> {
     }
 
     /// Return the JSON value associated with this object entry.
-    fn value(&self) -> &'a Self::Value {
+    fn value(&self) -> <Self::Value as ValidatableValue>::View<'a> {
         self.value
     }
 

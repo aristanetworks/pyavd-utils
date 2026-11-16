@@ -24,6 +24,10 @@ use crate::feedback::SourceSpan;
 // === ValidatableValue for yaml_parser::Node ===
 
 impl<'input> ValidatableValue for Node<'input> {
+    type View<'a>
+        = &'a Self
+    where
+        Self: 'a;
     type Mapping<'a>
         = NodeMapping<'a, 'input>
     where
@@ -93,7 +97,7 @@ impl<'input> ValidatableValue for Node<'input> {
         }
     }
 
-    fn get(&self, key: &str) -> Option<&Self> {
+    fn get(&self, key: &str) -> Option<Self::View<'_>> {
         match &self.value {
             Value::Mapping(pairs) => {
                 for pair in pairs {
@@ -255,7 +259,7 @@ impl<'a, 'input: 'a> ValidatableMapping<'a> for NodeMapping<'a, 'input> {
     type Pair = NodeMappingPair<'a, 'input>;
     type Iter = NodeMappingIter<'a, 'input>;
 
-    fn get(&self, key: &str) -> Option<&Self::Value> {
+    fn get(&self, key: &str) -> Option<<Self::Value as ValidatableValue>::View<'a>> {
         // This is intentionally a linear scan: YAML mappings preserve order
         // and may contain duplicate keys.
         for pair in self.pairs {
@@ -373,7 +377,7 @@ impl<'a, 'input: 'a> ValidatableMappingPair<'a> for NodeMappingPair<'a, 'input> 
     }
 
     /// Return the YAML value associated with this pair.
-    fn value(&self) -> &'a Self::Value {
+    fn value(&self) -> <Self::Value as ValidatableValue>::View<'a> {
         &self.pair.value
     }
 
