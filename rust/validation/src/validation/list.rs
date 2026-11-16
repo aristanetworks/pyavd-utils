@@ -139,14 +139,12 @@ fn validate_unique_keys<'a, S: ValidatableSequence<'a>>(
 
                     if let Some(seen_location) = seen_items.get(&value_str) {
                         ctx.add_duplicate_value_violation_pair(
+                            state,
                             seen_location,
-                            &ValueLocation::new(state.path.clone_with_slice(&trail), value),
+                            &ValueLocation::new(trail, value),
                         );
                     } else {
-                        seen_items.insert(
-                            value_str,
-                            ValueLocation::new(state.path.clone_with_slice(&trail), value),
-                        );
+                        seen_items.insert(value_str, ValueLocation::new(trail, value));
                     }
                 });
         }

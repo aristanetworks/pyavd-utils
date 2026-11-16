@@ -6,6 +6,7 @@
 
 use std::borrow::Cow;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use yaml_parser::Integer;
 use yaml_parser::MappingPair;
@@ -206,8 +207,8 @@ impl<'input> ValidatableValue for Node<'input> {
         matches!(self.value, Value::Float(_))
     }
 
-    fn source(&self) -> Option<&str> {
-        self.source.as_deref()
+    fn source(&self) -> Option<&Arc<str>> {
+        self.source.as_ref()
     }
 
     fn source_span(&self) -> Option<SourceSpan> {

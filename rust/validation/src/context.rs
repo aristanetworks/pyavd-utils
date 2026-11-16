@@ -37,7 +37,12 @@ impl Context {
         value: &V,
         error: impl Into<ErrorIssue>,
     ) {
-        self.add_error_with_span(state, value.source_span(), value.source(), error);
+        self.add_error_with_span(
+            state,
+            value.source_span(),
+            value.source().map(AsRef::as_ref),
+            error,
+        );
     }
 
     pub(crate) fn add_error_with_span(
@@ -79,7 +84,7 @@ impl Context {
         self.result.infos.push(Feedback {
             path: state.path.clone(),
             span: value.source_span(),
-            source: value.source().map(str::to_owned),
+            source: value.source().map(ToString::to_string),
             issue: info.into(),
         });
     }
@@ -123,18 +128,19 @@ impl Context {
 
     pub(crate) fn add_duplicate_value_violation_pair(
         &mut self,
+        state: &ValidationState,
         location_a: &ValueLocation,
         location_b: &ValueLocation,
     ) {
         for (location, other) in [(location_a, location_b), (location_b, location_a)] {
             self.result.errors.push(Feedback {
-                path: location.path.clone(),
+                path: state.path.clone_with_slice(&location.trail),
                 span: location.span.clone(),
-                source: location.source.clone(),
+                source: location.source.as_deref().map(str::to_owned),
                 issue: Violation::ValueNotUnique {
-                    other_path: other.path.clone(),
+                    other_path: state.path.clone_with_slice(&other.trail),
                     other_span: other.span.clone(),
-                    other_source: other.source.clone(),
+                    other_source: other.source.as_deref().map(str::to_owned),
                 }
                 .into(),
             });
@@ -142,20 +148,20 @@ impl Context {
     }
 }
 
-/// Owned diagnostic location retained after a temporary value view is dropped.
+/// Relative diagnostic location retained after a temporary value view is dropped.
 #[derive(Debug)]
 pub(crate) struct ValueLocation {
-    path: Path,
+    trail: Vec<String>,
     span: Option<SourceSpan>,
-    source: Option<String>,
+    source: Option<Arc<str>>,
 }
 
 impl ValueLocation {
-    pub(crate) fn new<V: ValidatableValue>(path: Path, value: &V) -> Self {
+    pub(crate) fn new<V: ValidatableValue>(trail: Vec<String>, value: &V) -> Self {
         Self {
-            path,
+            trail,
             span: value.source_span(),
-            source: value.source().map(str::to_owned),
+            source: value.source().cloned(),
         }
     }
 }

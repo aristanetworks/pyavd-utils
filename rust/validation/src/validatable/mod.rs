@@ -18,6 +18,7 @@
 
 use std::borrow::Borrow;
 use std::borrow::Cow;
+use std::sync::Arc;
 
 use schema_data::SchemaDataMapping;
 
@@ -143,8 +144,10 @@ pub trait ValidatableValue: Sized {
     /// This is used to record what value was coerced from.
     fn to_feedback_value(&self) -> crate::feedback::Value;
 
-    /// Get the opaque source identifier for this value, if available.
-    fn source(&self) -> Option<&str> {
+    /// Get the shared opaque source identifier for this value, if available.
+    ///
+    /// Clone the handle to retain the identifier without copying its text.
+    fn source(&self) -> Option<&Arc<str>> {
         None
     }
 
