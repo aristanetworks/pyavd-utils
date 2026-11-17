@@ -30,6 +30,7 @@ mod tests {
     use serde_json::json;
     use validation::ValidatableMapping as _;
     use validation::ValidatableMappingPair as _;
+    use validation::ValidatableSequence as _;
     use validation::ValidatableValue as _;
     use yaml_parser::MappingPair;
     use yaml_parser::Node;
@@ -685,6 +686,112 @@ mod tests {
         assert!(std::ptr::eq(
             unchanged.as_original().unwrap(),
             &raw const base
+        ));
+    }
+
+    fn shares_container_storage<'input, V: schema_merge::MergeBackend>(
+        left: &MergedValue<'input, V>,
+        right: &MergedValue<'input, V>,
+    ) -> bool {
+        match (left.as_mapping(), right.as_mapping()) {
+            (
+                Some(schema_merge::MergedMapping::Expanded(left_entries)),
+                Some(schema_merge::MergedMapping::Expanded(right_entries)),
+            ) => std::ptr::eq(left_entries, right_entries),
+            _ => match (left.as_sequence(), right.as_sequence()) {
+                (
+                    Some(schema_merge::MergedSequence::Expanded(left_entries)),
+                    Some(schema_merge::MergedSequence::Expanded(right_entries)),
+                ) => std::ptr::eq(left_entries, right_entries),
+                _ => panic!("Expected two expanded containers"),
+            },
+        }
+    }
+
+    fn check_shared_fork<V: schema_merge::MergeBackend>(base: &V, next: &V, patch: &V) {
+        let store = store();
+        let schema = StoreSchema::new(&store, "test").unwrap();
+        let options = MergeOptions::default();
+        let template = merge_borrowed(base, [next], &schema, options).unwrap();
+        let original = serde_json::to_value(&template).unwrap();
+        let cloned = template.clone_to_coerced();
+        assert!(shares_container_storage(&template, &cloned));
+        let fork = merge(cloned, [MergedValue::new(patch)], &schema, options).unwrap();
+        assert!(!shares_container_storage(&template, &fork));
+        assert_eq!(serde_json::to_value(&template).unwrap(), original);
+        assert_eq!(
+            serde_json::to_value(&fork).unwrap(),
+            json!({"shared": {"a": 1, "b": 2}, "items": [
+                {"name": "a", "keep": true, "old": 1, "new": 2},
+                {"name": "b", "keep": true, "old": 1},
+                {"name": "c"}
+            ]}),
+        );
+        assert!(shares_container_storage(
+            &template.get("shared").unwrap(),
+            &fork.get("shared").unwrap(),
+        ));
+        let old_items = template.get("items").unwrap();
+        let new_items = fork.get("items").unwrap();
+        assert!(!shares_container_storage(&old_items, &new_items));
+        let old_sequence = old_items.as_sequence().unwrap();
+        let new_sequence = new_items.as_sequence().unwrap();
+        let mut old_iter = old_sequence.iter();
+        let mut new_iter = new_sequence.iter();
+        let old_first = old_iter.next().unwrap();
+        let new_first = new_iter.next().unwrap();
+        assert!(!shares_container_storage(&old_first, &new_first));
+        assert!(shares_container_storage(
+            &old_iter.next().unwrap(),
+            &new_iter.next().unwrap(),
+        ));
+        let old_value = old_first.get("old").unwrap();
+        let fork_old_value = new_first.get("old").unwrap();
+        assert_eq!(old_value.source(), fork_old_value.source());
+        assert_eq!(old_value.source_span(), fork_old_value.source_span());
+        let patched_value = new_first.get("new").unwrap();
+        assert_eq!(patched_value.source(), patch.source());
+    }
+
+    #[test]
+    fn cloned_merge_results_share_untouched_expanded_containers() {
+        let base = json!({"shared": {"a": 1}, "items": [
+            {"name": "a", "keep": true}, {"name": "b", "keep": true}
+        ]});
+        let next = json!({"shared": {"b": 2}, "items": [
+            {"name": "a", "old": 1}, {"name": "b", "old": 1}
+        ]});
+        let patch = json!({"items": [{"name": "a", "new": 2}, {"name": "c"}]});
+        check_shared_fork(&base, &next, &patch);
+        check_shared_fork(
+            &yaml(&base.to_string(), "base"),
+            &yaml(&next.to_string(), "next"),
+            &yaml(&patch.to_string(), "patch"),
+        );
+    }
+
+    #[test]
+    fn cloned_generated_scalars_share_storage_and_retain_provenance() {
+        let original = yaml("UPLINK", "fixture");
+        let generated = MergedValue::new(&original).coerce_str("uplink".into());
+        assert!(generated.as_original().is_none());
+        let cloned = generated.clone_to_coerced();
+        assert!(std::ptr::eq(
+            generated.as_str().unwrap().as_ptr(),
+            cloned.as_str().unwrap().as_ptr(),
+        ));
+        assert_eq!(cloned.source_span(), original.source_span());
+        assert!(Arc::ptr_eq(
+            cloned.source().unwrap(),
+            original.source().unwrap()
+        ));
+        drop(generated);
+        assert_eq!(cloned.as_str().unwrap(), "uplink");
+        let generated_json = MergedValue::from_scalar(json!("generated")).unwrap();
+        let cloned_json = generated_json.clone();
+        assert!(std::ptr::eq(
+            generated_json.as_str().unwrap().as_ptr(),
+            cloned_json.as_str().unwrap().as_ptr(),
         ));
     }
 

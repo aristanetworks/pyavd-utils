@@ -21,6 +21,7 @@ mod validatable;
 use std::borrow::Borrow;
 use std::borrow::Cow;
 use std::fmt::Debug;
+use std::sync::Arc;
 
 use serde::Serialize;
 use serde::Serializer;
@@ -106,7 +107,8 @@ pub trait MergeBackend:
 /// Merging expands participating containers while borrowing original keys and children.
 /// Coercion rebuilds container wrappers and owns converted scalars, retaining unchanged
 /// fragment references. The fragments must outlive this value. Validation and
-/// serialization operate directly on this representation.
+/// serialization operate directly on this representation. Clones share expanded
+/// containers and generated scalars; merging copies only shared containers it changes.
 #[derive(Debug, Clone)]
 pub struct MergedValue<'input, V: MergeBackend> {
     inner: Repr<'input, V>,
@@ -115,24 +117,30 @@ pub struct MergedValue<'input, V: MergeBackend> {
 #[derive(Debug, Clone)]
 enum Repr<'input, V: MergeBackend> {
     Borrowed(&'input V),
-    Mapping {
-        original: Origin<'input, V>,
-        entries: Vec<Entry<'input, V>>,
-    },
-    Sequence {
-        original: Origin<'input, V>,
-        items: Vec<Item<'input, V>>,
-    },
+    Mapping(Arc<MappingData<'input, V>>),
+    Sequence(Arc<SequenceData<'input, V>>),
     // Only scalars: children of owned backend containers could not borrow for 'input.
-    Scalar(Box<V>),
+    Scalar(Arc<V>),
 }
 
-// Generated origins contain only empty container headers. Keep them boxed so
-// backend AST size does not inflate every borrowed child wrapper.
+#[derive(Debug, Clone)]
+struct MappingData<'input, V: MergeBackend> {
+    original: Origin<'input, V>,
+    entries: Vec<Entry<'input, V>>,
+}
+
+#[derive(Debug, Clone)]
+struct SequenceData<'input, V: MergeBackend> {
+    original: Origin<'input, V>,
+    items: Vec<Item<'input, V>>,
+}
+
+// Generated origins contain only empty container headers. Share them so cloning
+// a container does not clone backend metadata or inflate borrowed child wrappers.
 #[derive(Debug, Clone)]
 enum Origin<'input, V: MergeBackend> {
     Borrowed(&'input V),
-    Generated(Box<V>),
+    Generated(Arc<V>),
 }
 
 impl<V: MergeBackend> Origin<'_, V> {
@@ -219,7 +227,7 @@ impl<'input, V: MergeBackend> MergedValue<'input, V> {
             Err(value)
         } else {
             Ok(Self {
-                inner: Repr::Scalar(Box::new(value)),
+                inner: Repr::Scalar(Arc::new(value)),
             })
         }
     }
@@ -235,7 +243,8 @@ impl<'input, V: MergeBackend> MergedValue<'input, V> {
     fn original(&self) -> &V {
         match &self.inner {
             Repr::Borrowed(value) => value,
-            Repr::Mapping { original, .. } | Repr::Sequence { original, .. } => original.value(),
+            Repr::Mapping(data) => data.original.value(),
+            Repr::Sequence(data) => data.original.value(),
             Repr::Scalar(value) => value,
         }
     }
@@ -243,16 +252,16 @@ impl<'input, V: MergeBackend> MergedValue<'input, V> {
     fn mapping_origin(&self) -> Origin<'input, V> {
         match &self.inner {
             Repr::Borrowed(value) if value.is_mapping() => Origin::Borrowed(value),
-            Repr::Mapping { original, .. } => original.clone(),
-            _ => Origin::Generated(Box::new(self.original().empty_mapping())),
+            Repr::Mapping(data) => data.original.clone(),
+            _ => Origin::Generated(Arc::new(self.original().empty_mapping())),
         }
     }
 
     fn sequence_origin(&self) -> Origin<'input, V> {
         match &self.inner {
             Repr::Borrowed(value) if value.is_sequence() => Origin::Borrowed(value),
-            Repr::Sequence { original, .. } => original.clone(),
-            _ => Origin::Generated(Box::new(self.original().empty_sequence())),
+            Repr::Sequence(data) => data.original.clone(),
+            _ => Origin::Generated(Arc::new(self.original().empty_sequence())),
         }
     }
 
@@ -262,7 +271,7 @@ impl<'input, V: MergeBackend> MergedValue<'input, V> {
             _ => None,
         };
         let mut expanded = match &self.inner {
-            Repr::Sequence { items, .. } => Some(items.iter()),
+            Repr::Sequence(data) => Some(data.items.iter()),
             _ => None,
         };
         std::iter::from_fn(move || {
@@ -304,11 +313,11 @@ impl<'input, V: MergeBackend> MergeableValue for MergedValue<'input, V> {
     type Identity = SemanticValue;
 
     fn is_mapping(&self) -> bool {
-        matches!(self.inner, Repr::Mapping { .. })
+        matches!(self.inner, Repr::Mapping(_))
             || matches!(&self.inner, Repr::Borrowed(value) if value.is_mapping())
     }
     fn is_sequence(&self) -> bool {
-        matches!(self.inner, Repr::Sequence { .. })
+        matches!(self.inner, Repr::Sequence(_))
             || matches!(&self.inner, Repr::Borrowed(value) if value.is_sequence())
     }
     fn take_mapping(&mut self) -> Option<Vec<Self::Entry>> {
@@ -324,23 +333,20 @@ impl<'input, V: MergeBackend> MergeableValue for MergedValue<'input, V> {
                     value: Self::new(value),
                 })
                 .collect();
-            self.inner = Repr::Mapping {
+            self.inner = Repr::Mapping(Arc::new(MappingData {
                 original: Origin::Borrowed(original),
                 entries: Vec::new(),
-            };
+            }));
             return Some(entries);
         }
         match &mut self.inner {
-            Repr::Mapping { entries, .. } => Some(std::mem::take(entries)),
+            Repr::Mapping(data) => Some(std::mem::take(&mut Arc::make_mut(data).entries)),
             _ => None,
         }
     }
     fn set_mapping(&mut self, entries: Vec<Self::Entry>) {
-        if let Repr::Mapping {
-            entries: current, ..
-        } = &mut self.inner
-        {
-            *current = entries;
+        if let Repr::Mapping(data) = &mut self.inner {
+            Arc::make_mut(data).entries = entries;
         }
     }
     fn take_sequence(&mut self) -> Option<Vec<Self::Item>> {
@@ -355,20 +361,20 @@ impl<'input, V: MergeBackend> MergeableValue for MergedValue<'input, V> {
                     value: Self::new(value),
                 })
                 .collect();
-            self.inner = Repr::Sequence {
+            self.inner = Repr::Sequence(Arc::new(SequenceData {
                 original: Origin::Borrowed(original),
                 items: Vec::new(),
-            };
+            }));
             return Some(items);
         }
         match &mut self.inner {
-            Repr::Sequence { items, .. } => Some(std::mem::take(items)),
+            Repr::Sequence(data) => Some(std::mem::take(&mut Arc::make_mut(data).items)),
             _ => None,
         }
     }
     fn set_sequence(&mut self, items: Vec<Self::Item>) {
-        if let Repr::Sequence { items: current, .. } = &mut self.inner {
-            *current = items;
+        if let Repr::Sequence(data) = &mut self.inner {
+            Arc::make_mut(data).items = items;
         }
     }
     fn child_identity(&self, key: &str) -> Option<Self::Identity> {
@@ -378,15 +384,18 @@ impl<'input, V: MergeBackend> MergeableValue for MergedValue<'input, V> {
         match &self.inner {
             Repr::Borrowed(value) => value.identity(),
             Repr::Scalar(value) => value.identity(),
-            Repr::Mapping { entries, .. } => SemanticValue::mapping(
-                entries
+            Repr::Mapping(data) => SemanticValue::mapping(
+                data.entries
                     .iter()
                     .map(|entry| (V::key_identity(entry.key), entry.value.identity()))
                     .collect(),
             ),
-            Repr::Sequence { items, .. } => {
-                SemanticValue::sequence(items.iter().map(|item| item.value.identity()).collect())
-            }
+            Repr::Sequence(data) => SemanticValue::sequence(
+                data.items
+                    .iter()
+                    .map(|item| item.value.identity())
+                    .collect(),
+            ),
         }
     }
 }
@@ -436,16 +445,16 @@ impl<V: MergeBackend> Serialize for MergedValue<'_, V> {
         match &self.inner {
             Repr::Borrowed(value) => value.serialize_value(serializer),
             Repr::Scalar(value) => value.serialize_value(serializer),
-            Repr::Mapping { entries, .. } => {
-                let mut mapping = serializer.serialize_map(Some(entries.len()))?;
-                for entry in entries {
+            Repr::Mapping(data) => {
+                let mut mapping = serializer.serialize_map(Some(data.entries.len()))?;
+                for entry in &data.entries {
                     mapping.serialize_entry(V::serialized_key(entry.key), &entry.value)?;
                 }
                 mapping.end()
             }
-            Repr::Sequence { items, .. } => {
-                let mut sequence = serializer.serialize_seq(Some(items.len()))?;
-                for item in items {
+            Repr::Sequence(data) => {
+                let mut sequence = serializer.serialize_seq(Some(data.items.len()))?;
+                for item in &data.items {
                     sequence.serialize_element(&item.value)?;
                 }
                 sequence.end()
