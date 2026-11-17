@@ -19,6 +19,14 @@ pub(crate) mod _metaschema {
     use super::pyfunction;
 
     #[pyfunction]
+    /// Return whether a pattern compiles with AVD's runtime regex compiler and settings.
+    ///
+    /// This does not match input data or guarantee that matching cannot fail at runtime.
+    pub(crate) fn is_valid_avd_regex_pattern(pattern: &str) -> bool {
+        avdschema::str::compile_pattern(pattern).is_ok()
+    }
+
+    #[pyfunction]
     /// Write the AVD source-schema metaschema as formatted JSON.
     pub(crate) fn generate_metaschema(destination: PathBuf) -> PyResult<()> {
         let json = generate_metaschema_json().map_err(|error| {
@@ -32,5 +40,20 @@ pub(crate) mod _metaschema {
                 destination.display()
             ))
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::_metaschema::is_valid_avd_regex_pattern;
+
+    #[test]
+    fn pattern_check_uses_the_avd_compiler() {
+        for pattern in ["", "^requires-a-value$", r"\d+", "(?<=a+)b", r"\\p{Greek}"] {
+            assert!(is_valid_avd_regex_pattern(pattern), "{pattern}");
+        }
+        for pattern in ["[", "(", r"\p{L}", r"\p{Greek}", r"\cA"] {
+            assert!(!is_valid_avd_regex_pattern(pattern), "{pattern}");
+        }
     }
 }
