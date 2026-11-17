@@ -2,6 +2,8 @@
 // Use of this source code is governed by the Apache License 2.0
 // that can be found in the LICENSE file.
 
+use std::borrow::Borrow as _;
+
 use avdschema::DeprecationView;
 use avdschema::DictView;
 use avdschema::SchemaView;
@@ -137,7 +139,7 @@ pub(crate) fn check_deprecation<'a, M: ValidatableMapping<'a>>(
                         let exists = if rest_of_path.is_empty() {
                             true
                         } else {
-                            !root_value.walk_path(&rest_of_path.join(".")).is_empty()
+                            root_value.borrow().path_exists(&rest_of_path.join("."))
                         };
                         if exists {
                             ctx.add_error_with_span(

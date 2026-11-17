@@ -37,7 +37,12 @@ impl Context {
         value: &V,
         error: impl Into<ErrorIssue>,
     ) {
-        self.add_error_with_span(state, value.source_span(), value.source(), error);
+        self.add_error_with_span(
+            state,
+            value.source_span(),
+            value.source().map(AsRef::as_ref),
+            error,
+        );
     }
 
     pub(crate) fn add_error_with_span(
@@ -79,7 +84,7 @@ impl Context {
         self.result.infos.push(Feedback {
             path: state.path.clone(),
             span: value.source_span(),
-            source: value.source().map(str::to_owned),
+            source: value.source().map(ToString::to_string),
             issue: info.into(),
         });
     }
@@ -121,44 +126,43 @@ impl Context {
         }
     }
 
-    pub(crate) fn add_duplicate_value_violation_pair_for<
-        A: ValidatableValue,
-        B: ValidatableValue,
-    >(
+    pub(crate) fn add_duplicate_value_violation_pair(
         &mut self,
         state: &ValidationState,
-        value_a: &A,
-        trail_a: &[String],
-        value_b: &B,
-        trail_b: &[String],
+        location_a: &ValueLocation,
+        location_b: &ValueLocation,
     ) {
-        // Violation from A's perspective (A sees B as duplicate)
-        let violation_a = Feedback {
-            path: state.path.clone_with_slice(trail_a),
-            span: value_a.source_span(),
-            source: value_a.source().map(str::to_owned),
-            issue: Violation::ValueNotUnique {
-                other_path: state.path.clone_with_slice(trail_b),
-                other_span: value_b.source_span(),
-                other_source: value_b.source().map(str::to_owned),
-            }
-            .into(),
-        };
+        for (location, other) in [(location_a, location_b), (location_b, location_a)] {
+            self.result.errors.push(Feedback {
+                path: state.path.clone_with_slice(&location.trail),
+                span: location.span.clone(),
+                source: location.source.as_deref().map(str::to_owned),
+                issue: Violation::ValueNotUnique {
+                    other_path: state.path.clone_with_slice(&other.trail),
+                    other_span: other.span.clone(),
+                    other_source: other.source.as_deref().map(str::to_owned),
+                }
+                .into(),
+            });
+        }
+    }
+}
 
-        // Violation from B's perspective (B sees A as duplicate)
-        let violation_b = Feedback {
-            path: state.path.clone_with_slice(trail_b),
-            span: value_b.source_span(),
-            source: value_b.source().map(str::to_owned),
-            issue: Violation::ValueNotUnique {
-                other_path: state.path.clone_with_slice(trail_a),
-                other_span: value_a.source_span(),
-                other_source: value_a.source().map(str::to_owned),
-            }
-            .into(),
-        };
+/// Relative diagnostic location retained after a temporary value view is dropped.
+#[derive(Debug)]
+pub(crate) struct ValueLocation {
+    trail: Vec<String>,
+    span: Option<SourceSpan>,
+    source: Option<Arc<str>>,
+}
 
-        self.result.errors.extend([violation_a, violation_b]);
+impl ValueLocation {
+    pub(crate) fn new<V: ValidatableValue>(trail: Vec<String>, value: &V) -> Self {
+        Self {
+            trail,
+            span: value.source_span(),
+            source: value.source().cloned(),
+        }
     }
 }
 

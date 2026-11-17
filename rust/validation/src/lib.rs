@@ -25,6 +25,11 @@ mod walker;
 
 pub use self::context::Configuration;
 pub use self::context::ValidationResult;
+pub use self::validatable::MappingDuplicateKey;
+pub use self::validatable::ValidatableMapping;
+pub use self::validatable::ValidatableMappingPair;
+pub use self::validatable::ValidatableSequence;
+pub use self::validatable::ValidatableValue;
 pub use self::validation::store::InputValidationResult;
 pub use self::validation::store::StoreValidate;
 pub use self::validation::store::StoreValidateError;
