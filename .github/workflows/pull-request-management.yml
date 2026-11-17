@@ -92,7 +92,7 @@ jobs:
           persist-credentials: false
       - name: Install Rust toolchain from rust-toolchain.toml
         run: rustup show
-      # This is needed because we have pyo3 tests and our minimum python version is 3.10.
+      # This is needed because we have pyo3 tests and our minimum Python version is 3.11.
       # On some test containers (looking at you windows-latest) the included Python is 3.9.
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:

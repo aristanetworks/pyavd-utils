@@ -10,6 +10,8 @@ Build-time schema compilation and artifact generation used by AVD development to
 
 This package is released together with `pyavd-utils`. It is not required by pyAVD at runtime.
 
+Requires Python 3.11 or later.
+
 ## Checking AVD regex patterns
 
 `pyavd_utils_gen.metaschema.is_valid_avd_regex_pattern(pattern)` returns whether a
