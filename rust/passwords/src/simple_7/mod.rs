@@ -24,23 +24,34 @@ pub enum Simple7Error {
 impl std::error::Error for Simple7Error {}
 
 /// Decrypt (deobfuscate) a password from insecure type-7.
+///
+/// The salt prefix must contain exactly two ASCII decimal digits in the range 00-15.
 pub fn simple_7_decrypt(data: &str) -> Result<String, Simple7Error> {
     if data.len() < 2 {
         return Err(Simple7Error::DataTooShort);
     }
 
-    let salt = data[0..2].parse::<usize>()?;
+    let mut characters = data.chars();
+    let mut salt = 0_u8;
+    // Parse each digit separately to reject signs and retain InvalidSaltFormat errors.
+    // Advancing by characters avoids slicing inside a UTF-8 character on malformed input.
+    for _ in 0..2 {
+        let character = characters.next().ok_or(Simple7Error::DataTooShort)?;
+        let mut buffer = [0; 4];
+        let digit = character.encode_utf8(&mut buffer).parse::<u8>()?;
+        salt = salt * 10 + digit;
+    }
 
     // Validate salt is in valid range (0-15)
     if salt > 15 {
-        return Err(Simple7Error::InvalidSaltValue(salt as u8));
+        return Err(Simple7Error::InvalidSaltValue(salt));
     }
 
-    let secret = hex::decode(&data[2..])?;
+    let secret = hex::decode(characters.as_str())?;
 
     let decrypted: Vec<u8> = secret
         .iter()
-        .zip(SIMPLE_7_SEED.iter().cycle().skip(salt))
+        .zip(SIMPLE_7_SEED.iter().cycle().skip(usize::from(salt)))
         .map(|(&byte, &seed_byte)| byte ^ seed_byte)
         .collect();
 
@@ -193,6 +204,51 @@ mod tests {
         assert!(matches!(
             salt_99_result.unwrap_err(),
             Simple7Error::InvalidSaltValue(99)
+        ));
+    }
+
+    #[test]
+    fn test_simple_7_decrypt_malformed_salt_prefixes() {
+        for data in [
+            "é",
+            "€",
+            "🦀1234",
+            "0é1234",
+            "0€1234",
+            "é01234",
+            "１２1234",
+            "+115090B",
+            "-11234",
+            " 11234",
+            "1 1234",
+        ] {
+            let error = simple_7_decrypt(data).expect_err("Malformed salt must be rejected");
+            assert!(matches!(error, Simple7Error::InvalidSaltFormat(_)));
+            assert_eq!(error.to_string(), "Invalid salt format in encrypted data");
+        }
+    }
+
+    #[test]
+    fn test_simple_7_roundtrip_all_salts_with_unicode_password() {
+        for salt in 0..=15 {
+            let encrypted = simple_7_encrypt("päss€🦀", Some(salt)).expect("Encryption failed");
+            assert_eq!(
+                simple_7_decrypt(&encrypted).expect("Decryption failed"),
+                "päss€🦀"
+            );
+        }
+    }
+
+    #[test]
+    fn test_simple_7_decrypt_salt_only_and_non_ascii_payload() {
+        assert_eq!(simple_7_decrypt("00").expect("Empty payload is valid"), "");
+        assert!(matches!(
+            simple_7_decrypt("00é"),
+            Err(Simple7Error::InvalidHexEncoding(_))
+        ));
+        assert!(matches!(
+            simple_7_decrypt("16é"),
+            Err(Simple7Error::InvalidSaltValue(16))
         ));
     }
 }

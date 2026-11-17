@@ -57,8 +57,8 @@ fn validate_duplicate_keys<'a, M: ValidatableMapping<'a>>(
 ) {
     for duplicate_key in input.duplicate_keys() {
         state.path.push(duplicate_key.key.to_owned());
-        for span in duplicate_key.spans {
-            ctx.add_error_with_span(state, span, Violation::DuplicateKey());
+        for (source, span) in duplicate_key.locations {
+            ctx.add_error_with_span(state, span, source, Violation::DuplicateKey());
         }
         state.path.pop();
     }
@@ -94,26 +94,33 @@ fn validate_required_keys<'a, M: ValidatableMapping<'a>>(
 pub(crate) fn check_deprecation<'a, M: ValidatableMapping<'a>>(
     key_schema: SchemaView<'_>,
     key_span: Option<crate::feedback::SourceSpan>,
+    key_source: Option<&str>,
     parent_dict_input: &M,
     ctx: &mut Context,
     state: &ValidationState,
 ) -> bool {
-    if let Some(deprecation) = key_schema.deprecation()
-        && deprecation.warning()
-    {
+    if let Some(deprecation) = key_schema.deprecation() {
         if deprecation.removed() {
+            // Preserve the existing warning gate for removed keys.
+            if !deprecation.warning() {
+                return false;
+            }
             ctx.add_error_with_span(
                 state,
                 key_span,
+                key_source,
                 Violation::Removed(removed_from_view(&state.path, deprecation)),
             );
             true
         } else {
-            ctx.add_warning_with_span(
-                state,
-                key_span.clone(),
-                deprecated_from_view(&state.path, deprecation),
-            );
+            if deprecation.warning() {
+                ctx.add_warning_with_span(
+                    state,
+                    key_span.clone(),
+                    key_source,
+                    deprecated_from_view(&state.path, deprecation),
+                );
+            }
             if !deprecation.allow_with_new_key()
                 && let Some(schema_new_key) = deprecation.new_key()
             {
@@ -136,6 +143,7 @@ pub(crate) fn check_deprecation<'a, M: ValidatableMapping<'a>>(
                             ctx.add_error_with_span(
                                 state,
                                 key_span.clone(),
+                                key_source,
                                 Violation::DeprecatedConflict {
                                     other_path: new_key.into(),
                                     url: deprecation.url().map(ToOwned::to_owned).into(),
@@ -179,8 +187,10 @@ fn removed_from_view(path: &crate::feedback::Path, deprecation: DeprecationView<
 mod tests {
     use std::sync::Arc;
 
+    use avdschema::DynamicKeySource;
     use avdschema::any::SourceSchema;
     use avdschema::base::Base;
+    use avdschema::base::Deprecation;
     use avdschema::dict::DynamicKeyOverrides;
     use avdschema::dict::SourceDict;
     use avdschema::dict::SourceRootDict;
@@ -220,6 +230,7 @@ mod tests {
         assert_eq!(
             ctx.result.errors,
             vec![Feedback {
+                source: None,
                 path: vec![].into(),
                 span: None,
                 issue: Violation::InvalidType {
@@ -235,8 +246,8 @@ mod tests {
     fn validate_key_type_ok() {
         let schema = SourceDict {
             keys: Some(OrderMap::from_iter([
-                ("foo".into(), SourceStr::default().into()),
-                ("bar".into(), SourceInt::default().into()),
+                ("foo".parse().unwrap(), SourceStr::default().into()),
+                ("bar".parse().unwrap(), SourceInt::default().into()),
             ])),
             ..Default::default()
         };
@@ -250,8 +261,8 @@ mod tests {
     fn validate_key_type_err() {
         let schema = SourceDict {
             keys: Some(OrderMap::from_iter([
-                ("foo".into(), SourceStr::default().into()),
-                ("bar".into(), SourceInt::default().into()),
+                ("foo".parse().unwrap(), SourceStr::default().into()),
+                ("bar".parse().unwrap(), SourceInt::default().into()),
             ])),
             ..Default::default()
         };
@@ -263,6 +274,7 @@ mod tests {
             ctx.result.errors,
             vec![
                 Feedback {
+                    source: None,
                     path: vec!["foo".into()].into(),
                     span: None,
                     issue: Violation::InvalidType {
@@ -272,6 +284,7 @@ mod tests {
                     .into()
                 },
                 Feedback {
+                    source: None,
                     path: vec!["bar".into()].into(),
                     span: None,
                     issue: Violation::InvalidType {
@@ -288,8 +301,8 @@ mod tests {
     fn validate_key_type_coerced_ok() {
         let schema = SourceDict {
             keys: Some(OrderMap::from_iter([
-                ("foo".into(), SourceStr::default().into()),
-                ("bar".into(), SourceInt::default().into()),
+                ("foo".parse().unwrap(), SourceStr::default().into()),
+                ("bar".parse().unwrap(), SourceInt::default().into()),
             ])),
             ..Default::default()
         };
@@ -306,6 +319,7 @@ mod tests {
             ctx.result.infos,
             vec![
                 Feedback {
+                    source: None,
                     path: vec!["foo".into()].into(),
                     span: None,
                     issue: CoercionNote {
@@ -315,6 +329,7 @@ mod tests {
                     .into()
                 },
                 Feedback {
+                    source: None,
                     path: vec!["bar".into()].into(),
                     span: None,
                     issue: CoercionNote {
@@ -335,7 +350,7 @@ mod tests {
     fn any_schema_validation_returns_referenced_coercion_result() {
         let schema = SourceSchema::Dict(SourceDict {
             base: Base {
-                schema_ref: Some("eos_config#".into()),
+                schema_ref: Some("eos_config#".parse().unwrap()),
                 ..Default::default()
             },
             ..Default::default()
@@ -353,6 +368,7 @@ mod tests {
         assert_eq!(
             ctx.result.infos,
             vec![Feedback {
+                source: None,
                 path: vec!["key1".into()].into(),
                 span: None,
                 issue: CoercionNote {
@@ -369,12 +385,12 @@ mod tests {
     fn validate_dynamic_keys_ok() {
         let schema = SourceRootDict {
             keys: Some(OrderMap::from_iter([(
-                "my_dynamic_keys".into(),
+                "node_type_keys".parse().unwrap(),
                 SourceList {
                     items: Some(Box::new(
                         SourceDict {
                             keys: Some(OrderMap::from_iter([(
-                                "key".into(),
+                                "key".parse().unwrap(),
                                 SourceStr::default().into(),
                             )])),
                             ..Default::default()
@@ -386,7 +402,7 @@ mod tests {
                 .into(),
             )])),
             dynamic_keys: Some(OrderMap::from_iter([(
-                "my_dynamic_keys.key".into(),
+                DynamicKeySource::NodeTypes,
                 SourceInt {
                     max: Some(10),
                     ..Default::default()
@@ -397,7 +413,7 @@ mod tests {
             ..Default::default()
         };
         let input = serde_json::json!(
-            { "my_dynamic_keys": [{"key": "dynkey1"}, {"key": "dynkey2"}], "dynkey1": 5, "dynkey2": 9 });
+            { "node_type_keys": [{"key": "dynkey1"}, {"key": "dynkey2"}], "dynkey1": 5, "dynkey2": 9 });
         let mut ctx = Context::new(None);
         let _ = schema.validate(&input, &mut ctx);
         assert_eq!(ctx.result.errors, vec![]);
@@ -408,12 +424,12 @@ mod tests {
     fn validate_dynamic_keys_err() {
         let schema = SourceRootDict {
             keys: Some(OrderMap::from_iter([(
-                "my_dynamic_keys".into(),
+                "node_type_keys".parse().unwrap(),
                 SourceList {
                     items: Some(Box::new(
                         SourceDict {
                             keys: Some(OrderMap::from_iter([(
-                                "key".into(),
+                                "key".parse().unwrap(),
                                 SourceStr::default().into(),
                             )])),
                             ..Default::default()
@@ -425,7 +441,7 @@ mod tests {
                 .into(),
             )])),
             dynamic_keys: Some(OrderMap::from_iter([(
-                "my_dynamic_keys.key".into(),
+                DynamicKeySource::NodeTypes,
                 SourceInt {
                     max: Some(10),
                     ..Default::default()
@@ -436,7 +452,7 @@ mod tests {
             ..Default::default()
         };
         let input = serde_json::json!(
-            { "my_dynamic_keys": [{"key": "dynkey1"}, {"key": "dynkey2"}], "dynkey1": 11, "dynkey2": "wrong" });
+            { "node_type_keys": [{"key": "dynkey1"}, {"key": "dynkey2"}], "dynkey1": 11, "dynkey2": "wrong" });
         let mut ctx = Context::new(None);
         let _ = schema.validate(&input, &mut ctx);
         assert_eq!(ctx.result.infos, vec![]);
@@ -444,6 +460,7 @@ mod tests {
             ctx.result.errors,
             vec![
                 Feedback {
+                    source: None,
                     path: vec!["dynkey1".into()].into(),
                     span: None,
                     issue: Violation::ValueAboveMaximum {
@@ -453,6 +470,7 @@ mod tests {
                     .into()
                 },
                 Feedback {
+                    source: None,
                     path: vec!["dynkey2".into()].into(),
                     span: None,
                     issue: Violation::InvalidType {
@@ -469,7 +487,7 @@ mod tests {
     fn validate_dynamic_keys_from_overrides_ok() {
         let schema = SourceRootDict {
             dynamic_keys: Some(OrderMap::from_iter([(
-                "my_dynamic_keys.key".into(),
+                DynamicKeySource::NodeTypes,
                 SourceInt {
                     max: Some(10),
                     ..Default::default()
@@ -484,7 +502,7 @@ mod tests {
         let configuration = Configuration {
             dynamic_key_overrides: Some(Arc::new(DynamicKeyOverrides::from_iter([(
                 "dynkey1".into(),
-                "my_dynamic_keys.key".into(),
+                "node_type_keys.key".into(),
             )]))),
             ..Default::default()
         };
@@ -498,11 +516,11 @@ mod tests {
     fn validate_static_key_beats_dynamic_key_override_collision() {
         let schema = SourceRootDict {
             keys: Some(OrderMap::from_iter([(
-                "dynkey1".into(),
+                "dynkey1".parse().unwrap(),
                 SourceStr::default().into(),
             )])),
             dynamic_keys: Some(OrderMap::from_iter([(
-                "my_dynamic_keys.key".into(),
+                DynamicKeySource::NodeTypes,
                 SourceInt {
                     max: Some(10),
                     ..Default::default()
@@ -516,7 +534,7 @@ mod tests {
         let configuration = Configuration {
             dynamic_key_overrides: Some(Arc::new(DynamicKeyOverrides::from_iter([(
                 "dynkey1".into(),
-                "my_dynamic_keys.key".into(),
+                "node_type_keys.key".into(),
             )]))),
             ..Default::default()
         };
@@ -530,11 +548,23 @@ mod tests {
     fn validate_dynamic_keys_from_defaults_ok() {
         let schema = SourceRootDict {
             keys: Some(OrderMap::from_iter([(
-                "my_dynamic_keys".into(),
+                "node_type_keys".parse().unwrap(),
                 SourceList {
-                    items: Some(Box::new(SourceStr::default().into())),
+                    items: Some(Box::new(
+                        SourceDict {
+                            keys: Some(OrderMap::from_iter([(
+                                "key".parse().unwrap(),
+                                SourceStr::default().into(),
+                            )])),
+                            ..Default::default()
+                        }
+                        .into(),
+                    )),
                     base: Base {
-                        default: Some(vec!["dynkey1".into(), "dynkey2".into()]),
+                        default: Some(vec![
+                            serde_json::json!({"key": "dynkey1"}),
+                            serde_json::json!({"key": "dynkey2"}),
+                        ]),
                         ..Default::default()
                     },
                     ..Default::default()
@@ -542,7 +572,7 @@ mod tests {
                 .into(),
             )])),
             dynamic_keys: Some(OrderMap::from_iter([(
-                "my_dynamic_keys".into(),
+                DynamicKeySource::NodeTypes,
                 SourceInt {
                     max: Some(10),
                     ..Default::default()
@@ -563,11 +593,23 @@ mod tests {
     fn validate_dynamic_keys_from_defaults_err() {
         let schema = SourceRootDict {
             keys: Some(OrderMap::from_iter([(
-                "my_dynamic_keys".into(),
+                "node_type_keys".parse().unwrap(),
                 SourceList {
-                    items: Some(Box::new(SourceStr::default().into())),
+                    items: Some(Box::new(
+                        SourceDict {
+                            keys: Some(OrderMap::from_iter([(
+                                "key".parse().unwrap(),
+                                SourceStr::default().into(),
+                            )])),
+                            ..Default::default()
+                        }
+                        .into(),
+                    )),
                     base: Base {
-                        default: Some(vec!["dynkey1".into(), "dynkey2".into()]),
+                        default: Some(vec![
+                            serde_json::json!({"key": "dynkey1"}),
+                            serde_json::json!({"key": "dynkey2"}),
+                        ]),
                         ..Default::default()
                     },
                     ..Default::default()
@@ -575,10 +617,10 @@ mod tests {
                 .into(),
             )])),
             dynamic_keys: Some(OrderMap::from_iter([(
-                "my_dynamic_keys".into(),
+                DynamicKeySource::NodeTypes,
                 SourceDict {
                     keys: Some(OrderMap::from_iter([(
-                        "sub_key".into(),
+                        "sub_key".parse().unwrap(),
                         SourceInt {
                             max: Some(10),
                             ..Default::default()
@@ -601,6 +643,7 @@ mod tests {
             ctx.result.errors,
             vec![
                 Feedback {
+                    source: None,
                     path: vec!["dynkey1".into(), "sub_key".into()].into(),
                     span: None,
                     issue: Violation::ValueAboveMaximum {
@@ -610,11 +653,13 @@ mod tests {
                     .into()
                 },
                 Feedback {
+                    source: None,
                     path: vec!["dynkey1".into(), "bad_key".into()].into(),
                     span: None,
                     issue: Violation::UnexpectedKey {}.into()
                 },
                 Feedback {
+                    source: None,
                     path: vec!["dynkey2".into()].into(),
                     span: None,
                     issue: Violation::InvalidType {
@@ -631,7 +676,7 @@ mod tests {
     fn validate_key_allowed_ok() {
         let schema = SourceDict {
             keys: Some(OrderMap::from_iter([(
-                "foo".into(),
+                "foo".parse().unwrap(),
                 SourceStr::default().into(),
             )])),
             allow_other_keys: Some(true),
@@ -647,7 +692,7 @@ mod tests {
     fn validate_key_allowed_err() {
         let schema = SourceDict {
             keys: Some(OrderMap::from_iter([(
-                "foo".into(),
+                "foo".parse().unwrap(),
                 SourceStr::default().into(),
             )])),
             ..Default::default()
@@ -659,6 +704,7 @@ mod tests {
         assert_eq!(
             ctx.result.errors,
             vec![Feedback {
+                source: None,
                 path: vec!["foo1".into()].into(),
                 span: None,
                 issue: Violation::UnexpectedKey().into()
@@ -670,7 +716,7 @@ mod tests {
     fn validate_yaml_unexpected_key_uses_key_span() {
         let schema = SourceDict {
             keys: Some(OrderMap::from_iter([(
-                "foo".into(),
+                "foo".parse().unwrap(),
                 SourceStr::default().into(),
             )])),
             ..Default::default()
@@ -685,6 +731,7 @@ mod tests {
         assert_eq!(
             ctx.result.errors,
             vec![Feedback {
+                source: None,
                 path: vec!["bar".into()].into(),
                 span: Some(SourceSpan { start: 0, end: 3 }),
                 issue: Violation::UnexpectedKey().into()
@@ -696,7 +743,7 @@ mod tests {
     fn validate_yaml_duplicate_key_err() {
         let schema = SourceDict {
             keys: Some(OrderMap::from_iter([(
-                "foo".into(),
+                "foo".parse().unwrap(),
                 SourceStr::default().into(),
             )])),
             ..Default::default()
@@ -712,11 +759,13 @@ mod tests {
             ctx.result.errors,
             vec![
                 Feedback {
+                    source: None,
                     path: vec!["foo".into()].into(),
                     span: Some(SourceSpan { start: 0, end: 3 }),
                     issue: Violation::DuplicateKey().into()
                 },
                 Feedback {
+                    source: None,
                     path: vec!["foo".into()].into(),
                     span: Some(SourceSpan { start: 9, end: 12 }),
                     issue: Violation::DuplicateKey().into()
@@ -729,10 +778,10 @@ mod tests {
     fn validate_yaml_duplicate_key_err_on_schema_validated_nested_dict() {
         let schema = SourceDict {
             keys: Some(OrderMap::from_iter([(
-                "outer".into(),
+                "outer".parse().unwrap(),
                 SourceDict {
                     keys: Some(OrderMap::from_iter([(
-                        "inner".into(),
+                        "inner".parse().unwrap(),
                         SourceStr::default().into(),
                     )])),
                     ..Default::default()
@@ -752,11 +801,13 @@ mod tests {
             ctx.result.errors,
             vec![
                 Feedback {
+                    source: None,
                     path: vec!["outer".into(), "inner".into()].into(),
                     span: Some(SourceSpan { start: 9, end: 14 }),
                     issue: Violation::DuplicateKey().into()
                 },
                 Feedback {
+                    source: None,
                     path: vec!["outer".into(), "inner".into()].into(),
                     span: Some(SourceSpan { start: 22, end: 27 }),
                     issue: Violation::DuplicateKey().into()
@@ -769,8 +820,8 @@ mod tests {
     fn validate_yaml_duplicate_key_restores_path_before_later_errors() {
         let schema = SourceDict {
             keys: Some(OrderMap::from_iter([
-                ("foo".into(), SourceStr::default().into()),
-                ("baz".into(), SourceStr::default().into()),
+                ("foo".parse().unwrap(), SourceStr::default().into()),
+                ("baz".parse().unwrap(), SourceStr::default().into()),
             ])),
             ..Default::default()
         };
@@ -785,26 +836,31 @@ mod tests {
             ctx.result.errors,
             vec![
                 Feedback {
+                    source: None,
                     path: vec!["foo".into()].into(),
                     span: Some(SourceSpan { start: 0, end: 3 }),
                     issue: Violation::DuplicateKey().into()
                 },
                 Feedback {
+                    source: None,
                     path: vec!["foo".into()].into(),
                     span: Some(SourceSpan { start: 9, end: 12 }),
                     issue: Violation::DuplicateKey().into()
                 },
                 Feedback {
+                    source: None,
                     path: vec!["baz".into()].into(),
                     span: Some(SourceSpan { start: 18, end: 21 }),
                     issue: Violation::DuplicateKey().into()
                 },
                 Feedback {
+                    source: None,
                     path: vec!["baz".into()].into(),
                     span: Some(SourceSpan { start: 27, end: 30 }),
                     issue: Violation::DuplicateKey().into()
                 },
                 Feedback {
+                    source: None,
                     path: vec!["bar".into()].into(),
                     span: Some(SourceSpan { start: 36, end: 39 }),
                     issue: Violation::UnexpectedKey().into()
@@ -817,7 +873,7 @@ mod tests {
     fn validate_yaml_non_string_key_does_not_match_schema_key() {
         let schema = SourceDict {
             keys: Some(OrderMap::from_iter([(
-                "123".into(),
+                "123".parse().unwrap(),
                 SourceStr::default().into(),
             )])),
             ..Default::default()
@@ -832,6 +888,7 @@ mod tests {
         assert_eq!(
             ctx.result.errors,
             vec![Feedback {
+                source: None,
                 path: vec!["123".into()].into(),
                 span: Some(SourceSpan { start: 0, end: 3 }),
                 issue: Violation::UnexpectedKey().into()
@@ -843,7 +900,7 @@ mod tests {
     fn validate_yaml_non_string_key_allowed_and_preserved_in_coerced_output() {
         let schema = SourceDict {
             keys: Some(OrderMap::from_iter([(
-                "foo".into(),
+                "foo".parse().unwrap(),
                 SourceStr::default().into(),
             )])),
             allow_other_keys: Some(true),
@@ -880,7 +937,7 @@ mod tests {
     fn validate_underscore_key_preserved() {
         let schema = SourceDict {
             keys: Some(OrderMap::from_iter([(
-                "foo".into(),
+                "foo".parse().unwrap(),
                 SourceStr::default().into(),
             )])),
             ..Default::default()
@@ -929,6 +986,7 @@ mod tests {
         assert_eq!(
             ctx.result.warnings,
             vec![Feedback {
+                source: None,
                 path: vec!["foo".into()].into(),
                 span: None,
                 issue: WarningIssue::Deprecated(Deprecated {
@@ -944,6 +1002,7 @@ mod tests {
         assert_eq!(
             ctx.result.errors,
             vec![Feedback {
+                source: None,
                 path: vec!["foo".into()].into(),
                 span: None,
                 issue: Violation::LengthBelowMinimum {
@@ -979,6 +1038,7 @@ mod tests {
         assert_eq!(
             ctx.result.warnings,
             vec![Feedback {
+                source: None,
                 path: vec!["foo".into()].into(),
                 span: Some(SourceSpan { start: 0, end: 3 }),
                 issue: WarningIssue::Deprecated(Deprecated {
@@ -1020,6 +1080,7 @@ mod tests {
         assert_eq!(
             ctx.result.errors,
             vec![Feedback {
+                source: None,
                 path: vec!["foo".into()].into(),
                 span: None,
                 issue: Violation::Removed(Removed {
@@ -1058,6 +1119,155 @@ mod tests {
         assert!(ctx.result.errors.is_empty());
     }
 
+    fn deprecated_no_warning_schema(new_key: &str, allow_with_new_key: Option<bool>) -> SourceDict {
+        SourceDict {
+            keys: Some(OrderMap::from_iter([
+                (
+                    "old_key".parse().unwrap(),
+                    SourceStr {
+                        base: Base {
+                            deprecation: Some(Deprecation {
+                                warning: false,
+                                new_key: Some(new_key.into()),
+                                allow_with_new_key,
+                                url: Some("https://example.com/migration".into()),
+                                ..Default::default()
+                            }),
+                            ..Default::default()
+                        },
+                        min_length: Some(5),
+                        ..Default::default()
+                    }
+                    .into(),
+                ),
+                ("new_key".parse().unwrap(), SourceStr::default().into()),
+                (
+                    "methods".parse().unwrap(),
+                    SourceList {
+                        items: Some(Box::new(
+                            SourceDict {
+                                keys: Some(OrderMap::from_iter([(
+                                    "group".parse().unwrap(),
+                                    SourceStr::default().into(),
+                                )])),
+                                ..Default::default()
+                            }
+                            .into(),
+                        )),
+                        ..Default::default()
+                    }
+                    .into(),
+                ),
+            ])),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn validate_key_deprecated_no_warning_conflicts() {
+        for allow_with_new_key in [None, Some(false), Some(true)] {
+            for (new_key, input, conflicts) in [
+                (
+                    "new_key",
+                    serde_json::json!({"old_key": "old_value", "new_key": "new_value"}),
+                    vec!["new_key"],
+                ),
+                (
+                    "new_key",
+                    serde_json::json!({"old_key": "old_value"}),
+                    vec![],
+                ),
+                (
+                    "new_key",
+                    serde_json::json!({"new_key": "new_value"}),
+                    vec![],
+                ),
+                (
+                    "methods.group",
+                    serde_json::json!({"old_key": "old_value", "methods": [{"group": "new_value"}]}),
+                    vec!["methods.group"],
+                ),
+                (
+                    "methods.group",
+                    serde_json::json!({"old_key": "old_value", "methods": [{}]}),
+                    vec![],
+                ),
+                (
+                    "new_key or methods.group",
+                    serde_json::json!({
+                        "old_key": "old_value",
+                        "new_key": "new_value",
+                        "methods": [{"group": "new_value"}]
+                    }),
+                    vec!["new_key", "methods.group"],
+                ),
+            ] {
+                let schema = deprecated_no_warning_schema(new_key, allow_with_new_key);
+                let mut ctx = Context::new(None);
+                let _ = schema.validate(&input, &mut ctx);
+
+                let expected_errors: Vec<_> = conflicts
+                    .into_iter()
+                    .filter(|_| allow_with_new_key != Some(true))
+                    .map(|other_path| Feedback {
+                        source: None,
+                        path: vec!["old_key".into()].into(),
+                        span: None,
+                        issue: Violation::DeprecatedConflict {
+                            other_path: other_path.into(),
+                            url: Some("https://example.com/migration".into()).into(),
+                        }
+                        .into(),
+                    })
+                    .collect();
+                assert!(ctx.result.infos.is_empty());
+                assert!(ctx.result.warnings.is_empty());
+                assert_eq!(
+                    ctx.result.errors, expected_errors,
+                    "allow_with_new_key={allow_with_new_key:?}, new_key={new_key}, input={input}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn validate_yaml_deprecated_no_warning_conflict_continues_validation() {
+        let schema = deprecated_no_warning_schema("new_key", Some(false));
+        let (docs, errors) = parse("old_key: abc\nnew_key: new_value\n");
+        assert!(errors.is_empty());
+        assert_eq!(docs.len(), 1);
+        let mut ctx = Context::new(None);
+        let _ = schema.validate(&docs[0], &mut ctx);
+
+        assert!(ctx.result.infos.is_empty());
+        assert!(ctx.result.warnings.is_empty());
+        assert_eq!(
+            ctx.result.errors,
+            vec![
+                Feedback {
+                    source: None,
+                    path: vec!["old_key".into()].into(),
+                    span: Some(SourceSpan { start: 0, end: 7 }),
+                    issue: Violation::DeprecatedConflict {
+                        other_path: "new_key".into(),
+                        url: Some("https://example.com/migration".into()).into(),
+                    }
+                    .into(),
+                },
+                Feedback {
+                    source: None,
+                    path: vec!["old_key".into()].into(),
+                    span: Some(SourceSpan { start: 9, end: 12 }),
+                    issue: Violation::LengthBelowMinimum {
+                        minimum: 5,
+                        found: 3,
+                    }
+                    .into(),
+                },
+            ]
+        );
+    }
+
     // Tests that when allow_with_new_key is true, using both the deprecated key
     // and the new key simultaneously does NOT produce a DeprecatedConflict error.
     #[test]
@@ -1087,6 +1297,7 @@ mod tests {
         assert_eq!(
             ctx.result.warnings,
             vec![Feedback {
+                source: None,
                 path: vec!["old_key".into()].into(),
                 span: None,
                 issue: WarningIssue::Deprecated(Deprecated {
@@ -1130,6 +1341,7 @@ mod tests {
         assert_eq!(
             ctx.result.warnings,
             vec![Feedback {
+                source: None,
                 path: vec!["old_key".into()].into(),
                 span: None,
                 issue: WarningIssue::Deprecated(Deprecated {
@@ -1144,6 +1356,7 @@ mod tests {
         assert_eq!(
             ctx.result.errors,
             vec![Feedback {
+                source: None,
                 path: vec!["old_key".into()].into(),
                 span: None,
                 issue: Violation::DeprecatedConflict {
@@ -1184,6 +1397,7 @@ mod tests {
         assert_eq!(
             ctx.result.warnings,
             vec![Feedback {
+                source: None,
                 path: vec!["old_key".into()].into(),
                 span: None,
                 issue: WarningIssue::Deprecated(Deprecated {
@@ -1198,6 +1412,7 @@ mod tests {
         assert_eq!(
             ctx.result.errors,
             vec![Feedback {
+                source: None,
                 path: vec!["old_key".into()].into(),
                 span: None,
                 issue: Violation::DeprecatedConflict {
@@ -1245,6 +1460,7 @@ mod tests {
         assert_eq!(
             ctx.result.warnings,
             vec![Feedback {
+                source: None,
                 path: vec!["old_key".into()].into(),
                 span: None,
                 issue: WarningIssue::Deprecated(Deprecated {
@@ -1258,6 +1474,7 @@ mod tests {
         assert_eq!(
             ctx.result.errors,
             vec![Feedback {
+                source: None,
                 path: vec!["old_key".into()].into(),
                 span: None,
                 issue: Violation::DeprecatedConflict {
@@ -1273,7 +1490,7 @@ mod tests {
     fn validate_key_required_ok() {
         let schema = SourceDict {
             keys: Some(OrderMap::from_iter([(
-                "foo".into(),
+                "foo".parse().unwrap(),
                 SourceStr {
                     base: Base {
                         required: Some(true),
@@ -1298,6 +1515,7 @@ mod tests {
         assert_eq!(
             ctx.result.infos,
             vec![Feedback {
+                source: None,
                 path: vec!["foo".into()].into(),
                 span: None,
                 issue: CoercionNote {
@@ -1314,7 +1532,7 @@ mod tests {
     fn validate_key_required_err() {
         let schema = SourceDict {
             keys: Some(OrderMap::from_iter([(
-                "foo".into(),
+                "foo".parse().unwrap(),
                 SourceStr {
                     base: Base {
                         required: Some(true),
@@ -1333,6 +1551,7 @@ mod tests {
         assert_eq!(
             ctx.result.errors,
             vec![Feedback {
+                source: None,
                 path: vec![].into(),
                 span: None,
                 issue: Violation::MissingRequiredKey { key: "foo".into() }.into()
@@ -1344,7 +1563,7 @@ mod tests {
     fn validate_key_required_relaxed_root_dict_ok() {
         let schema = SourceDict {
             keys: Some(OrderMap::from_iter([(
-                "foo".into(),
+                "foo".parse().unwrap(),
                 SourceStr {
                     base: Base {
                         required: Some(true),
@@ -1371,7 +1590,7 @@ mod tests {
     fn validate_key_required_relaxed_root_dict_err() {
         let schema = SourceDict {
             keys: Some(OrderMap::from_iter([(
-                "foo".into(),
+                "foo".parse().unwrap(),
                 SourceStr {
                     base: Base {
                         required: Some(true),
@@ -1401,6 +1620,7 @@ mod tests {
         assert_eq!(
             ctx.result.errors,
             vec![Feedback {
+                source: None,
                 path: vec!["deeper".into()].into(),
                 span: None,
                 issue: Violation::MissingRequiredKey { key: "foo".into() }.into()
@@ -1556,7 +1776,7 @@ mod tests {
     fn validate_dynamic_key_deprecated_ok() {
         let schema: SourceRootDict = SourceRootDict::deserialize(serde_json::json!({
             "keys": {
-                "my_dynamic_keys": {
+            "node_type_keys": {
                     "type": "list",
                     "items": {
                         "type": "dict",
@@ -1569,7 +1789,7 @@ mod tests {
                 }
             },
             "dynamic_keys": {
-                "my_dynamic_keys.key": {
+                "node_type_keys.key": {
                     "type": "int",
                     "deprecation": {
                         "warning": true,
@@ -1582,7 +1802,7 @@ mod tests {
         .unwrap();
 
         let input = serde_json::json!({
-            "my_dynamic_keys": [{"key": "dynkey1"}],
+            "node_type_keys": [{"key": "dynkey1"}],
             "dynkey1": 5
         });
 
@@ -1593,6 +1813,7 @@ mod tests {
         assert_eq!(
             ctx.result.warnings,
             vec![Feedback {
+                source: None,
                 path: vec!["dynkey1".into()].into(),
                 span: None,
                 issue: WarningIssue::Deprecated(Deprecated {

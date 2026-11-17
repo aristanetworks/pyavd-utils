@@ -85,7 +85,7 @@
       }
     },
     "dynamic_keys": {
-      "selectors.key": {
+      "node_type_keys.key": {
         "type": "dict",
         "keys": {"value": {"type": "bool"}}
       }

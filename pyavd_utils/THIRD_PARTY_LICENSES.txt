@@ -219,12 +219,12 @@ Apache License 2.0
 ================================================================================
 
 Used by:
-  - avdschema 0.0.13
-  - passwords 0.0.13
-  - python-bindings 0.0.13
-  - schema-data 0.0.13
-  - validation 0.0.13
-  - yaml-parser 0.0.13
+  - avdschema 0.0.14
+  - passwords 0.0.14
+  - python-bindings 0.0.14
+  - schema-data 0.0.14
+  - validation 0.0.14
+  - yaml-parser 0.0.14
 
 License text:
 --------------------------------------------------------------------------------
@@ -444,7 +444,7 @@ MIT License
 
 Used by:
   - bitflags 2.13.2
-  - log 0.4.34
+  - log 0.4.35
   - regex-automata 0.4.18
   - regex-syntax 0.8.11
 
@@ -734,8 +734,8 @@ MIT License
 ================================================================================
 
 Used by:
-  - arc-swap 1.9.3
-  - pyo3-log 0.13.4
+  - arc-swap 1.9.5
+  - pyo3-log 0.13.5
 
 License text:
 --------------------------------------------------------------------------------
@@ -950,7 +950,7 @@ MIT License
 ================================================================================
 
 Used by:
-  - memmap2 0.9.11
+  - memmap2 0.9.12
 
 License text:
 --------------------------------------------------------------------------------
@@ -1091,7 +1091,7 @@ MIT License
 ================================================================================
 
 Used by:
-  - inout 0.2.5
+  - inout 0.2.6
 
 License text:
 --------------------------------------------------------------------------------
@@ -1198,10 +1198,10 @@ MIT License
 ================================================================================
 
 Used by:
-  - pyo3-ffi 0.29.3
-  - pyo3-macros-backend 0.29.3
-  - pyo3-macros 0.29.3
-  - pyo3 0.29.3
+  - pyo3-ffi 0.30.1
+  - pyo3-macros-backend 0.30.1
+  - pyo3-macros 0.30.1
+  - pyo3 0.30.1
 
 License text:
 --------------------------------------------------------------------------------
@@ -1525,19 +1525,51 @@ MIT License
 ================================================================================
 
 Used by:
-  - itoa 1.0.18
+  - rkyv_derive 0.8.18
+
+License text:
+--------------------------------------------------------------------------------
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the &quot;Software&quot;), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED &quot;AS IS&quot;, WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+================================================================================
+MIT License
+================================================================================
+
+Used by:
+  - itoa 1.0.19
   - linux-raw-sys 0.12.1
   - once_cell 1.21.4
   - proc-macro2 1.0.107
   - quote 1.0.47
-  - rustix 1.1.5
+  - rustix 1.1.6
   - rustversion 1.0.23
   - serde 1.0.229
   - serde_core 1.0.229
   - serde_derive 1.0.229
   - serde_json 1.0.154
   - syn 2.0.119
-  - syn 3.0.9
+  - syn 3.0.10
   - unicode-ident 1.0.27
   - zmij 1.0.23
 
@@ -1572,7 +1604,7 @@ MIT License
 ================================================================================
 
 Used by:
-  - fancy-regex 0.19.2
+  - fancy-regex 0.20.1
 
 License text:
 --------------------------------------------------------------------------------

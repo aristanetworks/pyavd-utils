@@ -9,6 +9,7 @@
 //! exposes three public layers:
 //!
 //! - [`parse`] builds an owned AST with spans, comments, anchors, and tags.
+//! - [`parse_with_source`] also attaches a shared caller-provided source identifier to every node.
 //! - [`emit_events`] exposes a lower-level event stream for SAX-style consumers.
 //! - [`writer`] and the optional [`serde`] module provide YAML output.
 //!
@@ -256,6 +257,18 @@ pub use value::Value;
 /// assert_eq!(nodes.len(), 1);
 /// ```
 pub fn parse(input: &str) -> (Stream<'static>, Vec<ParseError>) {
+    parse_with_source(input, None)
+}
+
+/// Parse YAML and attach a shared source identifier to every node, including mapping keys.
+///
+/// The source is cloned as a shared handle during node construction, without an
+/// additional traversal or a copy of the identifier per node. It is diagnostic
+/// metadata and is not emitted when serializing the parsed data.
+pub fn parse_with_source(
+    input: &str,
+    source: Option<std::sync::Arc<str>>,
+) -> (Stream<'static>, Vec<ParseError>) {
     // 1. Create emitter with streaming lexer (lexes on demand, no pre-buffering).
     let mut emitter = emitter::Emitter::new(input);
 
@@ -264,7 +277,7 @@ pub fn parse(input: &str) -> (Stream<'static>, Vec<ParseError>) {
     let mut all_errors = Vec::new();
     let nodes = {
         let mut ast_emitter = emitter.ast_events();
-        let mut parser = parser::Parser::new(&mut ast_emitter);
+        let mut parser = parser::Parser::new(&mut ast_emitter).with_source(source);
         let nodes = parser.parse();
         all_errors.extend(parser.take_errors());
         nodes

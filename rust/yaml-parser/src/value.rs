@@ -23,6 +23,7 @@ use std::borrow::Cow;
 use std::fmt;
 use std::ops::Deref;
 use std::ops::DerefMut;
+use std::sync::Arc;
 
 pub use crate::event::Comment;
 pub use crate::event::Properties;
@@ -252,6 +253,7 @@ mod serde_impls {
                     properties: None,
                     value: elem,
                     span: Span::default(),
+                    source: None,
                     trailing_comment: None,
                 };
                 items.push(SequenceItem::new(Span::default(), node));
@@ -269,12 +271,14 @@ mod serde_impls {
                     properties: None,
                     value: key,
                     span: Span::default(),
+                    source: None,
                     trailing_comment: None,
                 };
                 let value_node = Node {
                     properties: None,
                     value,
                     span: Span::default(),
+                    source: None,
                     trailing_comment: None,
                 };
                 pairs.push(MappingPair::new(Span::default(), key_node, value_node));
@@ -303,12 +307,14 @@ mod serde_impls {
                 properties: None,
                 value: Value::String(std::borrow::Cow::Owned(variant)),
                 span: Span::default(),
+                source: None,
                 trailing_comment: None,
             };
             let value_node = Node {
                 properties: None,
                 value,
                 span: Span::default(),
+                source: None,
                 trailing_comment: None,
             };
             Ok(Value::Mapping(vec![MappingPair::new(
@@ -348,18 +354,21 @@ pub struct Node<'input> {
     pub value: Value<'input>,
     /// Source span covering the semantic value of this node.
     pub span: Span,
+    /// Opaque caller-provided source identifier shared by nodes from the same input.
+    pub source: Option<Arc<str>>,
     /// Same-line comment that trails this node's source representation.
     pub trailing_comment: Option<Box<Comment<'input>>>,
 }
 
 impl<'input> Node<'input> {
-    /// Create a new node with just a value and span (no properties).
+    /// Create a new node with a value, span, and optional source identifier (no properties).
     #[must_use]
-    pub fn new(value: Value<'input>, span: Span) -> Self {
+    pub fn new(value: Value<'input>, span: Span, source: Option<Arc<str>>) -> Self {
         Self {
             properties: None,
             value,
             span,
+            source,
             trailing_comment: None,
         }
     }
@@ -433,8 +442,8 @@ impl<'input> Node<'input> {
 
     /// Create a null node.
     #[must_use]
-    pub fn null(span: Span) -> Self {
-        Self::new(Value::Null, span)
+    pub fn null(span: Span, source: Option<Arc<str>>) -> Self {
+        Self::new(Value::Null, span, source)
     }
 
     /// Returns the anchor if present.
@@ -477,6 +486,7 @@ impl<'input> Node<'input> {
             properties: self.properties.map(|props| Box::new((*props).into_owned())),
             value: self.value.into_owned(),
             span: self.span,
+            source: self.source,
             trailing_comment: self
                 .trailing_comment
                 .map(|comment| Box::new((*comment).into_owned())),
@@ -752,12 +762,13 @@ mod tests {
         let span = Span::from_usize_range(0..4);
 
         // Basic node
-        let node1 = Node::new(Value::String(Cow::Borrowed("test")), span);
+        let node1 = Node::new(Value::String(Cow::Borrowed("test")), span, None);
         assert!(!node1.has_anchor());
         assert!(!node1.has_tag());
 
         // Node with anchor (now takes &str directly)
-        let node2 = Node::new(Value::String(Cow::Borrowed("test")), span).with_anchor("myanchor");
+        let node2 =
+            Node::new(Value::String(Cow::Borrowed("test")), span, None).with_anchor("myanchor");
         assert!(node2.has_anchor());
         assert_eq!(node2.anchor(), Some("myanchor"));
         assert_eq!(
@@ -766,8 +777,8 @@ mod tests {
         );
 
         // Node with tag
-        let node3 =
-            Node::new(Value::String(Cow::Borrowed("test")), span).with_tag(Cow::Borrowed("str"));
+        let node3 = Node::new(Value::String(Cow::Borrowed("test")), span, None)
+            .with_tag(Cow::Borrowed("str"));
         assert!(node3.has_tag());
         assert_eq!(
             node3.tag().map(|property| property.value.as_ref()),
@@ -779,7 +790,7 @@ mod tests {
         );
 
         // Null node
-        let node4 = Node::null(span);
+        let node4 = Node::null(span, None);
         assert!(node4.value.is_null());
     }
 
@@ -793,7 +804,7 @@ mod tests {
         assert!(matches!(owned, Value::String(Cow::Owned(str)) if str == "test"));
 
         // Test Node::into_owned - anchors and tags are converted to owned
-        let node = Node::new(Value::String(Cow::Borrowed("test")), span)
+        let node = Node::new(Value::String(Cow::Borrowed("test")), span, None)
             .with_anchor("anchor")
             .with_tag(Cow::Borrowed("tag"));
         let owned_node: Node<'static> = node.into_owned();
@@ -810,7 +821,7 @@ mod tests {
     fn test_into_resolved_alias_root_strips_anchor_only() {
         let span = Span::from_usize_range(0..4);
         let alias_span = Span::from_usize_range(10..12);
-        let node = Node::new(Value::String(Cow::Borrowed("test")), span)
+        let node = Node::new(Value::String(Cow::Borrowed("test")), span, None)
             .with_anchor("anchor")
             .with_tag(Cow::Borrowed("tag"))
             .with_trailing_comment(Comment {

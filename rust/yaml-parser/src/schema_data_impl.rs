@@ -138,11 +138,11 @@ mod tests {
     }
 
     fn string_node(value: &'static str) -> Node<'static> {
-        Node::new(string_value(value), Span::default())
+        Node::new(string_value(value), Span::default(), None)
     }
 
     fn int_node(value: i64) -> Node<'static> {
-        Node::new(Value::Int(Integer::I64(value)), Span::default())
+        Node::new(Value::Int(Integer::I64(value)), Span::default(), None)
     }
 
     fn mapping_pair(key: Node<'static>, value: Node<'static>) -> MappingPair<'static> {
@@ -150,7 +150,7 @@ mod tests {
     }
 
     fn sequence_item(value: Value<'static>) -> SequenceItem<'static> {
-        SequenceItem::new(Span::default(), Node::new(value, Span::default()))
+        SequenceItem::new(Span::default(), Node::new(value, Span::default(), None))
     }
 
     fn parse_single_document(input: &str) -> Node<'static> {
@@ -169,7 +169,7 @@ eos_config:
     key2:
       type: str
       description: this is from key2
-    dynamic:
+    node_type_keys:
       type: list
       items:
         type: dict
@@ -177,7 +177,7 @@ eos_config:
           key:
             type: str
   dynamic_keys:
-    dynamic.key:
+    node_type_keys.key:
       type: int
       max: 10
 ",
@@ -190,7 +190,7 @@ eos_config:
     fn schema_data_value_views_match_value_variants() {
         let mapping = Value::Mapping(vec![mapping_pair(
             string_node("key"),
-            Node::new(Value::Bool(true), Span::default()),
+            Node::new(Value::Bool(true), Span::default(), None),
         )]);
         let sequence = Value::Sequence(vec![sequence_item(Value::Bool(true))]);
         let string = string_value("value");
@@ -218,11 +218,11 @@ eos_config:
         let mapping = vec![
             mapping_pair(
                 string_node("dup"),
-                Node::new(Value::Int(Integer::I64(1)), Span::default()),
+                Node::new(Value::Int(Integer::I64(1)), Span::default(), None),
             ),
             mapping_pair(
                 string_node("dup"),
-                Node::new(Value::Int(Integer::I64(2)), Span::default()),
+                Node::new(Value::Int(Integer::I64(2)), Span::default(), None),
             ),
         ];
         let slice = YamlMapping(mapping.as_slice());
@@ -240,7 +240,7 @@ eos_config:
     fn mapping_lookup_returns_none_for_missing_key() {
         let mapping = vec![mapping_pair(
             string_node("present"),
-            Node::new(Value::Bool(true), Span::default()),
+            Node::new(Value::Bool(true), Span::default(), None),
         )];
 
         assert_eq!(YamlMapping(mapping.as_slice()).get("missing"), None);
@@ -250,7 +250,7 @@ eos_config:
     fn mapping_lookup_ignores_non_string_keys() {
         let mapping = vec![mapping_pair(
             int_node(1),
-            Node::new(string_value("value"), Span::default()),
+            Node::new(string_value("value"), Span::default(), None),
         )];
 
         assert_eq!(YamlMapping(mapping.as_slice()).get("1"), None);
@@ -328,14 +328,14 @@ items:
     #[test]
     fn get_dynamic_keys_handles_string_sequence_wrong_type_and_missing_root() {
         let store = Store::from_json(
-            r#"{"test":{"type":"dict","dynamic_keys":{"name":{"type":"int"},"names":{"type":"bool"},"wrong":{"type":"str"}}}}"#,
+            r#"{"test":{"type":"dict","dynamic_keys":{"node_type_keys.key":{"type":"int"},"network_services_keys.name":{"type":"bool"},"custom_node_type_keys.key":{"type":"str"}}}}"#,
         )
         .unwrap();
         let Some(SchemaView::Dict(schema)) = store.get("test") else {
             panic!("test schema should be a dictionary")
         };
 
-        let string_doc = parse_single_document("name: single\n");
+        let string_doc = parse_single_document("node_type_keys: [{key: single}]\n");
         let string_dynamic_keys =
             resolve_dynamic_keys(schema, (&string_doc.value).as_mapping().unwrap(), None);
         assert_eq!(
@@ -343,7 +343,8 @@ items:
             vec!["single".to_owned()]
         );
 
-        let sequence_doc = parse_single_document("names: [one, two]\n");
+        let sequence_doc =
+            parse_single_document("network_services_keys: [{name: one}, {name: two}]\n");
         let sequence_dynamic_keys =
             resolve_dynamic_keys(schema, (&sequence_doc.value).as_mapping().unwrap(), None);
         assert_eq!(
@@ -351,7 +352,7 @@ items:
             vec!["one".to_owned(), "two".to_owned()]
         );
 
-        let wrong_type_doc = parse_single_document("wrong: 7\n");
+        let wrong_type_doc = parse_single_document("custom_node_type_keys: [{key: 7}]\n");
         let wrong_type_dynamic_keys =
             resolve_dynamic_keys(schema, (&wrong_type_doc.value).as_mapping().unwrap(), None);
         assert!(wrong_type_dynamic_keys.is_empty());
@@ -373,7 +374,7 @@ items:
         };
         let doc = parse_single_document(
             "
-dynamic:
+node_type_keys:
   - key: one
   - key: two
 key2: value
@@ -384,7 +385,7 @@ key2: value
 
         assert_eq!(schema.keys().count() + dynamic_keys.len(), 4);
         assert!(schema.key("key2").is_some());
-        assert!(schema.key("dynamic").is_some());
+        assert!(schema.key("node_type_keys").is_some());
         assert!(dynamic_keys.contains_key("one"));
         assert!(dynamic_keys.contains_key("two"));
     }
@@ -394,7 +395,7 @@ key2: value
         let store = test_store();
         let doc = parse_single_document(
             "
-dynamic:
+node_type_keys:
   - key: one
   - key: two
 key2: value

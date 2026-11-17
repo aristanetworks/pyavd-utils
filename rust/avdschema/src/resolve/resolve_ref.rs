@@ -2,40 +2,22 @@
 // Use of this source code is governed by the Apache License 2.0
 // that can be found in the LICENSE file.
 
-use std::sync::LazyLock;
-
-use fancy_regex::Regex;
+//! Resolve parsed schema references against authored declarations.
 
 use super::walker::Walker as _;
+use crate::SchemaPath;
 use crate::StoreSource;
 use crate::any::SourceLayer;
 use crate::resolve::errors::SchemaResolverError;
 
-/// Regex matching $ref syntax according the AVD metaschema.
-static REF_REGEX: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new("^([a-z][a-z_]*)#((/[a-z$][\\.a-z0-9_]*)*)$").unwrap());
-
-/// Resolve the given ref by first finding the relevant schema in in the store
-/// and afterwards walk that schema according to the path.
-/// Returns the schema pointed to by the ref, or an error for invalid ref.
+/// Follow typed edges to a declaration without expanding its own reference layers.
+/// Syntax has already been checked when the source model was deserialized.
 pub(crate) fn resolve_ref<'a>(
-    ref_: &str,
+    reference: &SchemaPath,
     store: &'a StoreSource,
 ) -> Result<SourceLayer<'a>, SchemaResolverError> {
-    let syntax_err = || SchemaResolverError::RefSyntax {
-        schema_ref: ref_.to_owned(),
-    };
-    // unwrap_or_default() cannot fail: the regex is compiled above and uses no lookarounds.
-    let captures = REF_REGEX
-        .captures(ref_)
-        .unwrap_or_default()
-        .ok_or_else(syntax_err)?;
-    let schema_name = captures.get(1).ok_or_else(syntax_err)?.as_str();
-    let schema_path = captures.get(2).ok_or_else(syntax_err)?.as_str();
-
-    let path_iter = schema_path.split('/').skip(1).peekable();
-    let schema = store.get(schema_name)?;
-    Ok(schema.walk(path_iter)?)
+    let schema = store.get(reference.schema_name())?;
+    Ok(schema.walk(reference.elements())?)
 }
 
 #[cfg(test)]
@@ -53,7 +35,10 @@ mod tests {
     // Testing with eos_cli_config_gen ref
     fn resolve_ref_ok() {
         let test_store = get_test_store();
-        let result = resolve_ref("eos_cli_config_gen#/keys/key2", &test_store);
+        let result = resolve_ref(
+            &"eos_cli_config_gen#/keys/key2".parse().unwrap(),
+            &test_store,
+        );
         assert!(result.is_ok());
         let SourceLayer::Schema(result_schema) = result.unwrap() else {
             panic!("key reference should resolve to a recursive schema")
@@ -72,7 +57,7 @@ mod tests {
     // Testing with eos_config ref
     fn resolve_ref_ok_2() {
         let test_store = get_test_store();
-        let result = resolve_ref("eos_config#/keys/key2", &test_store);
+        let result = resolve_ref(&"eos_config#/keys/key2".parse().unwrap(), &test_store);
         assert!(result.is_ok());
         let SourceLayer::Schema(result_schema) = result.unwrap() else {
             panic!("key reference should resolve to a recursive schema")
@@ -91,7 +76,7 @@ mod tests {
     // Testing with cv_deploy ref
     fn resolve_ref_ok_3() {
         let test_store = get_test_store();
-        let result = resolve_ref("cv_deploy#/keys/key4", &test_store);
+        let result = resolve_ref(&"cv_deploy#/keys/key4".parse().unwrap(), &test_store);
         assert!(result.is_ok());
         let SourceLayer::Schema(result_schema) = result.unwrap() else {
             panic!("key reference should resolve to a recursive schema")
@@ -107,34 +92,10 @@ mod tests {
     }
 
     #[test]
-    fn resolve_ref_err_1() {
-        let test_store = get_test_store();
-        let ref_ = "#/keys/key2";
-        let result = resolve_ref(ref_, &test_store);
-        assert!(result.is_err());
-        assert!(matches!(
-            result.unwrap_err(),
-            SchemaResolverError::RefSyntax { .. }
-        ));
-    }
-
-    #[test]
-    fn resolve_ref_err_2() {
-        let test_store = get_test_store();
-        let ref_ = "eos_cli_config_gen";
-        let result = resolve_ref(ref_, &test_store);
-        assert!(result.is_err());
-        assert!(matches!(
-            result.unwrap_err(),
-            SchemaResolverError::RefSyntax { .. }
-        ));
-    }
-
-    #[test]
     fn resolve_ref_err_3() {
         let test_store = get_test_store();
-        let ref_ = "wrong_schema#/keys/key2";
-        let result = resolve_ref(ref_, &test_store);
+        let ref_ = "wrong_schema#/keys/key2".parse().unwrap();
+        let result = resolve_ref(&ref_, &test_store);
         assert!(result.is_err());
         assert!(matches!(
             result.unwrap_err(),
@@ -153,24 +114,33 @@ mod tests {
                     "keys": {
                         "list": {"type": "list", "items": {"type": "bool"}}
                     },
-                    "dynamic_keys": {"dynamic": {"type": "int"}},
+                    "dynamic_keys": {"node_type_keys.key": {"type": "int"}},
                     "$defs": {"definition": {"type": "str"}}
                 }
             }"#,
         )
         .unwrap();
 
+        let list_item = resolve_ref(&"test#/keys/list/items".parse().unwrap(), &store).unwrap();
         assert!(matches!(
-            resolve_ref("test#/keys/list/items", &store),
-            Ok(SourceLayer::Schema(crate::any::SourceSchema::Bool(_)))
+            list_item,
+            SourceLayer::Schema(crate::any::SourceSchema::Bool(_))
         ));
+
+        let dynamic_key = resolve_ref(
+            &"test#/dynamic_keys/node_type_keys.key".parse().unwrap(),
+            &store,
+        )
+        .unwrap();
         assert!(matches!(
-            resolve_ref("test#/dynamic_keys/dynamic", &store),
-            Ok(SourceLayer::Schema(crate::any::SourceSchema::Int(_)))
+            dynamic_key,
+            SourceLayer::Schema(crate::any::SourceSchema::Int(_))
         ));
+
+        let definition = resolve_ref(&"test#/$defs/definition".parse().unwrap(), &store).unwrap();
         assert!(matches!(
-            resolve_ref("test#/$defs/definition", &store),
-            Ok(SourceLayer::Schema(crate::any::SourceSchema::Str(_)))
+            definition,
+            SourceLayer::Schema(crate::any::SourceSchema::Str(_))
         ));
     }
 
@@ -184,7 +154,7 @@ mod tests {
                         "scalar": {"type": "str"},
                         "list": {"type": "list"}
                     },
-                    "dynamic_keys": {"dynamic": {"type": "int"}},
+                    "dynamic_keys": {"node_type_keys.key": {"type": "int"}},
                     "$defs": {"definition": {"type": "str"}}
                 }
             }"#,
@@ -192,33 +162,25 @@ mod tests {
         .unwrap();
 
         assert!(matches!(
-            resolve_ref("test#/keys/missing", &store),
+            resolve_ref(&"test#/keys/missing".parse().unwrap(), &store),
             Err(SchemaResolverError::SchemaWalk(
                 SchemaWalkError::PathNotFound { element }
             )) if element == "missing"
         ));
-        for mapping in ["keys", "dynamic_keys", "$defs"] {
-            assert!(matches!(
-                resolve_ref(&format!("test#/{mapping}"), &store),
-                Err(SchemaResolverError::SchemaWalk(
-                    SchemaWalkError::PointingToMapping { mapping: found }
-                )) if found == mapping
-            ));
-        }
         assert!(matches!(
-            resolve_ref("test#/invalid/path", &store),
+            resolve_ref(&"test#/items".parse().unwrap(), &store),
             Err(SchemaResolverError::SchemaWalk(
                 SchemaWalkError::InvalidPathElement { element }
-            )) if element == "invalid"
+            )) if element == "items"
         ));
         assert!(matches!(
-            resolve_ref("test#/keys/scalar/keys/value", &store),
+            resolve_ref(&"test#/keys/scalar/keys/value".parse().unwrap(), &store),
             Err(SchemaResolverError::SchemaWalk(
                 SchemaWalkError::NotDictOrList
             ))
         ));
         assert!(matches!(
-            resolve_ref("test#/keys/list/items", &store),
+            resolve_ref(&"test#/keys/list/items".parse().unwrap(), &store),
             Err(SchemaResolverError::SchemaWalk(
                 SchemaWalkError::PathNotFound { element }
             )) if element == "items"

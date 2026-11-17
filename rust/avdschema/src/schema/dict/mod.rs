@@ -35,8 +35,7 @@ impl DataValue for MetaObject {}
 
 /// Schema-only key type for statically named schema keys.
 ///
-/// Static keys use snake case. The two explicitly named exceptions are deprecated keys retained
-/// in supported AVD schemas for backwards compatibility.
+/// Static keys use snake case. `Vxlan1` remains declared as removed in AVD 6.x schemas.
 #[cfg(feature = "metaschema")]
 #[derive(schemars::JsonSchema)]
 #[schemars(transparent)]
@@ -44,9 +43,7 @@ impl DataValue for MetaObject {}
     dead_code,
     reason = "This type supplies the property-name pattern for the generated metaschema"
 )]
-struct MetaStaticSchemaKey(
-    #[schemars(regex(pattern = "^(?:[a-z][a-z0-9_]*|MIB_family_name|Vxlan1)$"))] String,
-);
+struct MetaStaticSchemaKey(#[schemars(regex(pattern = "^(?:[a-z][a-z0-9_]*|Vxlan1)$"))] String);
 
 /// Schema-only key type for reusable schema definitions.
 #[cfg(feature = "metaschema")]
@@ -58,17 +55,7 @@ struct MetaStaticSchemaKey(
 )]
 struct MetaDefinitionKey(#[schemars(regex(pattern = "^[a-z][a-z0-9_]*$"))] String);
 
-/// Schema-only key type for data paths declaring dynamic schema keys.
-#[cfg(feature = "metaschema")]
-#[derive(schemars::JsonSchema)]
-#[schemars(transparent)]
-#[allow(
-    dead_code,
-    reason = "This type supplies the property-name pattern for the generated metaschema"
-)]
-struct MetaDynamicSchemaKey(#[schemars(regex(pattern = "^[a-z][a-z0-9_.]*$"))] String);
-
-/// Source model for a recursive AVD dictionary schema.
+/// AVD schema for dictionary data.
 #[skip_serializing_none]
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "metaschema", derive(schemars::JsonSchema))]
@@ -76,13 +63,13 @@ struct MetaDynamicSchemaKey(#[schemars(regex(pattern = "^[a-z][a-z0-9_.]*$"))] S
 pub struct SourceDict {
     /// Dictionary of recursive dictionary keys in the format `{<keyname>: {<schema>}}`.
     ///
-    /// `keyname` must use snake case. `schema` is recursive and must conform
-    /// to the AVD schema format.
+    /// Names must match `[A-Za-z0-9_]+` during loading. The authoring metaschema
+    /// restricts new schema keys to snake case (with documented exceptions).
     #[cfg_attr(
         feature = "metaschema",
         schemars(with = "Option<std::collections::BTreeMap<MetaStaticSchemaKey, SourceSchema>>")
     )]
-    pub keys: Option<OrderMap<String, SourceSchema>>,
+    pub keys: Option<OrderMap<crate::SchemaKey, SourceSchema>>,
     /// Whether input keys absent from `keys` and resolved `dynamic_keys` are accepted.
     /// Default is false.
     pub allow_other_keys: Option<bool>,

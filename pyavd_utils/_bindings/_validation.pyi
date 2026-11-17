@@ -29,11 +29,23 @@ class Configuration:
         warn_eos_config_keys: bool = False,
     ) -> None: ...
 
+class SourceSpan:
+    """Zero-based UTF-8 byte range in the original uncompressed input."""
+
+    start: int
+    """Inclusive start offset."""
+    end: int
+    """Exclusive end offset; equal offsets represent a zero-width span."""
+
 class Violation:
     """Input data violates the schema."""
 
     message: str
     """String detailing the violation."""
+    source: str | None
+    """Opaque caller-provided source identifier, if available."""
+    span: SourceSpan | None
+    """Range associated with this finding, if available."""
     path: list[str]
     """Path to the data which the violation concerns."""
 
@@ -42,6 +54,10 @@ class Deprecation:
 
     message: str
     """String detailing the deprecation."""
+    source: str | None
+    """Opaque caller-provided source identifier, if available."""
+    span: SourceSpan | None
+    """Range associated with this finding, if available."""
     path: list[str]
     """Path to the data which uses a deprecated data model."""
     removed: bool
@@ -60,6 +76,10 @@ class IgnoredEosConfigKey:
 
     message: str
     """String detailing the ignored key."""
+    source: str | None
+    """Opaque caller-provided source identifier, if available."""
+    span: SourceSpan | None
+    """Range associated with this finding, if available."""
     path: list[str]
     """Path to the ignored key."""
 

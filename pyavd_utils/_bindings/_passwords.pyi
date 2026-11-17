@@ -90,7 +90,7 @@ def simple_7_decrypt(data: str) -> str:
     with legacy systems. It provides only obfuscation, not real encryption.
 
     Args:
-        data: The type-7 encrypted password to decrypt.
+        data: The type-7 encrypted password to decrypt, beginning with two ASCII decimal salt digits (00-15).
 
     Returns:
         str: The decrypted password.

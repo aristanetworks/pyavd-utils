@@ -17,6 +17,12 @@ use crate::utils::load::Load;
 /// Enum covering recursive AVD schema types. Named schema roots use [`SourceRootDict`].
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, derive_more::From)]
 #[cfg_attr(feature = "metaschema", derive(schemars::JsonSchema))]
+#[cfg_attr(
+    feature = "metaschema",
+    schemars(
+        description = "Schema for an AVD value. The type selects the supported properties for booleans, integers, strings, lists, or dictionaries."
+    )
+)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum SourceSchema {
     Bool(SourceBool),
@@ -84,14 +90,14 @@ impl<'a> SourceLayer<'a> {
         }
     }
 
-    pub(crate) fn schema_ref(self) -> Option<&'a str> {
+    pub(crate) fn schema_ref(self) -> Option<&'a crate::SchemaPath> {
         match self {
-            Self::Root(schema) => schema.base.schema_ref.as_deref(),
-            Self::Schema(SourceSchema::Bool(schema)) => schema.base.schema_ref.as_deref(),
-            Self::Schema(SourceSchema::Int(schema)) => schema.base.schema_ref.as_deref(),
-            Self::Schema(SourceSchema::Str(schema)) => schema.base.schema_ref.as_deref(),
-            Self::Schema(SourceSchema::List(schema)) => schema.base.schema_ref.as_deref(),
-            Self::Schema(SourceSchema::Dict(schema)) => schema.base.schema_ref.as_deref(),
+            Self::Root(schema) => schema.base.schema_ref.as_ref(),
+            Self::Schema(SourceSchema::Bool(schema)) => schema.base.schema_ref.as_ref(),
+            Self::Schema(SourceSchema::Int(schema)) => schema.base.schema_ref.as_ref(),
+            Self::Schema(SourceSchema::Str(schema)) => schema.base.schema_ref.as_ref(),
+            Self::Schema(SourceSchema::List(schema)) => schema.base.schema_ref.as_ref(),
+            Self::Schema(SourceSchema::Dict(schema)) => schema.base.schema_ref.as_ref(),
         }
     }
 }

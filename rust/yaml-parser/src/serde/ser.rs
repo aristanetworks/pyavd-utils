@@ -485,6 +485,7 @@ fn node_from_value(value: Value<'static>) -> Node<'static> {
         properties: None,
         value,
         span: crate::span::Span::default(),
+        source: None,
         trailing_comment: None,
     }
 }
@@ -717,6 +718,7 @@ mod tests {
             properties: None,
             value: normalize_value(&node.value),
             span: Span::default(),
+            source: None,
             trailing_comment: normalize_comment(node.trailing_comment.as_deref()),
         }
     }

@@ -73,6 +73,7 @@ pub(crate) mod _passwords {
     #[cfg(feature = "simple-7")]
     #[pyfunction]
     /// Decrypt (deobfuscate) a password from insecure type-7.
+    /// The salt prefix must be two ASCII decimal digits (00-15).
     pub(crate) fn simple_7_decrypt(data: &str) -> PyResult<String> {
         ::passwords::simple_7_decrypt(data).map_err(|err| match err {
             ::passwords::Simple7Error::InvalidUtf8(_) => PyRuntimeError::new_err(err.to_string()),

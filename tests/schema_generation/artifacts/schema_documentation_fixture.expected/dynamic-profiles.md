@@ -7,12 +7,12 @@
 
     | Variable | Type | Required | Default | Value Restrictions | Description |
     | -------- | ---- | -------- | ------- | ------------------ | ----------- |
-    | [<samp>&lt;profile_types.name&gt;</samp>](## "<profile_types.name>") | List, items: String |  |  |  |  |
-    | [<samp>&nbsp;&nbsp;-&nbsp;&lt;str&gt;</samp>](## "<profile_types.name>.[]") | String |  |  |  |  |
+    | [<samp>&lt;network_services_keys.name&gt;</samp>](## "<network_services_keys.name>") | List, items: String |  |  |  |  |
+    | [<samp>&nbsp;&nbsp;-&nbsp;&lt;str&gt;</samp>](## "<network_services_keys.name>.[]") | String |  |  |  |  |
 
 === "YAML"
 
     ```yaml
-    <profile_types.name>:
+    <network_services_keys.name>:
       - <str>
     ```

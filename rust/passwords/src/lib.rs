@@ -8,7 +8,6 @@
     clippy::cast_possible_truncation,
     clippy::integer_division,
     clippy::integer_division_remainder_used,
-    clippy::string_slice,
     reason = "Existing password codec implementation uses fixed-size lookup tables and compact algorithm names"
 )]
 #![deny(unused_crate_dependencies)]

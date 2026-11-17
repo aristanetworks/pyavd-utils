@@ -121,6 +121,8 @@ impl<'a> FromIterator<&'a str> for Path {
 pub struct Feedback<T: Clone + Debug + PartialEq + Serialize + Display> {
     /// Data path which the feedback concerns.
     pub path: Path,
+    /// Opaque identifier of the input source, if available.
+    pub source: Option<String>,
     pub span: Option<SourceSpan>,
     pub issue: T,
 }
@@ -404,6 +406,7 @@ pub enum Violation {
     ValueNotUnique {
         other_path: Path,
         other_span: Option<SourceSpan>,
+        other_source: Option<String>,
     },
     /// The input data model is deprecated and cannot be used in conjunction with the new data model.
     #[display(

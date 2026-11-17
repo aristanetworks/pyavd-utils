@@ -20,12 +20,19 @@ where
     pub(crate) fn new(events: I) -> Self {
         Self {
             events,
+            source: None,
             peeked: None,
             events_consumed: 0,
             errors: Vec::new(),
             anchors: std::collections::HashSet::new(),
             anchor_nodes: std::collections::HashMap::new(),
         }
+    }
+
+    /// Set the shared source identifier before parsing begins.
+    pub(crate) fn with_source(mut self, source: Option<std::sync::Arc<str>>) -> Self {
+        self.source = source;
+        self
     }
 
     /// Take collected errors.

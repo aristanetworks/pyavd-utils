@@ -39,11 +39,30 @@ pub(crate) mod _validation {
         })
     }
 
+    /// Zero-based byte range in the original uncompressed UTF-8 input.
+    #[pyclass(from_py_object, frozen, get_all)]
+    #[derive(Clone, Debug, PartialEq)]
+    pub(crate) struct SourceSpan {
+        pub start: usize,
+        pub end: usize,
+    }
+
+    impl From<::validation::feedback::SourceSpan> for SourceSpan {
+        fn from(span: ::validation::feedback::SourceSpan) -> Self {
+            Self {
+                start: span.start,
+                end: span.end,
+            }
+        }
+    }
+
     #[pyclass(from_py_object, frozen, get_all)]
     #[derive(Clone)]
     pub(crate) struct Violation {
         pub message: String,
         pub path: Vec<String>,
+        pub source: Option<String>,
+        pub span: Option<SourceSpan>,
     }
 
     #[pyclass(from_py_object, frozen, get_all)]
@@ -51,6 +70,8 @@ pub(crate) mod _validation {
     pub(crate) struct Deprecation {
         pub message: String,
         pub path: Vec<String>,
+        pub source: Option<String>,
+        pub span: Option<SourceSpan>,
         pub removed: bool,
         pub version: Option<String>,
         pub replacement: Option<String>,
@@ -63,6 +84,8 @@ pub(crate) mod _validation {
     pub(crate) struct IgnoredEosConfigKey {
         pub message: String,
         pub path: Vec<String>,
+        pub source: Option<String>,
+        pub span: Option<SourceSpan>,
     }
 
     #[pyclass(from_py_object, get_all, set_all)]
@@ -119,6 +142,8 @@ pub(crate) mod _validation {
         ) -> PyResult<ValidationResult> {
             let mut result = ValidationResult::default();
             for feedback in value.errors {
+                let source = feedback.source;
+                let span = feedback.span.map(SourceSpan::from);
                 match feedback.issue {
                     ::validation::feedback::ErrorIssue::Violation(
                         ::validation::feedback::Violation::Removed(removed),
@@ -128,10 +153,14 @@ pub(crate) mod _validation {
                         result.violations.push(Violation {
                             message: message.clone(),
                             path: path.clone(),
+                            source: source.clone(),
+                            span: span.clone(),
                         });
                         result.deprecations.push(Deprecation {
                             message,
                             path,
+                            source,
+                            span,
                             removed: true,
                             version: removed.version.into(),
                             replacement: removed.replacement.into(),
@@ -143,6 +172,8 @@ pub(crate) mod _validation {
                         result.violations.push(Violation {
                             message: violation.to_string(),
                             path: feedback.path.into(),
+                            source,
+                            span,
                         });
                     }
                     ::validation::feedback::ErrorIssue::InternalError { message } => {
@@ -153,11 +184,15 @@ pub(crate) mod _validation {
                 }
             }
             for feedback in value.warnings {
+                let source = feedback.source;
+                let span = feedback.span.map(SourceSpan::from);
                 match feedback.issue {
                     ::validation::feedback::WarningIssue::Deprecated(deprecated) => {
                         result.deprecations.push(Deprecation {
                             message: deprecated.to_string(),
                             path: feedback.path.into(),
+                            source,
+                            span,
                             removed: false,
                             version: deprecated.version.into(),
                             replacement: deprecated.replacement.into(),
@@ -169,6 +204,8 @@ pub(crate) mod _validation {
                         result.ignored_eos_config_keys.push(IgnoredEosConfigKey {
                             message: ignored.to_string(),
                             path: feedback.path.into(),
+                            source,
+                            span,
                         });
                     }
                 }

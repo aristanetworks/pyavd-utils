@@ -914,3 +914,42 @@ fn test_unicode_byte_spans_across_nested_structures() {
         "emoji😀: plain🚀text",
     );
 }
+
+#[test]
+fn parsed_nodes_share_source_through_aliases_and_ownership_conversion() {
+    fn assert_source(node: &yaml_parser::Node<'_>, source: &std::sync::Arc<str>) {
+        assert!(std::sync::Arc::ptr_eq(
+            node.source.as_ref().expect("source"),
+            source
+        ));
+        match &node.value {
+            Value::Mapping(pairs) => {
+                for pair in pairs {
+                    assert_source(&pair.key, source);
+                    assert_source(&pair.value, source);
+                }
+            }
+            Value::Sequence(items) => {
+                for item in items {
+                    assert_source(&item.node, source);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let source: std::sync::Arc<str> = "fixture-a".into();
+    let input = String::from(
+        "base: &base {name: switch, enabled: true, empty: null}\nitems: [*base, 42]\n---\nother: value\n",
+    );
+    let (documents, errors) = yaml_parser::parse_with_source(&input, Some(source.clone()));
+    drop(input);
+    assert!(errors.is_empty(), "{errors:?}");
+    assert_eq!(documents.len(), 2);
+    for document in documents {
+        assert_source(&document.clone().into_owned(), &source);
+    }
+    let (default_documents, default_errors) = parse("key: value");
+    assert!(default_errors.is_empty());
+    assert!(default_documents[0].source.is_none());
+}
