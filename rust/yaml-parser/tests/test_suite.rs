@@ -576,11 +576,6 @@ fn collect_error_test_cases(test_dir: &Path) -> Vec<(String, String, String)> {
 /// 2. All expected errors are detected (one per original document)
 /// 3. Error recovery works regardless of document order (tested in reverse too)
 #[test]
-#[allow(
-    clippy::print_stderr,
-    clippy::tests_outside_test_module,
-    reason = "Integration test with test output"
-)]
 fn error_recovery_combined_stream() {
     let test_dir = yaml_test_suite_dir();
 
@@ -604,7 +599,6 @@ fn error_recovery_combined_stream() {
 #[allow(
     clippy::print_stderr,
     clippy::integer_division,
-    clippy::integer_division_remainder_used,
     reason = "Test output and intentional integer math for threshold"
 )]
 fn run_combined_error_test(error_cases: &[(String, String, String)], order_name: &str) {
@@ -678,11 +672,6 @@ fn run_combined_error_test(error_cases: &[(String, String, String)], order_name:
 /// Test that each error test case produces at least one error.
 /// This ensures we don't silently accept malformed YAML.
 #[test]
-#[allow(
-    clippy::print_stderr,
-    clippy::tests_outside_test_module,
-    reason = "Integration test with test output"
-)]
 fn error_test_cases_produce_errors() {
     let test_dir = yaml_test_suite_dir();
 
@@ -722,11 +711,6 @@ fn error_test_cases_produce_errors() {
 /// Analyze error kind distribution across all error test cases.
 /// This helps identify which errors use generic types vs specific ones.
 #[test]
-#[allow(
-    clippy::print_stderr,
-    clippy::tests_outside_test_module,
-    reason = "Integration test with analysis output"
-)]
 fn analyze_error_kinds() {
     use std::collections::HashMap;
 
@@ -778,10 +762,8 @@ fn analyze_error_kinds() {
 /// Test the event-based parser against the same test suite.
 #[test]
 #[allow(
-    clippy::print_stderr,
     clippy::cast_precision_loss,
     clippy::as_conversions,
-    clippy::tests_outside_test_module,
     reason = "Integration test with test output and statistics calculation"
 )]
 fn yaml_test_suite_via_events() {
@@ -830,13 +812,6 @@ do NOT remove or relax it just to get green tests.",
 /// through `emit_events -> writer -> emit_events` and comparing normalized
 /// event streams.
 #[test]
-#[allow(
-    clippy::print_stderr,
-    clippy::cast_precision_loss,
-    clippy::as_conversions,
-    clippy::tests_outside_test_module,
-    reason = "Integration test with test output and statistics calculation"
-)]
 fn yaml_test_suite_roundtrip_via_writer() {
     let test_dir = yaml_test_suite_dir();
 

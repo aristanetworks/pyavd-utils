@@ -13,7 +13,6 @@
 #![allow(
     clippy::as_conversions,
     clippy::indexing_slicing,
-    clippy::too_many_lines,
     clippy::unreachable,
     reason = "The renderer consumes compiler-validated schema IDs and mirrors the legacy output contract"
 )]
@@ -313,10 +312,6 @@ impl<'a> DocumentationProjection<'a> {
         }
     }
 
-    #[allow(
-        clippy::too_many_arguments,
-        reason = "Documentation flags are derived independently from list context"
-    )]
     fn draft_with_context(
         occurrence: &SchemaOccurrence<'_>,
         key: Option<String>,
