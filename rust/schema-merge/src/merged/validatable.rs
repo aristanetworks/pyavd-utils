@@ -36,8 +36,8 @@ impl<'input, V: MergeBackend> ValidatableValue for MergedValue<'input, V> {
         = Sequence<'a, 'input, V>
     where
         Self: 'a;
-    type Coerced = V::Coerced;
-    type CoercedMappingItem = V::CoercedMappingItem;
+    type Coerced = Self;
+    type CoercedMappingItem = Entry<'input, V>;
 
     fn is_null(&self) -> bool {
         self.original().is_null()
@@ -114,40 +114,66 @@ impl<'input, V: MergeBackend> ValidatableValue for MergedValue<'input, V> {
     }
 
     fn coerce_null(&self) -> Self::Coerced {
-        self.original().coerce_null()
+        if self.is_null() {
+            self.clone()
+        } else {
+            Self {
+                inner: Repr::Scalar(Box::new(self.original().make_null())),
+            }
+        }
     }
     fn coerce_bool(&self, value: bool) -> Self::Coerced {
-        self.original().coerce_bool(value)
+        if self.is_bool() && self.as_bool() == Some(value) {
+            self.clone()
+        } else {
+            Self {
+                inner: Repr::Scalar(Box::new(self.original().make_bool(value))),
+            }
+        }
     }
     fn coerce_int(&self, value: i64) -> Self::Coerced {
-        self.original().coerce_int(value)
+        if self.is_int() && self.as_i64() == Some(value) {
+            self.clone()
+        } else {
+            Self {
+                inner: Repr::Scalar(Box::new(self.original().make_int(value))),
+            }
+        }
     }
-    fn coerce_str(&self, value: String) -> Self::Coerced {
-        self.original().coerce_str(value)
+    fn coerce_str(&self, value: Cow<'_, str>) -> Self::Coerced {
+        if self.is_str() && self.as_str().as_deref() == Some(value.as_ref()) {
+            self.clone()
+        } else {
+            Self {
+                inner: Repr::Scalar(Box::new(self.original().make_str(value.into_owned()))),
+            }
+        }
     }
     fn coerce_sequence(&self, items: Vec<Self::Coerced>) -> Self::Coerced {
-        self.original().coerce_sequence(items)
+        let mut metadata = self.item_metadata();
+        Self {
+            inner: Repr::Sequence {
+                original: self.sequence_origin(),
+                items: items
+                    .into_iter()
+                    .map(|value| Item {
+                        original: metadata.next().flatten(),
+                        value,
+                    })
+                    .collect(),
+            },
+        }
     }
     fn coerce_mapping(&self, items: Vec<Self::CoercedMappingItem>) -> Self::Coerced {
-        self.original().coerce_mapping(items)
+        Self {
+            inner: Repr::Mapping {
+                original: self.mapping_origin(),
+                entries: items,
+            },
+        }
     }
     fn clone_to_coerced(&self) -> Self::Coerced {
-        match &self.inner {
-            Repr::Borrowed(value) => value.clone_to_coerced(),
-            Repr::Scalar(value) => value.clone_to_coerced(),
-            Repr::Mapping { original, entries } => original.coerce_mapping(
-                entries
-                    .iter()
-                    .map(|entry| V::coerced_entry(entry.key, entry.value.clone_to_coerced()))
-                    .collect(),
-            ),
-            Repr::Sequence { original, items } => original.coerce_sequence(
-                items
-                    .iter()
-                    .map(|item| item.value.clone_to_coerced())
-                    .collect(),
-            ),
-        }
+        self.clone()
     }
 }
 
@@ -183,7 +209,7 @@ pub enum Pair<'a, 'input, V: MergeBackend> {
     Expanded(&'a Entry<'input, V>),
 }
 impl<'a, 'input: 'a, V: MergeBackend> Pair<'a, 'input, V> {
-    pub(super) fn key(&self) -> &'a V::Key {
+    pub(super) fn key(&self) -> &'input V::Key {
         match self {
             Self::Original(key, _) => key,
             Self::Expanded(entry) => entry.key,
@@ -270,8 +296,16 @@ impl<'a, 'input: 'a, V: MergeBackend + 'input> ValidatableMappingPair<'a> for Pa
             Self::Expanded(entry) => View::Borrowed(&entry.value),
         }
     }
-    fn coerced_item(&self, value: V::Coerced) -> V::CoercedMappingItem {
-        V::coerced_entry(self.key(), value)
+    fn coerced_item(&self, value: Self::Value) -> Entry<'input, V> {
+        let original_value = match self {
+            Self::Original(_, original_value) => original_value,
+            Self::Expanded(entry) => entry.original_value,
+        };
+        Entry {
+            key: self.key(),
+            original_value,
+            value,
+        }
     }
     fn key_source(&self) -> Option<&str> {
         V::key_source(self.key())
