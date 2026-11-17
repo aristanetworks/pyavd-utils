@@ -20,12 +20,15 @@ mod tests {
     use schema_merge::MergeMode;
     use schema_merge::MergeOptions;
     use schema_merge::MergeableValue as _;
+    use schema_merge::MergedValue;
     use schema_merge::NoSchema;
     use schema_merge::SameKeyStrategy;
     use schema_merge::StoreSchema;
     use schema_merge::merge;
+    use schema_merge::merge_borrowed;
     use serde_json::Value;
     use serde_json::json;
+    use validation::ValidatableValue as _;
     use yaml_parser::MappingPair;
     use yaml_parser::Node;
     use yaml_parser::Value as YamlValue;
@@ -48,7 +51,7 @@ mod tests {
                     "scalar": {"type": "str"}
                 },
                 "dynamic_keys": {
-                    "names": {"type": "dict", "keys": {
+                    "node_type_keys.key": {"type": "dict", "keys": {
                         "items": {"type": "list", "primary_key": "name", "items": {"type": "dict"}}
                     }}
                 }
@@ -72,6 +75,20 @@ mod tests {
         let schema = StoreSchema::new(&store, "test").unwrap();
         let yaml_base = yaml(&base.to_string(), "base");
         let yaml_next = yaml(&next.to_string(), "next");
+        let borrowed_json = merge_borrowed(&base, [&next], &schema, options).unwrap();
+        assert_eq!(serde_json::to_value(&borrowed_json).unwrap(), expected);
+        assert_eq!(borrowed_json.clone_to_coerced(), expected);
+        let borrowed_yaml = merge_borrowed(&yaml_base, [&yaml_next], &schema, options).unwrap();
+        assert_eq!(serde_json::to_value(&borrowed_yaml).unwrap(), expected);
+        assert_eq!(
+            serde_json::to_value(&borrowed_yaml.clone_to_coerced().value).unwrap(),
+            expected
+        );
+        let serialized_yaml = yaml_serde::to_string(&borrowed_yaml).unwrap();
+        assert_eq!(
+            yaml_serde::from_str::<Value>(&serialized_yaml).unwrap(),
+            expected
+        );
         assert_eq!(merge(base, [next], &schema, options).unwrap(), expected);
         let merged = merge(yaml_base, [yaml_next], &schema, options).unwrap();
         assert_eq!(serde_json::to_value(&merged.value).unwrap(), expected);
@@ -284,10 +301,10 @@ mod tests {
     #[test]
     fn unknown_schema_paths_and_dynamic_keys_use_ordinary_lists() {
         check(
-            json!({"names": ["custom"], "custom": {"items": [{"name": "a", "old": true}]}}),
+            json!({"node_type_keys": [{"key": "custom"}], "custom": {"items": [{"name": "a", "old": true}]}}),
             json!({"custom": {"items": [{"name": "a", "new": true}]}}),
             MergeOptions::default(),
-            json!({"names": ["custom"], "custom": {"items": [{"name": "a", "old": true}, {"name": "a", "new": true}]}}),
+            json!({"node_type_keys": [{"key": "custom"}], "custom": {"items": [{"name": "a", "old": true}, {"name": "a", "new": true}]}}),
         );
         let store = store();
         assert!(StoreSchema::new(&store, "missing").is_err());
@@ -443,14 +460,19 @@ mod tests {
     fn yaml_duplicate_mapping_keys_and_nonstring_keys_are_retained() {
         let base = yaml("duplicate: {old: true}\n1: {old: true}\n", "base");
         let next = yaml(
-            "duplicate: first\nduplicate: second\n1: {new: true}\n",
+            "duplicate: first\nduplicate: second\n1: {new: true}\nnull: ignored\n? [one, two]\n: ignored\n",
             "next",
         );
+        let borrowed = merge_borrowed(&base, [&next], &NoSchema, MergeOptions::default()).unwrap();
+        let feedback = borrowed.to_feedback_value();
+        let identity = borrowed.identity();
         let merged = merge(base, [next], &NoSchema, MergeOptions::default()).unwrap();
+        assert_eq!(feedback, merged.to_feedback_value());
+        assert_eq!(identity, merged.identity());
         let YamlValue::Mapping(pairs) = merged.value else {
             panic!("expected mapping")
         };
-        assert_eq!(pairs.len(), 4);
+        assert_eq!(pairs.len(), 6);
         assert_eq!(
             serde_json::to_value(&pairs[1].value.value).unwrap(),
             json!({"old": true, "new": true})
@@ -516,6 +538,20 @@ mod tests {
                 next_items[0].get("new").unwrap().span,
             ),
         ];
+        let borrowed = merge_borrowed(
+            &base,
+            [&next],
+            &StoreSchema::new(&store, "test").unwrap(),
+            MergeOptions::default(),
+        )
+        .unwrap();
+        let config = validation::Configuration {
+            return_coerced_data: true,
+            ..Default::default()
+        };
+        let borrowed_result = store
+            .validate_value(&borrowed, "test", Some(&config))
+            .unwrap();
         let merged = merge(
             base,
             [next],
@@ -523,7 +559,17 @@ mod tests {
             MergeOptions::default(),
         )
         .unwrap();
-        let result = store.validate_value(&merged, "test", None).unwrap().result;
+        let owned_result = store
+            .validate_value(&merged, "test", Some(&config))
+            .unwrap();
+        assert_eq!(borrowed_result.result.errors, owned_result.result.errors);
+        assert_eq!(
+            borrowed_result.result.warnings,
+            owned_result.result.warnings
+        );
+        assert_eq!(borrowed_result.result.infos, owned_result.result.infos);
+        assert_eq!(borrowed_result.coerced, owned_result.coerced);
+        let result = borrowed_result.result;
         assert_eq!(result.errors.len(), 3);
         for (key, source, span) in spans {
             let error = result
@@ -583,5 +629,193 @@ mod tests {
         )
         .unwrap();
         assert_eq!(merged_yaml.identity(), base.identity());
+    }
+
+    #[test]
+    fn borrowed_subtrees_are_shared_and_replacement_lists_stay_borrowed() {
+        let base = json!({"settings": {"mtu": 1500, "description": "old"}, "untouched": [{"nested": [1, 2]}]});
+        let next = json!({"settings": {"description": "new"}});
+        let merged = merge_borrowed(&base, [&next], &NoSchema, MergeOptions::default()).unwrap();
+        assert!(std::ptr::eq(
+            merged.get("untouched").unwrap().as_original().unwrap(),
+            &raw const base["untouched"]
+        ));
+        let settings = merged.get("settings").unwrap();
+        assert!(settings.as_original().is_none());
+        assert!(std::ptr::eq(
+            settings.get("mtu").unwrap().as_original().unwrap(),
+            &raw const base["settings"]["mtu"]
+        ));
+        assert!(std::ptr::eq(
+            settings.get("description").unwrap().as_original().unwrap(),
+            &raw const next["settings"]["description"]
+        ));
+
+        let old_list = json!([{"large": [1, 2, 3]}]);
+        let new_list = json!([{"new": [4, 5, 6]}]);
+        let replaced = merge_borrowed(
+            &old_list,
+            [&new_list],
+            &NoSchema,
+            MergeOptions {
+                list_merge: ListMerge::Replace,
+                ..MergeOptions::default()
+            },
+        )
+        .unwrap();
+        assert!(std::ptr::eq(
+            replaced.as_original().unwrap(),
+            &raw const new_list
+        ));
+        let unchanged = merge_borrowed(&base, [], &NoSchema, MergeOptions::default()).unwrap();
+        assert!(std::ptr::eq(
+            unchanged.as_original().unwrap(),
+            &raw const base
+        ));
+    }
+
+    #[test]
+    fn merged_results_can_be_reused_and_borrow_nonstatic_yaml() {
+        use std::borrow::Cow;
+        let text = String::from("borrowed text");
+        let scalar = Node::new(
+            YamlValue::String(Cow::Borrowed(text.as_str())),
+            yaml_parser::Span::default(),
+            None,
+        );
+        let empty = yaml("{}", "base");
+        let next = Node::new(
+            YamlValue::Mapping(vec![MappingPair::new(
+                yaml_parser::Span::default(),
+                Node::new(
+                    YamlValue::String(Cow::Borrowed("value")),
+                    yaml_parser::Span::default(),
+                    None,
+                ),
+                scalar,
+            )]),
+            yaml_parser::Span::default(),
+            None,
+        );
+        let merged = merge_borrowed(&empty, [&next], &NoSchema, MergeOptions::default()).unwrap();
+        let extra = yaml("other: true", "extra");
+        let continued = merge(
+            merged.clone(),
+            [MergedValue::new(&extra)],
+            &NoSchema,
+            MergeOptions::default(),
+        )
+        .unwrap();
+        assert_eq!(
+            serde_json::to_value(&merged).unwrap(),
+            json!({"value": "borrowed text"})
+        );
+        assert_eq!(
+            serde_json::to_value(&continued).unwrap(),
+            json!({"value": "borrowed text", "other": true})
+        );
+        assert!(std::ptr::eq(
+            continued.get("value").unwrap().as_str().unwrap().as_ptr(),
+            text.as_ptr()
+        ));
+        assert_eq!(
+            serde_json::to_value(MergedValue::from_scalar(json!(42)).unwrap()).unwrap(),
+            json!(42)
+        );
+        assert!(MergedValue::from_scalar(json!([])).is_err());
+    }
+
+    #[test]
+    fn borrowed_yaml_validation_matches_owned_for_duplicates_and_key_feedback() {
+        use validation::StoreValidate as _;
+        let store = Store::from_json(
+            &json!({"test": {"type": "dict", "keys": {
+                "old": {"type": "int", "deprecation": {"warning": true, "new_key": "new"}},
+                "new": {"type": "int"},
+                "number": {"type": "int"}
+            }}})
+            .to_string(),
+        )
+        .unwrap();
+        let base = yaml("old: 1\nnumber: 1\nnumber: 2\n", "base");
+        let next = yaml("unexpected: 3\nnumber: 3\n", "next");
+        let options = MergeOptions::default();
+        let borrowed = merge_borrowed(&base, [&next], &NoSchema, options).unwrap();
+        let config = validation::Configuration {
+            return_coerced_data: true,
+            ..Default::default()
+        };
+        let result = store
+            .validate_value(&borrowed, "test", Some(&config))
+            .unwrap();
+        let owned = merge(base.clone(), [next.clone()], &NoSchema, options).unwrap();
+        let expected = store.validate_value(&owned, "test", Some(&config)).unwrap();
+        assert_eq!(result.result.errors, expected.result.errors);
+        assert_eq!(result.result.warnings, expected.result.warnings);
+        assert_eq!(result.result.infos, expected.result.infos);
+        assert_eq!(result.coerced, expected.coerced);
+        assert!(!result.result.warnings.is_empty());
+        assert!(!result.result.errors.is_empty());
+        assert!(
+            result
+                .result
+                .warnings
+                .iter()
+                .all(|warning| warning.source.as_deref() == Some("base") && warning.span.is_some())
+        );
+        assert!(
+            result
+                .result
+                .errors
+                .iter()
+                .all(|error| error.source.is_some() && error.span.is_some())
+        );
+    }
+
+    #[test]
+    fn validation_resolves_dynamic_definitions_across_borrowed_and_expanded_views() {
+        use validation::StoreValidate as _;
+        let store = Store::from_json(&json!({"test": {
+            "type": "dict",
+            "keys": {"node_type_keys": {"type": "list", "items": {"type": "dict", "keys": {"key": {"type": "str"}}}}},
+            "dynamic_keys": {"node_type_keys.key": {"type": "int", "max": 10}}
+        }}).to_string()).unwrap();
+        let base = yaml("node_type_keys: [{key: first}]\nfirst: 20\n", "base");
+        let next = yaml("node_type_keys: [{key: second}]\nsecond: 30\n", "next");
+        // Dynamic merge schemas remain unsupported; this exercises validation's
+        // schema-data navigation after ordinary fragment assembly.
+        let merged = merge_borrowed(&base, [&next], &NoSchema, MergeOptions::default()).unwrap();
+        let result = store.validate_value(&merged, "test", None).unwrap();
+        assert_eq!(result.result.errors.len(), 2);
+        assert!(
+            result
+                .result
+                .errors
+                .iter()
+                .any(|error| error.path.to_string() == "first"
+                    && error.source.as_deref() == Some("base"))
+        );
+        assert!(
+            result
+                .result
+                .errors
+                .iter()
+                .any(|error| error.path.to_string() == "second"
+                    && error.source.as_deref() == Some("next"))
+        );
+
+        let json_base = serde_json::to_value(&base.value).unwrap();
+        let json_next = serde_json::to_value(&next.value).unwrap();
+        let json_merged =
+            merge_borrowed(&json_base, [&json_next], &NoSchema, MergeOptions::default()).unwrap();
+        let json_result = store.validate_value(&json_merged, "test", None).unwrap();
+        assert_eq!(json_result.result.errors.len(), 2);
+        assert!(
+            json_result
+                .result
+                .errors
+                .iter()
+                .all(|error| error.source.is_none() && error.span.is_none())
+        );
     }
 }
