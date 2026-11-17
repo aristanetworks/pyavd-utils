@@ -5,11 +5,11 @@ from __future__ import annotations
 
 import json
 import re
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
-from pyavd_utils_gen.metaschema import generate_metaschema
+from pyavd_utils_gen.metaschema import generate_metaschema, is_valid_avd_regex_pattern
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -111,3 +111,33 @@ def test_metaschema_descriptions_are_for_schema_authors(tmp_path: Path) -> None:
     assert "variable-length lookbehinds" in string["pattern"]["description"]
     assert "word boundaries" in string["pattern"]["description"]
     assert "list item" in string["dynamic_valid_values"]["description"]
+
+
+@pytest.mark.parametrize(
+    ("pattern", "expected"),
+    [
+        ("", True),
+        ("^requires-a-value$", True),
+        (r"Ethernet\d+(?:/\d+)?", True),
+        (r"\d+\s\w+", True),
+        (r"[\D\S\W]+", True),
+        (r"\bcafé\b", True),
+        ("(?=[a-z])(?=.*[0-9])[a-z0-9]+", True),
+        ("(?<=a+)b", True),
+        (r"(a)\1", True),
+        (r"\\p{Greek}", True),
+        ("[", False),
+        ("(", False),
+        (r"\p{L}", False),
+        (r"\p{Greek}", False),
+        (r"\P{Script=Greek}", False),
+        (r"\cA", False),
+    ],
+)
+def test_is_valid_avd_regex_pattern(pattern: str, expected: bool) -> None:
+    assert is_valid_avd_regex_pattern(pattern) is expected
+
+
+def test_is_valid_avd_regex_pattern_requires_a_string() -> None:
+    with pytest.raises(TypeError):
+        is_valid_avd_regex_pattern(cast("str", None))
