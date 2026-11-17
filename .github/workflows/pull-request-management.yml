@@ -25,6 +25,8 @@ env:
   PY_COLORS: 1
   # rust
   CARGO_TERM_COLOR: always
+  # Avoid runner-provided toolchains; each hosted job has its own workspace.
+  RUSTUP_HOME: ${{ github.workspace }}/../rustup
 
 jobs:
   required-checks:
