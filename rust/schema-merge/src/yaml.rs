@@ -40,13 +40,21 @@ impl<'input> MergeableValue for Node<'input> {
         self.value = Value::Sequence(items);
     }
 
-    fn get(&self, key: &str) -> Option<&Self> {
+    fn is_mapping(&self) -> bool {
+        matches!(self.value, Value::Mapping(_))
+    }
+    fn is_sequence(&self) -> bool {
+        matches!(self.value, Value::Sequence(_))
+    }
+
+    fn child_identity(&self, key: &str) -> Option<Self::Identity> {
         match &self.value {
             Value::Mapping(pairs) => pairs.iter().find_map(|pair| {
                 matches!(&pair.key.value, Value::String(name) if name == key).then_some(&pair.value)
             }),
             _ => None,
         }
+        .map(Self::identity)
     }
 
     fn identity(&self) -> Self::Identity {

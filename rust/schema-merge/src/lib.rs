@@ -4,7 +4,7 @@
 
 //! Shallow and schema-guided deep merging for JSON values and YAML nodes.
 //!
-//! Values move between inputs and the result. YAML replacements keep incoming metadata;
+//! Inputs can be consumed or borrowed through [`MergedValue`]. YAML replacements keep incoming metadata;
 //! partially merged containers keep their original metadata, while their children retain
 //! their individual provenance. A container's original span does not describe all contributors.
 //!
@@ -15,6 +15,7 @@
 
 mod identity;
 mod json;
+mod merged;
 mod yaml;
 
 use std::collections::HashMap;
@@ -25,8 +26,24 @@ use std::hash::Hash;
 use avdschema::SchemaPathError;
 use avdschema::Store;
 pub use identity::SemanticValue;
+pub use merged::DataIter;
+pub use merged::DataKeys;
+pub use merged::DataMapping;
+pub use merged::DataSequence;
+pub use merged::DataValue;
+pub use merged::Entry as MergedEntry;
+pub use merged::Item as MergedItem;
+pub use merged::Mapping as MergedMapping;
+pub use merged::MappingIter as MergedMappingIter;
+pub use merged::MergeBackend;
+pub use merged::MergedValue;
+pub use merged::Pair as MergedPair;
+pub use merged::Sequence as MergedSequence;
+pub use merged::SequenceIter as MergedSequenceIter;
+pub use merged::View as MergedView;
+pub use merged::merge_borrowed;
 
-/// An owned tree that supports merging without discarding backend metadata.
+/// A tree that supports merging without discarding backend metadata.
 pub trait MergeableValue: Clone + Sized {
     /// Mapping entry, including any key and structural metadata.
     type Entry: MergeableEntry<Value = Self>;
@@ -43,8 +60,12 @@ pub trait MergeableValue: Clone + Sized {
     fn take_sequence(&mut self) -> Option<Vec<Self::Item>>;
     /// Set the entries on an existing sequence, preserving its metadata.
     fn set_sequence(&mut self, items: Vec<Self::Item>);
-    /// Look up a string mapping key; distinguish missing keys from explicit nulls.
-    fn get(&self, key: &str) -> Option<&Self>;
+    /// Whether this value is a mapping, without expanding it.
+    fn is_mapping(&self) -> bool;
+    /// Whether this value is a sequence, without expanding it.
+    fn is_sequence(&self) -> bool;
+    /// Identity of a string-keyed child; explicit null differs from a missing key.
+    fn child_identity(&self, key: &str) -> Option<Self::Identity>;
     /// Identity used for primary-key indexes and unique-list strategies.
     fn identity(&self) -> Self::Identity;
 }
@@ -251,30 +272,29 @@ fn merge_value<V: MergeableValue, S: MergeSchema>(
         *base = next;
         return Ok(());
     }
-    if let Some(next_entries) = next.take_mapping() {
-        if let Some(base_entries) = base.take_mapping() {
+    if base.is_mapping() && next.is_mapping() {
+        if let (Some(base_entries), Some(next_entries)) = (base.take_mapping(), next.take_mapping())
+        {
             let entries = merge_mapping::<V, S>(base_entries, next_entries, schema, options, path)?;
             base.set_mapping(entries);
-            return Ok(());
         }
-        next.set_mapping(next_entries);
+        return Ok(());
     }
     if options.mode == MergeMode::Shallow {
         *base = next;
         return Ok(());
     }
-    if let Some(next_items) = next.take_sequence() {
-        if let Some(base_items) = base.take_sequence() {
-            if options.list_merge == ListMerge::Replace {
-                next.set_sequence(next_items);
-                *base = next;
-                return Ok(());
-            }
-            let items = merge_sequence::<V, S>(base_items, next_items, schema, options, path)?;
-            base.set_sequence(items);
+    if base.is_sequence() && next.is_sequence() {
+        // Replacements must not expand or inspect either list.
+        if options.list_merge == ListMerge::Replace {
+            *base = next;
             return Ok(());
         }
-        next.set_sequence(next_items);
+        if let (Some(base_items), Some(next_items)) = (base.take_sequence(), next.take_sequence()) {
+            let items = merge_sequence::<V, S>(base_items, next_items, schema, options, path)?;
+            base.set_sequence(items);
+        }
+        return Ok(());
     }
     // Full replacements transfer the entire node, including its source and span.
     match options.same_key_strategy {
@@ -351,15 +371,15 @@ fn merge_sequence<V: MergeableValue, S: MergeSchema>(
     if let Some(primary_key) = primary_key {
         let mut indexes: HashMap<_, Vec<usize>> = HashMap::new();
         for (index, item) in base.iter().enumerate() {
-            if let Some(identity) = item.value().get(primary_key).map(MergeableValue::identity) {
+            if let Some(identity) = item.value().child_identity(primary_key) {
                 indexes.entry(identity).or_default().push(index);
             }
         }
         for item in next {
             let matches = item
                 .value()
-                .get(primary_key)
-                .and_then(|value| indexes.get(&value.identity()));
+                .child_identity(primary_key)
+                .and_then(|identity| indexes.get(&identity));
             if let Some(matches) = matches {
                 // Multiple matches indicate invalid duplicate base keys. Keep all entries so
                 // validation can report them, rather than silently collapsing them.
