@@ -17,9 +17,11 @@ use validation::feedback::Value as FeedbackValue;
 
 use super::Entry;
 use super::Item;
+use super::MappingData;
 use super::MergeBackend;
 use super::MergedValue;
 use super::Repr;
+use super::SequenceData;
 use super::View;
 use super::schema::DataMapping;
 
@@ -76,14 +78,14 @@ impl<'input, V: MergeBackend> ValidatableValue for MergedValue<'input, V> {
     fn as_mapping(&self) -> Option<Self::Mapping<'_>> {
         match &self.inner {
             Repr::Borrowed(value) if value.is_mapping() => Some(Mapping::Original(value)),
-            Repr::Mapping { entries, .. } => Some(Mapping::Expanded(entries)),
+            Repr::Mapping(data) => Some(Mapping::Expanded(&data.entries)),
             _ => None,
         }
     }
     fn as_sequence(&self) -> Option<Self::Sequence<'_>> {
         match &self.inner {
             Repr::Borrowed(value) if value.is_sequence() => Some(Sequence::Original(value)),
-            Repr::Sequence { items, .. } => Some(Sequence::Expanded(items)),
+            Repr::Sequence(data) => Some(Sequence::Expanded(&data.items)),
             _ => None,
         }
     }
@@ -95,8 +97,8 @@ impl<'input, V: MergeBackend> ValidatableValue for MergedValue<'input, V> {
         match &self.inner {
             Repr::Borrowed(value) => value.to_feedback_value(),
             Repr::Scalar(value) => value.to_feedback_value(),
-            Repr::Mapping { entries, .. } => FeedbackValue::Dict(
-                entries
+            Repr::Mapping(data) => FeedbackValue::Dict(
+                data.entries
                     .iter()
                     .filter_map(|entry| {
                         V::feedback_key(entry.key)
@@ -104,8 +106,8 @@ impl<'input, V: MergeBackend> ValidatableValue for MergedValue<'input, V> {
                     })
                     .collect(),
             ),
-            Repr::Sequence { items, .. } => FeedbackValue::List(
-                items
+            Repr::Sequence(data) => FeedbackValue::List(
+                data.items
                     .iter()
                     .map(|item| item.value.to_feedback_value())
                     .collect(),
@@ -118,7 +120,7 @@ impl<'input, V: MergeBackend> ValidatableValue for MergedValue<'input, V> {
             self.clone()
         } else {
             Self {
-                inner: Repr::Scalar(Box::new(self.original().make_null())),
+                inner: Repr::Scalar(Arc::new(self.original().make_null())),
             }
         }
     }
@@ -127,7 +129,7 @@ impl<'input, V: MergeBackend> ValidatableValue for MergedValue<'input, V> {
             self.clone()
         } else {
             Self {
-                inner: Repr::Scalar(Box::new(self.original().make_bool(value))),
+                inner: Repr::Scalar(Arc::new(self.original().make_bool(value))),
             }
         }
     }
@@ -136,7 +138,7 @@ impl<'input, V: MergeBackend> ValidatableValue for MergedValue<'input, V> {
             self.clone()
         } else {
             Self {
-                inner: Repr::Scalar(Box::new(self.original().make_int(value))),
+                inner: Repr::Scalar(Arc::new(self.original().make_int(value))),
             }
         }
     }
@@ -145,14 +147,14 @@ impl<'input, V: MergeBackend> ValidatableValue for MergedValue<'input, V> {
             self.clone()
         } else {
             Self {
-                inner: Repr::Scalar(Box::new(self.original().make_str(value.into_owned()))),
+                inner: Repr::Scalar(Arc::new(self.original().make_str(value.into_owned()))),
             }
         }
     }
     fn coerce_sequence(&self, items: Vec<Self::Coerced>) -> Self::Coerced {
         let mut metadata = self.item_metadata();
         Self {
-            inner: Repr::Sequence {
+            inner: Repr::Sequence(Arc::new(SequenceData {
                 original: self.sequence_origin(),
                 items: items
                     .into_iter()
@@ -161,15 +163,15 @@ impl<'input, V: MergeBackend> ValidatableValue for MergedValue<'input, V> {
                         value,
                     })
                     .collect(),
-            },
+            })),
         }
     }
     fn coerce_mapping(&self, items: Vec<Self::CoercedMappingItem>) -> Self::Coerced {
         Self {
-            inner: Repr::Mapping {
+            inner: Repr::Mapping(Arc::new(MappingData {
                 original: self.mapping_origin(),
                 entries: items,
-            },
+            })),
         }
     }
     fn clone_to_coerced(&self) -> Self::Coerced {
