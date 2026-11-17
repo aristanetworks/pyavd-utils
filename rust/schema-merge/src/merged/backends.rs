@@ -8,6 +8,7 @@ use serde::Serializer;
 use serde_json::Value;
 use validation::ValidatableValue as _;
 use validation::feedback::SourceSpan;
+use yaml_parser::Integer;
 use yaml_parser::MappingPair;
 use yaml_parser::Node;
 use yaml_parser::SequenceItem;
@@ -57,8 +58,23 @@ impl MergeBackend for Value {
     fn key_span(_key: &str) -> Option<SourceSpan> {
         None
     }
-    fn coerced_entry(key: &str, value: Self::Coerced) -> Self::CoercedMappingItem {
-        (key.to_owned(), value)
+    fn make_null(&self) -> Self {
+        Self::Null
+    }
+    fn make_bool(&self, value: bool) -> Self {
+        Self::Bool(value)
+    }
+    fn make_int(&self, value: i64) -> Self {
+        Self::Number(value.into())
+    }
+    fn make_str(&self, value: String) -> Self {
+        Self::String(value)
+    }
+    fn empty_mapping(&self) -> Self {
+        Self::Object(serde_json::Map::new())
+    }
+    fn empty_sequence(&self) -> Self {
+        Self::Array(Vec::new())
     }
     fn serialize_value<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         serde::Serialize::serialize(self, serializer)
@@ -132,14 +148,39 @@ impl<'input> MergeBackend for Node<'input> {
     fn key_span(key: &Self::Key) -> Option<SourceSpan> {
         key.key.source_span()
     }
-    fn coerced_entry(key: &Self::Key, value: Self::Coerced) -> Self::CoercedMappingItem {
-        // Clone only the key and pair metadata, never the original mapped value.
-        let mut pair = MappingPair::new(key.pair_span, key.key.clone().into_owned(), value);
-        pair.header_comment = key
-            .header_comment
-            .clone()
-            .map(|comment| Box::new((*comment).into_owned()));
-        pair
+    fn make_null(&self) -> Self {
+        Node::new(YamlValue::Null, self.span, self.source.clone())
+    }
+    fn make_bool(&self, value: bool) -> Self {
+        Node::new(YamlValue::Bool(value), self.span, self.source.clone())
+    }
+    fn make_int(&self, value: i64) -> Self {
+        Node::new(
+            YamlValue::Int(Integer::I64(value)),
+            self.span,
+            self.source.clone(),
+        )
+    }
+    fn make_str(&self, value: String) -> Self {
+        Node::new(
+            YamlValue::String(Cow::Owned(value)),
+            self.span,
+            self.source.clone(),
+        )
+    }
+    fn empty_mapping(&self) -> Self {
+        Node::new(
+            YamlValue::Mapping(Vec::new()),
+            self.span,
+            self.source.clone(),
+        )
+    }
+    fn empty_sequence(&self) -> Self {
+        Node::new(
+            YamlValue::Sequence(Vec::new()),
+            self.span,
+            self.source.clone(),
+        )
     }
     fn serialize_value<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         serde::Serialize::serialize(&self.value, serializer)

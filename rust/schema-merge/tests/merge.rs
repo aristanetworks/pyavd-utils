@@ -28,6 +28,8 @@ mod tests {
     use schema_merge::merge_borrowed;
     use serde_json::Value;
     use serde_json::json;
+    use validation::ValidatableMapping as _;
+    use validation::ValidatableMappingPair as _;
     use validation::ValidatableValue as _;
     use yaml_parser::MappingPair;
     use yaml_parser::Node;
@@ -77,11 +79,14 @@ mod tests {
         let yaml_next = yaml(&next.to_string(), "next");
         let borrowed_json = merge_borrowed(&base, [&next], &schema, options).unwrap();
         assert_eq!(serde_json::to_value(&borrowed_json).unwrap(), expected);
-        assert_eq!(borrowed_json.clone_to_coerced(), expected);
+        assert_eq!(
+            serde_json::to_value(borrowed_json.clone_to_coerced()).unwrap(),
+            expected
+        );
         let borrowed_yaml = merge_borrowed(&yaml_base, [&yaml_next], &schema, options).unwrap();
         assert_eq!(serde_json::to_value(&borrowed_yaml).unwrap(), expected);
         assert_eq!(
-            serde_json::to_value(&borrowed_yaml.clone_to_coerced().value).unwrap(),
+            serde_json::to_value(borrowed_yaml.clone_to_coerced()).unwrap(),
             expected
         );
         let serialized_yaml = yaml_serde::to_string(&borrowed_yaml).unwrap();
@@ -553,8 +558,8 @@ mod tests {
             .validate_value(&borrowed, "test", Some(&config))
             .unwrap();
         let merged = merge(
-            base,
-            [next],
+            base.clone(),
+            [next.clone()],
             &StoreSchema::new(&store, "test").unwrap(),
             MergeOptions::default(),
         )
@@ -568,7 +573,16 @@ mod tests {
             owned_result.result.warnings
         );
         assert_eq!(borrowed_result.result.infos, owned_result.result.infos);
-        assert_eq!(borrowed_result.coerced, owned_result.coerced);
+        assert_eq!(
+            borrowed_result
+                .coerced
+                .as_ref()
+                .map(schema_merge::MergeableValue::identity),
+            owned_result
+                .coerced
+                .as_ref()
+                .map(schema_merge::MergeableValue::identity)
+        );
         let result = borrowed_result.result;
         assert_eq!(result.errors.len(), 3);
         for (key, source, span) in spans {
@@ -753,7 +767,16 @@ mod tests {
         assert_eq!(result.result.errors, expected.result.errors);
         assert_eq!(result.result.warnings, expected.result.warnings);
         assert_eq!(result.result.infos, expected.result.infos);
-        assert_eq!(result.coerced, expected.coerced);
+        assert_eq!(
+            result
+                .coerced
+                .as_ref()
+                .map(schema_merge::MergeableValue::identity),
+            expected
+                .coerced
+                .as_ref()
+                .map(schema_merge::MergeableValue::identity)
+        );
         assert!(!result.result.warnings.is_empty());
         assert!(!result.result.errors.is_empty());
         assert!(
@@ -817,5 +840,214 @@ mod tests {
                 .iter()
                 .all(|error| error.source.is_none() && error.span.is_none())
         );
+    }
+
+    fn coercion_fragments() -> (Store, Node<'static>, Node<'static>) {
+        let store = Store::from_json(&json!({"test": {"type": "dict", "allow_other_keys": true, "keys": {
+            "settings": {"type": "dict", "keys": {
+                "keep": {"type": "str"}, "number": {"type": "int"},
+                "flag": {"type": "bool"}, "nullable": {"type": "str"},
+                "converted": {"type": "int"}, "lower": {"type": "str", "convert_to_lower_case": true},
+                "stringify": {"type": "str"}, "integral": {"type": "int"}, "extra": {"type": "str"}
+            }},
+            "items": {"type": "list", "primary_key": "name", "items": {"type": "dict", "keys": {
+                "name": {"type": "str"}, "keep": {"type": "str"}, "number": {"type": "int"}
+            }}}
+        }}}).to_string()).unwrap();
+        let base = yaml(
+            "settings:\n  keep: unchanged\n  number: 7\n  flag: true\n  nullable: null\n  converted: \"42\"\n  lower: HELLO\n  stringify: 123\n  integral: 1.0\npassthrough: {nested: [a, b]}\nitems:\n  - name: a\n    keep: original\n    number: \"12\"\n",
+            "base",
+        );
+        let next = yaml(
+            "settings: {extra: untouched}\nitems:\n  - name: a\n    number: \"13\"\n  - name: b\n    keep: appended\n",
+            "next",
+        );
+        (store, base, next)
+    }
+
+    #[test]
+    fn coerced_merged_output_borrows_unchanged_values_and_owns_conversions() {
+        use validation::StoreValidate as _;
+        let (store, base, next) = coercion_fragments();
+        let options = MergeOptions::default();
+        let schema = StoreSchema::new(&store, "test").unwrap();
+        let config = validation::Configuration {
+            return_coerced_data: true,
+            return_coercion_infos: true,
+            ..Default::default()
+        };
+        let result = {
+            let merged = merge_borrowed(&base, [&next], &schema, options).unwrap();
+            store
+                .validate_value(&merged, "test", Some(&config))
+                .unwrap()
+        };
+        // The result borrows fragment storage, never the temporary merged wrappers.
+        assert!(result.result.errors.is_empty());
+        assert_eq!(result.result.infos.len(), 5);
+        assert!(
+            result
+                .result
+                .infos
+                .iter()
+                .all(|info| info.source.is_some() && info.span.is_some())
+        );
+        let coerced = result.coerced.unwrap();
+        let expected = json!({"settings": {
+            "keep": "unchanged", "number": 7, "flag": true, "nullable": null,
+            "converted": 42, "lower": "hello", "stringify": "123", "integral": 1, "extra": "untouched"
+        }, "passthrough": {"nested": ["a", "b"]}, "items": [
+            {"name": "a", "keep": "original", "number": 13}, {"name": "b", "keep": "appended"}
+        ]});
+        assert_eq!(serde_json::to_value(&coerced).unwrap(), expected);
+        let serialized = yaml_serde::to_string(&coerced).unwrap();
+        assert_eq!(
+            yaml_serde::from_str::<Value>(&serialized).unwrap(),
+            expected
+        );
+        let settings = coerced.get("settings").unwrap();
+        let base_settings = base.get("settings").unwrap();
+        for key in ["keep", "number", "flag", "nullable"] {
+            assert!(std::ptr::eq(
+                settings.get(key).unwrap().as_original().unwrap(),
+                base_settings.get(key).unwrap()
+            ));
+        }
+        assert!(std::ptr::eq(
+            settings.get("extra").unwrap().as_original().unwrap(),
+            next.get("settings").unwrap().get("extra").unwrap()
+        ));
+        assert!(std::ptr::eq(
+            coerced.get("passthrough").unwrap().as_original().unwrap(),
+            base.get("passthrough").unwrap()
+        ));
+        for key in ["converted", "lower", "stringify", "integral"] {
+            let value = settings.get(key).unwrap();
+            let original = base_settings.get(key).unwrap();
+            assert!(value.as_original().is_none());
+            assert_eq!(value.source_span(), original.source_span());
+            assert!(Arc::ptr_eq(
+                value.source().unwrap(),
+                original.source.as_ref().unwrap()
+            ));
+        }
+        let json_base = serde_json::to_value(&base.value).unwrap();
+        let json_next = serde_json::to_value(&next.value).unwrap();
+        let json_coerced = {
+            let merged = merge_borrowed(&json_base, [&json_next], &schema, options).unwrap();
+            let json_result = store
+                .validate_value(&merged, "test", Some(&config))
+                .unwrap();
+            assert!(json_result.result.errors.is_empty());
+            json_result.coerced.unwrap()
+        };
+        assert_eq!(serde_json::to_value(&json_coerced).unwrap(), expected);
+        let json_settings = json_coerced.get("settings").unwrap();
+        assert!(std::ptr::eq(
+            json_settings.get("keep").unwrap().as_original().unwrap(),
+            &raw const json_base["settings"]["keep"]
+        ));
+        assert!(
+            json_settings
+                .get("converted")
+                .unwrap()
+                .as_original()
+                .is_none()
+        );
+        assert!(json_settings.get("converted").unwrap().source().is_none());
+        assert!(
+            json_settings
+                .get("converted")
+                .unwrap()
+                .source_span()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn coerced_mapping_keys_and_sequence_items_retain_fragment_metadata() {
+        use validation::StoreValidate as _;
+        let (store, base, next) = coercion_fragments();
+        let schema = StoreSchema::new(&store, "test").unwrap();
+        let merged = merge_borrowed(&base, [&next], &schema, MergeOptions::default()).unwrap();
+        let config = validation::Configuration {
+            return_coerced_data: true,
+            ..Default::default()
+        };
+        let coerced = store
+            .validate_value(&merged, "test", Some(&config))
+            .unwrap()
+            .coerced
+            .unwrap();
+        let settings = coerced.get("settings").unwrap();
+        let base_settings = base.get("settings").unwrap();
+        let key_pair = settings
+            .as_mapping()
+            .unwrap()
+            .iter()
+            .find(|pair| pair.schema_key().as_deref() == Some("converted"))
+            .unwrap();
+        let original_pair = pair(base_settings, "converted");
+        assert_eq!(key_pair.key_span(), original_pair.key.source_span());
+        assert_eq!(key_pair.key_source(), Some("base"));
+        assert!(std::ptr::eq(
+            key_pair.schema_key().unwrap().as_ptr(),
+            original_pair.key.as_str().unwrap().as_ptr()
+        ));
+        let items_view = coerced.get("items").unwrap();
+        let schema_merge::MergedSequence::Expanded(items) = items_view.as_sequence().unwrap()
+        else {
+            panic!("expected rebuilt items")
+        };
+        let YamlValue::Sequence(base_items) = &base.get("items").unwrap().value else {
+            panic!("expected base items")
+        };
+        let YamlValue::Sequence(next_items) = &next.get("items").unwrap().value else {
+            panic!("expected next items")
+        };
+        assert!(std::ptr::eq(
+            items[0].original().unwrap(),
+            &raw const base_items[0]
+        ));
+        assert!(std::ptr::eq(
+            items[1].original().unwrap(),
+            &raw const next_items[1]
+        ));
+        let number = schema_merge::MergeableItem::value(&items[0])
+            .get("number")
+            .unwrap();
+        assert_eq!(number.source().unwrap().as_ref(), "next");
+        assert_eq!(
+            number.source_span(),
+            next_items[0].get("number").unwrap().source_span()
+        );
+    }
+
+    #[test]
+    fn generated_container_headers_outlive_their_scalar_wrapper() {
+        let original = Node::new(
+            YamlValue::Int(yaml_parser::Integer::I64(1)),
+            yaml_parser::Span::new(10..11),
+            Some("generated".into()),
+        );
+        let (mapping, sequence) = {
+            let scalar = MergedValue::from_scalar(original).unwrap();
+            (
+                scalar.coerce_mapping(Vec::new()),
+                scalar.coerce_sequence(vec![scalar.clone()]),
+            )
+        };
+        assert_eq!(serde_json::to_value(&mapping).unwrap(), json!({}));
+        assert_eq!(serde_json::to_value(&sequence).unwrap(), json!([1]));
+        assert_eq!(mapping.source().unwrap().as_ref(), "generated");
+        assert_eq!(sequence.source().unwrap().as_ref(), "generated");
+        assert_eq!(
+            mapping.source_span(),
+            Some(validation::feedback::SourceSpan { start: 10, end: 11 })
+        );
+        let schema_merge::MergedSequence::Expanded(items) = sequence.as_sequence().unwrap() else {
+            panic!("expected rebuilt items")
+        };
+        assert!(items[0].original().is_none());
     }
 }
