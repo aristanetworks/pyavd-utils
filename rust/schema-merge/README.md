@@ -86,10 +86,17 @@ whose children could not satisfy the fragment lifetime.
 `ValidatableValue`, mapping/sequence adapters, and schema-data adapters support direct
 validation and navigation. Child views borrow existing wrappers or own a temporary
 wrapper around an original node, using the validation view contract from PR #360.
-Validation preserves each key/value's individual source and span. Coerced output uses
-the backend's existing independent output type (`serde_json::Value` or `Node<'static>`).
-Requesting that output, or calling `clone_to_coerced`, materializes an owned tree;
-ordinary validation and serialization do not.
+Validation preserves each key/value's individual source and span. Coerced output
+is another `MergedValue`: unchanged fragment scalars and keys remain borrowed,
+converted or lowercased scalars are owned, and rebuilt containers retain their
+original provenance and item metadata. The output borrows the fragments rather
+than the temporary merge wrappers, so it can outlive those wrappers. Unknown and
+invalid values preserved by validation keep their existing borrowed subtrees.
+
+`clone_to_coerced` clones the merge representation, retaining original subtree
+references. Validation currently rebuilds schema-traversed container wrappers even
+when all their children are unchanged; whole-container reuse is a separate
+optimization. Direct JSON/YAML validation retains its existing owned output types.
 
 `Serialize` delegates unchanged subtrees to their backend and streams expanded
 containers through Serde. JSON and YAML serializers can consume the same result
@@ -149,7 +156,7 @@ cargo bench --locked -p schema-merge --bench merge
 ```
 
 Shared tests exercise owned and borrowed JSON and YAML backends, including direct
-serialization and materialization. Pointer checks verify subtree sharing and whole-list
+serialization and borrowed coercion. Pointer checks verify subtree sharing and whole-list
 replacement without expansion. YAML tests additionally cover
 source/span preservation, key and sequence metadata, shared source allocations,
 semantic deduplication, invalid duplicate keys, and validation feedback after merging.

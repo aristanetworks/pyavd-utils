@@ -79,17 +79,34 @@ pub trait MergeBackend:
     fn key_source(key: &Self::Key) -> Option<&str>;
     /// Original key span.
     fn key_span(key: &Self::Key) -> Option<SourceSpan>;
-    /// Rebuild a coerced entry while retaining original key and pair metadata.
-    fn coerced_entry(key: &Self::Key, value: Self::Coerced) -> Self::CoercedMappingItem;
+    /// Create a null scalar retaining the original provenance.
+    #[must_use]
+    fn make_null(&self) -> Self;
+    /// Create a boolean scalar retaining the original provenance.
+    #[must_use]
+    fn make_bool(&self, value: bool) -> Self;
+    /// Create an integer scalar retaining the original provenance.
+    #[must_use]
+    fn make_int(&self, value: i64) -> Self;
+    /// Create a string scalar retaining the original provenance.
+    #[must_use]
+    fn make_str(&self, value: String) -> Self;
+    /// Create an empty mapping header retaining the original provenance.
+    #[must_use]
+    fn empty_mapping(&self) -> Self;
+    /// Create an empty sequence header retaining the original provenance.
+    #[must_use]
+    fn empty_sequence(&self) -> Self;
     /// Serialize a backend value without serializing provenance or syntax metadata.
     fn serialize_value<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error>;
 }
 
 /// A merge result borrowing unchanged subtrees from immutable fragments.
 ///
-/// Only containers that participate in a merge are expanded. Their keys and children
-/// continue borrowing the original fragments. The fragments must outlive this value.
-/// Validation and serialization operate directly on this representation.
+/// Merging expands participating containers while borrowing original keys and children.
+/// Coercion rebuilds container wrappers and owns converted scalars, retaining unchanged
+/// fragment references. The fragments must outlive this value. Validation and
+/// serialization operate directly on this representation.
 #[derive(Debug, Clone)]
 pub struct MergedValue<'input, V: MergeBackend> {
     inner: Repr<'input, V>,
@@ -99,16 +116,32 @@ pub struct MergedValue<'input, V: MergeBackend> {
 enum Repr<'input, V: MergeBackend> {
     Borrowed(&'input V),
     Mapping {
-        original: &'input V,
+        original: Origin<'input, V>,
         entries: Vec<Entry<'input, V>>,
     },
     Sequence {
-        original: &'input V,
+        original: Origin<'input, V>,
         items: Vec<Item<'input, V>>,
     },
-    // Only scalars: owning a container would make its children's lifetimes shorter
-    // than 'input. Coercion uses the backend's independently owned output instead.
+    // Only scalars: children of owned backend containers could not borrow for 'input.
     Scalar(Box<V>),
+}
+
+// Generated origins contain only empty container headers. Keep them boxed so
+// backend AST size does not inflate every borrowed child wrapper.
+#[derive(Debug, Clone)]
+enum Origin<'input, V: MergeBackend> {
+    Borrowed(&'input V),
+    Generated(Box<V>),
+}
+
+impl<V: MergeBackend> Origin<'_, V> {
+    fn value(&self) -> &V {
+        match self {
+            Self::Borrowed(value) => value,
+            Self::Generated(value) => value,
+        }
+    }
 }
 
 /// Expanded mapping entry borrowing its original key and pair metadata.
@@ -122,7 +155,7 @@ pub struct Entry<'input, V: MergeBackend> {
 /// Expanded sequence item borrowing its original structural metadata.
 #[derive(Debug)]
 pub struct Item<'input, V: MergeBackend> {
-    original: &'input V::Element,
+    original: Option<&'input V::Element>,
     value: MergedValue<'input, V>,
 }
 
@@ -179,8 +212,8 @@ impl<'input, V: MergeBackend> MergedValue<'input, V> {
 
     /// Own a generated scalar. Containers are returned unchanged as an error.
     ///
-    /// Container construction is performed by merging borrowed fragments; validation
-    /// can also produce an independent tree using the backend's coercion builders.
+    /// Containers are built from borrowed or generated children by merging and
+    /// validation, rather than by owning a complete backend subtree.
     pub fn from_scalar(value: V) -> Result<Self, V> {
         if value.is_mapping() || value.is_sequence() {
             Err(value)
@@ -201,15 +234,44 @@ impl<'input, V: MergeBackend> MergedValue<'input, V> {
 
     fn original(&self) -> &V {
         match &self.inner {
-            Repr::Borrowed(value)
-            | Repr::Mapping {
-                original: value, ..
-            }
-            | Repr::Sequence {
-                original: value, ..
-            } => value,
+            Repr::Borrowed(value) => value,
+            Repr::Mapping { original, .. } | Repr::Sequence { original, .. } => original.value(),
             Repr::Scalar(value) => value,
         }
+    }
+
+    fn mapping_origin(&self) -> Origin<'input, V> {
+        match &self.inner {
+            Repr::Borrowed(value) if value.is_mapping() => Origin::Borrowed(value),
+            Repr::Mapping { original, .. } => original.clone(),
+            _ => Origin::Generated(Box::new(self.original().empty_mapping())),
+        }
+    }
+
+    fn sequence_origin(&self) -> Origin<'input, V> {
+        match &self.inner {
+            Repr::Borrowed(value) if value.is_sequence() => Origin::Borrowed(value),
+            Repr::Sequence { original, .. } => original.clone(),
+            _ => Origin::Generated(Box::new(self.original().empty_sequence())),
+        }
+    }
+
+    fn item_metadata(&self) -> impl Iterator<Item = Option<&'input V::Element>> + '_ {
+        let mut original = match &self.inner {
+            Repr::Borrowed(value) => Some(value.elements()),
+            _ => None,
+        };
+        let mut expanded = match &self.inner {
+            Repr::Sequence { items, .. } => Some(items.iter()),
+            _ => None,
+        };
+        std::iter::from_fn(move || {
+            if let Some(iter) = &mut original {
+                iter.next().map(|(element, _)| Some(element))
+            } else {
+                expanded.as_mut()?.next().map(|item| item.original)
+            }
+        })
     }
 }
 
@@ -263,7 +325,7 @@ impl<'input, V: MergeBackend> MergeableValue for MergedValue<'input, V> {
                 })
                 .collect();
             self.inner = Repr::Mapping {
-                original,
+                original: Origin::Borrowed(original),
                 entries: Vec::new(),
             };
             return Some(entries);
@@ -289,12 +351,12 @@ impl<'input, V: MergeBackend> MergeableValue for MergedValue<'input, V> {
             let items = original
                 .elements()
                 .map(|(element, value)| Item {
-                    original: element,
+                    original: Some(element),
                     value: Self::new(value),
                 })
                 .collect();
             self.inner = Repr::Sequence {
-                original,
+                original: Origin::Borrowed(original),
                 items: Vec::new(),
             };
             return Some(items);
@@ -350,8 +412,8 @@ impl<'input, V: MergeBackend> MergeableEntry for Entry<'input, V> {
 }
 
 impl<'input, V: MergeBackend> Item<'input, V> {
-    /// Original backend item, including its span and comments for YAML.
-    pub fn original(&self) -> &'input V::Element {
+    /// Original backend item, including YAML span/comments, if the item was sourced.
+    pub fn original(&self) -> Option<&'input V::Element> {
         self.original
     }
 }
