@@ -1434,9 +1434,12 @@ version = "0.0.14"
 dependencies = [
  "avdschema",
  "criterion",
+ "schema-data",
+ "serde",
  "serde_json",
  "validation",
  "yaml-parser",
+ "yaml_serde",
 ]
 
 [[package]]

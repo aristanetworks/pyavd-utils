@@ -31,8 +31,15 @@ impl MergeableValue for Value {
         *self = Self::Array(items);
     }
 
-    fn get(&self, key: &str) -> Option<&Self> {
-        self.get(key)
+    fn is_mapping(&self) -> bool {
+        self.is_object()
+    }
+    fn is_sequence(&self) -> bool {
+        self.is_array()
+    }
+
+    fn child_identity(&self, key: &str) -> Option<Self::Identity> {
+        self.get(key).map(Self::identity)
     }
 
     fn identity(&self) -> Self::Identity {

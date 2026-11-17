@@ -6,14 +6,15 @@
 
 # Schema-aware merging
 
-`schema-merge` combines owned `serde_json::Value` trees or YAML `Node` trees through
-`MergeableValue`, `MergeableEntry`, and `MergeableItem`. The merge engine does not
-convert YAML to JSON. This crate is the merger layer for a future fragment inventory;
+`schema-merge` combines JSON values and YAML nodes. `merge_borrowed` produces a
+`MergedValue` borrowing immutable fragments; `merge` also supports consuming owned
+trees through `MergeableValue`, `MergeableEntry`, and `MergeableItem`. Neither API
+converts YAML to JSON. This crate is the merger layer for a future fragment inventory;
 fragment/device selection and Python bindings are separate work.
 
 ```rust
 use avdschema::Store;
-use schema_merge::{merge, ListMerge, MergeOptions, StoreSchema};
+use schema_merge::{merge_borrowed, ListMerge, MergeOptions, StoreSchema};
 use yaml_parser::parse_with_source;
 
 let store = Store::from_json(r#"{"eos_config":{"type":"dict","keys":{
@@ -26,13 +27,17 @@ let (mut next, next_errors) = parse_with_source(
     "interfaces: [{name: Ethernet1, description: uplink}]", Some("fixture-b".into()),
 );
 assert!(base_errors.is_empty() && next_errors.is_empty());
-let merged = merge(
-    base.remove(0),
-    [next.remove(0)],
+let base = base.remove(0);
+let next = next.remove(0);
+let merged = merge_borrowed(
+    &base,
+    [&next],
     &StoreSchema::new(&store, "eos_config").expect("schema should exist"),
     MergeOptions { list_merge: ListMerge::AppendUnique, ..MergeOptions::default() },
 ).expect("fragments should merge");
-// The merged interface has mtu from fixture-a and description from fixture-b.
+// The merged interface borrows mtu from fixture-a and description from fixture-b.
+let json_output = serde_json::to_string(&merged).expect("serializable values");
+assert!(json_output.contains("uplink"));
 ```
 
 Use `NoSchema` for ordinary list merging. `StoreSchema` delegates primary-key lookup
@@ -58,10 +63,44 @@ allows another metadata provider without coupling the algorithm to schema views.
   Incoming items match only the original base list, preserving unmatched duplicate
   primary keys for validation. `allow_duplicate_primary_key` does not disable merging,
   matching AVD's Python merger.
-- Values move into the result. The public API consumes its inputs and returns the
-  resulting root, including scalar replacements and root lists. Callers can clone
-  inputs explicitly when they need to retain them. Incoming values are cloned only
-  when matching multiple invalid duplicate primary keys in the base.
+- `merge_borrowed` retains immutable inputs. `merge` consumes its inputs and returns
+  the resulting root, including scalar replacements and root lists. Both use the
+  same merge algorithm.
+
+## Borrowed merge results
+
+`MergedValue` starts as one reference to a fragment. Merging expands participating
+mappings and lists into owned vectors of wrappers, with borrowed keys and children.
+Untouched subtrees remain single references. A list replacement simply switches
+references without traversing or cloning either list. Expanded vectors are reused
+when further fragments merge into the result. Primary-key indexes are currently
+rebuilt for each incoming fragment, and tolerate unvalidated duplicate keys.
+
+The original fragments must outlive all results borrowing them. They can be reused
+for many devices. Cloning a result copies its expanded containers and generated
+scalars, retaining references to original subtrees. `merge` can continue merging
+`MergedValue` inputs without materializing a backend tree. `from_scalar` supports
+owned generated scalars; its private representation excludes owned backend containers
+whose children could not satisfy the fragment lifetime.
+
+`ValidatableValue`, mapping/sequence adapters, and schema-data adapters support direct
+validation and navigation. Child views borrow existing wrappers or own a temporary
+wrapper around an original node, using the validation view contract from PR #360.
+Validation preserves each key/value's individual source and span. Coerced output uses
+the backend's existing independent output type (`serde_json::Value` or `Node<'static>`).
+Requesting that output, or calling `clone_to_coerced`, materializes an owned tree;
+ordinary validation and serialization do not.
+
+`Serialize` delegates unchanged subtrees to their backend and streams expanded
+containers through Serde. JSON and YAML serializers can consume the same result
+without an intermediate AST. Output contains data only, excluding provenance and
+merge metadata. Serialization does not preserve YAML comments, styles, or anchors;
+YAML non-string keys and non-finite numbers remain subject to the chosen serializer's
+format restrictions.
+
+The borrowing API works with non-static YAML nodes. It does not change the parser's
+current ownership of decoded strings or implement the future inventory's input-buffer
+storage. Those can evolve independently of the merge result lifetime.
 
 ## Provenance and equality
 
@@ -109,7 +148,9 @@ cargo test --locked -p schema-merge
 cargo bench --locked -p schema-merge --bench merge
 ```
 
-Shared tests exercise both JSON and YAML backends. YAML tests additionally cover
+Shared tests exercise owned and borrowed JSON and YAML backends, including direct
+serialization and materialization. Pointer checks verify subtree sharing and whole-list
+replacement without expansion. YAML tests additionally cover
 source/span preservation, key and sequence metadata, shared source allocations,
 semantic deduplication, invalid duplicate keys, and validation feedback after merging.
 The nested ACL fixtures are copied from `aristanetworks/avd` at commit

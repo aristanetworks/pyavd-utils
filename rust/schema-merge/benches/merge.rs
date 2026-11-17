@@ -12,9 +12,12 @@ use criterion::BenchmarkId;
 use criterion::Criterion;
 use criterion::criterion_group;
 use criterion::criterion_main;
+use schema_merge::ListMerge;
 use schema_merge::MergeOptions;
+use schema_merge::NoSchema;
 use schema_merge::StoreSchema;
 use schema_merge::merge;
+use schema_merge::merge_borrowed;
 use serde_json::json;
 use yaml_parser::parse_with_source;
 
@@ -46,6 +49,43 @@ fn primary_key_lists(criterion: &mut Criterion) {
         assert!(base_errors.is_empty() && next_errors.is_empty());
         let yaml_base = yaml_base.remove(0);
         let yaml_next = yaml_next.remove(0);
+        group.bench_with_input(
+            BenchmarkId::new("borrowed_json", count),
+            &count,
+            |bencher, _count| {
+                bencher.iter_batched(
+                    || (),
+                    |()| {
+                        black_box(
+                            merge_borrowed(&base, [&next], &schema, MergeOptions::default())
+                                .expect("valid merge"),
+                        )
+                    },
+                    BatchSize::SmallInput,
+                );
+            },
+        );
+        group.bench_with_input(
+            BenchmarkId::new("borrowed_yaml", count),
+            &count,
+            |bencher, _count| {
+                bencher.iter_batched(
+                    || (),
+                    |()| {
+                        black_box(
+                            merge_borrowed(
+                                &yaml_base,
+                                [&yaml_next],
+                                &schema,
+                                MergeOptions::default(),
+                            )
+                            .expect("valid merge"),
+                        )
+                    },
+                    BatchSize::SmallInput,
+                );
+            },
+        );
         group.bench_with_input(
             BenchmarkId::new("json", count),
             &count,
@@ -82,5 +122,68 @@ fn primary_key_lists(criterion: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, primary_key_lists);
+#[allow(
+    clippy::expect_used,
+    reason = "Benchmark setup uses known valid fixtures"
+)]
+fn replace_lists(criterion: &mut Criterion) {
+    let base = json!(
+        (0..10_000)
+            .map(|index| json!({"name": format!("Ethernet{index}"), "mtu": 1500}))
+            .collect::<Vec<_>>()
+    );
+    let next = base.clone();
+    let (mut yaml_base, base_errors) = parse_with_source(&base.to_string(), Some("base".into()));
+    let (mut yaml_next, next_errors) = parse_with_source(&next.to_string(), Some("next".into()));
+    assert!(base_errors.is_empty() && next_errors.is_empty());
+    let yaml_base = yaml_base.remove(0);
+    let yaml_next = yaml_next.remove(0);
+    let options = MergeOptions {
+        list_merge: ListMerge::Replace,
+        ..MergeOptions::default()
+    };
+    let mut group = criterion.benchmark_group("replace_10000");
+    group.bench_function("json", |bencher| {
+        bencher.iter_batched(
+            || (base.clone(), next.clone()),
+            |(owned_base, owned_next)| {
+                black_box(merge(owned_base, [owned_next], &NoSchema, options).expect("valid merge"))
+            },
+            BatchSize::SmallInput,
+        );
+    });
+    group.bench_function("yaml", |bencher| {
+        bencher.iter_batched(
+            || (yaml_base.clone(), yaml_next.clone()),
+            |(owned_base, owned_next)| {
+                black_box(merge(owned_base, [owned_next], &NoSchema, options).expect("valid merge"))
+            },
+            BatchSize::SmallInput,
+        );
+    });
+    group.bench_function("borrowed_json", |bencher| {
+        bencher.iter_batched(
+            || (),
+            |()| {
+                black_box(merge_borrowed(&base, [&next], &NoSchema, options).expect("valid merge"))
+            },
+            BatchSize::SmallInput,
+        );
+    });
+    group.bench_function("borrowed_yaml", |bencher| {
+        bencher.iter_batched(
+            || (),
+            |()| {
+                black_box(
+                    merge_borrowed(&yaml_base, [&yaml_next], &NoSchema, options)
+                        .expect("valid merge"),
+                )
+            },
+            BatchSize::SmallInput,
+        );
+    });
+    group.finish();
+}
+
+criterion_group!(benches, primary_key_lists, replace_lists);
 criterion_main!(benches);

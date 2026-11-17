@@ -25,6 +25,13 @@ enum Identity {
 }
 
 impl SemanticValue {
+    pub(crate) fn sequence(items: Vec<Self>) -> Self {
+        Self(Identity::Sequence(items))
+    }
+    pub(crate) fn string(value: &str) -> Self {
+        Self(Identity::String(value.to_owned()))
+    }
+
     fn float(value: f64) -> Self {
         if value.is_finite() && value.fract() == 0.0 {
             // Formatting the actual float avoids rounding large integers through f64 before
@@ -40,7 +47,7 @@ impl SemanticValue {
         }
     }
 
-    fn mapping(mut pairs: Vec<(Self, Self)>) -> Self {
+    pub(crate) fn mapping(mut pairs: Vec<(Self, Self)>) -> Self {
         pairs.sort_unstable();
         Self(Identity::Mapping(pairs))
     }
