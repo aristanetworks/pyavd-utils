@@ -9,3 +9,5 @@
 Build-time schema compilation and artifact generation used by AVD development tooling.
 
 This package is released together with `pyavd-utils`. It is not required by pyAVD at runtime.
+
+Requires Python 3.11 or later.

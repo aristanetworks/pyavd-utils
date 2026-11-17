@@ -38,6 +38,8 @@ development and build tooling; pyAVD runtime installations do not need it.
 
 ---
 
+Both `pyavd-utils` and `pyavd-utils-gen` require Python 3.11 or later.
+
 ## Contribution and Development
 
 We welcome contributions to the `pyavd-utils` project. As this is a performance-focused component, any contributions should include thorough testing and benchmarking to ensure stability and verify performance improvements.
