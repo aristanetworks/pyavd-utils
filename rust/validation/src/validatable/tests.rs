@@ -10,7 +10,6 @@ use super::integral_float_to_i64;
 
 #[test]
 #[allow(
-    clippy::unreadable_literal,
     clippy::lossy_float_literal,
     reason = "the literal intentionally documents the imprecise i64 upper boundary"
 )]

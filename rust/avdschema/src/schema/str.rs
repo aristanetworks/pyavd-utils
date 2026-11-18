@@ -101,18 +101,21 @@ impl Pattern {
     }
     pub fn get_compiled_pattern(&self) -> Result<&Regex, &Error> {
         self.compiled_pattern
-            .get_or_init(|| {
-                let anchored_pattern = format!("^(?:{})$", self.pattern);
-                RegexBuilder::new(&anchored_pattern)
-                    // Unicode mode keeps `.`, negated classes, and Perl shorthand complements
-                    // valid for Rust UTF-8 strings. Only the Unicode Perl tables are enabled in
-                    // Cargo, so broad properties and scripts remain unavailable.
-                    .unicode_mode(true)
-                    .build()
-            })
+            .get_or_init(|| compile_pattern(&self.pattern))
             .as_ref()
     }
 }
+/// Compile an AVD schema pattern using the runtime regex dialect and full-value anchoring.
+///
+/// Unicode mode and the enabled Unicode Perl tables support shorthand classes such as `\d`,
+/// `\s`, and `\w`; broad Unicode properties and scripts are not enabled.
+/// This only compiles the pattern and does not attempt a match.
+pub fn compile_pattern(pattern: &str) -> Result<Regex, Error> {
+    RegexBuilder::new(&format!("^(?:{pattern})$"))
+        .unicode_mode(true)
+        .build()
+}
+
 impl PartialEq for Pattern {
     fn eq(&self, other: &Self) -> bool {
         self.pattern == other.pattern

@@ -489,7 +489,6 @@ fn parse_prefixed_int(sign: Sign, digits: &str, radix: u32) -> Option<Integer<'s
 }
 
 /// Coerce integer to f64 accepting precision loss.
-#[allow(clippy::cast_precision_loss, reason = "Accepted precision loss")]
 fn integer_to_f64(value: &Integer<'_>) -> Option<f64> {
     let decimal = value.to_decimal_string();
     parse_finite_f64(decimal.as_ref())

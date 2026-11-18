@@ -31,8 +31,7 @@ mod trivia;
 #[cfg(test)]
 #[allow(
     clippy::min_ident_chars,
-    clippy::shadow_reuse,
-    reason = "Tests benefit from short identifiers and variable shadowing for readability"
+    reason = "Tests benefit from short identifiers for readability"
 )]
 mod tests;
 
