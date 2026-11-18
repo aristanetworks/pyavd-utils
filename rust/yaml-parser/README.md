@@ -10,6 +10,7 @@
 Its public surface is centered around:
 
 - `parse` for an owned AST with spans, comments, anchors, and tags
+- `ParsedYaml` for owned input text and an AST borrowing from that text
 - `emit_events` for event-stream consumers
 - `writer::write_yaml_from_events` for YAML output from events
 - `yaml_parser::serde` for optional serde integration

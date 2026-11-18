@@ -6,10 +6,11 @@
 //!
 //! `yaml-parser` is designed for tooling and configuration workloads where
 //! callers need more than a simple "parse or fail" interface. The crate
-//! exposes three public layers:
+//! exposes the following public APIs:
 //!
 //! - [`parse`] builds an owned AST with spans, comments, anchors, and tags.
 //! - [`parse_with_source`] also attaches a shared caller-provided source identifier to every node.
+//! - [`ParsedYaml`] owns the input text and retains an AST borrowing from it.
 //! - [`emit_events`] exposes a lower-level event stream for SAX-style consumers.
 //! - [`writer`] and the optional [`serde`] module provide YAML output.
 //!
@@ -17,8 +18,9 @@
 //!
 //! - Parsing is recovery-oriented: a call may return both parsed documents and
 //!   errors.
-//! - Top-level results are returned as owned [`Node<'static>`][Node] values, so
-//!   they can outlive the input string.
+//! - [`parse`] and [`parse_with_source`] return owned [`Node<'static>`][Node]
+//!   values that can outlive the input string. [`ParsedYaml`] instead keeps the
+//!   input and borrowing AST together in one self-contained object.
 //! - Every public AST node and event carries span information.
 //! - Comments, anchors, and tags are preserved where they have a stable public
 //!   representation.
@@ -42,6 +44,9 @@
 //! - scalar presentation style,
 //! - flow vs block collection style,
 //! - or explicit alias events.
+//!
+//! Use [`ParsedYaml::parse`] when you can transfer ownership of the input text
+//! and want to avoid copying AST strings that can borrow directly from it.
 //!
 //! Use [`writer::write_yaml_from_events`] when you already have events and want
 //! to emit valid YAML text.
@@ -172,6 +177,7 @@ mod emitter;
 mod error;
 mod event;
 mod lexer;
+mod parsed_yaml;
 mod parser;
 mod scalar_resolver;
 #[cfg(feature = "schema-data")]
@@ -196,6 +202,7 @@ pub use error::ParseError;
 pub use event::CollectionStyle;
 pub use event::Event;
 pub use event::ScalarStyle;
+pub use parsed_yaml::ParsedYaml;
 #[cfg(feature = "schema-data")]
 pub use schema_data_impl::YamlMapping;
 pub use span::BytePosition;
@@ -269,6 +276,15 @@ pub fn parse_with_source(
     input: &str,
     source: Option<std::sync::Arc<str>>,
 ) -> (Stream<'static>, Vec<ParseError>) {
+    let (nodes, errors) = parse_borrowed(input, source);
+    (nodes.into_iter().map(Node::into_owned).collect(), errors)
+}
+
+/// Build an AST borrowing from the input wherever no text transformation is needed.
+fn parse_borrowed(
+    input: &str,
+    source: Option<std::sync::Arc<str>>,
+) -> (Stream<'_>, Vec<ParseError>) {
     // 1. Create emitter with streaming lexer (lexes on demand, no pre-buffering).
     let mut emitter = emitter::Emitter::new(input);
 
@@ -284,11 +300,7 @@ pub fn parse_with_source(
     };
     all_errors.extend(emitter.take_errors());
 
-    // 3. Convert to owned so callers get `Node<'static>` values that can
-    //    outlive the input string.
-    let all_docs: Stream<'static> = nodes.into_iter().map(Node::into_owned).collect();
-
-    (all_docs, all_errors)
+    (nodes, all_errors)
 }
 
 /// Emit raw YAML events from input without building an AST.
