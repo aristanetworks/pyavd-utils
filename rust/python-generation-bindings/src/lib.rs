@@ -5,7 +5,6 @@
 
 #![allow(
     missing_docs,
-    missing_debug_implementations,
     clippy::needless_pass_by_value,
     clippy::unnecessary_wraps,
     reason = "PyO3-facing API names mirror the exported Python module contract"

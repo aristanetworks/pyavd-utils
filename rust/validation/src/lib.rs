@@ -10,7 +10,6 @@
     clippy::empty_structs_with_brackets,
     clippy::field_scoped_visibility_modifiers,
     clippy::float_cmp,
-    clippy::option_option,
     clippy::partial_pub_fields,
     clippy::struct_excessive_bools,
     reason = "Existing validation models and tests predate workspace lint inheritance"

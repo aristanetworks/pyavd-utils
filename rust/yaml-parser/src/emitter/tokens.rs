@@ -121,10 +121,6 @@ impl<'input> Emitter<'input> {
         .unwrap_or(false)
     }
 
-    #[allow(
-        clippy::string_slice,
-        reason = "Positions from tokens are UTF-8 boundaries"
-    )]
     pub(super) fn scan_skip_inline_whitespace_from(
         window: &LookaheadWindow<'_, 'input>,
         mut offset: usize,

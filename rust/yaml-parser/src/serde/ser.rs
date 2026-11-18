@@ -515,10 +515,6 @@ where
 }
 #[cfg(test)]
 mod tests {
-    #![allow(
-        clippy::expect_used,
-        reason = "tests use expect with explicit messages for clearer diagnostics"
-    )]
     use serde::Deserialize;
     use serde::Serialize;
     use serde::Serializer;

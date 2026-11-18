@@ -7,14 +7,11 @@
 //! This module tests that spans accurately represent the byte offsets
 //! of YAML constructs in the input string.
 
-#![allow(clippy::indexing_slicing, reason = "panics are acceptable in tests")]
 #![allow(clippy::string_slice, reason = "test code with known-safe slicing")]
 #![allow(
     clippy::tests_outside_test_module,
     reason = "integration tests don't need cfg(test)"
 )]
-#![allow(clippy::expect_used, reason = "expect is acceptable in tests")]
-#![allow(clippy::panic, reason = "panic is acceptable in tests")]
 #![allow(
     clippy::manual_let_else,
     reason = "match expressions are acceptable in test setup"
