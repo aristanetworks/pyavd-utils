@@ -23,10 +23,6 @@ use std::borrow::Cow;
 use std::fmt::Debug;
 use std::sync::Arc;
 
-use serde::Serialize;
-use serde::Serializer;
-use serde::ser::SerializeMap as _;
-use serde::ser::SerializeSeq as _;
 use validation::ValidatableValue;
 use validation::feedback::SourceSpan;
 
@@ -49,8 +45,6 @@ pub trait MergeBackend:
     type Key: Debug + ?Sized;
     /// Original sequence item metadata.
     type Element: Debug;
-    /// Value serialized for a mapping key.
-    type SerializedKey: Serialize + ?Sized;
     /// Borrowed mapping entries, in input order (including duplicate YAML keys).
     type Entries<'a>: Iterator<Item = (&'a Self::Key, &'a Self)>
     where
@@ -74,8 +68,6 @@ pub trait MergeBackend:
     }
     /// Metadata-free identity of a mapping key.
     fn key_identity(key: &Self::Key) -> SemanticValue;
-    /// Serializable key contents, excluding metadata.
-    fn serialized_key(key: &Self::Key) -> &Self::SerializedKey;
     /// Original key source.
     fn key_source(key: &Self::Key) -> Option<&str>;
     /// Original key span.
@@ -98,17 +90,15 @@ pub trait MergeBackend:
     /// Create an empty sequence header retaining the original provenance.
     #[must_use]
     fn empty_sequence(&self) -> Self;
-    /// Serialize a backend value without serializing provenance or syntax metadata.
-    fn serialize_value<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error>;
 }
 
 /// A merge result borrowing unchanged subtrees from immutable fragments.
 ///
 /// Merging expands participating containers while borrowing original keys and children.
 /// Coercion rebuilds container wrappers and owns converted scalars, retaining unchanged
-/// fragment references. The fragments must outlive this value. Validation and
-/// serialization operate directly on this representation. Clones share expanded
-/// containers and generated scalars; merging copies only shared containers it changes.
+/// fragment references. The fragments must outlive this value. Validation operates
+/// directly on this representation. Clones share expanded containers and generated
+/// scalars; merging copies only shared containers it changes.
 #[derive(Debug, Clone)]
 pub struct MergedValue<'input, V: MergeBackend> {
     inner: Repr<'input, V>,
@@ -437,28 +427,5 @@ impl<'input, V: MergeBackend> MergeableItem for Item<'input, V> {
     }
     fn into_value(self) -> Self::Value {
         self.value
-    }
-}
-
-impl<V: MergeBackend> Serialize for MergedValue<'_, V> {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        match &self.inner {
-            Repr::Borrowed(value) => value.serialize_value(serializer),
-            Repr::Scalar(value) => value.serialize_value(serializer),
-            Repr::Mapping(data) => {
-                let mut mapping = serializer.serialize_map(Some(data.entries.len()))?;
-                for entry in &data.entries {
-                    mapping.serialize_entry(V::serialized_key(entry.key), &entry.value)?;
-                }
-                mapping.end()
-            }
-            Repr::Sequence(data) => {
-                let mut sequence = serializer.serialize_seq(Some(data.items.len()))?;
-                for item in &data.items {
-                    sequence.serialize_element(&item.value)?;
-                }
-                sequence.end()
-            }
-        }
     }
 }
