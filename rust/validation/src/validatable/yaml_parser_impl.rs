@@ -18,6 +18,7 @@ use super::MappingDuplicateKey;
 use super::ValidatableMapping;
 use super::ValidatableMappingPair;
 use super::ValidatableSequence;
+use super::ValidatableSequenceItem;
 use super::ValidatableValue;
 use super::integral_float_to_i64;
 use crate::feedback::SourceSpan;
@@ -39,6 +40,7 @@ impl<'input> ValidatableValue for Node<'input> {
         Self: 'a;
     type Coerced = Node<'static>;
     type CoercedMappingItem = MappingPair<'static>;
+    type CoercedSequenceItem = SequenceItem<'static>;
 
     fn is_null(&self) -> bool {
         matches!(self.value, Value::Null)
@@ -156,17 +158,8 @@ impl<'input> ValidatableValue for Node<'input> {
         )
     }
 
-    fn coerce_sequence(&self, items: Vec<Self::Coerced>) -> Self::Coerced {
-        Node::new(
-            Value::Sequence(
-                items
-                    .into_iter()
-                    .map(|node| SequenceItem::new(node.span, node))
-                    .collect(),
-            ),
-            self.span,
-            self.source.clone(),
-        )
+    fn coerce_sequence(&self, items: Vec<Self::CoercedSequenceItem>) -> Self::Coerced {
+        Node::new(Value::Sequence(items), self.span, self.source.clone())
     }
 
     fn coerce_mapping(&self, items: Vec<Self::CoercedMappingItem>) -> Self::Coerced {
@@ -411,12 +404,11 @@ impl<'a, 'input: 'a> ValidatableMappingPair<'a> for NodeMappingPair<'a, 'input> 
 
 impl<'a, 'input: 'a> ValidatableSequence<'a> for &'a [SequenceItem<'input>] {
     type Value = Node<'input>;
-    type Iter = SequenceIter<'a, 'input>;
+    type Item = &'a SequenceItem<'input>;
+    type Iter = std::slice::Iter<'a, SequenceItem<'input>>;
 
     fn iter(&self) -> Self::Iter {
-        SequenceIter {
-            inner: <[SequenceItem<'input>]>::iter(self),
-        }
+        <[SequenceItem<'input>]>::iter(self)
     }
 
     fn len(&self) -> usize {
@@ -424,16 +416,22 @@ impl<'a, 'input: 'a> ValidatableSequence<'a> for &'a [SequenceItem<'input>] {
     }
 }
 
-#[derive(Debug)]
-pub struct SequenceIter<'a, 'input> {
-    inner: std::slice::Iter<'a, SequenceItem<'input>>,
-}
+impl<'a, 'input: 'a> ValidatableSequenceItem<'a> for &'a SequenceItem<'input> {
+    type Value = Node<'input>;
 
-impl<'a, 'input: 'a> Iterator for SequenceIter<'a, 'input> {
-    type Item = &'a Node<'input>;
+    fn value(&self) -> &'a Node<'input> {
+        &self.node
+    }
 
-    fn next(&mut self) -> Option<Self::Item> {
-        self.inner.next().map(|item| &item.node)
+    fn coerced_item(&self, value: Node<'static>) -> SequenceItem<'static> {
+        SequenceItem {
+            item_span: self.item_span,
+            node: value,
+            header_comment: self
+                .header_comment
+                .clone()
+                .map(|comment| Box::new((*comment).into_owned())),
+        }
     }
 }
 
@@ -453,6 +451,7 @@ mod tests {
     use crate::validatable::ValidatableMapping;
     use crate::validatable::ValidatableMappingPair as _;
     use crate::validatable::ValidatableSequence;
+    use crate::validatable::ValidatableSequenceItem as _;
     use crate::validatable::ValidatableValue;
 
     fn make_span() -> yaml_parser::Span {
@@ -729,7 +728,7 @@ mod tests {
         assert!(!seq.is_empty());
 
         let items: Vec<i64> = ValidatableSequence::iter(&seq)
-            .filter_map(ValidatableValue::as_i64)
+            .filter_map(|item| item.value().as_i64())
             .collect();
         assert_eq!(items, vec![1, 2, 3]);
     }
@@ -862,7 +861,7 @@ mod tests {
         let coerced_bool = original.coerce_bool(true);
         let coerced_int = original.coerce_int(42);
         let coerced_str = original.coerce_str(Cow::Borrowed("value"));
-        let coerced_sequence = original.coerce_sequence(vec![item]);
+        let coerced_sequence = original.coerce_sequence(vec![SequenceItem::new(item.span, item)]);
 
         let coerced_mapping = original.coerce_mapping(Vec::new());
         for node in [
