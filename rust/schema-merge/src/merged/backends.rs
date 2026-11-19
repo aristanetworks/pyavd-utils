@@ -4,7 +4,6 @@
 
 use std::borrow::Cow;
 
-use serde::Serializer;
 use serde_json::Value;
 use validation::ValidatableValue as _;
 use validation::feedback::SourceSpan;
@@ -20,7 +19,6 @@ use crate::SemanticValue;
 impl MergeBackend for Value {
     type Key = str;
     type Element = Self;
-    type SerializedKey = str;
     type Entries<'a> = std::iter::Map<
         std::iter::Flatten<std::option::IntoIter<&'a serde_json::Map<String, Self>>>,
         fn((&'a String, &'a Self)) -> (&'a str, &'a Self),
@@ -49,9 +47,6 @@ impl MergeBackend for Value {
     fn key_identity(key: &str) -> SemanticValue {
         SemanticValue::string(key)
     }
-    fn serialized_key(key: &str) -> &str {
-        key
-    }
     fn key_source(_key: &str) -> Option<&str> {
         None
     }
@@ -76,15 +71,11 @@ impl MergeBackend for Value {
     fn empty_sequence(&self) -> Self {
         Self::Array(Vec::new())
     }
-    fn serialize_value<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serde::Serialize::serialize(self, serializer)
-    }
 }
 
 impl<'input> MergeBackend for Node<'input> {
     type Key = MappingPair<'input>;
     type Element = SequenceItem<'input>;
-    type SerializedKey = YamlValue<'input>;
     type Entries<'a>
         = std::iter::Map<
         std::slice::Iter<'a, MappingPair<'input>>,
@@ -139,9 +130,6 @@ impl<'input> MergeBackend for Node<'input> {
     fn key_identity(key: &Self::Key) -> SemanticValue {
         (&key.key).into()
     }
-    fn serialized_key(key: &Self::Key) -> &Self::SerializedKey {
-        &key.key.value
-    }
     fn key_source(key: &Self::Key) -> Option<&str> {
         key.key.source.as_deref()
     }
@@ -181,8 +169,5 @@ impl<'input> MergeBackend for Node<'input> {
             self.span,
             self.source.clone(),
         )
-    }
-    fn serialize_value<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serde::Serialize::serialize(&self.value, serializer)
     }
 }

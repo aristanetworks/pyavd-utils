@@ -15,6 +15,7 @@ fragment/device selection and Python bindings are separate work.
 ```rust
 use avdschema::Store;
 use schema_merge::{merge_borrowed, ListMerge, MergeOptions, StoreSchema};
+use validation::{ValidatableSequence, ValidatableValue};
 use yaml_parser::parse_with_source;
 
 let store = Store::from_json(r#"{"eos_config":{"type":"dict","keys":{
@@ -36,8 +37,14 @@ let merged = merge_borrowed(
     MergeOptions { list_merge: ListMerge::AppendUnique, ..MergeOptions::default() },
 ).expect("fragments should merge");
 // The merged interface borrows mtu from fixture-a and description from fixture-b.
-let json_output = serde_json::to_string(&merged).expect("serializable values");
-assert!(json_output.contains("uplink"));
+let interfaces = merged.get("interfaces").expect("interfaces should exist");
+let sequence = interfaces.as_sequence().expect("interfaces should be a sequence");
+let interface = sequence.iter().next().expect("interface should exist");
+assert_eq!(interface.get("mtu").expect("mtu should exist").as_i64(), Some(1500));
+assert_eq!(
+    interface.get("description").expect("description should exist").as_str().as_deref(),
+    Some("uplink"),
+);
 ```
 
 Use `NoSchema` for ordinary list merging. `StoreSchema` delegates primary-key lookup
@@ -102,12 +109,8 @@ rebuilds schema-traversed container wrappers even when all their children are un
 avoiding those rebuilds is a separate optimization. Direct JSON/YAML validation retains
 its existing owned output types.
 
-`Serialize` delegates unchanged subtrees to their backend and streams expanded
-containers through Serde. JSON and YAML serializers can consume the same result
-without an intermediate AST. Output contains data only, excluding provenance and
-merge metadata. Serialization does not preserve YAML comments, styles, or anchors;
-YAML non-string keys and non-finite numbers remain subject to the chosen serializer's
-format restrictions.
+`MergedValue` does not implement serialization. Consumers access merged data through
+the validation and schema-data views.
 
 The borrowing API works with non-static YAML nodes. It does not change the parser's
 current ownership of decoded strings or implement the future inventory's input-buffer
@@ -159,10 +162,10 @@ cargo test --locked -p schema-merge
 cargo bench --locked -p schema-merge --bench merge
 ```
 
-Shared tests exercise owned and borrowed JSON and YAML backends, including direct
-serialization and borrowed coercion. Pointer checks verify subtree sharing, copy-on-write
-forks of expanded containers, shared generated scalars, and whole-list replacement
-without expansion. YAML tests additionally cover
+Shared tests exercise owned and borrowed JSON and YAML backends, including borrowed
+coercion and data access through validation views. Pointer checks verify subtree
+sharing, copy-on-write forks of expanded containers, shared generated scalars, and
+whole-list replacement without expansion. YAML tests additionally cover
 source/span preservation, key and sequence metadata, shared source allocations,
 semantic deduplication, invalid duplicate keys, and validation feedback after merging.
 The nested ACL fixtures are copied from `aristanetworks/avd` at commit
