@@ -79,21 +79,22 @@ mod tests {
         let yaml_base = yaml(&base.to_string(), "base");
         let yaml_next = yaml(&next.to_string(), "next");
         let borrowed_json = merge_borrowed(&base, [&next], &schema, options).unwrap();
-        assert_eq!(serde_json::to_value(&borrowed_json).unwrap(), expected);
         assert_eq!(
-            serde_json::to_value(borrowed_json.clone_to_coerced()).unwrap(),
-            expected
+            borrowed_json.to_feedback_value(),
+            expected.to_feedback_value()
+        );
+        assert_eq!(
+            borrowed_json.clone_to_coerced().to_feedback_value(),
+            expected.to_feedback_value()
         );
         let borrowed_yaml = merge_borrowed(&yaml_base, [&yaml_next], &schema, options).unwrap();
-        assert_eq!(serde_json::to_value(&borrowed_yaml).unwrap(), expected);
         assert_eq!(
-            serde_json::to_value(borrowed_yaml.clone_to_coerced()).unwrap(),
-            expected
+            borrowed_yaml.to_feedback_value(),
+            expected.to_feedback_value()
         );
-        let serialized_yaml = yaml_serde::to_string(&borrowed_yaml).unwrap();
         assert_eq!(
-            yaml_serde::from_str::<Value>(&serialized_yaml).unwrap(),
-            expected
+            borrowed_yaml.clone_to_coerced().to_feedback_value(),
+            expected.to_feedback_value()
         );
         assert_eq!(merge(base, [next], &schema, options).unwrap(), expected);
         let merged = merge(yaml_base, [yaml_next], &schema, options).unwrap();
@@ -713,19 +714,20 @@ mod tests {
         let schema = StoreSchema::new(&store, "test").unwrap();
         let options = MergeOptions::default();
         let template = merge_borrowed(base, [next], &schema, options).unwrap();
-        let original = serde_json::to_value(&template).unwrap();
+        let original = template.to_feedback_value();
         let cloned = template.clone_to_coerced();
         assert!(shares_container_storage(&template, &cloned));
         let fork = merge(cloned, [MergedValue::new(patch)], &schema, options).unwrap();
         assert!(!shares_container_storage(&template, &fork));
-        assert_eq!(serde_json::to_value(&template).unwrap(), original);
+        assert_eq!(template.to_feedback_value(), original);
         assert_eq!(
-            serde_json::to_value(&fork).unwrap(),
+            fork.to_feedback_value(),
             json!({"shared": {"a": 1, "b": 2}, "items": [
                 {"name": "a", "keep": true, "old": 1, "new": 2},
                 {"name": "b", "keep": true, "old": 1},
                 {"name": "c"}
-            ]}),
+            ]})
+            .to_feedback_value(),
         );
         assert!(shares_container_storage(
             &template.get("shared").unwrap(),
@@ -828,20 +830,22 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            serde_json::to_value(&merged).unwrap(),
-            json!({"value": "borrowed text"})
+            merged.to_feedback_value(),
+            json!({"value": "borrowed text"}).to_feedback_value()
         );
         assert_eq!(
-            serde_json::to_value(&continued).unwrap(),
-            json!({"value": "borrowed text", "other": true})
+            continued.to_feedback_value(),
+            json!({"value": "borrowed text", "other": true}).to_feedback_value()
         );
         assert!(std::ptr::eq(
             continued.get("value").unwrap().as_str().unwrap().as_ptr(),
             text.as_ptr()
         ));
         assert_eq!(
-            serde_json::to_value(MergedValue::from_scalar(json!(42)).unwrap()).unwrap(),
-            json!(42)
+            MergedValue::from_scalar(json!(42))
+                .unwrap()
+                .to_feedback_value(),
+            json!(42).to_feedback_value()
         );
         assert!(MergedValue::from_scalar(json!([])).is_err());
     }
@@ -1006,12 +1010,7 @@ mod tests {
         }, "passthrough": {"nested": ["a", "b"]}, "items": [
             {"name": "a", "keep": "original", "number": 13}, {"name": "b", "keep": "appended"}
         ]});
-        assert_eq!(serde_json::to_value(&coerced).unwrap(), expected);
-        let serialized = yaml_serde::to_string(&coerced).unwrap();
-        assert_eq!(
-            yaml_serde::from_str::<Value>(&serialized).unwrap(),
-            expected
-        );
+        assert_eq!(coerced.to_feedback_value(), expected.to_feedback_value());
         let settings = coerced.get("settings").unwrap();
         let base_settings = base.get("settings").unwrap();
         for key in ["keep", "number", "flag", "nullable"] {
@@ -1048,7 +1047,10 @@ mod tests {
             assert!(json_result.result.errors.is_empty());
             json_result.coerced.unwrap()
         };
-        assert_eq!(serde_json::to_value(&json_coerced).unwrap(), expected);
+        assert_eq!(
+            json_coerced.to_feedback_value(),
+            expected.to_feedback_value()
+        );
         let json_settings = json_coerced.get("settings").unwrap();
         assert!(std::ptr::eq(
             json_settings.get("keep").unwrap().as_original().unwrap(),
@@ -1144,8 +1146,8 @@ mod tests {
                 scalar.coerce_sequence(vec![scalar.clone()]),
             )
         };
-        assert_eq!(serde_json::to_value(&mapping).unwrap(), json!({}));
-        assert_eq!(serde_json::to_value(&sequence).unwrap(), json!([1]));
+        assert_eq!(mapping.to_feedback_value(), json!({}).to_feedback_value());
+        assert_eq!(sequence.to_feedback_value(), json!([1]).to_feedback_value());
         assert_eq!(mapping.source().unwrap().as_ref(), "generated");
         assert_eq!(sequence.source().unwrap().as_ref(), "generated");
         assert_eq!(
