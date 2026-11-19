@@ -97,8 +97,8 @@ impl ValidatableValue for Value {
         Value::Number(value.into())
     }
 
-    fn coerce_str(&self, value: String) -> Self::Coerced {
-        Value::String(value)
+    fn coerce_str(&self, value: Cow<'_, str>) -> Self::Coerced {
+        Value::String(value.into_owned())
     }
 
     fn coerce_sequence(&self, items: Vec<Self::Coerced>) -> Self::Coerced {

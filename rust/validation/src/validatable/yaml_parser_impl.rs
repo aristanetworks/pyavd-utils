@@ -148,9 +148,9 @@ impl<'input> ValidatableValue for Node<'input> {
         )
     }
 
-    fn coerce_str(&self, value: String) -> Self::Coerced {
+    fn coerce_str(&self, value: Cow<'_, str>) -> Self::Coerced {
         Node::new(
-            Value::String(Cow::Owned(value)),
+            Value::String(Cow::Owned(value.into_owned())),
             self.span,
             self.source.clone(),
         )
@@ -861,7 +861,7 @@ mod tests {
         let coerced_null = original.coerce_null();
         let coerced_bool = original.coerce_bool(true);
         let coerced_int = original.coerce_int(42);
-        let coerced_str = original.coerce_str("value".to_owned());
+        let coerced_str = original.coerce_str(Cow::Borrowed("value"));
         let coerced_sequence = original.coerce_sequence(vec![item]);
 
         let coerced_mapping = original.coerce_mapping(Vec::new());

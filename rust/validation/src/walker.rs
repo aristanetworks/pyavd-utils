@@ -143,7 +143,7 @@ impl<'context, 'store> Validator<'context, 'store> {
                 .context
                 .configuration
                 .return_coerced_data
-                .then(|| value.coerce_str(value_.into_owned())),
+                .then(|| value.coerce_str(value_)),
             NodeValidation::Null => self
                 .context
                 .configuration

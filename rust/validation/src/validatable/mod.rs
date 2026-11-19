@@ -230,7 +230,9 @@ pub trait ValidatableValue: Sized {
     fn coerce_int(&self, value: i64) -> Self::Coerced;
 
     /// Create a coerced string value.
-    fn coerce_str(&self, value: String) -> Self::Coerced;
+    ///
+    /// Retain borrowed strings until the backend decides whether ownership is needed.
+    fn coerce_str(&self, value: Cow<'_, str>) -> Self::Coerced;
 
     /// Create a coerced sequence from coerced items.
     fn coerce_sequence(&self, items: Vec<Self::Coerced>) -> Self::Coerced;
