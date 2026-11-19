@@ -377,14 +377,21 @@ impl<'a, 'input: 'a> ValidatableMappingPair<'a> for NodeMappingPair<'a, 'input> 
 
     /// Build the YAML mapping pair for coerced output.
     ///
-    /// Cheap-cloning everything as most strings are Cow<Borrow> and only replacing value.
+    /// Copy the original key and metadata without cloning the replaced value subtree.
     fn coerced_item(
         &self,
         value: <Self::Value as ValidatableValue>::Coerced,
     ) -> <Self::Value as ValidatableValue>::CoercedMappingItem {
-        let mut pair = self.pair.clone();
-        pair.value = value;
-        pair.into_owned()
+        MappingPair {
+            pair_span: self.pair.pair_span,
+            key: self.pair.key.clone().into_owned(),
+            value,
+            header_comment: self
+                .pair
+                .header_comment
+                .as_deref()
+                .map(|comment| Box::new(comment.clone().into_owned())),
+        }
     }
 
     fn key_source(&self) -> Option<&str> {
@@ -429,8 +436,8 @@ impl<'a, 'input: 'a> ValidatableSequenceItem<'a> for &'a SequenceItem<'input> {
             node: value,
             header_comment: self
                 .header_comment
-                .clone()
-                .map(|comment| Box::new((*comment).into_owned())),
+                .as_deref()
+                .map(|comment| Box::new(comment.clone().into_owned())),
         }
     }
 }
