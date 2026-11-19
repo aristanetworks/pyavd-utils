@@ -14,28 +14,27 @@ env:
 
 jobs:
   benchmarks:
-    name: Benchmark Rust crates
+    name: Rust ${{ matrix.mode }} benchmarks
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [simulation, memory]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
       - name: Install Rust toolchain from rust-toolchain.toml
         run: rustup show
       - name: Install cargo-codspeed
         run: cargo install cargo-codspeed --version 5.0.1 --locked
-      - name: Download schema benchmark fixture
-        run: >-
-          curl --fail --location
-          --output rust/test_schema_store/tmp/schemas.json.gz
-          https://github.com/aristanetworks/avd/releases/download/v6.1.0/schemas.json.gz
-      - name: Build benchmarks for simulation and memory modes
-        run: cargo codspeed build --locked --workspace --all-features --measurement-mode simulation,memory
+      - name: Build benchmarks
+        run: cargo codspeed build --locked --workspace --all-features --measurement-mode ${{ matrix.mode }}
       - name: Run benchmarks
         uses: CodSpeedHQ/action@373d6868929f444bc08d901fd0eb0ad52a8875ea # v5.2.1
         with:
-          mode: simulation,memory
-          run: cargo codspeed run --workspace
+          mode: ${{ matrix.mode }}
+          run: cargo codspeed run --workspace --measurement-mode ${{ matrix.mode }}

@@ -8,12 +8,6 @@ rust-version.workspace = true
 [lints]
 workspace = true
 
-[dev-dependencies]
-avdschema = { path = "../avdschema", features = ["dump_load_files"] }
-criterion = { workspace = true }
-test_schema_store = { path = "../test_schema_store" }
-ordermap = { workspace = true, features = ["serde"] }
-
 [dependencies]
 avdschema = { path = "../avdschema", default-features = false }
 derive_more = { workspace = true, features = ["display", "from"] }
@@ -31,6 +25,12 @@ default = ["gzip", "regex-perf", "yaml"]
 gzip = ["avdschema/gzip"]
 regex-perf = ["avdschema/regex-perf"]
 yaml = ["avdschema/yaml"]
+
+[dev-dependencies]
+avdschema = { path = "../avdschema", features = ["dump_load_files"] }
+criterion = { workspace = true }
+test_schema_store = { path = "../test_schema_store" }
+ordermap = { workspace = true, features = ["serde"] }
 
 [lib]
 crate-type = ["cdylib", "lib"]

@@ -10,13 +10,16 @@
 
 use std::sync::OnceLock;
 
+use avdschema::Load as _;
+use avdschema::Store;
+use avdschema::StoreSource;
 use criterion::Criterion;
 use criterion::criterion_group;
 use criterion::criterion_main;
 use pyo3::types::PyAnyMethods as _;
 use pyo3::types::PyDict;
 use python_bindings::_bindings;
-use test_schema_store::get_store_gz_path;
+use test_schema_store::get_store_path;
 
 static INIT_PY: OnceLock<()> = OnceLock::new();
 static INIT_STORE: OnceLock<()> = OnceLock::new();
@@ -55,8 +58,16 @@ fn setup_python_with_store() {
                 .getattr("_schema_store")
                 .unwrap();
             let kwargs = PyDict::new(py);
-            let file = py.detach(get_store_gz_path);
-            kwargs.set_item("file", file).unwrap();
+            let file = py.detach(|| {
+                let source = StoreSource::from_file(Some(get_store_path())).unwrap();
+                let archive = std::path::PathBuf::from(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/../test_schema_store/tmp/codspeed-python.rkyv"
+                ));
+                Store::compile_to_file(&source, &archive).unwrap();
+                archive
+            });
+            kwargs.set_item("file", &file).unwrap();
             module
                 .call_method("init_store_from_file", (), Some(&kwargs))
                 .unwrap();
@@ -74,6 +85,41 @@ fn benchmark_get_validated_data(criterion: &mut Criterion) {
                 .unwrap()
                 .getattr("_validation")
                 .unwrap();
+            let preflight = PyDict::new(py);
+            preflight.set_item("data_as_json", data).unwrap();
+            preflight.set_item("schema_name", "eos_config").unwrap();
+            let result = module
+                .call_method("get_validated_data", (), Some(&preflight))
+                .unwrap();
+            assert_eq!(
+                result
+                    .getattr("validation_result")
+                    .unwrap()
+                    .getattr("violations")
+                    .unwrap()
+                    .len()
+                    .unwrap(),
+                0,
+                "Python benchmark fixture must validate"
+            );
+            let validated_data: String =
+                result.getattr("validated_data").unwrap().extract().unwrap();
+            let actual: serde_json::Value = serde_json::from_str(&validated_data).unwrap();
+            let mut expected: serde_json::Value = serde_json::from_str(data).unwrap();
+            if let Some(interfaces) = expected
+                .get_mut("ethernet_interfaces")
+                .and_then(serde_json::Value::as_array_mut)
+            {
+                for interface in interfaces {
+                    if let Some(description) = interface.get_mut("description") {
+                        *description = serde_json::Value::String(description.to_string());
+                    }
+                }
+            }
+            assert_eq!(
+                actual, expected,
+                "Python benchmark fixture must coerce descriptions"
+            );
             bencher.iter(|| {
                 let kwargs = PyDict::new(py);
                 kwargs
@@ -100,6 +146,17 @@ fn benchmark_validate_json(criterion: &mut Criterion) {
                 .unwrap()
                 .getattr("_validation")
                 .unwrap();
+            let preflight = PyDict::new(py);
+            preflight.set_item("data_as_json", data).unwrap();
+            preflight.set_item("schema_name", "eos_config").unwrap();
+            let result = module
+                .call_method("validate_json", (), Some(&preflight))
+                .unwrap();
+            assert_eq!(
+                result.getattr("violations").unwrap().len().unwrap(),
+                0,
+                "Python benchmark fixture must validate"
+            );
             bencher.iter(|| {
                 let kwargs = PyDict::new(py);
                 kwargs

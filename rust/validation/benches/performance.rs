@@ -8,8 +8,9 @@ use std::hint::black_box;
 
 use avdschema::Load as _;
 use avdschema::Store;
+use avdschema::StoreSource;
 use criterion::Criterion;
-use test_schema_store::get_store_gz_path;
+use test_schema_store::get_store_path;
 use validation::Configuration;
 use validation::StoreValidate as _;
 use validation::StoreValidateInput as _;
@@ -48,11 +49,25 @@ fn eos_config_yaml(interface_count: usize) -> String {
     clippy::expect_used,
     reason = "benchmark setup must fail loudly when the schema fixture is invalid"
 )]
-fn resolved_store() -> Store {
-    Store::from_file(Some(get_store_gz_path()))
-        .expect("benchmark schema store must load")
-        .as_resolved()
-        .expect("benchmark schema store must resolve")
+fn compiled_store() -> Store {
+    let source =
+        StoreSource::from_file(Some(get_store_path())).expect("benchmark schema source must load");
+    Store::compile(&source).expect("benchmark schema store must compile")
+}
+
+fn expected_coerced_json(json_value: &serde_json::Value) -> serde_json::Value {
+    let mut expected_json = json_value.clone();
+    if let Some(interfaces) = expected_json
+        .get_mut("ethernet_interfaces")
+        .and_then(serde_json::Value::as_array_mut)
+    {
+        for interface in interfaces {
+            if let Some(description) = interface.get_mut("description") {
+                *description = serde_json::Value::String(description.to_string());
+            }
+        }
+    }
+    expected_json
 }
 
 #[expect(
@@ -60,7 +75,7 @@ fn resolved_store() -> Store {
     reason = "benchmark setup must fail loudly when generated fixtures are invalid"
 )]
 fn benchmark_validation(criterion: &mut Criterion) {
-    let store = resolved_store();
+    let store = compiled_store();
     let json_input = eos_config_json(INTERFACE_COUNT);
     let yaml_input = eos_config_yaml(INTERFACE_COUNT);
     let json_value = serde_json::from_str::<serde_json::Value>(&json_input)
@@ -82,76 +97,175 @@ fn benchmark_validation(criterion: &mut Criterion) {
         ..Default::default()
     };
 
+    // Check semantics outside measurement so cheap error paths cannot look like improvements.
+    let expected_json = expected_coerced_json(&json_value);
+    for configuration in [&validate_only, &return_coerced] {
+        let parsed_json = store
+            .validate_json(&json_input, "eos_config", Some(configuration))
+            .expect("JSON benchmark validation must succeed");
+        assert!(
+            parsed_json.input_diagnostics.is_empty(),
+            "JSON benchmark input diagnostics: {:?}",
+            parsed_json.input_diagnostics
+        );
+        let parsed_yaml = store
+            .validate_yaml(&yaml_input, "eos_config", Some(configuration))
+            .expect("YAML benchmark validation must succeed");
+        assert!(
+            parsed_yaml.input_diagnostics.is_empty(),
+            "YAML benchmark input diagnostics: {:?}",
+            parsed_yaml.input_diagnostics
+        );
+        assert_eq!(
+            parsed_yaml.documents.len(),
+            1,
+            "YAML benchmark must validate one document"
+        );
+        let preparsed_json = store
+            .validate_value(&json_value, "eos_config", Some(configuration))
+            .expect("preparsed JSON benchmark validation must succeed");
+        let preparsed_yaml = store
+            .validate_value(&yaml_value, "eos_config", Some(configuration))
+            .expect("preparsed YAML benchmark validation must succeed");
+        for output in [&parsed_json.document, &preparsed_json] {
+            assert!(
+                output.result.errors.is_empty(),
+                "JSON benchmark validation errors: {:?}",
+                output.result.errors
+            );
+            assert_eq!(
+                output.coerced.as_ref(),
+                configuration.return_coerced_data.then_some(&expected_json),
+                "JSON benchmark coercion must match"
+            );
+        }
+        for output in parsed_yaml
+            .documents
+            .iter()
+            .chain(std::iter::once(&preparsed_yaml))
+        {
+            assert!(
+                output.result.errors.is_empty(),
+                "YAML benchmark validation errors: {:?}",
+                output.result.errors
+            );
+            assert_eq!(output.coerced.is_some(), configuration.return_coerced_data);
+            if let Some(coerced) = &output.coerced {
+                let coerced_json = serde_json::to_value(&coerced.value)
+                    .expect("coerced YAML benchmark output must convert to JSON");
+                assert_eq!(
+                    coerced_json, expected_json,
+                    "YAML benchmark coercion must match"
+                );
+            }
+        }
+    }
+
+    benchmark_json_validation(
+        criterion,
+        &store,
+        &json_value,
+        &json_input,
+        &validate_only,
+        &return_coerced,
+    );
+    benchmark_yaml_validation(
+        criterion,
+        &store,
+        &yaml_value,
+        &yaml_input,
+        &validate_only,
+        &return_coerced,
+    );
+}
+
+fn benchmark_json_validation(
+    criterion: &mut Criterion,
+    store: &Store,
+    json_value: &serde_json::Value,
+    json_input: &str,
+    validate_only: &Configuration,
+    return_coerced: &Configuration,
+) {
     criterion.bench_function("validation/json/preparsed_validate_only", |bencher| {
         bencher.iter(|| {
             black_box(store.validate_value(
-                black_box(&json_value),
+                black_box(json_value),
                 black_box("eos_config"),
-                black_box(Some(&validate_only)),
+                black_box(Some(validate_only)),
             ))
         });
     });
     criterion.bench_function("validation/json/preparsed_return_coerced", |bencher| {
         bencher.iter(|| {
             black_box(store.validate_value(
-                black_box(&json_value),
+                black_box(json_value),
                 black_box("eos_config"),
-                black_box(Some(&return_coerced)),
+                black_box(Some(return_coerced)),
             ))
         });
     });
     criterion.bench_function("validation/json/parse_and_validate", |bencher| {
         bencher.iter(|| {
             black_box(store.validate_json(
-                black_box(&json_input),
+                black_box(json_input),
                 black_box("eos_config"),
-                black_box(Some(&validate_only)),
+                black_box(Some(validate_only)),
             ))
         });
     });
     criterion.bench_function("validation/json/parse_validate_and_coerce", |bencher| {
         bencher.iter(|| {
             black_box(store.validate_json(
-                black_box(&json_input),
+                black_box(json_input),
                 black_box("eos_config"),
-                black_box(Some(&return_coerced)),
+                black_box(Some(return_coerced)),
             ))
         });
     });
+}
 
+fn benchmark_yaml_validation(
+    criterion: &mut Criterion,
+    store: &Store,
+    yaml_value: &yaml_parser::Node<'_>,
+    yaml_input: &str,
+    validate_only: &Configuration,
+    return_coerced: &Configuration,
+) {
     criterion.bench_function("validation/yaml/preparsed_validate_only", |bencher| {
         bencher.iter(|| {
             black_box(store.validate_value(
-                black_box(&yaml_value),
+                black_box(yaml_value),
                 black_box("eos_config"),
-                black_box(Some(&validate_only)),
+                black_box(Some(validate_only)),
             ))
         });
     });
     criterion.bench_function("validation/yaml/preparsed_return_coerced", |bencher| {
         bencher.iter(|| {
             black_box(store.validate_value(
-                black_box(&yaml_value),
+                black_box(yaml_value),
                 black_box("eos_config"),
-                black_box(Some(&return_coerced)),
+                black_box(Some(return_coerced)),
             ))
         });
     });
     criterion.bench_function("validation/yaml/parse_and_validate", |bencher| {
         bencher.iter(|| {
             black_box(store.validate_yaml(
-                black_box(&yaml_input),
+                black_box(yaml_input),
                 black_box("eos_config"),
-                black_box(Some(&validate_only)),
+                black_box(Some(validate_only)),
             ))
         });
     });
     criterion.bench_function("validation/yaml/parse_validate_and_coerce", |bencher| {
         bencher.iter(|| {
             black_box(store.validate_yaml(
-                black_box(&yaml_input),
+                black_box(yaml_input),
                 black_box("eos_config"),
-                black_box(Some(&return_coerced)),
+                black_box(Some(return_coerced)),
             ))
         });
     });
