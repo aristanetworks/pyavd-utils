@@ -1231,7 +1231,6 @@ dependencies = [
  "avdschema",
  "log",
  "pyo3",
- "pyo3-build-config",
  "pyo3-log",
  "serde_json",
 ]
@@ -1948,6 +1947,7 @@ dependencies = [
  "derive_more",
  "saphyr",
  "schema-data",
+ "self_cell",
  "serde",
  "yaml_serde",
 ]

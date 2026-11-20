@@ -4,6 +4,7 @@ version.workspace = true
 edition = "2024"
 license.workspace = true
 description = "Stable pyavd-utils API and feature boundary for the AVD language server"
+rust-version.workspace = true
 
 [lints]
 workspace = true
