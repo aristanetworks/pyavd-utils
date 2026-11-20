@@ -51,6 +51,12 @@ Use `NoSchema` for ordinary list merging. `StoreSchema` delegates primary-key lo
 to `Store::get_schema_info`, the helper used by AVD's Python merger. `MergeSchema`
 allows another metadata provider without coupling the algorithm to schema views.
 
+Use `merge_inputs(base, inputs, schema)` when each incoming input has its own
+behavior. Each `MergeInput { value, options }` applies its options to that merge
+only, including recursive calls. The value may be an owned backend tree or a
+`MergedValue` borrowing a parsed fragment. The existing `merge` and
+`merge_borrowed` functions remain convenient for uniform options.
+
 ## Behavior
 
 - `MergeMode::Shallow` updates root keys like pipeline `dict.update()`: each incoming
