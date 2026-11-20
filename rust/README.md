@@ -56,3 +56,36 @@ standalone parsing does not need it. It does not enable `avdschema` features.
 Consumers select gzip, YAML file support, and performance accelerators directly
 on their `avdschema` dependency. Unicode-aware Perl classes and variable-length
 lookbehinds are always enabled.
+
+## Benchmarks
+
+Run the Criterion-compatible benchmark suites locally from the repository root:
+
+```bash
+cargo bench --locked --workspace --all-features
+```
+
+The suites use the small, checked-in schema fixture at `tests/schemas/schemas.json`.
+These microbenchmarks do not characterize full AVD schema startup.
+Schema benchmarks measure compilation and compiled archive mapping separately;
+validation and Python benchmarks check successful coercion before measurement.
+The generated interface inputs emphasize coercion of numeric descriptions.
+
+Build and smoke-test each CodSpeed measurement mode separately:
+
+```bash
+cargo install cargo-codspeed --version 5.0.1 --locked
+cargo codspeed build --locked --workspace --all-features --measurement-mode simulation
+cargo codspeed run --workspace --measurement-mode simulation
+cargo codspeed build --locked --workspace --all-features --measurement-mode memory
+cargo codspeed run --workspace --measurement-mode memory
+```
+
+Outside a CodSpeed runner, these run commands only smoke-test the harness;
+the Linux CI action collects and uploads measurements.
+
+Simulation measures CPU work; memory analysis reports allocation metrics rather
+than process RSS. Python-boundary results include the Rust allocations observed
+by CodSpeed, and do not represent the full Python interpreter memory footprint.
+The GitHub workflow builds and uploads each mode in an independent job after the
+Rust test matrix succeeds, so one mode can finish even if the other fails.

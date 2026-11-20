@@ -27,7 +27,14 @@ regex-perf = ["avdschema/regex-perf"]
 yaml = ["avdschema/yaml"]
 
 [dev-dependencies]
+avdschema = { path = "../avdschema", features = ["dump_load_files"] }
+criterion = { workspace = true }
+test_schema_store = { path = "../test_schema_store" }
 ordermap = { workspace = true, features = ["serde"] }
 
 [lib]
 crate-type = ["cdylib", "lib"]
+
+[[bench]]
+name = "performance"
+harness = false
