@@ -9,7 +9,6 @@
     reason = "self_cell internally uses mem::forget to safely construct its self-referential owner"
 )]
 
-use std::fmt;
 use std::sync::Arc;
 
 use self_cell::self_cell;
@@ -18,6 +17,7 @@ use crate::Node;
 use crate::ParseError;
 use crate::Stream;
 
+#[derive(Debug)]
 struct ParsedStream<'input> {
     documents: Stream<'input>,
     errors: Vec<ParseError>,
@@ -30,6 +30,8 @@ self_cell!(
         #[covariant]
         dependent: ParsedStream,
     }
+
+    impl {Debug}
 );
 
 /// A parsed YAML stream owning its input text, AST, and parse errors.
@@ -63,18 +65,9 @@ self_cell!(
 /// };
 /// println!("{document:?}");
 /// ```
+#[derive(Debug)]
 pub struct ParsedYaml {
     cell: ParsedYamlCell,
-}
-
-impl fmt::Debug for ParsedYaml {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ParsedYaml")
-            .field("input", &self.input())
-            .field("documents", &self.documents())
-            .field("errors", &self.errors())
-            .finish()
-    }
 }
 
 impl ParsedYaml {
