@@ -154,6 +154,17 @@ pub struct MergeOptions {
     pub same_key_strategy: SameKeyStrategy,
 }
 
+/// An incoming value and the options used to merge it into the accumulated result.
+///
+/// Options apply to this input only, including all recursive merges it triggers.
+#[derive(Debug, Clone)]
+pub struct MergeInput<V> {
+    /// Incoming value, which may borrow immutable fragment data through [`MergedValue`].
+    pub value: V,
+    /// Merge behavior for this input.
+    pub options: MergeOptions,
+}
+
 /// Schema metadata provider for a merge operation.
 ///
 /// Paths contain dictionary keys and numeric list indexes, as in the existing schema-path helper.
@@ -244,21 +255,34 @@ impl std::error::Error for MergeError {}
 /// A shallow merge updates root mapping keys regardless of the deep-merge conflict strategy.
 /// Non-mapping roots are replaced in shallow mode. Unlike Python's in-place wrapper, this API
 /// returns the resulting root, including replacements and root lists.
-pub fn merge<V, I, S>(
-    mut base: V,
-    nexts: I,
-    schema: &S,
-    options: MergeOptions,
-) -> Result<V, MergeError>
+pub fn merge<V, I, S>(base: V, nexts: I, schema: &S, options: MergeOptions) -> Result<V, MergeError>
 where
     V: MergeableValue,
     I: IntoIterator<Item = V>,
     S: MergeSchema,
 {
-    for next in nexts {
+    merge_inputs(
+        base,
+        nexts.into_iter().map(|value| MergeInput { value, options }),
+        schema,
+    )
+}
+
+/// Merge inputs in order, applying each input's own options.
+///
+/// This has the same primary-key, duplicate-key, and provenance semantics as [`merge`].
+/// Options belong to the incoming input: a shallow update can follow a deep merge,
+/// and subsequent inputs can use different list and conflict strategies.
+pub fn merge_inputs<V, I, S>(mut base: V, nexts: I, schema: &S) -> Result<V, MergeError>
+where
+    V: MergeableValue,
+    I: IntoIterator<Item = MergeInput<V>>,
+    S: MergeSchema,
+{
+    for MergeInput { value, options } in nexts {
         merge_value(
             &mut base,
-            next,
+            value,
             Some(schema),
             options,
             &mut Vec::new(),

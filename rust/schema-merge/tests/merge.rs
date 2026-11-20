@@ -70,6 +70,118 @@ mod tests {
         documents.remove(0)
     }
 
+    #[test]
+    fn incoming_inputs_select_their_own_merge_behavior_and_keep_provenance() {
+        use schema_merge::MergeInput;
+        use schema_merge::merge_inputs;
+
+        let inputs = [
+            json!({"nested": {"old": 1}, "list": [1]}),
+            json!({"nested": {"site": 2}, "list": [2]}),
+            json!({"nested": {"replacement": 3}, "list": [3]}),
+            json!({"nested": {"last": 4}, "list": [4]}),
+        ];
+        let options = [
+            MergeOptions::default(),
+            MergeOptions::default(),
+            MergeOptions {
+                mode: MergeMode::Shallow,
+                ..MergeOptions::default()
+            },
+            MergeOptions {
+                list_merge: ListMerge::Replace,
+                ..MergeOptions::default()
+            },
+        ];
+        let yaml_inputs: Vec<_> = inputs
+            .iter()
+            .enumerate()
+            .map(|(index, value)| yaml(&value.to_string(), &format!("fragment-{index}")))
+            .collect();
+        let expected = json!({"nested": {"replacement": 3, "last": 4}, "list": [4]});
+        let owned = merge_inputs(
+            inputs[0].clone(),
+            inputs
+                .iter()
+                .zip(options)
+                .skip(1)
+                .map(|(value, options)| MergeInput {
+                    value: value.clone(),
+                    options,
+                }),
+            &NoSchema,
+        )
+        .unwrap();
+        assert_eq!(owned, expected);
+        let owned_yaml = merge_inputs(
+            yaml_inputs[0].clone(),
+            yaml_inputs
+                .iter()
+                .zip(options)
+                .skip(1)
+                .map(|(value, options)| MergeInput {
+                    value: value.clone(),
+                    options,
+                }),
+            &NoSchema,
+        )
+        .unwrap();
+        assert_eq!(owned_yaml.identity(), expected.identity());
+        let borrowed = merge_inputs(
+            MergedValue::new(&inputs[0]),
+            inputs
+                .iter()
+                .zip(options)
+                .skip(1)
+                .map(|(value, options)| MergeInput {
+                    value: MergedValue::new(value),
+                    options,
+                }),
+            &NoSchema,
+        )
+        .unwrap();
+        assert_eq!(borrowed.identity(), expected.identity());
+        let borrowed_yaml = merge_inputs(
+            MergedValue::new(&yaml_inputs[0]),
+            yaml_inputs
+                .iter()
+                .zip(options)
+                .skip(1)
+                .map(|(value, options)| MergeInput {
+                    value: MergedValue::new(value),
+                    options,
+                }),
+            &NoSchema,
+        )
+        .unwrap();
+        assert_eq!(borrowed_yaml.identity(), expected.identity());
+        let nested = borrowed_yaml.get("nested").unwrap();
+        for (key, source) in [("replacement", "fragment-2"), ("last", "fragment-3")] {
+            let value = nested.get(key).unwrap();
+            assert_eq!(value.source().unwrap().as_ref(), source);
+            let original_nested = yaml_inputs[if key == "replacement" { 2 } else { 3 }]
+                .get("nested")
+                .unwrap();
+            assert_eq!(
+                value.source_span(),
+                original_nested.get(key).unwrap().source_span()
+            );
+        }
+    }
+
+    #[test]
+    fn scalar_access_exposes_coerced_values_without_exposing_container_origins() {
+        let input = yaml("number: '123'", "fixture");
+        let merged = MergedValue::new(&input);
+        assert!(merged.as_scalar().is_none());
+        let original = merged.get("number").unwrap();
+        let coerced = original.coerce_int(123);
+        let scalar = coerced.as_scalar().unwrap();
+        assert_eq!(scalar.as_i64(), Some(123));
+        assert_eq!(scalar.source, input.source);
+        assert_eq!(scalar.source_span(), original.source_span());
+    }
+
     #[allow(
         clippy::needless_pass_by_value,
         reason = "Fixture expectations are convenient owned JSON literals"
