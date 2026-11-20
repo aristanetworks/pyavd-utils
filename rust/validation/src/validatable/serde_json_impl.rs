@@ -13,6 +13,7 @@ use serde_json::Value;
 use super::ValidatableMapping;
 use super::ValidatableMappingPair;
 use super::ValidatableSequence;
+use super::ValidatableSequenceItem;
 use super::ValidatableValue;
 use super::integral_float_to_i64;
 
@@ -27,6 +28,7 @@ impl ValidatableValue for Value {
     type Sequence<'a> = &'a Vec<Value>;
     type Coerced = Value;
     type CoercedMappingItem = (String, Value);
+    type CoercedSequenceItem = Value;
 
     fn is_null(&self) -> bool {
         self.is_null()
@@ -101,7 +103,7 @@ impl ValidatableValue for Value {
         Value::String(value.into_owned())
     }
 
-    fn coerce_sequence(&self, items: Vec<Self::Coerced>) -> Self::Coerced {
+    fn coerce_sequence(&self, items: Vec<Self::CoercedSequenceItem>) -> Self::Coerced {
         Value::Array(items)
     }
 
@@ -234,6 +236,7 @@ impl<'a> ValidatableMappingPair<'a> for MapPair<'a> {
 
 impl<'a> ValidatableSequence<'a> for &'a Vec<Value> {
     type Value = Value;
+    type Item = &'a Value;
     type Iter = std::slice::Iter<'a, Value>;
 
     fn iter(&self) -> Self::Iter {
@@ -242,5 +245,17 @@ impl<'a> ValidatableSequence<'a> for &'a Vec<Value> {
 
     fn len(&self) -> usize {
         Vec::len(self)
+    }
+}
+
+impl<'a> ValidatableSequenceItem<'a> for &'a Value {
+    type Value = Value;
+
+    fn value(&self) -> &'a Value {
+        self
+    }
+
+    fn coerced_item(&self, value: Value) -> Value {
+        value
     }
 }
