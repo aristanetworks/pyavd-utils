@@ -431,7 +431,7 @@ mod tests {
         let declaration = root.child(SchemaPathElement::DynamicKey {
             source: DynamicKeySource::NetworkServices,
         });
-        assert!(root.elements().is_empty());
+        assert_eq!(root.elements(), []);
         assert_eq!(
             declaration.to_string(),
             "schema#/dynamic_keys/network_services_keys.name"

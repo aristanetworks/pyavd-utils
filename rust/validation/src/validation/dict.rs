@@ -228,7 +228,7 @@ mod tests {
         let input = serde_json::json!(true);
         let mut ctx = Context::new(None);
         let _ = schema.validate(&input, &mut ctx);
-        assert!(ctx.result.infos.is_empty());
+        assert_eq!(ctx.result.infos.as_slice(), []);
         assert_eq!(
             ctx.result.errors,
             vec![Feedback {
@@ -271,7 +271,7 @@ mod tests {
         let input = serde_json::json!({ "foo": [], "bar": "boo" });
         let mut ctx = Context::new(None);
         let _ = schema.validate(&input, &mut ctx);
-        assert!(ctx.result.infos.is_empty());
+        assert_eq!(ctx.result.infos.as_slice(), []);
         assert_eq!(
             ctx.result.errors,
             vec![
@@ -316,7 +316,7 @@ mod tests {
         };
         let mut ctx = Context::new(Some(&configuration));
         let coerced = schema.validate(&input, &mut ctx);
-        assert!(ctx.result.errors.is_empty());
+        assert_eq!(ctx.result.errors.as_slice(), []);
         assert_eq!(
             ctx.result.infos,
             vec![
@@ -366,7 +366,7 @@ mod tests {
         let mut ctx = Context::new(Some(&configuration));
         let coerced = schema.validate(&input, &mut ctx);
 
-        assert!(ctx.result.errors.is_empty());
+        assert_eq!(ctx.result.errors.as_slice(), []);
         assert_eq!(
             ctx.result.infos,
             vec![Feedback {
@@ -510,8 +510,8 @@ mod tests {
         };
         let mut ctx = Context::new(Some(&configuration));
         let _ = schema.validate(&input, &mut ctx);
-        assert!(ctx.result.errors.is_empty());
-        assert!(ctx.result.infos.is_empty());
+        assert_eq!(ctx.result.errors.as_slice(), []);
+        assert_eq!(ctx.result.infos.as_slice(), []);
     }
 
     #[test]
@@ -542,8 +542,8 @@ mod tests {
         };
         let mut ctx = Context::new(Some(&configuration));
         let _ = schema.validate(&input, &mut ctx);
-        assert!(ctx.result.errors.is_empty());
-        assert!(ctx.result.infos.is_empty());
+        assert_eq!(ctx.result.errors.as_slice(), []);
+        assert_eq!(ctx.result.infos.as_slice(), []);
     }
 
     #[test]
@@ -587,8 +587,8 @@ mod tests {
         let input = serde_json::json!({ "dynkey1": 5, "dynkey2": 9 });
         let mut ctx = Context::new(None);
         let _ = schema.validate(&input, &mut ctx);
-        assert!(ctx.result.errors.is_empty());
-        assert!(ctx.result.infos.is_empty());
+        assert_eq!(ctx.result.errors.as_slice(), []);
+        assert_eq!(ctx.result.infos.as_slice(), []);
     }
 
     #[test]
@@ -640,7 +640,7 @@ mod tests {
             serde_json::json!({ "dynkey1": {"sub_key": 11, "bad_key": true}, "dynkey2": "wrong" });
         let mut ctx = Context::new(None);
         let _ = schema.validate(&input, &mut ctx);
-        assert!(ctx.result.infos.is_empty());
+        assert_eq!(ctx.result.infos.as_slice(), []);
         assert_eq!(
             ctx.result.errors,
             vec![
@@ -702,7 +702,7 @@ mod tests {
         let input = serde_json::json!({ "foo": "ok", "foo1": "wrong" });
         let mut ctx = Context::new(None);
         let _ = schema.validate(&input, &mut ctx);
-        assert!(ctx.result.infos.is_empty());
+        assert_eq!(ctx.result.infos.as_slice(), []);
         assert_eq!(
             ctx.result.errors,
             vec![Feedback {
@@ -724,7 +724,7 @@ mod tests {
             ..Default::default()
         };
         let (docs, errors) = parse("bar: 1\n");
-        assert!(errors.is_empty());
+        assert_eq!(errors.as_slice(), []);
         let input = docs.first().expect("expected a parsed document");
 
         let mut ctx = Context::new(None);
@@ -751,7 +751,7 @@ mod tests {
             ..Default::default()
         };
         let (docs, errors) = parse("foo: one\nfoo: two\n");
-        assert!(errors.is_empty());
+        assert_eq!(errors.as_slice(), []);
         let input = docs.first().expect("expected a parsed document");
 
         let mut ctx = Context::new(None);
@@ -793,7 +793,7 @@ mod tests {
             ..Default::default()
         };
         let (docs, errors) = parse("outer:\n  inner: one\n  inner: two\n");
-        assert!(errors.is_empty());
+        assert_eq!(errors.as_slice(), []);
         let input = docs.first().expect("expected a parsed document");
 
         let mut ctx = Context::new(None);
@@ -828,7 +828,7 @@ mod tests {
             ..Default::default()
         };
         let (docs, errors) = parse("foo: one\nfoo: two\nbaz: one\nbaz: two\nbar: one\n");
-        assert!(errors.is_empty());
+        assert_eq!(errors.as_slice(), []);
         let input = docs.first().expect("expected a parsed document");
 
         let mut ctx = Context::new(None);
@@ -881,7 +881,7 @@ mod tests {
             ..Default::default()
         };
         let (docs, errors) = parse("123: value\n");
-        assert!(errors.is_empty());
+        assert_eq!(errors.as_slice(), []);
         let input = docs.first().expect("expected a parsed document");
 
         let mut ctx = Context::new(None);
@@ -909,7 +909,7 @@ mod tests {
             ..Default::default()
         };
         let (docs, errors) = parse("123: value\n");
-        assert!(errors.is_empty());
+        assert_eq!(errors.as_slice(), []);
         let input = docs.first().expect("expected a parsed document");
 
         let configuration = Configuration {
@@ -921,7 +921,7 @@ mod tests {
             .validate(input, &mut ctx)
             .expect("expected coerced data");
 
-        assert!(ctx.result.errors.is_empty());
+        assert_eq!(ctx.result.errors.as_slice(), []);
         let yaml_parser::Value::Mapping(pairs) = coerced.value else {
             panic!("expected coerced mapping");
         };
@@ -953,8 +953,8 @@ mod tests {
         let mut ctx = Context::new(Some(&configuration));
         let coerced = schema.validate(&input, &mut ctx);
         // No errors - _internal is ignored, foo is valid
-        assert!(ctx.result.errors.is_empty());
-        assert!(ctx.result.infos.is_empty());
+        assert_eq!(ctx.result.errors.as_slice(), []);
+        assert_eq!(ctx.result.infos.as_slice(), []);
         // Coerced output should include _internal key unchanged
         assert_eq!(
             coerced,
@@ -984,7 +984,7 @@ mod tests {
         let input = serde_json::json!({"foo": 123});
         let mut ctx = Context::new(None);
         let _ = schema.validate(&input, &mut ctx);
-        assert!(ctx.result.infos.is_empty());
+        assert_eq!(ctx.result.infos.as_slice(), []);
         assert_eq!(
             ctx.result.warnings,
             vec![Feedback {
@@ -1031,7 +1031,7 @@ mod tests {
         }))
         .unwrap();
         let (docs, errors) = parse("foo: bar\n");
-        assert!(errors.is_empty());
+        assert_eq!(errors.as_slice(), []);
         let input = docs.first().expect("expected a parsed document");
 
         let mut ctx = Context::new(None);
@@ -1077,7 +1077,7 @@ mod tests {
         };
         let mut ctx = Context::new(Some(&configuration));
         let coerced = schema.validate(&input, &mut ctx);
-        assert!(ctx.result.infos.is_empty());
+        assert_eq!(ctx.result.infos.as_slice(), []);
         assert_eq!(coerced, Some(input));
         assert_eq!(
             ctx.result.errors,
@@ -1116,9 +1116,9 @@ mod tests {
         let input = serde_json::json!({"foo": "blah"});
         let mut ctx = Context::new(None);
         let _ = schema.validate(&input, &mut ctx);
-        assert!(ctx.result.infos.is_empty());
-        assert!(ctx.result.warnings.is_empty());
-        assert!(ctx.result.errors.is_empty());
+        assert_eq!(ctx.result.infos.as_slice(), []);
+        assert_eq!(ctx.result.warnings.as_slice(), []);
+        assert_eq!(ctx.result.errors.as_slice(), []);
     }
 
     fn deprecated_no_warning_schema(new_key: &str, allow_with_new_key: Option<bool>) -> SourceDict {
@@ -1222,8 +1222,8 @@ mod tests {
                         .into(),
                     })
                     .collect();
-                assert!(ctx.result.infos.is_empty());
-                assert!(ctx.result.warnings.is_empty());
+                assert_eq!(ctx.result.infos.as_slice(), []);
+                assert_eq!(ctx.result.warnings.as_slice(), []);
                 assert_eq!(
                     ctx.result.errors, expected_errors,
                     "allow_with_new_key={allow_with_new_key:?}, new_key={new_key}, input={input}"
@@ -1236,13 +1236,13 @@ mod tests {
     fn validate_yaml_deprecated_no_warning_conflict_continues_validation() {
         let schema = deprecated_no_warning_schema("new_key", Some(false));
         let (docs, errors) = parse("old_key: abc\nnew_key: new_value\n");
-        assert!(errors.is_empty());
+        assert_eq!(errors.as_slice(), []);
         assert_eq!(docs.len(), 1);
         let mut ctx = Context::new(None);
         let _ = schema.validate(&docs[0], &mut ctx);
 
-        assert!(ctx.result.infos.is_empty());
-        assert!(ctx.result.warnings.is_empty());
+        assert_eq!(ctx.result.infos.as_slice(), []);
+        assert_eq!(ctx.result.warnings.as_slice(), []);
         assert_eq!(
             ctx.result.errors,
             vec![
@@ -1294,7 +1294,7 @@ mod tests {
         let input = serde_json::json!({"old_key": "old_value", "new_key": "new_value"});
         let mut ctx = Context::new(None);
         schema.validate(&input, &mut ctx);
-        assert!(ctx.result.infos.is_empty());
+        assert_eq!(ctx.result.infos.as_slice(), []);
         // Should have a deprecation warning
         assert_eq!(
             ctx.result.warnings,
@@ -1311,7 +1311,7 @@ mod tests {
             }]
         );
         // Should NOT have a DeprecatedConflict error
-        assert!(ctx.result.errors.is_empty());
+        assert_eq!(ctx.result.errors.as_slice(), []);
     }
 
     // Tests that when allow_with_new_key is not set (None/undefined), using both the
@@ -1338,7 +1338,7 @@ mod tests {
         let input = serde_json::json!({"old_key": "old_value", "new_key": "new_value"});
         let mut ctx = Context::new(None);
         schema.validate(&input, &mut ctx);
-        assert!(ctx.result.infos.is_empty());
+        assert_eq!(ctx.result.infos.as_slice(), []);
         // Should have a deprecation warning
         assert_eq!(
             ctx.result.warnings,
@@ -1394,7 +1394,7 @@ mod tests {
         let input = serde_json::json!({"old_key": "old_value", "new_key": "new_value"});
         let mut ctx = Context::new(None);
         schema.validate(&input, &mut ctx);
-        assert!(ctx.result.infos.is_empty());
+        assert_eq!(ctx.result.infos.as_slice(), []);
         // Should have a deprecation warning
         assert_eq!(
             ctx.result.warnings,
@@ -1513,7 +1513,7 @@ mod tests {
         };
         let mut ctx = Context::new(Some(&configuration));
         let coerced = schema.validate(&input, &mut ctx);
-        assert!(ctx.result.errors.is_empty());
+        assert_eq!(ctx.result.errors.as_slice(), []);
         assert_eq!(
             ctx.result.infos,
             vec![Feedback {
@@ -1549,7 +1549,7 @@ mod tests {
         let input = serde_json::json!({});
         let mut ctx = Context::new(None);
         let _ = schema.validate(&input, &mut ctx);
-        assert!(ctx.result.infos.is_empty());
+        assert_eq!(ctx.result.infos.as_slice(), []);
         assert_eq!(
             ctx.result.errors,
             vec![Feedback {
@@ -1584,8 +1584,8 @@ mod tests {
         };
         let mut ctx = Context::new(Some(&configuration));
         let _ = schema.validate(&input, &mut ctx);
-        assert!(ctx.result.errors.is_empty());
-        assert!(ctx.result.infos.is_empty());
+        assert_eq!(ctx.result.errors.as_slice(), []);
+        assert_eq!(ctx.result.infos.as_slice(), []);
     }
 
     #[test]
@@ -1618,7 +1618,7 @@ mod tests {
             &mut ctx,
             &mut state,
         );
-        assert!(ctx.result.infos.is_empty());
+        assert_eq!(ctx.result.infos.as_slice(), []);
         assert_eq!(
             ctx.result.errors,
             vec![Feedback {
@@ -1677,7 +1677,7 @@ mod tests {
         let _ = schema.validate(&input, &mut ctx);
 
         // Should have no warnings
-        assert!(ctx.result.warnings.is_empty());
+        assert_eq!(ctx.result.warnings.as_slice(), []);
     }
 
     #[test]
@@ -1698,7 +1698,7 @@ mod tests {
         let _ = schema.validate(&input, &mut ctx);
 
         // Should have no warnings
-        assert!(ctx.result.warnings.is_empty());
+        assert_eq!(ctx.result.warnings.as_slice(), []);
     }
 
     #[test]
@@ -1719,7 +1719,7 @@ mod tests {
         let _ = schema.validate(&input, &mut ctx);
 
         // Should have no warnings since key3 exists in both schemas
-        assert!(ctx.result.warnings.is_empty());
+        assert_eq!(ctx.result.warnings.as_slice(), []);
     }
 
     #[test]
@@ -1747,9 +1747,9 @@ mod tests {
         let _ = schema.validate(&input, &mut ctx);
 
         // Should have no warnings - these special keys are silently ignored
-        assert!(ctx.result.warnings.is_empty());
+        assert_eq!(ctx.result.warnings.as_slice(), []);
         // Should have no errors either
-        assert!(ctx.result.errors.is_empty());
+        assert_eq!(ctx.result.errors.as_slice(), []);
     }
 
     #[test]
@@ -1770,7 +1770,7 @@ mod tests {
 
         let coerced = schema.validate(&input, &mut ctx);
 
-        assert!(ctx.result.errors.is_empty());
+        assert_eq!(ctx.result.errors.as_slice(), []);
         assert_eq!(coerced, Some(input));
     }
 
@@ -1811,7 +1811,7 @@ mod tests {
         let mut ctx = Context::new(None);
         let _ = schema.validate(&input, &mut ctx);
 
-        assert!(ctx.result.errors.is_empty());
+        assert_eq!(ctx.result.errors.as_slice(), []);
         assert_eq!(
             ctx.result.warnings,
             vec![Feedback {

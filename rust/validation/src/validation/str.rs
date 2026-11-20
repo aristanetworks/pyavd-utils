@@ -188,7 +188,7 @@ mod tests {
         let input = serde_json::json!([]);
         let mut ctx = Context::new(None);
         let _ = schema.validate(&input, &mut ctx);
-        assert!(ctx.result.infos.is_empty());
+        assert_eq!(ctx.result.infos.as_slice(), []);
         assert_eq!(
             ctx.result.errors,
             vec![Feedback {
@@ -231,7 +231,7 @@ mod tests {
         let input: Value = "FOO".into();
         let mut ctx = Context::new(None);
         let _ = schema.validate(&input, &mut ctx);
-        assert!(ctx.result.infos.is_empty());
+        assert_eq!(ctx.result.infos.as_slice(), []);
         assert_eq!(
             ctx.result.errors,
             vec![Feedback {
@@ -265,7 +265,7 @@ mod tests {
         };
         let mut ctx = Context::new(Some(&configuration));
         let coerced = schema.validate(&input, &mut ctx);
-        assert!(ctx.result.errors.is_empty());
+        assert_eq!(ctx.result.errors.as_slice(), []);
         assert_eq!(
             ctx.result.infos,
             vec![Feedback {
@@ -301,7 +301,7 @@ mod tests {
         };
         let mut ctx = Context::new(Some(&configuration));
         let coerced = schema.validate(&input, &mut ctx);
-        assert!(ctx.result.errors.is_empty());
+        assert_eq!(ctx.result.errors.as_slice(), []);
         // Two coercion notes: bool -> "True", then "True" -> "true"
         assert_eq!(
             ctx.result.infos,
@@ -343,7 +343,7 @@ mod tests {
         };
         let mut ctx = Context::new(Some(&configuration));
         let coerced = schema.validate(&input, &mut ctx);
-        assert!(ctx.result.errors.is_empty());
+        assert_eq!(ctx.result.errors.as_slice(), []);
         assert_eq!(
             ctx.result.infos,
             vec![Feedback {
@@ -369,9 +369,9 @@ mod tests {
         let input: Value = "foo".into();
         let mut ctx = Context::new(None);
         let _ = schema.validate(&input, &mut ctx);
-        assert!(ctx.result.errors.is_empty());
-        assert!(ctx.result.warnings.is_empty());
-        assert!(ctx.result.infos.is_empty());
+        assert_eq!(ctx.result.errors.as_slice(), []);
+        assert_eq!(ctx.result.warnings.as_slice(), []);
+        assert_eq!(ctx.result.infos.as_slice(), []);
     }
 
     #[test]
@@ -383,7 +383,7 @@ mod tests {
         let input: Value = "go".into();
         let mut ctx = Context::new(None);
         let _ = schema.validate(&input, &mut ctx);
-        assert!(ctx.result.infos.is_empty());
+        assert_eq!(ctx.result.infos.as_slice(), []);
         assert_eq!(
             ctx.result.errors,
             vec![Feedback {
@@ -420,7 +420,7 @@ mod tests {
         let input: Value = "fooo".into();
         let mut ctx = Context::new(None);
         let _ = schema.validate(&input, &mut ctx);
-        assert!(ctx.result.infos.is_empty());
+        assert_eq!(ctx.result.infos.as_slice(), []);
         assert_eq!(
             ctx.result.errors,
             vec![Feedback {
@@ -457,7 +457,7 @@ mod tests {
         let input: Value = "foo".into();
         let mut ctx = Context::new(None);
         let _ = schema.validate(&input, &mut ctx);
-        assert!(ctx.result.infos.is_empty());
+        assert_eq!(ctx.result.infos.as_slice(), []);
         assert_eq!(
             ctx.result.errors,
             vec![Feedback {
@@ -498,7 +498,7 @@ mod tests {
         let input: Value = "abcdef".into();
         let mut ctx = Context::new(None);
         schema.validate(&input, &mut ctx);
-        assert!(ctx.result.infos.is_empty());
+        assert_eq!(ctx.result.infos.as_slice(), []);
         assert_eq!(
             ctx.result.errors,
             vec![Feedback {
@@ -525,7 +525,7 @@ mod tests {
         let input: Value = "foo".into();
         let mut ctx = Context::new(None);
         let _ = schema.validate(&input, &mut ctx);
-        assert!(ctx.result.infos.is_empty());
+        assert_eq!(ctx.result.infos.as_slice(), []);
         assert_eq!(ctx.result.errors.len(), 1);
         match &ctx.result.errors[0].issue {
             ErrorIssue::InternalError { message } => {
