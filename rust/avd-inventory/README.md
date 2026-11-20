@@ -38,7 +38,7 @@ handling are provided by `schema-merge`.
 
 ## Build phases
 
-`build(self, store, options) -> Result<BuildOutput, BuildError>` consumes collection
+`build_to_json(self, store, options) -> Result<BuildOutput, BuildError>` consumes collection
 and privately seals the inputs, merges, and validates. All devices use the schema
 and validation settings selected by `BuildOptions`; merge behavior belongs to each
 incoming fragment.
