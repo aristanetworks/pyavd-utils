@@ -10,6 +10,7 @@ use validation::MappingDuplicateKey;
 use validation::ValidatableMapping;
 use validation::ValidatableMappingPair;
 use validation::ValidatableSequence;
+use validation::ValidatableSequenceItem;
 use validation::ValidatableValue;
 use validation::feedback::SourceSpan;
 use validation::feedback::Type;
@@ -40,6 +41,7 @@ impl<'input, V: MergeBackend> ValidatableValue for MergedValue<'input, V> {
         Self: 'a;
     type Coerced = Self;
     type CoercedMappingItem = Entry<'input, V>;
+    type CoercedSequenceItem = Item<'input, V>;
 
     fn is_null(&self) -> bool {
         self.original().is_null()
@@ -151,18 +153,11 @@ impl<'input, V: MergeBackend> ValidatableValue for MergedValue<'input, V> {
             }
         }
     }
-    fn coerce_sequence(&self, items: Vec<Self::Coerced>) -> Self::Coerced {
-        let mut metadata = self.item_metadata();
+    fn coerce_sequence(&self, items: Vec<Self::CoercedSequenceItem>) -> Self::Coerced {
         Self {
             inner: Repr::Sequence(Arc::new(SequenceData {
                 original: self.sequence_origin(),
-                items: items
-                    .into_iter()
-                    .map(|value| Item {
-                        original: metadata.next().flatten(),
-                        value,
-                    })
-                    .collect(),
+                items,
             })),
         }
     }
@@ -238,8 +233,14 @@ impl<'a, 'input: 'a, V: MergeBackend + 'input> ValidatableMapping<'a> for Mappin
     type Iter = MappingIter<'a, 'input, V>;
 
     fn get(&self, key: &str) -> Option<View<'a, 'input, V>> {
-        self.iter()
-            .find_map(|pair| (V::key_name(pair.key()) == Some(key)).then(|| pair.value()))
+        match self {
+            Self::Original(value) => value
+                .get_child(key)
+                .map(|value| View::Original(MergedValue::new(value))),
+            Self::Expanded(entries) => entries.iter().find_map(|entry| {
+                (V::key_name(entry.key) == Some(key)).then_some(View::Borrowed(&entry.value))
+            }),
+        }
     }
     fn duplicate_keys(&self) -> Vec<MappingDuplicateKey<'a>> {
         let mut keys: Vec<MappingDuplicateKey<'a>> = Vec::new();
@@ -327,7 +328,35 @@ pub enum Sequence<'a, 'input, V: MergeBackend> {
 }
 impl<V: MergeBackend> Copy for Sequence<'_, '_, V> {}
 
-/// Iterator over validation sequence values.
+/// Validation sequence item retaining its original structural metadata.
+#[derive(Debug)]
+pub enum SequenceItem<'a, 'input, V: MergeBackend> {
+    /// Original item metadata and value.
+    Original(&'input V::Element, &'input V),
+    /// Expanded item.
+    Expanded(&'a Item<'input, V>),
+}
+
+impl<'a, 'input: 'a, V: MergeBackend> ValidatableSequenceItem<'a> for SequenceItem<'a, 'input, V> {
+    type Value = MergedValue<'input, V>;
+
+    fn value(&self) -> View<'a, 'input, V> {
+        match self {
+            Self::Original(_, value) => View::Original(MergedValue::new(value)),
+            Self::Expanded(item) => View::Borrowed(&item.value),
+        }
+    }
+
+    fn coerced_item(&self, value: Self::Value) -> Item<'input, V> {
+        let original = match self {
+            Self::Original(original, _) => Some(*original),
+            Self::Expanded(item) => item.original,
+        };
+        Item { original, value }
+    }
+}
+
+/// Iterator over validation sequence items.
 pub enum SequenceIter<'a, 'input, V: MergeBackend + 'input> {
     /// Original sequence items.
     Original(V::Elements<'input>),
@@ -340,18 +369,19 @@ impl<V: MergeBackend> std::fmt::Debug for SequenceIter<'_, '_, V> {
     }
 }
 impl<'a, 'input: 'a, V: MergeBackend> Iterator for SequenceIter<'a, 'input, V> {
-    type Item = View<'a, 'input, V>;
+    type Item = SequenceItem<'a, 'input, V>;
     fn next(&mut self) -> Option<Self::Item> {
         match self {
             Self::Original(iter) => iter
                 .next()
-                .map(|(_, value)| View::Original(MergedValue::new(value))),
-            Self::Expanded(iter) => iter.next().map(|item| View::Borrowed(&item.value)),
+                .map(|(original, value)| SequenceItem::Original(original, value)),
+            Self::Expanded(iter) => iter.next().map(SequenceItem::Expanded),
         }
     }
 }
 impl<'a, 'input: 'a, V: MergeBackend + 'input> ValidatableSequence<'a> for Sequence<'a, 'input, V> {
     type Value = MergedValue<'input, V>;
+    type Item = SequenceItem<'a, 'input, V>;
     type Iter = SequenceIter<'a, 'input, V>;
     fn iter(&self) -> Self::Iter {
         match self {
