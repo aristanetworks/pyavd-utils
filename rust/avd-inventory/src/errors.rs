@@ -58,8 +58,8 @@ impl Error for AddFragmentError {
 
 /// A failure that prevents completing the inventory build.
 ///
-/// Input validation findings are retained in the private validated product,
-/// rather than being build failures.
+/// Input validation findings are returned in [`crate::BuildOutput`], rather than
+/// being execution failures. Callers must gate the common build on those findings.
 #[derive(Debug)]
 pub enum BuildError {
     /// The requested schema could not be selected for merging.
@@ -73,6 +73,10 @@ pub enum BuildError {
     },
     /// The validation operation could not be performed.
     Validation(StoreValidateError),
+    /// The bounded validation worker pool could not be created.
+    WorkerPool(rayon::ThreadPoolBuildError),
+    /// Validated output cannot be represented as JSON.
+    Json(serde_json::Error),
 }
 
 impl fmt::Display for BuildError {
@@ -81,6 +85,8 @@ impl fmt::Display for BuildError {
             Self::Schema(error) => write!(f, "{error}"),
             Self::Merge { source, error } => write!(f, "Fragment '{source}': {error}"),
             Self::Validation(error) => write!(f, "{error}"),
+            Self::WorkerPool(error) => write!(f, "Could not create validation workers: {error}"),
+            Self::Json(error) => write!(f, "Could not encode validated JSON: {error}"),
         }
     }
 }
@@ -89,6 +95,8 @@ impl Error for BuildError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Merge { error, .. } => Some(error),
+            Self::WorkerPool(error) => Some(error),
+            Self::Json(error) => Some(error),
             Self::Schema(_) | Self::Validation(_) => None,
         }
     }

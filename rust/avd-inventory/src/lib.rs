@@ -6,8 +6,8 @@
 //!
 //! Adding a fragment decodes it once and extends the merge graph. Building consumes
 //! the inventory, merges common fragment histories once, and validates each distinct
-//! device root. The current build discards the private coerced roots and feedback;
-//! it does not publish or return inventory data.
+//! device root in parallel. Results own JSON output and diagnostics carrying original
+//! sources and spans, independent of the parsed fragments.
 //!
 //! ```
 //! use avd_inventory::{BuildOptions, Inventory, YamlFragment};
@@ -21,8 +21,11 @@
 //!     yaml: "mtu: '1500'".into(),
 //!     source: "fixture-a".into(),
 //!     devices: vec!["leaf1".into(), "leaf2".into()],
+//!     merge: Default::default(),
 //! })?;
-//! inventory.build(&schema, &BuildOptions::new("test"))?;
+//! let output = inventory.build(&schema, &BuildOptions::new("test"))?;
+//! assert!(!output.has_errors());
+//! assert_eq!(output.devices["leaf1"].validated_data.as_deref(), Some(r#"{"mtu":1500}"#));
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 //!
@@ -33,21 +36,20 @@
 //! let mut inventory = Inventory::<YamlFragment>::new();
 //! inventory.add_fragment(JsonFragment {
 //!     json: "{}".into(), source: "fixture".into(), devices: vec![],
+//!     merge: Default::default(),
 //! });
 //! ```
 
 mod errors;
 mod fragments;
 mod graph;
+mod json;
 mod phases;
 
+use std::num::NonZeroUsize;
 use std::sync::Arc;
 
 use avdschema::Store;
-use schema_merge::MergeOptions;
-use schema_merge::MergeableValue as _;
-use validation::Configuration;
-
 pub use errors::AddFragmentError;
 pub use errors::BuildError;
 pub use errors::FragmentErrorKind;
@@ -56,33 +58,69 @@ pub use fragments::JsonFragment;
 pub use fragments::ParsedFragment;
 pub use fragments::YamlFragment;
 use graph::MergeGraph;
+use indexmap::IndexMap;
 use phases::Inputs;
 use phases::Validated;
+use schema_merge::MergeOptions;
+use schema_merge::MergeableValue as _;
+use schema_merge::MergedValue;
+use validation::Configuration;
+use validation::ValidationResult;
 
 /// Identity of a fragment within one inventory, independent of its source identifier.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct FragmentId(usize);
 
-/// Build-wide schema, merge, and validation settings.
+/// Build-wide schema and validation settings.
 #[derive(Debug, Clone)]
 pub struct BuildOptions {
     /// Schema selected from the supplied schema store.
     pub schema_name: String,
-    /// Uniform merge behavior for all devices and shared prefixes.
-    pub merge: MergeOptions,
     /// Validation behavior. Coerced output is always enabled internally.
     pub validation: Configuration,
+    /// Maximum validation workers for this build. `None` uses available parallelism.
+    ///
+    /// Set this to the Python service's validation worker limit. A value of one
+    /// runs validation on the calling thread without creating a pool.
+    pub validation_threads: Option<NonZeroUsize>,
 }
 
 impl BuildOptions {
-    /// Select a schema with default merge and validation behavior.
+    /// Select a schema with default validation behavior and available parallelism.
     pub fn new(schema_name: &str) -> Self {
         Self {
             schema_name: schema_name.to_owned(),
-            merge: MergeOptions::default(),
             validation: Configuration::default(),
+            validation_threads: None,
         }
     }
+}
+
+/// Owned results of an inventory build, safe to return after parsed inputs are dropped.
+#[derive(Debug)]
+pub struct BuildOutput {
+    /// Per-device results. Devices with identical fragment histories share one result.
+    pub devices: IndexMap<String, Arc<DeviceOutput>>,
+}
+
+impl BuildOutput {
+    /// Whether any device has input validation errors.
+    ///
+    /// Callers must gate their common build stage on this inventory-wide result.
+    pub fn has_errors(&self) -> bool {
+        self.devices
+            .values()
+            .any(|output| !output.validation.errors.is_empty())
+    }
+}
+
+/// Validation feedback and JSON for one distinct merged device root.
+#[derive(Debug)]
+pub struct DeviceOutput {
+    /// Errors, warnings and infos with original fragment sources and spans where available.
+    pub validation: ValidationResult,
+    /// Coerced JSON, present only when this root has no validation errors.
+    pub validated_data: Option<String>,
 }
 
 /// A collecting inventory accepting only one fragment format.
@@ -129,15 +167,17 @@ impl<F: InventoryFragment> Inventory<F> {
         self.inputs.fragments.push(StoredFragment {
             value: parsed.value,
             source: parsed.source,
+            merge: parsed.merge,
         });
         Ok(id)
     }
 
     /// Consume the inventory, merge device variables, and run validation/coercion.
     ///
-    /// This initial entrypoint discards both coerced data and validation feedback
-    /// and returns `Ok(())` when the phases complete. Validation findings do not
-    /// become build errors. Publication and returning the product are separate work.
+    /// Distinct roots are validated and encoded in parallel with a build-local
+    /// worker pool. Findings remain structured output; schema, execution and JSON
+    /// encoding failures are build errors. Call [`BuildOutput::has_errors`] before
+    /// continuing with a common build stage. No archive is published.
     /// Inputs cannot be added after this call because it consumes `self`.
     ///
     /// ```compile_fail,E0382
@@ -149,13 +189,25 @@ impl<F: InventoryFragment> Inventory<F> {
     /// inventory.add_fragment(fragment);
     /// # }
     /// ```
-    pub fn build(self, store: &Store, options: &BuildOptions) -> Result<(), BuildError> {
+    pub fn build(self, store: &Store, options: &BuildOptions) -> Result<BuildOutput, BuildError>
+    where
+        for<'a> MergedValue<'a, F::Value>: Send + Sync,
+    {
         let inputs = self.seal();
         let merged = inputs.merge(store, options)?;
         let Validated { roots, devices } = merged.validate(store, options)?;
-        // The owned parsed inputs remain alive until both products have been dropped.
-        drop((roots, devices));
-        Ok(())
+        let devices = devices
+            .iter()
+            .map(|(device, root)| {
+                // Every device head is retained as a terminal root by the private merge graph.
+                #[allow(
+                    clippy::indexing_slicing,
+                    reason = "Every device head is a retained terminal root"
+                )]
+                (device.clone(), Arc::clone(&roots[root]))
+            })
+            .collect();
+        Ok(BuildOutput { devices })
     }
 
     fn seal(self) -> Inputs<F> {
@@ -167,6 +219,7 @@ impl<F: InventoryFragment> Inventory<F> {
 pub(crate) struct StoredFragment<V> {
     value: V,
     source: Arc<str>,
+    merge: MergeOptions,
 }
 
 #[cfg(test)]

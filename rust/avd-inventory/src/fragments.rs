@@ -5,6 +5,8 @@
 use std::sync::Arc;
 
 use schema_merge::MergeBackend;
+use schema_merge::MergeOptions;
+use schema_merge::MergedValue;
 use serde_json::Value;
 use yaml_parser::Node;
 
@@ -20,6 +22,8 @@ pub struct YamlFragment {
     pub source: Arc<str>,
     /// Devices receiving this fragment, after their earlier fragments.
     pub devices: Vec<String>,
+    /// Behavior when applying this fragment after each device's earlier fragments.
+    pub merge: MergeOptions,
 }
 
 /// JSON-encoded variables and the devices to which they apply.
@@ -31,6 +35,8 @@ pub struct JsonFragment {
     pub source: Arc<str>,
     /// Devices receiving this fragment, after their earlier fragments.
     pub devices: Vec<String>,
+    /// Behavior when applying this fragment after each device's earlier fragments.
+    pub merge: MergeOptions,
 }
 
 /// Decoded input to inventory collection.
@@ -45,6 +51,8 @@ pub struct ParsedFragment<V: MergeBackend> {
     pub source: Arc<str>,
     /// Devices receiving this fragment.
     pub devices: Vec<String>,
+    /// Merge behavior of this incoming fragment.
+    pub merge: MergeOptions,
 }
 
 /// An input format and its corresponding merge backend.
@@ -56,6 +64,9 @@ pub trait InventoryFragment: Sized {
 
     /// Decode this fragment. Inventory insertion calls this automatically.
     fn decode(self) -> Result<ParsedFragment<Self::Value>, AddFragmentError>;
+
+    /// Encode validated/coerced data without materializing another value tree.
+    fn encode_json(value: &MergedValue<'_, Self::Value>) -> Result<String, serde_json::Error>;
 }
 
 impl InventoryFragment for YamlFragment {
@@ -82,7 +93,12 @@ impl InventoryFragment for YamlFragment {
             value,
             source: self.source,
             devices: self.devices,
+            merge: self.merge,
         })
+    }
+
+    fn encode_json(value: &MergedValue<'_, Self::Value>) -> Result<String, serde_json::Error> {
+        crate::json::encode(value)
     }
 }
 
@@ -98,6 +114,11 @@ impl InventoryFragment for JsonFragment {
             value,
             source: self.source,
             devices: self.devices,
+            merge: self.merge,
         })
+    }
+
+    fn encode_json(value: &MergedValue<'_, Self::Value>) -> Result<String, serde_json::Error> {
+        crate::json::encode(value)
     }
 }
