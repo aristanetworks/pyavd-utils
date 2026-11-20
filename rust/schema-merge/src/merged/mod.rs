@@ -15,6 +15,7 @@ pub use validatable::Mapping;
 pub use validatable::MappingIter;
 pub use validatable::Pair;
 pub use validatable::Sequence;
+pub use validatable::SequenceItem;
 pub use validatable::SequenceIter;
 mod validatable;
 
@@ -56,6 +57,10 @@ pub trait MergeBackend:
 
     /// Borrow mapping entries; callers first check the value's type.
     fn entries(&self) -> Self::Entries<'_>;
+    /// Borrow a string-keyed child, using keyed storage when available.
+    ///
+    /// YAML returns the first matching string key, preserving duplicate-key behavior.
+    fn get_child(&self, key: &str) -> Option<&Self>;
     /// Borrow sequence items; callers first check the value's type.
     fn elements(&self) -> Self::Elements<'_>;
     /// String key used for schema lookups, if applicable.
@@ -254,24 +259,6 @@ impl<'input, V: MergeBackend> MergedValue<'input, V> {
             _ => Origin::Generated(Arc::new(self.original().empty_sequence())),
         }
     }
-
-    fn item_metadata(&self) -> impl Iterator<Item = Option<&'input V::Element>> + '_ {
-        let mut original = match &self.inner {
-            Repr::Borrowed(value) => Some(value.elements()),
-            _ => None,
-        };
-        let mut expanded = match &self.inner {
-            Repr::Sequence(data) => Some(data.items.iter()),
-            _ => None,
-        };
-        std::iter::from_fn(move || {
-            if let Some(iter) = &mut original {
-                iter.next().map(|(element, _)| Some(element))
-            } else {
-                expanded.as_mut()?.next().map(|item| item.original)
-            }
-        })
-    }
 }
 
 /// Merge immutable fragments without cloning their trees.
@@ -335,8 +322,15 @@ impl<'input, V: MergeBackend> MergeableValue for MergedValue<'input, V> {
         }
     }
     fn set_mapping(&mut self, entries: Vec<Self::Entry>) {
-        if let Repr::Mapping(data) = &mut self.inner {
-            Arc::make_mut(data).entries = entries;
+        match &mut self.inner {
+            Repr::Mapping(data) => Arc::make_mut(data).entries = entries,
+            Repr::Borrowed(original) if original.is_mapping() => {
+                self.inner = Repr::Mapping(Arc::new(MappingData {
+                    original: Origin::Borrowed(original),
+                    entries,
+                }));
+            }
+            _ => (),
         }
     }
     fn take_sequence(&mut self) -> Option<Vec<Self::Item>> {
@@ -363,8 +357,15 @@ impl<'input, V: MergeBackend> MergeableValue for MergedValue<'input, V> {
         }
     }
     fn set_sequence(&mut self, items: Vec<Self::Item>) {
-        if let Repr::Sequence(data) = &mut self.inner {
-            Arc::make_mut(data).items = items;
+        match &mut self.inner {
+            Repr::Sequence(data) => Arc::make_mut(data).items = items,
+            Repr::Borrowed(original) if original.is_sequence() => {
+                self.inner = Repr::Sequence(Arc::new(SequenceData {
+                    original: Origin::Borrowed(original),
+                    items,
+                }));
+            }
+            _ => (),
         }
     }
     fn child_identity(&self, key: &str) -> Option<Self::Identity> {
@@ -411,6 +412,14 @@ impl<'input, V: MergeBackend> MergeableEntry for Entry<'input, V> {
 }
 
 impl<'input, V: MergeBackend> Item<'input, V> {
+    /// Wrap a generated value without original sequence-item metadata.
+    pub fn new(value: MergedValue<'input, V>) -> Self {
+        Self {
+            original: None,
+            value,
+        }
+    }
+
     /// Original backend item, including YAML span/comments, if the item was sourced.
     pub fn original(&self) -> Option<&'input V::Element> {
         self.original

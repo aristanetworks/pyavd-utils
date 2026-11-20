@@ -108,6 +108,9 @@ impl<'a, 'input: 'a, V: MergeBackend + 'input> SchemaDataMapping<'a>
     type Value = DataValue<'a, 'input, V>;
     type Keys = DataKeys<'a, 'input, V>;
     fn get(&self, key: &str) -> Option<Self::Value> {
+        if let Mapping::Original(value) = self.0 {
+            return value.get_child(key).map(DataValue::Original);
+        }
         self.0.iter().find_map(|pair| {
             if V::key_name(pair.key()) != Some(key) {
                 return None;

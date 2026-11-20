@@ -31,6 +31,7 @@ mod tests {
     use validation::ValidatableMapping as _;
     use validation::ValidatableMappingPair as _;
     use validation::ValidatableSequence as _;
+    use validation::ValidatableSequenceItem as _;
     use validation::ValidatableValue as _;
     use yaml_parser::MappingPair;
     use yaml_parser::Node;
@@ -740,12 +741,12 @@ mod tests {
         let new_sequence = new_items.as_sequence().unwrap();
         let mut old_iter = old_sequence.iter();
         let mut new_iter = new_sequence.iter();
-        let old_first = old_iter.next().unwrap();
-        let new_first = new_iter.next().unwrap();
+        let old_first = old_iter.next().unwrap().value();
+        let new_first = new_iter.next().unwrap().value();
         assert!(!shares_container_storage(&old_first, &new_first));
         assert!(shares_container_storage(
-            &old_iter.next().unwrap(),
-            &new_iter.next().unwrap(),
+            &old_iter.next().unwrap().value(),
+            &new_iter.next().unwrap().value(),
         ));
         let old_value = old_first.get("old").unwrap();
         let fork_old_value = new_first.get("old").unwrap();
@@ -1133,6 +1134,156 @@ mod tests {
     }
 
     #[test]
+    fn coerced_sequence_items_keep_metadata_when_filtered_and_reordered() {
+        let base = yaml("- # first\n  1\n- # second\n  2\n- # third\n  3\n", "base");
+        let next = yaml("- # fourth\n  4\n", "next");
+        let base_items = base.as_sequence().unwrap();
+        let next_items = next.as_sequence().unwrap();
+        for expanded in [false, true] {
+            let expected_last = if expanded {
+                &next_items[0]
+            } else {
+                &base_items[2]
+            };
+            let output = {
+                let merged = if expanded {
+                    merge_borrowed(&base, [&next], &NoSchema, MergeOptions::default()).unwrap()
+                } else {
+                    MergedValue::new(&base)
+                };
+                let sequence = merged.as_sequence().unwrap();
+                let mut items = sequence.iter();
+                let first = items.next().unwrap();
+                let last = items.last().unwrap();
+                merged.coerce_sequence(vec![
+                    last.coerced_item(last.value().coerce_int(30)),
+                    first.coerced_item(first.value().coerce_int(10)),
+                ])
+            };
+            let schema_merge::MergedSequence::Expanded(items) = output.as_sequence().unwrap()
+            else {
+                panic!("expected rebuilt items")
+            };
+            assert_eq!(items.len(), 2);
+            for ((expected, value), item) in [(expected_last, 30), (&base_items[0], 10)]
+                .into_iter()
+                .zip(items)
+            {
+                let original = item.original().unwrap();
+                // Borrow the whole original item: structural spans/comments are neither
+                // lost nor copied onto a different item during reconstruction.
+                assert!(std::ptr::eq(original, expected));
+                assert!(original.header_comment.is_some());
+                assert_ne!(original.item_span, original.node.span);
+                let coerced = schema_merge::MergeableItem::value(item);
+                assert_eq!(coerced.as_i64(), Some(value));
+                assert_eq!(coerced.source(), expected.node.source.as_ref());
+                assert_eq!(coerced.source_span(), expected.node.source_span());
+            }
+            // A second coercion retains the same origin through an expanded item view.
+            let again = {
+                let sequence = output.as_sequence().unwrap();
+                let first = sequence.iter().next().unwrap();
+                output.coerce_sequence(vec![first.coerced_item(first.value().coerce_int(300))])
+            };
+            drop(output);
+            let schema_merge::MergedSequence::Expanded(recoerced_items) =
+                again.as_sequence().unwrap()
+            else {
+                panic!("expected rebuilt items")
+            };
+            assert!(std::ptr::eq(
+                recoerced_items[0].original().unwrap(),
+                expected_last
+            ));
+            assert_eq!(again.to_feedback_value(), json!([300]).to_feedback_value());
+        }
+    }
+
+    fn check_container_setter<V: schema_merge::MergeBackend>(base: &V, next: &V) {
+        for expanded in [false, true] {
+            let mut target = MergedValue::new(base);
+            if expanded {
+                if let Some(entries) = target.take_mapping() {
+                    target.set_mapping(entries);
+                } else if let Some(items) = target.take_sequence() {
+                    target.set_sequence(items);
+                }
+            }
+            let snapshot = target.clone();
+            let mut incoming = MergedValue::new(next);
+            if let Some(entries) = incoming.take_mapping() {
+                target.set_mapping(entries);
+            } else if let Some(items) = incoming.take_sequence() {
+                target.set_sequence(items);
+            } else {
+                panic!("expected a container")
+            }
+            assert_eq!(target.to_feedback_value(), next.to_feedback_value());
+            assert_eq!(snapshot.to_feedback_value(), base.to_feedback_value());
+            assert_eq!(target.source(), base.source());
+            assert_eq!(target.source_span(), base.source_span());
+        }
+    }
+
+    #[test]
+    fn container_setters_replace_borrowed_and_shared_expanded_contents() {
+        check_container_setter(&json!({"old": 1}), &json!({"new": 2}));
+        check_container_setter(&json!([1]), &json!([2, 3]));
+        check_container_setter(&yaml("old: 1", "base"), &yaml("new: 2", "next"));
+        check_container_setter(&yaml("- 1", "base"), &yaml("- 2\n- 3", "next"));
+    }
+
+    #[test]
+    fn nonstring_keys_disable_schema_lookup_for_their_entire_subtree() {
+        struct StringKeySchema;
+        impl schema_merge::MergeSchema for StringKeySchema {
+            fn primary_key(
+                &self,
+                path: &[String],
+            ) -> Result<Option<&str>, avdschema::SchemaPathError> {
+                // This is a real string key, not a schema path for non-string keys.
+                if path == ["<non-string key>"] {
+                    Ok(Some("name"))
+                } else {
+                    Err(avdschema::SchemaPathError::InvalidTraversal)
+                }
+            }
+        }
+        let base = yaml(
+            "1: [{name: a, old: true}]\n2: {nested: [{name: a, old: true}]}\n'<non-string key>': [{name: a, old: true}]\n",
+            "base",
+        );
+        let next = yaml(
+            "1: [{name: a, new: true}]\n2: {nested: [{name: a, new: true}]}\n'<non-string key>': [{name: a, new: true}]\n",
+            "next",
+        );
+        let expected = yaml(
+            "1: [{name: a, old: true}, {name: a, new: true}]\n2: {nested: [{name: a, old: true}, {name: a, new: true}]}\n'<non-string key>': [{name: a, old: true, new: true}]\n",
+            "expected",
+        );
+        let borrowed =
+            merge_borrowed(&base, [&next], &StringKeySchema, MergeOptions::default()).unwrap();
+        assert_eq!(borrowed.identity(), expected.identity());
+        let owned = merge(base, [next], &StringKeySchema, MergeOptions::default()).unwrap();
+        assert_eq!(owned.identity(), expected.identity());
+    }
+
+    #[test]
+    fn borrowed_mapping_lookup_uses_the_first_matching_string_key() {
+        use schema_data::SchemaDataMapping as _;
+        use schema_data::SchemaDataValue as _;
+        let input = yaml("1: ignored\n'1': first\n'1': second\n", "fixture");
+        let merged = MergedValue::new(&input);
+        let mapping = merged.as_mapping().unwrap();
+        assert_eq!(mapping.get("1").unwrap().as_str().as_deref(), Some("first"));
+        assert!(mapping.get("missing").is_none());
+        let data = mapping.as_schema_data_mapping();
+        assert_eq!(data.get("1").unwrap().as_str(), Some("first"));
+        assert!(data.get("missing").is_none());
+    }
+
+    #[test]
     fn generated_container_headers_outlive_their_scalar_wrapper() {
         let original = Node::new(
             YamlValue::Int(yaml_parser::Integer::I64(1)),
@@ -1143,7 +1294,7 @@ mod tests {
             let scalar = MergedValue::from_scalar(original).unwrap();
             (
                 scalar.coerce_mapping(Vec::new()),
-                scalar.coerce_sequence(vec![scalar.clone()]),
+                scalar.coerce_sequence(vec![schema_merge::MergedItem::new(scalar.clone())]),
             )
         };
         assert_eq!(mapping.to_feedback_value(), json!({}).to_feedback_value());

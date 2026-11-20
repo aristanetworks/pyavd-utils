@@ -39,6 +39,7 @@ pub use merged::MergeBackend;
 pub use merged::MergedValue;
 pub use merged::Pair as MergedPair;
 pub use merged::Sequence as MergedSequence;
+pub use merged::SequenceItem as MergedSequenceItem;
 pub use merged::SequenceIter as MergedSequenceIter;
 pub use merged::View as MergedView;
 pub use merged::merge_borrowed;
@@ -255,7 +256,14 @@ where
     S: MergeSchema,
 {
     for next in nexts {
-        merge_value(&mut base, next, schema, options, &mut Vec::new(), true)?;
+        merge_value(
+            &mut base,
+            next,
+            Some(schema),
+            options,
+            &mut Vec::new(),
+            true,
+        )?;
     }
     Ok(base)
 }
@@ -263,7 +271,7 @@ where
 fn merge_value<V: MergeableValue, S: MergeSchema>(
     base: &mut V,
     mut next: V,
-    schema: &S,
+    schema: Option<&S>,
     options: MergeOptions,
     path: &mut Vec<String>,
     root: bool,
@@ -310,7 +318,7 @@ fn merge_value<V: MergeableValue, S: MergeSchema>(
 fn merge_mapping<V: MergeableValue, S: MergeSchema>(
     mut base: Vec<V::Entry>,
     next: Vec<V::Entry>,
-    schema: &S,
+    schema: Option<&S>,
     options: MergeOptions,
     path: &mut Vec<String>,
 ) -> Result<Vec<V::Entry>, MergeError> {
@@ -331,13 +339,16 @@ fn merge_mapping<V: MergeableValue, S: MergeSchema>(
         if let Some(existing) = existing.and_then(|positions| positions.first())
             && let Some(base_entry) = base.get_mut(*existing)
         {
+            // Non-string keys have a diagnostic path but no schema path. Disable
+            // schema lookup for their entire subtree, including nested string keys.
+            let child_schema = schema.filter(|_| entry.key_name().is_some());
             let component = entry.key_name().unwrap_or("<non-string key>").to_owned();
             path.push(component);
             let incoming_value = entry.take_value();
             merge_value(
                 base_entry.value_mut(),
                 incoming_value,
-                schema,
+                child_schema,
                 options,
                 path,
                 false,
@@ -357,12 +368,12 @@ fn merge_mapping<V: MergeableValue, S: MergeSchema>(
 fn merge_sequence<V: MergeableValue, S: MergeSchema>(
     mut base: Vec<V::Item>,
     next: Vec<V::Item>,
-    schema: &S,
+    schema: Option<&S>,
     options: MergeOptions,
     path: &mut Vec<String>,
 ) -> Result<Vec<V::Item>, MergeError> {
     let primary_key = schema
-        .primary_key(path)
+        .map_or(Ok(None), |schema| schema.primary_key(path))
         .map_err(|source| MergeError::Schema {
             path: path.clone(),
             source,

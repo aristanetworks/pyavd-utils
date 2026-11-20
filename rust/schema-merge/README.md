@@ -15,7 +15,7 @@ fragment/device selection and Python bindings are separate work.
 ```rust
 use avdschema::Store;
 use schema_merge::{merge_borrowed, ListMerge, MergeOptions, StoreSchema};
-use validation::{ValidatableSequence, ValidatableValue};
+use validation::{ValidatableSequence, ValidatableSequenceItem, ValidatableValue};
 use yaml_parser::parse_with_source;
 
 let store = Store::from_json(r#"{"eos_config":{"type":"dict","keys":{
@@ -39,7 +39,7 @@ let merged = merge_borrowed(
 // The merged interface borrows mtu from fixture-a and description from fixture-b.
 let interfaces = merged.get("interfaces").expect("interfaces should exist");
 let sequence = interfaces.as_sequence().expect("interfaces should be a sequence");
-let interface = sequence.iter().next().expect("interface should exist");
+let interface = sequence.iter().next().expect("interface should exist").value();
 assert_eq!(interface.get("mtu").expect("mtu should exist").as_i64(), Some(1500));
 assert_eq!(
     interface.get("description").expect("description should exist").as_str().as_deref(),
@@ -99,7 +99,10 @@ wrapper around an original node, using the validation child-view contract.
 Validation preserves each key/value's individual source and span. Coerced output
 is another `MergedValue`: unchanged fragment scalars and keys remain borrowed,
 converted or lowercased scalars are owned, and rebuilt containers retain their
-original provenance and item metadata. The output borrows the fragments rather
+original provenance and item metadata. Sequence iteration yields
+`ValidatableSequenceItem` views whose `coerced_item` builder carries the original
+item metadata with its value, preserving the association through filtering and
+reordering. The output borrows the fragments rather
 than the temporary merge wrappers, so it can outlive those wrappers. Unknown and
 invalid values preserved by validation keep their existing borrowed subtrees.
 
