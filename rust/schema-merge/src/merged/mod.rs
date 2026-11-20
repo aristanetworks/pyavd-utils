@@ -235,6 +235,19 @@ impl<'input, V: MergeBackend> MergedValue<'input, V> {
         }
     }
 
+    /// Borrow a scalar in its original backend representation, including coerced scalars.
+    ///
+    /// Containers return `None`; their effective children must be read through the
+    /// mapping and sequence views. This permits output adapters to preserve numeric
+    /// precision without materializing a backend tree.
+    pub fn as_scalar(&self) -> Option<&V> {
+        match &self.inner {
+            Repr::Scalar(value) => Some(value),
+            Repr::Borrowed(value) if !value.is_mapping() && !value.is_sequence() => Some(value),
+            _ => None,
+        }
+    }
+
     fn original(&self) -> &V {
         match &self.inner {
             Repr::Borrowed(value) => value,
