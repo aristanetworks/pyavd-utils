@@ -167,7 +167,7 @@ impl<'input> ValidatableValue for Node<'input> {
     }
 
     fn clone_to_coerced(&self) -> Self::Coerced {
-        self.clone().into_owned()
+        clone_owned_node(self)
     }
 
     fn to_feedback_value(&self) -> crate::feedback::Value {
@@ -384,7 +384,7 @@ impl<'a, 'input: 'a> ValidatableMappingPair<'a> for NodeMappingPair<'a, 'input> 
     ) -> <Self::Value as ValidatableValue>::CoercedMappingItem {
         MappingPair {
             pair_span: self.pair.pair_span,
-            key: self.pair.key.clone().into_owned(),
+            key: clone_owned_node(&self.pair.key),
             value,
             header_comment: self
                 .pair
@@ -439,6 +439,43 @@ impl<'a, 'input: 'a> ValidatableSequenceItem<'a> for &'a SequenceItem<'input> {
                 .as_deref()
                 .map(|comment| Box::new(comment.clone().into_owned())),
         }
+    }
+}
+
+// Copy directly into the final owned AST. Cloning first would walk the tree
+// twice and allocate intermediate metadata boxes before converting lifetimes.
+fn clone_owned_node(node: &Node<'_>) -> Node<'static> {
+    let value = match &node.value {
+        Value::Null => Value::Null,
+        Value::Bool(value) => Value::Bool(*value),
+        Value::Int(value) => Value::Int(value.clone().into_owned()),
+        Value::Float(value) => Value::Float(*value),
+        Value::String(value) => Value::String(Cow::Owned(value.as_ref().to_owned())),
+        Value::Sequence(items) => Value::Sequence(
+            items
+                .iter()
+                .map(|item| item.coerced_item(clone_owned_node(&item.node)))
+                .collect(),
+        ),
+        Value::Mapping(pairs) => Value::Mapping(
+            pairs
+                .iter()
+                .map(|pair| NodeMappingPair { pair }.coerced_item(clone_owned_node(&pair.value)))
+                .collect(),
+        ),
+    };
+    Node {
+        properties: node
+            .properties
+            .as_deref()
+            .map(|properties| Box::new(properties.clone().into_owned())),
+        value,
+        span: node.span,
+        source: node.source.clone(),
+        trailing_comment: node
+            .trailing_comment
+            .as_deref()
+            .map(|comment| Box::new(comment.clone().into_owned())),
     }
 }
 
@@ -921,6 +958,80 @@ mod tests {
         let coerced = node.clone_to_coerced();
 
         assert!(matches!(coerced.value, Value::String(Cow::Owned(value)) if value == "borrowed"));
+    }
+
+    #[test]
+    fn test_yaml_owned_copy_preserves_nested_ast_and_metadata() {
+        for owned_input in [false, true] {
+            let (copied, expected, key, expected_key) = {
+                let text = String::from("340282366920938463463374607431768211456");
+                let span = yaml_parser::Span::new(1..20);
+                let source: std::sync::Arc<str> = "fixture".into();
+                let comment = yaml_parser::Comment {
+                    text: Cow::Borrowed(text.as_str()),
+                    span,
+                };
+                let leaf = Node::new(
+                    Value::Sequence(
+                        [
+                            Value::Null,
+                            Value::Bool(true),
+                            Value::Float(1.5),
+                            Value::Int(Integer::I64(-1)),
+                            Value::Int(Integer::U64(u64::MAX)),
+                            Value::Int(Integer::I128(i128::MIN)),
+                            Value::Int(Integer::U128(u128::MAX)),
+                            Value::Int(Integer::BigIntStr(Cow::Borrowed(text.as_str()))),
+                            Value::String(Cow::Borrowed(text.as_str())),
+                        ]
+                        .into_iter()
+                        .map(|value| {
+                            SequenceItem::new(span, Node::new(value, span, Some(source.clone())))
+                        })
+                        .collect(),
+                    ),
+                    span,
+                    Some(source.clone()),
+                )
+                .with_anchor(text.as_str())
+                .with_tag(Cow::Borrowed("!custom"))
+                .with_trailing_comment(comment.clone());
+                let node = Node::new(
+                    Value::Mapping(vec![
+                        MappingPair::new(
+                            span,
+                            leaf.clone(), // Complex YAML keys use the same owned-copy path.
+                            Node::new(
+                                Value::Sequence(vec![
+                                    SequenceItem::new(span, leaf)
+                                        .with_header_comment(comment.clone()),
+                                ]),
+                                span,
+                                Some(source),
+                            ),
+                        )
+                        .with_header_comment(comment.clone()),
+                    ]),
+                    span,
+                    None,
+                )
+                .with_trailing_comment(comment);
+                let node = if owned_input { node.into_owned() } else { node };
+                let mapping = node.as_mapping().expect("expected mapping");
+                let pair = mapping.iter().next().expect("expected pair");
+                let key = pair.coerced_item(Node::null(span, None)).key;
+                let expected_key = pair.pair.key.clone().into_owned();
+                (
+                    node.clone_to_coerced(),
+                    node.clone().into_owned(),
+                    key,
+                    expected_key,
+                )
+            };
+            // The source text and original AST have been dropped.
+            assert_eq!(copied, expected);
+            assert_eq!(key, expected_key);
+        }
     }
 
     #[test]

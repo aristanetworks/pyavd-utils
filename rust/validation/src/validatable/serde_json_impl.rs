@@ -116,8 +116,7 @@ impl ValidatableValue for Value {
     }
 
     fn to_feedback_value(&self) -> crate::feedback::Value {
-        // feedback::Value has From<serde_json::Value>
-        self.clone().into()
+        self.into()
     }
 
     fn is_float(&self) -> bool {
