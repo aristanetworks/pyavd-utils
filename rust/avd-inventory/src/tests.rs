@@ -199,7 +199,7 @@ fn validation_returns_original_source_spans_and_owns_feedback_after_inputs_are_d
     inventory
         .add_fragment(yaml("mtu: '1600'\n", "specific", &["a"]))
         .unwrap();
-    let output = inventory.build(&store, &options).unwrap();
+    let output = inventory.build_to_json(&store, &options).unwrap();
     assert!(output.has_errors());
     for device in ["a", "b"] {
         let result = &output.devices[device];
@@ -272,7 +272,7 @@ fn empty_device_lists_apply_nowhere_and_empty_inventories_can_build() {
     let store = store();
     let options = BuildOptions::new("test");
     Inventory::<YamlFragment>::new()
-        .build(&store, &options)
+        .build_to_json(&store, &options)
         .unwrap();
     let mut inventory = Inventory::<JsonFragment>::new();
     inventory
@@ -288,7 +288,7 @@ fn empty_device_lists_apply_nowhere_and_empty_inventories_can_build() {
 fn build_errors_identify_missing_schemas_and_conflicting_fragments() {
     let store = store();
     let schema_error = Inventory::<JsonFragment>::new()
-        .build(&store, &BuildOptions::new("missing"))
+        .build_to_json(&store, &BuildOptions::new("missing"))
         .unwrap_err();
     assert!(matches!(schema_error, BuildError::Schema(_)));
     let mut inventory = Inventory::<YamlFragment>::new();
@@ -299,7 +299,7 @@ fn build_errors_identify_missing_schemas_and_conflicting_fragments() {
     conflicting.merge.same_key_strategy = SameKeyStrategy::MustMatch;
     inventory.add_fragment(conflicting).unwrap();
     let options = BuildOptions::new("test");
-    let error = inventory.build(&store, &options).unwrap_err();
+    let error = inventory.build_to_json(&store, &options).unwrap_err();
     assert!(
         matches!(error, BuildError::Merge { source, error: schema_merge::MergeError::Conflict { path } } if source.as_ref() == "conflict" && path == ["mtu"])
     );
@@ -318,7 +318,9 @@ fn any_device_input_error_gates_the_common_build() {
     inventory
         .add_fragment(json_fragment("{\"mtu\":\"1600\"}", &["c"]))
         .unwrap();
-    let output = inventory.build(&store, &BuildOptions::new("test")).unwrap();
+    let output = inventory
+        .build_to_json(&store, &BuildOptions::new("test"))
+        .unwrap();
     assert!(output.has_errors());
     assert!(output.devices["a"].validated_data.is_none());
     assert!(Arc::ptr_eq(&output.devices["a"], &output.devices["b"]));
@@ -352,7 +354,9 @@ fn each_fragment_controls_merge_behavior_without_affecting_other_devices() {
     let mut shallow = yaml("shared: {last: 3}", "shallow", &["a"]);
     shallow.merge.mode = MergeMode::Shallow;
     inventory.add_fragment(shallow).unwrap();
-    let output = inventory.build(&store, &BuildOptions::new("test")).unwrap();
+    let output = inventory
+        .build_to_json(&store, &BuildOptions::new("test"))
+        .unwrap();
     assert!(!output.has_errors());
     for (device, expected) in [
         (
@@ -387,7 +391,7 @@ fn parallel_and_serial_builds_return_identical_ordered_json_and_diagnostics() {
         let mut options = BuildOptions::new("test");
         options.validation_threads = NonZeroUsize::new(workers);
         options.validation.return_coercion_infos = true;
-        inventory.build(&store, &options).unwrap()
+        inventory.build_to_json(&store, &options).unwrap()
     };
     let serial = build(1);
     let parallel = build(2);
@@ -449,7 +453,7 @@ fn distinct_roots_run_inside_the_requested_worker_pool_and_shared_roots_encode_o
         .unwrap();
     let mut options = BuildOptions::new("test");
     options.validation_threads = NonZeroUsize::new(2);
-    let output = inventory.build(&store, &options).unwrap();
+    let output = inventory.build_to_json(&store, &options).unwrap();
     assert!(!output.has_errors());
     assert_eq!(ENCODED.load(Ordering::Relaxed), 3);
     assert!(Arc::ptr_eq(&output.devices["a"], &output.devices["d"]));
@@ -467,7 +471,9 @@ fn yaml_json_output_keeps_large_numbers_floats_and_coerced_scalars() {
     inventory
         .add_fragment(yaml("shared: {new: value}", "extra", &["a"]))
         .unwrap();
-    let output = inventory.build(&store, &BuildOptions::new("test")).unwrap();
+    let output = inventory
+        .build_to_json(&store, &BuildOptions::new("test"))
+        .unwrap();
     assert!(!output.has_errors());
     let json: serde_json::Value =
         serde_json::from_str(output.devices["a"].validated_data.as_ref().unwrap()).unwrap();
@@ -495,7 +501,7 @@ fn json_encoding_rejects_unrepresentable_yaml_instead_of_silently_changing_it() 
             .add_fragment(yaml(text, "fixture", &["a"]))
             .unwrap();
         assert!(matches!(
-            inventory.build(&store, &BuildOptions::new("test")),
+            inventory.build_to_json(&store, &BuildOptions::new("test")),
             Err(BuildError::Json(_))
         ));
     }
@@ -525,7 +531,9 @@ fn keyed_list_merges_keep_error_value_and_warning_key_spans_through_reordering_a
         let mut specific = yaml(next, "specific", &["a"]);
         specific.merge.list_merge = list_merge;
         inventory.add_fragment(specific).unwrap();
-        let output = inventory.build(&store, &BuildOptions::new("test")).unwrap();
+        let output = inventory
+            .build_to_json(&store, &BuildOptions::new("test"))
+            .unwrap();
         let result = &output.devices["a"];
         let expected = if list_merge == ListMerge::Replace {
             vec![("specific", next, "bad-next", "0")]

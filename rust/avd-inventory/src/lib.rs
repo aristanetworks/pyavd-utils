@@ -23,7 +23,7 @@
 //!     devices: vec!["leaf1".into(), "leaf2".into()],
 //!     merge: Default::default(),
 //! })?;
-//! let output = inventory.build(&schema, &BuildOptions::new("test"))?;
+//! let output = inventory.build_to_json(&schema, &BuildOptions::new("test"))?;
 //! assert!(!output.has_errors());
 //! assert_eq!(output.devices["leaf1"].validated_data.as_deref(), Some(r#"{"mtu":1500}"#));
 //! # Ok::<(), Box<dyn std::error::Error>>(())
@@ -125,8 +125,8 @@ pub struct DeviceOutput {
 
 /// A collecting inventory accepting only one fragment format.
 ///
-/// `build` consumes the inventory. Merge and validation phases remain private;
-/// no self-referential owner is needed because the parsed inputs stay local to build.
+/// `build_to_json` consumes the inventory. Merge and validation phases remain private;
+/// no self-referential owner is needed because the parsed inputs stay local to `build_to_json`.
 #[derive(Debug)]
 pub struct Inventory<F: InventoryFragment> {
     inputs: Inputs<F>,
@@ -172,7 +172,7 @@ impl<F: InventoryFragment> Inventory<F> {
         Ok(id)
     }
 
-    /// Consume the inventory, merge device variables, and run validation/coercion.
+    /// Consume the inventory, merge and validate device variables, and encode JSON.
     ///
     /// Distinct roots are validated and encoded in parallel with a build-local
     /// worker pool. Findings remain structured output; schema, execution and JSON
@@ -185,11 +185,15 @@ impl<F: InventoryFragment> Inventory<F> {
     /// # use avdschema::Store;
     /// # fn example(store: &Store, fragment: YamlFragment) {
     /// let mut inventory = Inventory::<YamlFragment>::new();
-    /// let _ = inventory.build(store, &BuildOptions::new("test"));
+    /// let _ = inventory.build_to_json(store, &BuildOptions::new("test"));
     /// inventory.add_fragment(fragment);
     /// # }
     /// ```
-    pub fn build(self, store: &Store, options: &BuildOptions) -> Result<BuildOutput, BuildError>
+    pub fn build_to_json(
+        self,
+        store: &Store,
+        options: &BuildOptions,
+    ) -> Result<BuildOutput, BuildError>
     where
         for<'a> MergedValue<'a, F::Value>: Send + Sync,
     {
