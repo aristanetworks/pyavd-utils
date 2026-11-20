@@ -22,6 +22,7 @@ use crate::feedback::IgnoredEosConfigKey;
 use crate::feedback::Violation;
 use crate::validatable::ValidatableMappingPair as _;
 use crate::validatable::ValidatableSequence as _;
+use crate::validatable::ValidatableSequenceItem as _;
 use crate::validatable::ValidatableValue;
 use crate::validation::NodeValidation;
 use crate::validation::boolean;
@@ -177,16 +178,21 @@ impl<'context, 'store> Validator<'context, 'store> {
             .then(|| Vec::with_capacity(sequence.len()));
 
         for (index, item) in sequence.iter().enumerate() {
-            let item = item.borrow();
+            let item_view = item.value();
+            let item_value = item_view.borrow();
             state.path.push(index.to_string());
-            list::validate_item_node(schema, item, self.context, state);
+            list::validate_item_node(schema, item_value, self.context, state);
             let coerced_item = if let Some(item_schema) = schema.items() {
-                self.visit(item_schema, item, state)
+                self.visit(item_schema, item_value, state)
             } else {
                 None
             };
             if let Some(ref mut items) = coerced {
-                items.push(coerced_item.unwrap_or_else(|| item.clone_to_coerced()));
+                items.push(
+                    item.coerced_item(
+                        coerced_item.unwrap_or_else(|| item_value.clone_to_coerced()),
+                    ),
+                );
             }
             state.path.pop();
         }

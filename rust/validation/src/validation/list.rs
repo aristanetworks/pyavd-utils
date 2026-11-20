@@ -15,6 +15,7 @@ use crate::context::ValueLocation;
 use crate::feedback::Type;
 use crate::feedback::Violation;
 use crate::validatable::ValidatableSequence;
+use crate::validatable::ValidatableSequenceItem as _;
 use crate::validatable::ValidatableValue;
 
 /// Validate list-wide constraints without recursively validating item bodies.
@@ -131,7 +132,8 @@ fn validate_unique_keys<'a, S: ValidatableSequence<'a>>(
         let mut seen_items: HashMap<String, ValueLocation> = HashMap::new();
 
         for (i, item) in items.iter().enumerate() {
-            item.borrow()
+            item.value()
+                .borrow()
                 .walk_path(unique_key, &mut |trail_suffix, value| {
                     let mut trail = vec![i.to_string()];
                     trail.extend_from_slice(trail_suffix);
