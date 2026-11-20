@@ -32,6 +32,9 @@ impl MergeBackend for Value {
             .flatten()
             .map(|(key, value)| (key.as_str(), value))
     }
+    fn get_child(&self, key: &str) -> Option<&Self> {
+        self.get(key)
+    }
     fn elements(&self) -> Self::Elements<'_> {
         self.as_array()
             .map_or(&[][..], Vec::as_slice)
@@ -97,6 +100,9 @@ impl<'input> MergeBackend for Node<'input> {
             _ => &[],
         };
         pairs.iter().map(|pair| (pair, &pair.value))
+    }
+    fn get_child(&self, key: &str) -> Option<&Self> {
+        self.get(key)
     }
     fn elements(&self) -> Self::Elements<'_> {
         let items = match &self.value {
