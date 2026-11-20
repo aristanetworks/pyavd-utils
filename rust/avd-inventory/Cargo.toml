@@ -1,0 +1,17 @@
+[package]
+name = "avd-inventory"
+version.workspace = true
+edition = "2024"
+license.workspace = true
+description = "Typed fragment collection, shared merging, and validation for AVD inventories"
+
+[lints]
+workspace = true
+
+[dependencies]
+avdschema = { path = "../avdschema", default-features = false }
+indexmap = { workspace = true }
+schema-merge = { path = "../schema-merge" }
+serde_json = { workspace = true, features = ["arbitrary_precision", "preserve_order"] }
+validation = { path = "../validation", default-features = false }
+yaml-parser = { path = "../yaml-parser", default-features = false }
