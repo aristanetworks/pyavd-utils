@@ -4,6 +4,7 @@ version.workspace = true
 edition = "2024"
 license.workspace = true
 description = "Storage-neutral data views for AVD schema navigation"
+rust-version.workspace = true
 
 [dependencies]
 ordermap = { workspace = true }
