@@ -323,7 +323,16 @@ impl<'input, V: MergeBackend> MergeableValue for MergedValue<'input, V> {
     }
     fn set_mapping(&mut self, entries: Vec<Self::Entry>) {
         match &mut self.inner {
-            Repr::Mapping(data) => Arc::make_mut(data).entries = entries,
+            Repr::Mapping(data) => {
+                if let Some(unique) = Arc::get_mut(data) {
+                    unique.entries = entries;
+                } else {
+                    *data = Arc::new(MappingData {
+                        original: data.original.clone(),
+                        entries,
+                    });
+                }
+            }
             Repr::Borrowed(original) if original.is_mapping() => {
                 self.inner = Repr::Mapping(Arc::new(MappingData {
                     original: Origin::Borrowed(original),
@@ -358,7 +367,16 @@ impl<'input, V: MergeBackend> MergeableValue for MergedValue<'input, V> {
     }
     fn set_sequence(&mut self, items: Vec<Self::Item>) {
         match &mut self.inner {
-            Repr::Sequence(data) => Arc::make_mut(data).items = items,
+            Repr::Sequence(data) => {
+                if let Some(unique) = Arc::get_mut(data) {
+                    unique.items = items;
+                } else {
+                    *data = Arc::new(SequenceData {
+                        original: data.original.clone(),
+                        items,
+                    });
+                }
+            }
             Repr::Borrowed(original) if original.is_sequence() => {
                 self.inner = Repr::Sequence(Arc::new(SequenceData {
                     original: Origin::Borrowed(original),
