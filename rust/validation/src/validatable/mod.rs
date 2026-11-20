@@ -77,6 +77,12 @@ pub trait ValidatableValue: Sized {
     /// native mapping-pair type so key and pair spans can be preserved.
     type CoercedMappingItem;
 
+    /// The output item type used when rebuilding a coerced sequence.
+    ///
+    /// JSON uses a plain value, while YAML retains the sequence-item span
+    /// and header comment alongside the coerced node.
+    type CoercedSequenceItem;
+
     // === Strict type checking (no coercion) ===
 
     /// Returns `true` if this value is null/None.
@@ -197,7 +203,7 @@ pub trait ValidatableValue: Sized {
         if let Some(seq) = self.as_sequence() {
             for (index, item) in seq.iter().enumerate() {
                 trail.push(index.to_string());
-                item.borrow().walk(components, trail, visitor);
+                item.value().borrow().walk(components, trail, visitor);
                 trail.pop();
             }
             return;
@@ -230,10 +236,12 @@ pub trait ValidatableValue: Sized {
     fn coerce_int(&self, value: i64) -> Self::Coerced;
 
     /// Create a coerced string value.
-    fn coerce_str(&self, value: String) -> Self::Coerced;
+    ///
+    /// Retain borrowed strings until the backend decides whether ownership is needed.
+    fn coerce_str(&self, value: Cow<'_, str>) -> Self::Coerced;
 
     /// Create a coerced sequence from coerced items.
-    fn coerce_sequence(&self, items: Vec<Self::Coerced>) -> Self::Coerced;
+    fn coerce_sequence(&self, items: Vec<Self::CoercedSequenceItem>) -> Self::Coerced;
 
     /// Create a coerced mapping from coerced key-value pairs.
     fn coerce_mapping(&self, items: Vec<Self::CoercedMappingItem>) -> Self::Coerced;
@@ -346,10 +354,13 @@ pub trait ValidatableSequence<'a> {
     /// The type of values in this sequence.
     type Value: ValidatableValue + 'a;
 
-    /// Iterator type for values.
-    type Iter: Iterator<Item = <Self::Value as ValidatableValue>::View<'a>>;
+    /// The sequence-item type yielded by iteration.
+    type Item: ValidatableSequenceItem<'a, Value = Self::Value>;
 
-    /// Iterate over values.
+    /// Iterator type for sequence items.
+    type Iter: Iterator<Item = Self::Item>;
+
+    /// Iterate over items, retaining their structural metadata.
     fn iter(&self) -> Self::Iter;
 
     /// Get the number of items in the sequence.
@@ -359,6 +370,25 @@ pub trait ValidatableSequence<'a> {
     fn is_empty(&self) -> bool {
         self.len() == 0
     }
+}
+
+/// A single sequence item, including backend-specific structural metadata.
+///
+/// Keeping the item separate from its value lets coercion preserve membership
+/// metadata, such as a YAML entry's span and header comment, even when items
+/// are filtered or reordered before rebuilding a sequence.
+pub trait ValidatableSequenceItem<'a> {
+    /// The type of value in this sequence item.
+    type Value: ValidatableValue + 'a;
+
+    /// Get the item's value.
+    fn value(&self) -> <Self::Value as ValidatableValue>::View<'a>;
+
+    /// Build a coerced sequence item retaining this item's structural metadata.
+    fn coerced_item(
+        &self,
+        value: <Self::Value as ValidatableValue>::Coerced,
+    ) -> <Self::Value as ValidatableValue>::CoercedSequenceItem;
 }
 
 // === Implementations ===
