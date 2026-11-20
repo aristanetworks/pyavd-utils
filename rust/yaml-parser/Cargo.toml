@@ -5,6 +5,7 @@ edition = "2024"
 license.workspace = true
 description = "A YAML 1.2 parser with error recovery, span tracking, and multiple error collection"
 readme = "README.md"
+rust-version.workspace = true
 
 [dependencies]
 schema-data = { path = "../schema-data", optional = true }
