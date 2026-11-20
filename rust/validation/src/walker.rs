@@ -178,6 +178,7 @@ impl<'context, 'store> Validator<'context, 'store> {
             .then(|| Vec::with_capacity(sequence.len()));
 
         for (index, item) in sequence.iter().enumerate() {
+            // A backend may return an owned view. Keep it alive while borrowing its value.
             let item_view = item.value();
             let item_value = item_view.borrow();
             state.path.push(index.to_string());
