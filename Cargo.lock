@@ -1875,6 +1875,7 @@ dependencies = [
  "derive_more",
  "saphyr",
  "schema-data",
+ "self_cell",
  "serde",
  "yaml_serde",
 ]

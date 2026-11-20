@@ -11,6 +11,7 @@ rust-version.workspace = true
 schema-data = { path = "../schema-data", optional = true }
 derive_more = { workspace = true, features = ["display"] }
 serde = { workspace = true, optional = true }
+self_cell = { workspace = true }
 
 [dev-dependencies]
 avdschema = { path = "../avdschema" }
