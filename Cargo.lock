@@ -74,7 +74,9 @@ version = "0.0.14"
 dependencies = [
  "avdschema",
  "indexmap 2.14.2",
+ "rayon",
  "schema-merge",
+ "serde",
  "serde_json",
  "validation",
  "yaml-parser",

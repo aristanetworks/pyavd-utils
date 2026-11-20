@@ -11,7 +11,9 @@ workspace = true
 [dependencies]
 avdschema = { path = "../avdschema", default-features = false }
 indexmap = { workspace = true }
+rayon = "1.12.0"
 schema-merge = { path = "../schema-merge" }
+serde = { workspace = true }
 serde_json = { workspace = true, features = ["arbitrary_precision", "preserve_order"] }
 validation = { path = "../validation", default-features = false }
-yaml-parser = { path = "../yaml-parser", default-features = false }
+yaml-parser = { path = "../yaml-parser", default-features = false, features = ["serde"] }

@@ -2,15 +2,19 @@
 // Use of this source code is governed by the Apache License 2.0
 // that can be found in the LICENSE file.
 
+use std::sync::Arc;
+
 use avdschema::Store;
 use indexmap::IndexMap;
+use rayon::prelude::*;
+use schema_merge::MergeInput;
 use schema_merge::MergedValue;
 use schema_merge::StoreSchema;
 use validation::StoreValidate as _;
-use validation::ValidationOutput;
 
 use crate::BuildError;
 use crate::BuildOptions;
+use crate::DeviceOutput;
 use crate::InventoryFragment;
 use crate::StoredFragment;
 use crate::graph::MergeGraph;
@@ -29,8 +33,8 @@ pub(crate) struct Merged<'input, F: InventoryFragment> {
 }
 
 #[derive(Debug)]
-pub(crate) struct Validated<'input, F: InventoryFragment> {
-    pub roots: IndexMap<StepId, ValidationOutput<MergedValue<'input, F::Value>>>,
+pub(crate) struct Validated<'input> {
+    pub roots: IndexMap<StepId, Arc<DeviceOutput>>,
     pub devices: &'input IndexMap<String, StepId>,
 }
 
@@ -65,11 +69,18 @@ impl<F: InventoryFragment> Inputs<F> {
                     results[parent].clone()
                 }
                 .expect("parent result must exist before its children are merged");
-                let merged = schema_merge::merge(previous, [incoming], &schema, options.merge)
-                    .map_err(|error| BuildError::Merge {
-                        source: fragment.source.clone(),
-                        error,
-                    })?;
+                let merged = schema_merge::merge_inputs(
+                    previous,
+                    [MergeInput {
+                        value: incoming,
+                        options: fragment.merge,
+                    }],
+                    &schema,
+                )
+                .map_err(|error| BuildError::Merge {
+                    source: fragment.source.clone(),
+                    error,
+                })?;
                 remaining[parent] -= 1;
                 merged
             } else {
@@ -96,21 +107,67 @@ impl<'input, F: InventoryFragment> Merged<'input, F> {
         self,
         store: &Store,
         options: &BuildOptions,
-    ) -> Result<Validated<'input, F>, BuildError> {
+    ) -> Result<Validated<'input>, BuildError>
+    where
+        MergedValue<'input, F::Value>: Send + Sync,
+    {
         let mut configuration = options.validation.clone();
         configuration.return_coerced_data = true;
-        let roots = self
-            .roots
-            .into_iter()
-            .map(|(id, value)| {
-                let output = store
-                    .validate_value(&value, &options.schema_name, Some(&configuration))
-                    .map_err(BuildError::Validation)?;
-                Ok((id, output))
-            })
-            .collect::<Result<_, BuildError>>()?;
+        let validate = |(id, value): (StepId, MergedValue<'input, F::Value>)| {
+            let output = store
+                .validate_value(&value, &options.schema_name, Some(&configuration))
+                .map_err(BuildError::Validation)?;
+            let validated_data = if output.result.errors.is_empty() {
+                output
+                    .coerced
+                    .as_ref()
+                    .map(F::encode_json)
+                    .transpose()
+                    .map_err(BuildError::Json)?
+            } else {
+                None
+            };
+            Ok((
+                id,
+                Arc::new(DeviceOutput {
+                    validation: output.result,
+                    validated_data,
+                }),
+            ))
+        };
+        // Collect into a Vec before parallel iteration so result order remains
+        // deterministic without enabling IndexMap's optional Rayon support.
+        let roots: Vec<_> = self.roots.into_iter().collect();
+        let roots: Vec<_> = if options
+            .validation_threads
+            .is_some_and(|count| count.get() == 1)
+            || roots.len() < 2
+        {
+            roots
+                .into_iter()
+                .map(validate)
+                .collect::<Result<_, BuildError>>()?
+        } else {
+            let workers = options
+                .validation_threads
+                .map_or_else(
+                    || std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get),
+                    std::num::NonZeroUsize::get,
+                )
+                .min(roots.len());
+            let pool = rayon::ThreadPoolBuilder::new()
+                .num_threads(workers)
+                .build()
+                .map_err(BuildError::WorkerPool)?;
+            pool.install(|| {
+                roots
+                    .into_par_iter()
+                    .map(validate)
+                    .collect::<Result<_, BuildError>>()
+            })?
+        };
         Ok(Validated {
-            roots,
+            roots: roots.into_iter().collect(),
             devices: self.devices,
         })
     }
