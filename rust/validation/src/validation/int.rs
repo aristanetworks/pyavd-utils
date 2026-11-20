@@ -132,7 +132,7 @@ mod tests {
         let input = serde_json::json!({});
         let mut ctx = Context::new(None);
         let _ = schema.validate(&input, &mut ctx);
-        assert!(ctx.result.infos.is_empty());
+        assert_eq!(ctx.result.infos.as_slice(), []);
         assert_eq!(
             ctx.result.errors,
             vec![Feedback {
@@ -154,7 +154,7 @@ mod tests {
         let input = Value::Number(serde_json::Number::from(i64::MAX as u64 + 1));
         let mut ctx = Context::new(None);
         let _ = schema.validate(&input, &mut ctx);
-        assert!(ctx.result.infos.is_empty());
+        assert_eq!(ctx.result.infos.as_slice(), []);
         assert_eq!(
             ctx.result.errors,
             vec![Feedback {
@@ -192,7 +192,7 @@ mod tests {
         );
         let mut ctx = Context::new(None);
         let _ = schema.validate(&input, &mut ctx);
-        assert!(ctx.result.infos.is_empty());
+        assert_eq!(ctx.result.infos.as_slice(), []);
         assert_eq!(
             ctx.result.errors,
             vec![Feedback {
@@ -218,7 +218,7 @@ mod tests {
         };
         let mut ctx = Context::new(Some(&configuration));
         let coerced = schema.validate(&input, &mut ctx);
-        assert!(ctx.result.errors.is_empty());
+        assert_eq!(ctx.result.errors.as_slice(), []);
         assert_eq!(
             ctx.result.infos,
             vec![Feedback {
@@ -241,7 +241,7 @@ mod tests {
         let input: Value = "one23".into();
         let mut ctx = Context::new(None);
         let _ = schema.validate(&input, &mut ctx);
-        assert!(ctx.result.infos.is_empty());
+        assert_eq!(ctx.result.infos.as_slice(), []);
         assert_eq!(
             ctx.result.errors,
             vec![Feedback {
@@ -270,7 +270,7 @@ mod tests {
         let input_true: Value = true.into();
         let mut true_ctx = Context::new(Some(&configuration));
         let true_coerced = schema.validate(&input_true, &mut true_ctx);
-        assert!(true_ctx.result.errors.is_empty());
+        assert_eq!(true_ctx.result.errors.as_slice(), []);
         assert_eq!(
             true_ctx.result.infos,
             vec![Feedback {
@@ -290,7 +290,7 @@ mod tests {
         let input_false: Value = false.into();
         let mut false_ctx = Context::new(Some(&configuration));
         let false_coerced = schema.validate(&input_false, &mut false_ctx);
-        assert!(false_ctx.result.errors.is_empty());
+        assert_eq!(false_ctx.result.errors.as_slice(), []);
         assert_eq!(
             false_ctx.result.infos,
             vec![Feedback {
@@ -330,7 +330,7 @@ mod tests {
         let input: Value = 321.into();
         let mut ctx = Context::new(None);
         let _ = schema.validate(&input, &mut ctx);
-        assert!(ctx.result.infos.is_empty());
+        assert_eq!(ctx.result.infos.as_slice(), []);
         assert_eq!(
             ctx.result.errors,
             vec![Feedback {
@@ -367,7 +367,7 @@ mod tests {
         let input: Value = 121.into();
         let mut ctx = Context::new(None);
         let _ = schema.validate(&input, &mut ctx);
-        assert!(ctx.result.infos.is_empty());
+        assert_eq!(ctx.result.infos.as_slice(), []);
         assert_eq!(
             ctx.result.errors,
             vec![Feedback {
@@ -404,7 +404,7 @@ mod tests {
         let input: Value = 125.into();
         let mut ctx = Context::new(None);
         let _ = schema.validate(&input, &mut ctx);
-        assert!(ctx.result.infos.is_empty());
+        assert_eq!(ctx.result.infos.as_slice(), []);
         assert_eq!(
             ctx.result.errors,
             vec![Feedback {
@@ -432,7 +432,7 @@ mod tests {
         let mut ctx = Context::new(Some(&configuration));
         let coerced = schema.validate(&input, &mut ctx);
 
-        assert!(ctx.result.errors.is_empty());
+        assert_eq!(ctx.result.errors.as_slice(), []);
         assert_eq!(
             ctx.result.infos,
             vec![Feedback {

@@ -732,7 +732,7 @@ mod tests {
         let seq = node.as_sequence().expect("should be a sequence");
         assert_eq!(seq.len(), 3);
         assert_eq!(ValidatableSequence::len(&seq), 3);
-        assert!(!seq.is_empty());
+        assert!(!seq.is_empty(), "expected a nonempty sequence, got {seq:?}");
 
         let items: Vec<i64> = ValidatableSequence::iter(&seq)
             .filter_map(|item| item.value().as_i64())
