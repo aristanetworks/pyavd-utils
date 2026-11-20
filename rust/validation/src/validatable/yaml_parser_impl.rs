@@ -858,17 +858,24 @@ mod tests {
             yaml_parser::Span::new(10..20),
             Some(source.clone()),
         );
-        let item = Node::new(
-            Value::String(Cow::Borrowed("item")),
-            yaml_parser::Span::new(12..16),
-            None,
+        // For `- item`, the structural span includes `- ` while the node span
+        // covers only `item`. Coercion must preserve these independently.
+        let item = SequenceItem::new(
+            yaml_parser::Span::new(10..16),
+            Node::new(
+                Value::String(Cow::Borrowed("item")),
+                yaml_parser::Span::new(12..16),
+                Some(source.clone()),
+            ),
         );
 
         let coerced_null = original.coerce_null();
         let coerced_bool = original.coerce_bool(true);
         let coerced_int = original.coerce_int(42);
         let coerced_str = original.coerce_str(Cow::Borrowed("value"));
-        let coerced_sequence = original.coerce_sequence(vec![SequenceItem::new(item.span, item)]);
+        let coerced_sequence = original.coerce_sequence(vec![
+            (&item).coerced_item(item.node.coerce_str(Cow::Borrowed("converted"))),
+        ]);
 
         let coerced_mapping = original.coerce_mapping(Vec::new());
         for node in [
@@ -893,7 +900,19 @@ mod tests {
         assert!(matches!(coerced_bool.value, Value::Bool(true)));
         assert!(matches!(coerced_int.value, Value::Int(Integer::I64(42))));
         assert!(matches!(coerced_str.value, Value::String(value) if value == "value"));
-        assert!(matches!(coerced_sequence.value, Value::Sequence(items) if items.len() == 1));
+        let Value::Sequence(items) = &coerced_sequence.value else {
+            panic!("coerce_sequence should create a sequence");
+        };
+        let [coerced_item] = items.as_slice() else {
+            panic!("coerce_sequence should emit one item");
+        };
+        assert_eq!(coerced_item.item_span, yaml_parser::Span::new(10..16));
+        assert_eq!(coerced_item.node.span, yaml_parser::Span::new(12..16));
+        assert_eq!(coerced_item.node.as_str().as_deref(), Some("converted"));
+        assert!(std::sync::Arc::ptr_eq(
+            coerced_item.node.source.as_ref().unwrap(),
+            &source,
+        ));
     }
 
     #[test]
