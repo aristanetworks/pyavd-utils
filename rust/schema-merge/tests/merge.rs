@@ -1284,6 +1284,28 @@ mod tests {
     }
 
     #[test]
+    fn duplicate_key_feedback_matches_borrowed_and_expanded_mappings() {
+        let input = yaml(
+            "name: first\n1: first\n1: second\nnull: first\nnull: second\n? [x]\n: first\n? [x]\n: second\n'': first\n'': second\nname: second\n",
+            "fixture",
+        );
+        let expected = input.as_mapping().unwrap().duplicate_keys();
+        assert_eq!(expected.len(), 2);
+        assert_eq!(expected[0].key, "name");
+        assert_eq!(expected[1].key, "");
+        let merged = MergedValue::new(&input);
+        let mapping = merged.as_mapping().unwrap();
+        assert_eq!(mapping.duplicate_keys(), expected);
+        let expanded = merged.coerce_mapping(
+            mapping
+                .iter()
+                .map(|pair| pair.coerced_item(pair.value().clone_to_coerced()))
+                .collect(),
+        );
+        assert_eq!(expanded.as_mapping().unwrap().duplicate_keys(), expected);
+    }
+
+    #[test]
     fn generated_container_headers_outlive_their_scalar_wrapper() {
         let original = Node::new(
             YamlValue::Int(yaml_parser::Integer::I64(1)),

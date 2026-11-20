@@ -243,6 +243,11 @@ impl<'a, 'input: 'a, V: MergeBackend + 'input> ValidatableMapping<'a> for Mappin
         }
     }
     fn duplicate_keys(&self) -> Vec<MappingDuplicateKey<'a>> {
+        if let Self::Original(value) = self {
+            return value
+                .as_mapping()
+                .map_or_else(Vec::new, |mapping| mapping.duplicate_keys());
+        }
         let mut keys: Vec<MappingDuplicateKey<'a>> = Vec::new();
         let mut seen = HashMap::new();
         for pair in self.iter() {
