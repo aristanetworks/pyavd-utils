@@ -71,7 +71,7 @@ fn values_equal_ignoring_structural_spans(left: &Value<'_>, right: &Value<'_>) -
 #[test]
 fn test_parse_simple_scalar() {
     let (docs, errors) = parse("hello");
-    assert!(errors.is_empty());
+    assert_eq!(errors.as_slice(), []);
     assert_eq!(docs.len(), 1);
     assert!(matches!(&docs.first().unwrap().value, Value::String(string) if string == "hello"));
 }
@@ -79,7 +79,7 @@ fn test_parse_simple_scalar() {
 #[test]
 fn test_parse_simple_mapping() {
     let (docs, errors) = parse("key: value");
-    assert!(errors.is_empty());
+    assert_eq!(errors.as_slice(), []);
     assert_eq!(docs.len(), 1);
     let value = &docs.first().unwrap().value;
     assert!(matches!(value, Value::Mapping(_)));
@@ -94,7 +94,7 @@ fn test_parse_simple_mapping() {
 #[test]
 fn test_parse_flow_mapping() {
     let (docs, errors) = parse("{a: 1, b: 2}");
-    assert!(errors.is_empty());
+    assert_eq!(errors.as_slice(), []);
     assert_eq!(docs.len(), 1);
     let value = &docs.first().unwrap().value;
     assert!(matches!(value, Value::Mapping(_)));
@@ -106,7 +106,7 @@ fn test_parse_flow_mapping() {
 #[test]
 fn test_parse_flow_sequence() {
     let (docs, errors) = parse("[1, 2, 3]");
-    assert!(errors.is_empty());
+    assert_eq!(errors.as_slice(), []);
     assert_eq!(docs.len(), 1);
     let value = &docs.first().unwrap().value;
     assert!(matches!(value, Value::Sequence(_)));
@@ -118,7 +118,7 @@ fn test_parse_flow_sequence() {
 #[test]
 fn test_parse_block_sequence() {
     let (docs, errors) = parse("- a\n- b\n- c");
-    assert!(errors.is_empty());
+    assert_eq!(errors.as_slice(), []);
     assert_eq!(docs.len(), 1);
     let value = &docs.first().unwrap().value;
     assert!(matches!(value, Value::Sequence(_)));
@@ -130,7 +130,7 @@ fn test_parse_block_sequence() {
 #[test]
 fn test_parse_null_values() {
     let (docs, errors) = parse("~");
-    assert!(errors.is_empty());
+    assert_eq!(errors.as_slice(), []);
     assert_eq!(docs.len(), 1);
     assert!(matches!(&docs.first().unwrap().value, Value::Null));
 }
@@ -138,7 +138,7 @@ fn test_parse_null_values() {
 #[test]
 fn test_parse_tilde_prefixed_plain_scalar_stays_string() {
     let (docs, errors) = parse("~foo");
-    assert!(errors.is_empty());
+    assert_eq!(errors.as_slice(), []);
     assert_eq!(docs.len(), 1);
     assert!(matches!(&docs.first().unwrap().value, Value::String(string) if string == "~foo"));
 }
@@ -146,21 +146,21 @@ fn test_parse_tilde_prefixed_plain_scalar_stays_string() {
 #[test]
 fn test_parse_boolean_values() {
     let (docs, errors) = parse("true");
-    assert!(errors.is_empty());
+    assert_eq!(errors.as_slice(), []);
     assert!(matches!(&docs.first().unwrap().value, Value::Bool(true)));
 }
 
 #[test]
 fn test_parse_number_values() {
     let (docs, errors) = parse("42");
-    assert!(errors.is_empty());
+    assert_eq!(errors.as_slice(), []);
     assert!(matches!(
         &docs.first().unwrap().value,
         Value::Int(Integer::I64(42))
     ));
 
     let (docs_, errors_) = parse("3.45");
-    assert!(errors_.is_empty());
+    assert_eq!(errors_.as_slice(), []);
     assert_eq!(docs_.len(), 1);
     assert_eq!(docs_.first().unwrap().value, Value::Float(3.45));
 }
@@ -286,7 +286,7 @@ fn test_self_referential_alias_drops_item_and_reports_error() {
 fn test_multiline_quoted_key_error() {
     let input = "\"c\n d\": 1";
     let (_, errors) = parse(input);
-    assert!(!errors.is_empty());
+    assert_ne!(errors.as_slice(), []);
 }
 
 /// Parse input through the full event pipeline and return nodes.

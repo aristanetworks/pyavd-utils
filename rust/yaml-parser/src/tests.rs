@@ -34,14 +34,14 @@ fn check_struct_sizes() {
 #[test]
 fn test_empty_input() {
     let (docs, errors) = parse("");
-    assert!(errors.is_empty());
-    assert!(docs.is_empty());
+    assert_eq!(errors.as_slice(), []);
+    assert_eq!(docs.as_slice(), []);
 }
 
 #[test]
 fn test_simple_scalar() {
     let (docs, errors) = parse("hello");
-    assert!(errors.is_empty());
+    assert_eq!(errors.as_slice(), []);
     assert_eq!(docs.len(), 1);
     assert!(matches!(&docs.first().unwrap().value, Value::String(string) if string == "hello"));
 }
@@ -49,7 +49,7 @@ fn test_simple_scalar() {
 #[test]
 fn test_simple_mapping() {
     let (docs, errors) = parse("key: value");
-    assert!(errors.is_empty());
+    assert_eq!(errors.as_slice(), []);
     assert_eq!(docs.len(), 1);
     let doc = docs.first().unwrap();
 
@@ -104,7 +104,7 @@ address:
   city: Springfield
 ";
     let (docs, errors) = parse(input);
-    assert!(errors.is_empty());
+    assert_eq!(errors.as_slice(), []);
     assert_eq!(docs.len(), 1);
 }
 
@@ -116,7 +116,7 @@ items:
   - {name: bar, value: 2}
 ";
     let (docs, errors) = parse(input);
-    assert!(errors.is_empty());
+    assert_eq!(errors.as_slice(), []);
     assert_eq!(docs.len(), 1);
 }
 
@@ -151,7 +151,7 @@ fn test_simple_document() {
     // Test that a simple document parses correctly
     let input = "key: value";
     let (docs, parse_errors) = parse(input);
-    assert!(parse_errors.is_empty());
+    assert_eq!(parse_errors.as_slice(), []);
     assert_eq!(docs.len(), 1);
 }
 
@@ -160,7 +160,7 @@ fn test_document_with_leading_comment() {
     // Test that documents with leading comments parse correctly
     let input = "# comment\nkey: value";
     let (docs, parse_errors) = parse(input);
-    assert!(parse_errors.is_empty());
+    assert_eq!(parse_errors.as_slice(), []);
     assert_eq!(docs.len(), 1);
 }
 
@@ -1336,12 +1336,12 @@ fn test_zero_copy_parsing() {
     let mut emitter = Emitter::new(input);
     let events: Vec<_> = emitter.by_ref().collect();
     let parse_errors = emitter.take_errors();
-    assert!(parse_errors.is_empty());
+    assert_eq!(parse_errors.as_slice(), []);
 
     // Reconstruct AST from events using Parser (streaming over the event iterator)
     let mut parser = Parser::new(events.into_iter());
     let nodes = parser.parse();
-    assert!(parser.take_errors().is_empty());
+    assert_eq!(parser.take_errors().as_slice(), []);
     assert_eq!(nodes.len(), 1);
 
     let node = &nodes[0];
@@ -1415,7 +1415,7 @@ fn test_block_scalar_chomping() {
     // clip: exactly one trailing newline
     // keep: preserve all trailing newlines
     let (nodes, errors) = parse("keep: |+\n  text\n");
-    assert!(errors.is_empty());
+    assert_eq!(errors.as_slice(), []);
     let map = match &nodes.first().unwrap().value {
         Value::Mapping(map) => Some(map),
         _ => None,
@@ -1439,7 +1439,7 @@ fn test_emit_events_zero_copy() {
     // Verify that emit_events returns events that borrow from the input
     let input = "key: value";
     let (events, errors) = emit_events(input);
-    assert!(errors.is_empty());
+    assert_eq!(errors.as_slice(), []);
 
     // Find the scalar events and verify they point to the input string
     let scalar_events: Vec<_> = events

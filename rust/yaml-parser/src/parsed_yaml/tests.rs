@@ -20,7 +20,7 @@ fn retains_input_allocation_and_borrowed_text_after_move() {
     let parsed = values.pop().unwrap();
 
     assert_eq!(parsed.input().as_ptr(), input_pointer);
-    assert!(parsed.errors().is_empty());
+    assert_eq!(parsed.errors(), []);
     let node = parsed.documents().first().unwrap();
     let Value::String(Cow::Borrowed(text)) = &node.value else {
         panic!("expected borrowed scalar");
@@ -35,7 +35,7 @@ fn retains_input_allocation_and_borrowed_text_after_move() {
 #[test]
 fn keeps_decoded_strings_owned() {
     let parsed = ParsedYaml::parse(String::from("\"hello\\nworld\""));
-    assert!(parsed.errors().is_empty());
+    assert_eq!(parsed.errors(), []);
     assert!(matches!(
         &parsed.documents().first().unwrap().value,
         Value::String(Cow::Owned(text)) if text == "hello\nworld"
@@ -67,7 +67,7 @@ fn shares_source_identifier_with_keys_and_nested_nodes() {
         String::from("items:\n  - name: example\n"),
         Some(Arc::clone(&source)),
     );
-    assert!(parsed.errors().is_empty());
+    assert_eq!(parsed.errors(), []);
     assert_source(parsed.documents().first().unwrap(), &source);
 }
 
@@ -95,8 +95,8 @@ fn matches_owned_parser_documents_metadata_and_errors() {
 #[test]
 fn retains_partial_documents_and_error_spans() {
     let parsed = ParsedYaml::parse(String::from("valid: yes\ninvalid: *missing\nkept: value\n"));
-    assert!(!parsed.documents().is_empty());
-    assert!(!parsed.errors().is_empty());
+    assert_ne!(parsed.documents(), []);
+    assert_ne!(parsed.errors(), []);
     for error in parsed.errors() {
         assert!(parsed.input().get(error.span.to_range()).is_some());
     }
