@@ -15,6 +15,10 @@ Its public surface is centered around:
 - `writer::write_yaml_from_events` for YAML output from events
 - `yaml_parser::serde` for optional serde integration
 
+Use `Node::clone_into_owned()` to copy a borrowing AST into independent owned
+storage while preserving provenance and comments. `Node::into_owned()` consumes
+the original instead, allowing it to reuse existing owned allocations.
+
 The authoritative user-facing API documentation lives in rustdoc on the public
 items, especially:
 

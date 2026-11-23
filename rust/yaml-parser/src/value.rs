@@ -16,8 +16,9 @@
 //! avoids allocation. Content that requires transformation (escape sequences,
 //! multiline folding) uses owned strings.
 //!
-//! Use [`Node::into_owned()`] or [`Value::into_owned()`] to convert to
-//! `'static` lifetime when you need to store values beyond the input's lifetime.
+//! Use [`Node::clone_into_owned()`] to copy a node into `'static` storage without
+//! consuming it. [`Node::into_owned()`] and [`Value::into_owned()`] consume their
+//! input and reuse existing owned allocations.
 
 use std::borrow::Cow;
 use std::fmt;
@@ -477,6 +478,64 @@ impl<'input> Node<'input> {
         self.trailing_comment.as_deref()
     }
 
+    /// Copy this node into owned storage without consuming the original.
+    ///
+    /// The result can outlive the input text. Values, keys, properties and comments
+    /// are copied directly into the final AST in one traversal, preserving all
+    /// spans and sharing source identifiers through [`Arc`]. Unlike [`Clone::clone`],
+    /// this converts borrowed strings to owned strings. Use [`Self::into_owned`]
+    /// when the original is no longer needed, to reuse its owned allocations.
+    #[must_use]
+    pub fn clone_into_owned(&self) -> Node<'static> {
+        let value = match &self.value {
+            Value::Null => Value::Null,
+            Value::Bool(value) => Value::Bool(*value),
+            Value::Int(value) => Value::Int(value.clone().into_owned()),
+            Value::Float(value) => Value::Float(*value),
+            Value::String(value) => Value::String(Cow::Owned(value.as_ref().to_owned())),
+            Value::Sequence(items) => Value::Sequence(
+                items
+                    .iter()
+                    .map(|item| SequenceItem {
+                        item_span: item.item_span,
+                        node: item.node.clone_into_owned(),
+                        header_comment: item
+                            .header_comment
+                            .as_deref()
+                            .map(|comment| Box::new(comment.clone().into_owned())),
+                    })
+                    .collect(),
+            ),
+            Value::Mapping(pairs) => Value::Mapping(
+                pairs
+                    .iter()
+                    .map(|pair| MappingPair {
+                        pair_span: pair.pair_span,
+                        key: pair.key.clone_into_owned(),
+                        value: pair.value.clone_into_owned(),
+                        header_comment: pair
+                            .header_comment
+                            .as_deref()
+                            .map(|comment| Box::new(comment.clone().into_owned())),
+                    })
+                    .collect(),
+            ),
+        };
+        Node {
+            properties: self
+                .properties
+                .as_deref()
+                .map(|properties| Box::new(properties.clone().into_owned())),
+            value,
+            span: self.span,
+            source: self.source.clone(),
+            trailing_comment: self
+                .trailing_comment
+                .as_deref()
+                .map(|comment| Box::new(comment.clone().into_owned())),
+        }
+    }
+
     /// Convert this node to an owned version with `'static` lifetime.
     ///
     /// This is useful when you need to store the node beyond the input's lifetime.
@@ -815,6 +874,47 @@ mod tests {
             Some(property) if matches!(&property.value, Cow::Owned(str) if str == "tag")
         ));
         assert!(matches!(owned_node.value, Value::String(Cow::Owned(str)) if str == "test"));
+    }
+
+    #[test]
+    fn test_clone_into_owned_outlives_input_and_preserves_metadata() {
+        let source: Arc<str> = "fixture.yaml".into();
+        let (copied_borrowed, copied_owned, expected) = {
+            let parsed = crate::ParsedYaml::parse_with_source(
+                String::from(
+                    "items: # mapping header\n  - # item header\n    value: &anchor !custom text # trailing\n    escaped: \"line\\nbreak\"\n    numbers: [null, true, -1, 1.5, 18446744073709551615, 340282366920938463463374607431768211456]\n",
+                ),
+                Some(Arc::clone(&source)),
+            );
+            assert!(parsed.errors().is_empty(), "{:?}", parsed.errors());
+            let node = parsed.documents().first().expect("expected a document");
+            let copied_borrowed: Node<'static> = node.clone_into_owned();
+            let expected = node.clone().into_owned();
+            // Copying must leave the borrowing AST unchanged and usable.
+            assert_eq!(node, &expected);
+            let copied_owned: Node<'static> = expected.clone_into_owned();
+            (copied_borrowed, copied_owned, expected)
+        };
+        // The ParsedYaml owner and its input text have been dropped.
+        assert_eq!(copied_borrowed, expected);
+        assert_eq!(copied_owned, expected);
+        assert!(Arc::ptr_eq(
+            copied_borrowed.source.as_ref().unwrap(),
+            &source
+        ));
+        assert!(Arc::ptr_eq(copied_owned.source.as_ref().unwrap(), &source));
+        let Value::Mapping(pairs) = &copied_borrowed.value else {
+            panic!("expected a mapping");
+        };
+        let pair = pairs.first().expect("expected items pair");
+        assert!(pair.header_comment.is_some());
+        assert!(matches!(&pair.key.value, Value::String(Cow::Owned(key)) if key == "items"));
+        let Value::Sequence(items) = &pair.value.value else {
+            panic!("expected a sequence");
+        };
+        let item = items.first().expect("expected an item");
+        assert!(item.header_comment.is_some());
+        assert_ne!(item.item_span, item.node.span);
     }
 
     #[test]

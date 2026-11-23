@@ -167,7 +167,7 @@ impl<'input> ValidatableValue for Node<'input> {
     }
 
     fn clone_to_coerced(&self) -> Self::Coerced {
-        clone_owned_node(self)
+        self.clone_into_owned()
     }
 
     fn to_feedback_value(&self) -> crate::feedback::Value {
@@ -384,7 +384,7 @@ impl<'a, 'input: 'a> ValidatableMappingPair<'a> for NodeMappingPair<'a, 'input> 
     ) -> <Self::Value as ValidatableValue>::CoercedMappingItem {
         MappingPair {
             pair_span: self.pair.pair_span,
-            key: clone_owned_node(&self.pair.key),
+            key: self.pair.key.clone_into_owned(),
             value,
             header_comment: self
                 .pair
@@ -439,43 +439,6 @@ impl<'a, 'input: 'a> ValidatableSequenceItem<'a> for &'a SequenceItem<'input> {
                 .as_deref()
                 .map(|comment| Box::new(comment.clone().into_owned())),
         }
-    }
-}
-
-// Copy directly into the final owned AST. Cloning first would walk the tree
-// twice and allocate intermediate metadata boxes before converting lifetimes.
-fn clone_owned_node(node: &Node<'_>) -> Node<'static> {
-    let value = match &node.value {
-        Value::Null => Value::Null,
-        Value::Bool(value) => Value::Bool(*value),
-        Value::Int(value) => Value::Int(value.clone().into_owned()),
-        Value::Float(value) => Value::Float(*value),
-        Value::String(value) => Value::String(Cow::Owned(value.as_ref().to_owned())),
-        Value::Sequence(items) => Value::Sequence(
-            items
-                .iter()
-                .map(|item| item.coerced_item(clone_owned_node(&item.node)))
-                .collect(),
-        ),
-        Value::Mapping(pairs) => Value::Mapping(
-            pairs
-                .iter()
-                .map(|pair| NodeMappingPair { pair }.coerced_item(clone_owned_node(&pair.value)))
-                .collect(),
-        ),
-    };
-    Node {
-        properties: node
-            .properties
-            .as_deref()
-            .map(|properties| Box::new(properties.clone().into_owned())),
-        value,
-        span: node.span,
-        source: node.source.clone(),
-        trailing_comment: node
-            .trailing_comment
-            .as_deref()
-            .map(|comment| Box::new(comment.clone().into_owned())),
     }
 }
 
