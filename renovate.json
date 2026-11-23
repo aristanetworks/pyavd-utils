@@ -10,6 +10,7 @@
   ],
   "enabledManagers": [
     "cargo",
+    "custom.regex",
     "github-actions",
     "pep621",
     "pre-commit",
@@ -21,6 +22,15 @@
   "lockFileMaintenance": {
     "commitMessagePrefix": "CI: "
   },
+  "customManagers": [
+    {
+      "customType": "regex",
+      "managerFilePatterns": ["/^\\.github/workflows/codspeed\\.yml$/"],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>crate) depName=(?<depName>cargo-codspeed)\\s+CARGO_CODSPEED_VERSION: \"(?<currentValue>[^\"]+)\""
+      ]
+    }
+  ],
   "packageRules": [
     {
       "description": "Maintain production and build dependencies for Python",
@@ -72,6 +82,15 @@
       ],
       "semanticCommitType": "chore",
       "commitMessagePrefix": "Bump(rust): "
+    },
+    {
+      "description": "Update the CodSpeed Rust CLI and benchmark adapter together",
+      "matchDatasources": ["crate"],
+      "matchPackageNames": ["cargo-codspeed", "codspeed-criterion-compat"],
+      "groupName": "CodSpeed Rust tooling",
+      "rangeStrategy": "bump",
+      "semanticCommitType": "ci",
+      "commitMessagePrefix": "CI(rust): "
     },
     {
       "description": "Update the pinned Rust toolchain",

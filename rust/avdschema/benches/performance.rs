@@ -38,8 +38,9 @@ fn benchmark_compile_store(criterion: &mut Criterion) {
     });
     let archive = std::path::PathBuf::from(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../test_schema_store/tmp/codspeed-schema.rkyv"
-    ));
+        "/../test_schema_store/tmp"
+    ))
+    .join(format!("codspeed-schema-{}.rkyv", std::process::id()));
     Store::compile_to_file(&source, &archive).expect("benchmark archive must be written");
     let store = Store::from_file(&archive).expect("benchmark archive must load");
     assert!(
@@ -86,4 +87,5 @@ fn main() {
 fn main() {
     let mut criterion = Criterion::default().configure_from_args();
     run_benchmarks(&mut criterion);
+    criterion.final_summary();
 }

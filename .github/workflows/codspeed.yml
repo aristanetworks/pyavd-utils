@@ -11,6 +11,8 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  # renovate: datasource=crate depName=cargo-codspeed
+  CARGO_CODSPEED_VERSION: "6.1.0"
 
 jobs:
   benchmarks:
@@ -29,10 +31,29 @@ jobs:
           python-version: "3.12"
       - name: Install Rust toolchain from rust-toolchain.toml
         run: rustup show
+      - name: Cache Cargo dependencies
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+      - name: Cache benchmark builds and cargo-codspeed
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: target
+          key: ${{ runner.os }}-codspeed-${{ matrix.mode }}-${{ hashFiles('rust-toolchain.toml') }}-${{ env.CARGO_CODSPEED_VERSION }}-${{ hashFiles('Cargo.lock') }}-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-codspeed-${{ matrix.mode }}-${{ hashFiles('rust-toolchain.toml') }}-${{ env.CARGO_CODSPEED_VERSION }}-${{ hashFiles('Cargo.lock') }}-
       - name: Install cargo-codspeed
-        run: cargo install cargo-codspeed --version 5.0.1 --locked
+        run: |
+          cargo install cargo-codspeed --version "$CARGO_CODSPEED_VERSION" --locked --root "$PWD/target/codspeed-cli"
+          echo "$PWD/target/codspeed-cli/bin" >> "$GITHUB_PATH"
       - name: Build benchmarks
-        run: cargo codspeed build --locked --workspace --all-features --measurement-mode ${{ matrix.mode }}
+        env:
+          MEASUREMENT_MODE: ${{ matrix.mode }}
+        run: cargo codspeed build --locked --workspace --all-features --measurement-mode "$MEASUREMENT_MODE"
       - name: Run benchmarks
         uses: CodSpeedHQ/action@af75f77f17a054769abefaa42fe8dc2975469b5f # v5.6.3
         with:

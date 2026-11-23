@@ -74,4 +74,5 @@ fn main() {
 fn main() {
     let mut criterion = Criterion::default().configure_from_args();
     run_benchmarks(&mut criterion);
+    criterion.final_summary();
 }

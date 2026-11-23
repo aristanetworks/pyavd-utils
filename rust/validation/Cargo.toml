@@ -38,3 +38,7 @@ crate-type = ["cdylib", "lib"]
 [[bench]]
 name = "performance"
 harness = false
+
+[[bench]]
+name = "patterns"
+harness = false

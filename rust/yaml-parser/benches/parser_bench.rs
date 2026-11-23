@@ -33,6 +33,7 @@
 use std::hint::black_box;
 use std::time::Duration;
 
+use criterion::BatchSize;
 use criterion::BenchmarkId;
 use criterion::Criterion;
 use criterion::Throughput;
@@ -99,6 +100,83 @@ fn bench_yaml_parser_parse(bench: &mut criterion::Bencher<'_>, input: &str) {
     });
 }
 
+fn bench_parsed_yaml_parse(bench: &mut criterion::Bencher<'_>, input: &str) {
+    // The caller transfers an existing String; acquiring that buffer is setup.
+    bench.iter_batched(
+        || input.to_owned(),
+        |input| {
+            // Match the owned parser benchmark, which also includes AST teardown.
+            drop(black_box(yaml_parser::ParsedYaml::parse(black_box(input))));
+        },
+        BatchSize::SmallInput,
+    );
+}
+
+fn checked_parsers(input: &str) -> yaml_parser::ParsedYaml {
+    let (documents, errors) = yaml_parser::parse(input);
+    assert!(
+        errors.is_empty(),
+        "owned benchmark parse errors: {errors:?}"
+    );
+    let parsed = yaml_parser::ParsedYaml::parse(input.to_owned());
+    assert!(
+        parsed.errors().is_empty(),
+        "borrowing benchmark parse errors: {:?}",
+        parsed.errors()
+    );
+    assert_eq!(
+        parsed.documents().len(),
+        documents.len(),
+        "benchmark document counts must agree"
+    );
+    for (borrowing, owned) in parsed.documents().iter().zip(&documents) {
+        check_equivalent_nodes(borrowing, owned);
+    }
+    parsed
+}
+
+fn check_equivalent_nodes(borrowing: &yaml_parser::Node<'_>, owned: &yaml_parser::Node<'_>) {
+    use yaml_parser::Value;
+
+    assert_eq!(borrowing.properties, owned.properties);
+    assert_eq!(borrowing.span, owned.span);
+    assert_eq!(borrowing.source, owned.source);
+    assert_eq!(borrowing.trailing_comment, owned.trailing_comment);
+    match (&borrowing.value, &owned.value) {
+        // The tags corpus contains NaN, which is unequal to itself under PartialEq.
+        (Value::Float(left), Value::Float(right)) if left.is_nan() && right.is_nan() => {}
+        (Value::Sequence(left), Value::Sequence(right)) => {
+            assert_eq!(
+                left.len(),
+                right.len(),
+                "benchmark sequence lengths must agree"
+            );
+            for (left_item, right_item) in left.iter().zip(right) {
+                assert_eq!(left_item.item_span, right_item.item_span);
+                assert_eq!(left_item.header_comment, right_item.header_comment);
+                check_equivalent_nodes(&left_item.node, &right_item.node);
+            }
+        }
+        (Value::Mapping(left), Value::Mapping(right)) => {
+            assert_eq!(
+                left.len(),
+                right.len(),
+                "benchmark mapping lengths must agree"
+            );
+            for (left_pair, right_pair) in left.iter().zip(right) {
+                assert_eq!(left_pair.pair_span, right_pair.pair_span);
+                assert_eq!(left_pair.header_comment, right_pair.header_comment);
+                check_equivalent_nodes(&left_pair.key, &right_pair.key);
+                check_equivalent_nodes(&left_pair.value, &right_pair.value);
+            }
+        }
+        _ => assert_eq!(
+            borrowing.value, owned.value,
+            "benchmark scalar values must agree"
+        ),
+    }
+}
+
 fn bench_saphyr_marked_parse(bench: &mut criterion::Bencher<'_>, input: &str) {
     bench.iter(|| {
         let value = saphyr::MarkedYaml::load_from_str(black_box(input));
@@ -136,6 +214,7 @@ fn bench_parse_throughput(criterion: &mut Criterion) {
     let mut group = criterion.benchmark_group("parse_throughput");
 
     for (name, input) in test_cases {
+        checked_parsers(input);
         group.throughput(input_throughput(input));
 
         // Benchmark yaml-parser (always includes spans)
@@ -143,6 +222,12 @@ fn bench_parse_throughput(criterion: &mut Criterion) {
             BenchmarkId::new("yaml_parser", name),
             input,
             |bench, data| bench_yaml_parser_parse(bench, data),
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new("parsed_yaml", name),
+            input,
+            |bench, data| bench_parsed_yaml_parse(bench, data),
         );
 
         // Benchmark saphyr with span tracking (fair comparison since yaml_parser always has spans)
@@ -209,11 +294,44 @@ fn bench_avd_scale(criterion: &mut Criterion) {
 
     for interface_count in [10, 100, 1_000] {
         let input = eos_config_yaml(interface_count);
+        let parsed = checked_parsers(&input);
+        assert_eq!(
+            parsed.documents().len(),
+            1,
+            "expected one benchmark document"
+        );
+        let actual_count = parsed
+            .documents()
+            .first()
+            .and_then(|document| {
+                let yaml_parser::Value::Mapping(pairs) = &document.value else {
+                    return None;
+                };
+                pairs.iter().find_map(|pair| {
+                    if matches!(&pair.key.value, yaml_parser::Value::String(key) if key == "ethernet_interfaces")
+                        && let yaml_parser::Value::Sequence(items) = &pair.value.value
+                    {
+                        Some(items.len())
+                    } else {
+                        None
+                    }
+                })
+            });
+        assert_eq!(
+            actual_count,
+            Some(interface_count),
+            "benchmark parser must retain every generated interface"
+        );
         group.throughput(input_throughput(&input));
         group.bench_with_input(
             BenchmarkId::new("yaml_parser", format!("{interface_count}_interfaces")),
             &input,
             |bench, data| bench_yaml_parser_parse(bench, data),
+        );
+        group.bench_with_input(
+            BenchmarkId::new("parsed_yaml", format!("{interface_count}_interfaces")),
+            &input,
+            |bench, data| bench_parsed_yaml_parse(bench, data),
         );
     }
 
@@ -229,17 +347,26 @@ fn bench_scalar_types(criterion: &mut Criterion) {
 key2: "newline\nhere"
 key3: "tab\there"
 "#;
+    checked_parsers(plain);
+    checked_parsers(double_quoted);
+    checked_parsers(BLOCK_SCALARS);
     let mut smaller_group = criterion.benchmark_group("scalar_types");
     smaller_group.measurement_time(Duration::from_secs(15));
     smaller_group.sample_size(150);
     smaller_group.bench_function("yaml_parser/plain", |bench| {
         bench_yaml_parser_parse(bench, plain);
     });
+    smaller_group.bench_function("parsed_yaml/plain", |bench| {
+        bench_parsed_yaml_parse(bench, plain);
+    });
     smaller_group.bench_function("saphyr_marked/plain", |bench| {
         bench_saphyr_marked_parse(bench, plain);
     });
     smaller_group.bench_function("yaml_parser/double_quoted", |bench| {
         bench_yaml_parser_parse(bench, double_quoted);
+    });
+    smaller_group.bench_function("parsed_yaml/double_quoted", |bench| {
+        bench_parsed_yaml_parse(bench, double_quoted);
     });
     smaller_group.bench_function("saphyr_marked/double_quoted", |bench| {
         bench_saphyr_marked_parse(bench, double_quoted);
@@ -250,6 +377,9 @@ key3: "tab\there"
     let mut block_group = criterion.benchmark_group("scalar_types");
     block_group.bench_function("yaml_parser/block_scalars", |bench| {
         bench_yaml_parser_parse(bench, BLOCK_SCALARS);
+    });
+    block_group.bench_function("parsed_yaml/block_scalars", |bench| {
+        bench_parsed_yaml_parse(bench, BLOCK_SCALARS);
     });
     block_group.bench_function("saphyr_marked/block_scalars", |bench| {
         bench_saphyr_marked_parse(bench, BLOCK_SCALARS);
@@ -340,4 +470,5 @@ fn main() {
 fn main() {
     let mut criterion = Criterion::default().configure_from_args();
     run_benchmarks(&mut criterion);
+    criterion.final_summary();
 }

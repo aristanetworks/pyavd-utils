@@ -24,8 +24,9 @@ use test_schema_store::get_store_path;
 static INIT_PY: OnceLock<()> = OnceLock::new();
 static INIT_STORE: OnceLock<()> = OnceLock::new();
 static TEST_DATA: OnceLock<String> = OnceLock::new();
+static STRING_TEST_DATA: OnceLock<String> = OnceLock::new();
 
-fn eos_config_json(interface_count: usize) -> String {
+fn eos_config_json(interface_count: usize, string_descriptions: bool) -> String {
     let mut data = String::from("{\"ethernet_interfaces\":[");
     for interface_index in 1..=interface_count {
         if interface_index > 1 {
@@ -34,15 +35,27 @@ fn eos_config_json(interface_count: usize) -> String {
         data.push_str("{\"name\":\"Ethernet");
         data.push_str(&interface_index.to_string());
         data.push_str("\",\"description\":");
+        if string_descriptions {
+            data.push('"');
+        }
         data.push_str(&(10_000 + interface_index).to_string());
+        if string_descriptions {
+            data.push('"');
+        }
         data.push('}');
     }
     data.push_str("]}");
     data
 }
 
-fn benchmark_data() -> &'static str {
-    TEST_DATA.get_or_init(|| eos_config_json(256)).as_str()
+fn benchmark_data(string_descriptions: bool) -> &'static str {
+    let cell = if string_descriptions {
+        &STRING_TEST_DATA
+    } else {
+        &TEST_DATA
+    };
+    cell.get_or_init(|| eos_config_json(256, string_descriptions))
+        .as_str()
 }
 
 fn setup_python_with_store() {
@@ -62,8 +75,9 @@ fn setup_python_with_store() {
                 let source = StoreSource::from_file(Some(get_store_path())).unwrap();
                 let archive = std::path::PathBuf::from(concat!(
                     env!("CARGO_MANIFEST_DIR"),
-                    "/../test_schema_store/tmp/codspeed-python.rkyv"
-                ));
+                    "/../test_schema_store/tmp"
+                ))
+                .join(format!("codspeed-python-{}.rkyv", std::process::id()));
                 Store::compile_to_file(&source, &archive).unwrap();
                 archive
             });
@@ -77,100 +91,116 @@ fn setup_python_with_store() {
 
 fn benchmark_get_validated_data(criterion: &mut Criterion) {
     setup_python_with_store();
-    let data = benchmark_data();
-    criterion.bench_function("python_bindings/get_validated_data", |bencher| {
-        pyo3::Python::attach(|py| {
-            let module = py
-                .import("_bindings")
-                .unwrap()
-                .getattr("_validation")
-                .unwrap();
-            let preflight = PyDict::new(py);
-            preflight.set_item("data_as_json", data).unwrap();
-            preflight.set_item("schema_name", "eos_config").unwrap();
-            let result = module
-                .call_method("get_validated_data", (), Some(&preflight))
-                .unwrap();
-            assert_eq!(
-                result
-                    .getattr("validation_result")
+    for string_descriptions in [false, true] {
+        let data = benchmark_data(string_descriptions);
+        let name = if string_descriptions {
+            "python_bindings/valid_strings/get_validated_data"
+        } else {
+            "python_bindings/get_validated_data"
+        };
+        criterion.bench_function(name, |bencher| {
+            pyo3::Python::attach(|py| {
+                let module = py
+                    .import("_bindings")
                     .unwrap()
-                    .getattr("violations")
-                    .unwrap()
-                    .len()
-                    .unwrap(),
-                0,
-                "Python benchmark fixture must validate"
-            );
-            let validated_data: String =
-                result.getattr("validated_data").unwrap().extract().unwrap();
-            let actual: serde_json::Value = serde_json::from_str(&validated_data).unwrap();
-            let mut expected: serde_json::Value = serde_json::from_str(data).unwrap();
-            if let Some(interfaces) = expected
-                .get_mut("ethernet_interfaces")
-                .and_then(serde_json::Value::as_array_mut)
-            {
-                for interface in interfaces {
-                    if let Some(description) = interface.get_mut("description") {
-                        *description = serde_json::Value::String(description.to_string());
+                    .getattr("_validation")
+                    .unwrap();
+                let preflight = PyDict::new(py);
+                preflight.set_item("data_as_json", data).unwrap();
+                preflight.set_item("schema_name", "eos_config").unwrap();
+                let result = module
+                    .call_method("get_validated_data", (), Some(&preflight))
+                    .unwrap();
+                assert_eq!(
+                    result
+                        .getattr("validation_result")
+                        .unwrap()
+                        .getattr("violations")
+                        .unwrap()
+                        .len()
+                        .unwrap(),
+                    0,
+                    "Python benchmark fixture must validate"
+                );
+                let validated_data: String =
+                    result.getattr("validated_data").unwrap().extract().unwrap();
+                let actual: serde_json::Value = serde_json::from_str(&validated_data).unwrap();
+                let mut expected: serde_json::Value = serde_json::from_str(data).unwrap();
+                if let Some(interfaces) = expected
+                    .get_mut("ethernet_interfaces")
+                    .and_then(serde_json::Value::as_array_mut)
+                {
+                    for interface in interfaces {
+                        if let Some(description) = interface.get_mut("description")
+                            && !description.is_string()
+                        {
+                            *description = serde_json::Value::String(description.to_string());
+                        }
                     }
                 }
-            }
-            assert_eq!(
-                actual, expected,
-                "Python benchmark fixture must coerce descriptions"
-            );
-            bencher.iter(|| {
-                let kwargs = PyDict::new(py);
-                kwargs
-                    .set_item("data_as_json", std::hint::black_box(data))
-                    .unwrap();
-                kwargs.set_item("schema_name", "eos_config").unwrap();
-                std::hint::black_box(
-                    module
-                        .call_method("get_validated_data", (), Some(&kwargs))
-                        .unwrap(),
+                assert_eq!(
+                    actual, expected,
+                    "Python benchmark fixture must coerce descriptions"
                 );
+                bencher.iter(|| {
+                    let kwargs = PyDict::new(py);
+                    kwargs
+                        .set_item("data_as_json", std::hint::black_box(data))
+                        .unwrap();
+                    kwargs.set_item("schema_name", "eos_config").unwrap();
+                    std::hint::black_box(
+                        module
+                            .call_method("get_validated_data", (), Some(&kwargs))
+                            .unwrap(),
+                    );
+                });
             });
         });
-    });
+    }
 }
 
 fn benchmark_validate_json(criterion: &mut Criterion) {
     setup_python_with_store();
-    let data = benchmark_data();
-    criterion.bench_function("python_bindings/validate_json", |bencher| {
-        pyo3::Python::attach(|py| {
-            let module = py
-                .import("_bindings")
-                .unwrap()
-                .getattr("_validation")
-                .unwrap();
-            let preflight = PyDict::new(py);
-            preflight.set_item("data_as_json", data).unwrap();
-            preflight.set_item("schema_name", "eos_config").unwrap();
-            let result = module
-                .call_method("validate_json", (), Some(&preflight))
-                .unwrap();
-            assert_eq!(
-                result.getattr("violations").unwrap().len().unwrap(),
-                0,
-                "Python benchmark fixture must validate"
-            );
-            bencher.iter(|| {
-                let kwargs = PyDict::new(py);
-                kwargs
-                    .set_item("data_as_json", std::hint::black_box(data))
+    for string_descriptions in [false, true] {
+        let data = benchmark_data(string_descriptions);
+        let name = if string_descriptions {
+            "python_bindings/valid_strings/validate_json"
+        } else {
+            "python_bindings/validate_json"
+        };
+        criterion.bench_function(name, |bencher| {
+            pyo3::Python::attach(|py| {
+                let module = py
+                    .import("_bindings")
+                    .unwrap()
+                    .getattr("_validation")
                     .unwrap();
-                kwargs.set_item("schema_name", "eos_config").unwrap();
-                std::hint::black_box(
-                    module
-                        .call_method("validate_json", (), Some(&kwargs))
-                        .unwrap(),
+                let preflight = PyDict::new(py);
+                preflight.set_item("data_as_json", data).unwrap();
+                preflight.set_item("schema_name", "eos_config").unwrap();
+                let result = module
+                    .call_method("validate_json", (), Some(&preflight))
+                    .unwrap();
+                assert_eq!(
+                    result.getattr("violations").unwrap().len().unwrap(),
+                    0,
+                    "Python benchmark fixture must validate"
                 );
+                bencher.iter(|| {
+                    let kwargs = PyDict::new(py);
+                    kwargs
+                        .set_item("data_as_json", std::hint::black_box(data))
+                        .unwrap();
+                    kwargs.set_item("schema_name", "eos_config").unwrap();
+                    std::hint::black_box(
+                        module
+                            .call_method("validate_json", (), Some(&kwargs))
+                            .unwrap(),
+                    );
+                });
             });
         });
-    });
+    }
 }
 
 criterion_group!(
