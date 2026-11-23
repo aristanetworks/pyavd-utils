@@ -30,7 +30,6 @@
 //! compilation resolves the resulting typed addresses against the source store.
 // TODO: Reevaluate the allow
 #![allow(
-    clippy::empty_structs_with_brackets,
     clippy::empty_enum_variants_with_brackets,
     clippy::iter_over_hash_type,
     clippy::impl_trait_in_params,
@@ -38,10 +37,6 @@
     clippy::module_name_repetitions,
     clippy::multiple_inherent_impl,
     clippy::partial_pub_fields,
-    clippy::pub_underscore_fields,
-    clippy::redundant_type_annotations,
-    clippy::used_underscore_binding,
-    clippy::unwrap_used,
     clippy::tests_outside_test_module,
     reason = "Existing schema models and feature-gated shared test helpers predate workspace lint inheritance"
 )]

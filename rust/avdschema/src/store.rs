@@ -14,7 +14,6 @@ use std::path::Path;
 use std::sync::OnceLock;
 
 use fancy_regex::Regex;
-use fancy_regex::RegexBuilder;
 #[cfg(feature = "mmap")]
 use mmap_guard::FileData;
 use rkyv::rancor::Error as RkyvError;
@@ -174,17 +173,9 @@ impl Store {
         else {
             return Err("string schema index is outside the pattern cache");
         };
-        cell.get_or_init(|| {
-            RegexBuilder::new(format!("^(?:{pattern})$").as_str())
-                // Unicode mode keeps `.`, negated classes, and Perl shorthand complements valid
-                // for Rust UTF-8 strings. Only the Unicode Perl tables are enabled in Cargo, so
-                // broad properties and scripts remain unavailable.
-                .unicode_mode(true)
-                .build()
-                .map_err(|error| error.to_string())
-        })
-        .as_ref()
-        .map_err(String::as_str)
+        cell.get_or_init(|| crate::str::compile_pattern(pattern).map_err(|error| error.to_string()))
+            .as_ref()
+            .map_err(String::as_str)
     }
 }
 

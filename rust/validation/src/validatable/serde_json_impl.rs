@@ -13,16 +13,22 @@ use serde_json::Value;
 use super::ValidatableMapping;
 use super::ValidatableMappingPair;
 use super::ValidatableSequence;
+use super::ValidatableSequenceItem;
 use super::ValidatableValue;
 use super::integral_float_to_i64;
 
 // === ValidatableValue for serde_json::Value ===
 
 impl ValidatableValue for Value {
+    type View<'a>
+        = &'a Self
+    where
+        Self: 'a;
     type Mapping<'a> = &'a Map<String, Value>;
     type Sequence<'a> = &'a Vec<Value>;
     type Coerced = Value;
     type CoercedMappingItem = (String, Value);
+    type CoercedSequenceItem = Value;
 
     fn is_null(&self) -> bool {
         self.is_null()
@@ -71,7 +77,7 @@ impl ValidatableValue for Value {
         self.as_array()
     }
 
-    fn get(&self, key: &str) -> Option<&Self> {
+    fn get(&self, key: &str) -> Option<Self::View<'_>> {
         self.get(key)
     }
 
@@ -93,11 +99,11 @@ impl ValidatableValue for Value {
         Value::Number(value.into())
     }
 
-    fn coerce_str(&self, value: String) -> Self::Coerced {
-        Value::String(value)
+    fn coerce_str(&self, value: Cow<'_, str>) -> Self::Coerced {
+        Value::String(value.into_owned())
     }
 
-    fn coerce_sequence(&self, items: Vec<Self::Coerced>) -> Self::Coerced {
+    fn coerce_sequence(&self, items: Vec<Self::CoercedSequenceItem>) -> Self::Coerced {
         Value::Array(items)
     }
 
@@ -146,7 +152,7 @@ impl<'a> ValidatableMapping<'a> for &'a Map<String, Value> {
     type Pair = MapPair<'a>;
     type Iter = MapIter<'a>;
 
-    fn get(&self, key: &str) -> Option<&Self::Value> {
+    fn get(&self, key: &str) -> Option<<Self::Value as ValidatableValue>::View<'a>> {
         Map::get(self, key)
     }
 
@@ -213,7 +219,7 @@ impl<'a> ValidatableMappingPair<'a> for MapPair<'a> {
     }
 
     /// Return the JSON value associated with this object entry.
-    fn value(&self) -> &'a Self::Value {
+    fn value(&self) -> <Self::Value as ValidatableValue>::View<'a> {
         self.value
     }
 
@@ -230,6 +236,7 @@ impl<'a> ValidatableMappingPair<'a> for MapPair<'a> {
 
 impl<'a> ValidatableSequence<'a> for &'a Vec<Value> {
     type Value = Value;
+    type Item = &'a Value;
     type Iter = std::slice::Iter<'a, Value>;
 
     fn iter(&self) -> Self::Iter {
@@ -238,5 +245,17 @@ impl<'a> ValidatableSequence<'a> for &'a Vec<Value> {
 
     fn len(&self) -> usize {
         Vec::len(self)
+    }
+}
+
+impl<'a> ValidatableSequenceItem<'a> for &'a Value {
+    type Value = Value;
+
+    fn value(&self) -> &'a Value {
+        self
+    }
+
+    fn coerced_item(&self, value: Value) -> Value {
+        value
     }
 }

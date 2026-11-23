@@ -6,6 +6,7 @@
 
 use std::borrow::Cow;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use yaml_parser::Integer;
 use yaml_parser::MappingPair;
@@ -17,6 +18,7 @@ use super::MappingDuplicateKey;
 use super::ValidatableMapping;
 use super::ValidatableMappingPair;
 use super::ValidatableSequence;
+use super::ValidatableSequenceItem;
 use super::ValidatableValue;
 use super::integral_float_to_i64;
 use crate::feedback::SourceSpan;
@@ -24,6 +26,10 @@ use crate::feedback::SourceSpan;
 // === ValidatableValue for yaml_parser::Node ===
 
 impl<'input> ValidatableValue for Node<'input> {
+    type View<'a>
+        = &'a Self
+    where
+        Self: 'a;
     type Mapping<'a>
         = NodeMapping<'a, 'input>
     where
@@ -34,6 +40,7 @@ impl<'input> ValidatableValue for Node<'input> {
         Self: 'a;
     type Coerced = Node<'static>;
     type CoercedMappingItem = MappingPair<'static>;
+    type CoercedSequenceItem = SequenceItem<'static>;
 
     fn is_null(&self) -> bool {
         matches!(self.value, Value::Null)
@@ -93,7 +100,7 @@ impl<'input> ValidatableValue for Node<'input> {
         }
     }
 
-    fn get(&self, key: &str) -> Option<&Self> {
+    fn get(&self, key: &str) -> Option<Self::View<'_>> {
         match &self.value {
             Value::Mapping(pairs) => {
                 for pair in pairs {
@@ -143,25 +150,16 @@ impl<'input> ValidatableValue for Node<'input> {
         )
     }
 
-    fn coerce_str(&self, value: String) -> Self::Coerced {
+    fn coerce_str(&self, value: Cow<'_, str>) -> Self::Coerced {
         Node::new(
-            Value::String(Cow::Owned(value)),
+            Value::String(Cow::Owned(value.into_owned())),
             self.span,
             self.source.clone(),
         )
     }
 
-    fn coerce_sequence(&self, items: Vec<Self::Coerced>) -> Self::Coerced {
-        Node::new(
-            Value::Sequence(
-                items
-                    .into_iter()
-                    .map(|node| SequenceItem::new(node.span, node))
-                    .collect(),
-            ),
-            self.span,
-            self.source.clone(),
-        )
+    fn coerce_sequence(&self, items: Vec<Self::CoercedSequenceItem>) -> Self::Coerced {
+        Node::new(Value::Sequence(items), self.span, self.source.clone())
     }
 
     fn coerce_mapping(&self, items: Vec<Self::CoercedMappingItem>) -> Self::Coerced {
@@ -202,8 +200,8 @@ impl<'input> ValidatableValue for Node<'input> {
         matches!(self.value, Value::Float(_))
     }
 
-    fn source(&self) -> Option<&str> {
-        self.source.as_deref()
+    fn source(&self) -> Option<&Arc<str>> {
+        self.source.as_ref()
     }
 
     fn source_span(&self) -> Option<SourceSpan> {
@@ -255,7 +253,7 @@ impl<'a, 'input: 'a> ValidatableMapping<'a> for NodeMapping<'a, 'input> {
     type Pair = NodeMappingPair<'a, 'input>;
     type Iter = NodeMappingIter<'a, 'input>;
 
-    fn get(&self, key: &str) -> Option<&Self::Value> {
+    fn get(&self, key: &str) -> Option<<Self::Value as ValidatableValue>::View<'a>> {
         // This is intentionally a linear scan: YAML mappings preserve order
         // and may contain duplicate keys.
         for pair in self.pairs {
@@ -373,20 +371,27 @@ impl<'a, 'input: 'a> ValidatableMappingPair<'a> for NodeMappingPair<'a, 'input> 
     }
 
     /// Return the YAML value associated with this pair.
-    fn value(&self) -> &'a Self::Value {
+    fn value(&self) -> <Self::Value as ValidatableValue>::View<'a> {
         &self.pair.value
     }
 
     /// Build the YAML mapping pair for coerced output.
     ///
-    /// Cheap-cloning everything as most strings are Cow<Borrow> and only replacing value.
+    /// Copy the original key and metadata without cloning the replaced value subtree.
     fn coerced_item(
         &self,
         value: <Self::Value as ValidatableValue>::Coerced,
     ) -> <Self::Value as ValidatableValue>::CoercedMappingItem {
-        let mut pair = self.pair.clone();
-        pair.value = value;
-        pair.into_owned()
+        MappingPair {
+            pair_span: self.pair.pair_span,
+            key: self.pair.key.clone().into_owned(),
+            value,
+            header_comment: self
+                .pair
+                .header_comment
+                .as_deref()
+                .map(|comment| Box::new(comment.clone().into_owned())),
+        }
     }
 
     fn key_source(&self) -> Option<&str> {
@@ -406,12 +411,11 @@ impl<'a, 'input: 'a> ValidatableMappingPair<'a> for NodeMappingPair<'a, 'input> 
 
 impl<'a, 'input: 'a> ValidatableSequence<'a> for &'a [SequenceItem<'input>] {
     type Value = Node<'input>;
-    type Iter = SequenceIter<'a, 'input>;
+    type Item = &'a SequenceItem<'input>;
+    type Iter = std::slice::Iter<'a, SequenceItem<'input>>;
 
     fn iter(&self) -> Self::Iter {
-        SequenceIter {
-            inner: <[SequenceItem<'input>]>::iter(self),
-        }
+        <[SequenceItem<'input>]>::iter(self)
     }
 
     fn len(&self) -> usize {
@@ -419,16 +423,22 @@ impl<'a, 'input: 'a> ValidatableSequence<'a> for &'a [SequenceItem<'input>] {
     }
 }
 
-#[derive(Debug)]
-pub struct SequenceIter<'a, 'input> {
-    inner: std::slice::Iter<'a, SequenceItem<'input>>,
-}
+impl<'a, 'input: 'a> ValidatableSequenceItem<'a> for &'a SequenceItem<'input> {
+    type Value = Node<'input>;
 
-impl<'a, 'input: 'a> Iterator for SequenceIter<'a, 'input> {
-    type Item = &'a Node<'input>;
+    fn value(&self) -> &'a Node<'input> {
+        &self.node
+    }
 
-    fn next(&mut self) -> Option<Self::Item> {
-        self.inner.next().map(|item| &item.node)
+    fn coerced_item(&self, value: Node<'static>) -> SequenceItem<'static> {
+        SequenceItem {
+            item_span: self.item_span,
+            node: value,
+            header_comment: self
+                .header_comment
+                .as_deref()
+                .map(|comment| Box::new(comment.clone().into_owned())),
+        }
     }
 }
 
@@ -448,6 +458,7 @@ mod tests {
     use crate::validatable::ValidatableMapping;
     use crate::validatable::ValidatableMappingPair as _;
     use crate::validatable::ValidatableSequence;
+    use crate::validatable::ValidatableSequenceItem as _;
     use crate::validatable::ValidatableValue;
 
     fn make_span() -> yaml_parser::Span {
@@ -724,7 +735,7 @@ mod tests {
         assert!(!seq.is_empty());
 
         let items: Vec<i64> = ValidatableSequence::iter(&seq)
-            .filter_map(ValidatableValue::as_i64)
+            .filter_map(|item| item.value().as_i64())
             .collect();
         assert_eq!(items, vec![1, 2, 3]);
     }
@@ -847,17 +858,24 @@ mod tests {
             yaml_parser::Span::new(10..20),
             Some(source.clone()),
         );
-        let item = Node::new(
-            Value::String(Cow::Borrowed("item")),
-            yaml_parser::Span::new(12..16),
-            None,
+        // For `- item`, the structural span includes `- ` while the node span
+        // covers only `item`. Coercion must preserve these independently.
+        let item = SequenceItem::new(
+            yaml_parser::Span::new(10..16),
+            Node::new(
+                Value::String(Cow::Borrowed("item")),
+                yaml_parser::Span::new(12..16),
+                Some(source.clone()),
+            ),
         );
 
         let coerced_null = original.coerce_null();
         let coerced_bool = original.coerce_bool(true);
         let coerced_int = original.coerce_int(42);
-        let coerced_str = original.coerce_str("value".to_owned());
-        let coerced_sequence = original.coerce_sequence(vec![item]);
+        let coerced_str = original.coerce_str(Cow::Borrowed("value"));
+        let coerced_sequence = original.coerce_sequence(vec![
+            (&item).coerced_item(item.node.coerce_str(Cow::Borrowed("converted"))),
+        ]);
 
         let coerced_mapping = original.coerce_mapping(Vec::new());
         for node in [
@@ -882,7 +900,19 @@ mod tests {
         assert!(matches!(coerced_bool.value, Value::Bool(true)));
         assert!(matches!(coerced_int.value, Value::Int(Integer::I64(42))));
         assert!(matches!(coerced_str.value, Value::String(value) if value == "value"));
-        assert!(matches!(coerced_sequence.value, Value::Sequence(items) if items.len() == 1));
+        let Value::Sequence(items) = &coerced_sequence.value else {
+            panic!("coerce_sequence should create a sequence");
+        };
+        let [coerced_item] = items.as_slice() else {
+            panic!("coerce_sequence should emit one item");
+        };
+        assert_eq!(coerced_item.item_span, yaml_parser::Span::new(10..16));
+        assert_eq!(coerced_item.node.span, yaml_parser::Span::new(12..16));
+        assert_eq!(coerced_item.node.as_str().as_deref(), Some("converted"));
+        assert!(std::sync::Arc::ptr_eq(
+            coerced_item.node.source.as_ref().unwrap(),
+            &source,
+        ));
     }
 
     #[test]

@@ -2,6 +2,7 @@
 // Use of this source code is governed by the Apache License 2.0
 // that can be found in the LICENSE file.
 
+use std::borrow::Borrow as _;
 use std::collections::HashMap;
 
 use avdschema::ListView;
@@ -10,9 +11,11 @@ use super::NodeValidation;
 use super::invalid_type;
 use crate::context::Context;
 use crate::context::ValidationState;
+use crate::context::ValueLocation;
 use crate::feedback::Type;
 use crate::feedback::Violation;
 use crate::validatable::ValidatableSequence;
+use crate::validatable::ValidatableSequenceItem as _;
 use crate::validatable::ValidatableValue;
 
 /// Validate list-wide constraints without recursively validating item bodies.
@@ -97,7 +100,9 @@ fn validate_item_primary_key<V: ValidatableValue>(
     state: &ValidationState,
 ) {
     if let Some(primary_key) = schema.primary_key()
-        && item.get(primary_key).is_none_or(ValidatableValue::is_null)
+        && item
+            .get(primary_key)
+            .is_none_or(|value| value.borrow().is_null())
     {
         ctx.add_error_for(
             state,
@@ -115,8 +120,6 @@ fn validate_unique_keys<'a, S: ValidatableSequence<'a>>(
     ctx: &mut Context,
     state: &ValidationState,
 ) {
-    type SeenItem<'a, T> = (Vec<String>, &'a T);
-
     let unique_keys = schema.unique_keys().into_iter().flatten().chain(
         // the primary key is considered unique unless told otherwise
         schema
@@ -125,35 +128,27 @@ fn validate_unique_keys<'a, S: ValidatableSequence<'a>>(
     );
 
     for unique_key in unique_keys {
-        // Map from stringified value to list of (trail, value) pairs.
-        let mut seen_items: HashMap<String, Vec<SeenItem<'a, S::Value>>> = HashMap::new();
+        // Retain diagnostic locations rather than references into temporary views.
+        let mut seen_items: HashMap<String, ValueLocation> = HashMap::new();
 
         for (i, item) in items.iter().enumerate() {
-            for (trail_suffix, value) in item.walk_path(unique_key) {
-                // Build the full trail
-                let mut trail = vec![i.to_string()];
-                trail.extend(trail_suffix);
+            item.value()
+                .borrow()
+                .walk_path(unique_key, &mut |trail_suffix, value| {
+                    let mut trail = vec![i.to_string()];
+                    trail.extend_from_slice(trail_suffix);
+                    let value_str = value_to_string(value);
 
-                // Convert value to string for comparison
-                let value_str = value_to_string(value);
-
-                seen_items
-                    .entry(value_str)
-                    .and_modify(|seen_item_trails| {
-                        // We found at least one other item, so we know we have a duplicate
-                        // Add violations for all duplicates in both directions.
-                        for (seen_item_trail, seen_value) in seen_item_trails.iter() {
-                            ctx.add_duplicate_value_violation_pair_for(
-                                state,
-                                *seen_value,
-                                seen_item_trail,
-                                value,
-                                &trail,
-                            );
-                        }
-                    })
-                    .or_insert_with(|| vec![(trail, value)]);
-            }
+                    if let Some(seen_location) = seen_items.get(&value_str) {
+                        ctx.add_duplicate_value_violation_pair(
+                            state,
+                            seen_location,
+                            &ValueLocation::new(trail, value),
+                        );
+                    } else {
+                        seen_items.insert(value_str, ValueLocation::new(trail, value));
+                    }
+                });
         }
     }
 }

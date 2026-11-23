@@ -3,6 +3,7 @@ name = "python-bindings"
 version.workspace = true
 edition = "2024"
 license.workspace = true
+rust-version.workspace = true
 
 [lints]
 workspace = true
@@ -21,7 +22,7 @@ avdschema = { path = "../avdschema", default-features = false, features = [
 ] }
 log = { workspace = true }
 passwords = { path = "../passwords", default-features = false, optional = true }
-pyo3 = { workspace = true, features = ["abi3-py310"] }
+pyo3 = { workspace = true, features = ["abi3-py311"] }
 pyo3-log = { workspace = true }
 serde_json = { workspace = true, features = [
     "arbitrary_precision",

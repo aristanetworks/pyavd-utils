@@ -8,10 +8,6 @@
 //! error recovery, and edge cases.
 
 #![allow(
-    clippy::approx_constant,
-    reason = "test values don't need constant refs"
-)]
-#![allow(
     clippy::as_conversions,
     reason = "pointer conversions are fine in tests"
 )]

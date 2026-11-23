@@ -9,6 +9,8 @@
 //! individual nodes and edges; recursive walking, path handling, diagnostics,
 //! and output ownership stay here.
 
+use std::borrow::Borrow as _;
+
 use avdschema::DictView;
 use avdschema::ListView;
 use avdschema::SchemaView;
@@ -20,6 +22,7 @@ use crate::feedback::IgnoredEosConfigKey;
 use crate::feedback::Violation;
 use crate::validatable::ValidatableMappingPair as _;
 use crate::validatable::ValidatableSequence as _;
+use crate::validatable::ValidatableSequenceItem as _;
 use crate::validatable::ValidatableValue;
 use crate::validation::NodeValidation;
 use crate::validation::boolean;
@@ -141,7 +144,7 @@ impl<'context, 'store> Validator<'context, 'store> {
                 .context
                 .configuration
                 .return_coerced_data
-                .then(|| value.coerce_str(value_.into_owned())),
+                .then(|| value.coerce_str(value_)),
             NodeValidation::Null => self
                 .context
                 .configuration
@@ -175,15 +178,22 @@ impl<'context, 'store> Validator<'context, 'store> {
             .then(|| Vec::with_capacity(sequence.len()));
 
         for (index, item) in sequence.iter().enumerate() {
+            // A backend may return an owned view. Keep it alive while borrowing its value.
+            let item_view = item.value();
+            let item_value = item_view.borrow();
             state.path.push(index.to_string());
-            list::validate_item_node(schema, item, self.context, state);
+            list::validate_item_node(schema, item_value, self.context, state);
             let coerced_item = if let Some(item_schema) = schema.items() {
-                self.visit(item_schema, item, state)
+                self.visit(item_schema, item_value, state)
             } else {
                 None
             };
             if let Some(ref mut items) = coerced {
-                items.push(coerced_item.unwrap_or_else(|| item.clone_to_coerced()));
+                items.push(
+                    item.coerced_item(
+                        coerced_item.unwrap_or_else(|| item_value.clone_to_coerced()),
+                    ),
+                );
             }
             state.path.pop();
         }
@@ -234,7 +244,7 @@ impl<'context, 'store> Validator<'context, 'store> {
         if !schema.has_schema_keys() {
             if let Some(ref mut items) = coerced_items {
                 for pair in input.iter() {
-                    items.push(pair.coerced_item(pair.value().clone_to_coerced()));
+                    items.push(pair.coerced_item(pair.value().borrow().clone_to_coerced()));
                 }
             }
             return coerced_items;
@@ -258,7 +268,8 @@ impl<'context, 'store> Validator<'context, 'store> {
             let display_key = pair.display_key();
             let schema_key = pair.schema_key();
             let path_key = schema_key.as_deref().unwrap_or(&display_key);
-            let input_value = pair.value();
+            let input_value_view = pair.value();
+            let input_value = input_value_view.borrow();
             let key_span = pair.key_span();
             let key_source = pair.key_source();
             state.path.push(path_key.to_owned());
@@ -322,11 +333,8 @@ impl<'context, 'store> Validator<'context, 'store> {
             });
 
             if let Some(ref mut items) = coerced_items {
-                items.push(
-                    pair.coerced_item(
-                        coerced_value.unwrap_or_else(|| input_value.clone_to_coerced()),
-                    ),
-                );
+                let coerced_value = coerced_value.unwrap_or_else(|| input_value.clone_to_coerced());
+                items.push(pair.coerced_item(coerced_value));
             }
             state.path.pop();
         }

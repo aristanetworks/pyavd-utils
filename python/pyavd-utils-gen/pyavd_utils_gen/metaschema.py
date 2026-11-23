@@ -8,5 +8,6 @@ from __future__ import annotations
 from ._bindings import _metaschema  # pyright: ignore[reportMissingModuleSource]
 
 generate_metaschema = _metaschema.generate_metaschema
+is_valid_avd_regex_pattern = _metaschema.is_valid_avd_regex_pattern
 
-__all__ = ["generate_metaschema"]
+__all__ = ["generate_metaschema", "is_valid_avd_regex_pattern"]

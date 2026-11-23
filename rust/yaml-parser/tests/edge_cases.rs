@@ -12,12 +12,6 @@
     reason = "integration tests in tests/ are top-level by design"
 )]
 #![allow(
-    clippy::expect_used,
-    reason = "expect() in tests provides precise failure messages for invariants \
-              like 'exactly one document' and makes assertions more readable"
-)]
-#![allow(clippy::panic, reason = "panic is expected in test assertions")]
-#![allow(
     clippy::print_stderr,
     reason = "eprintln is used for diagnostic output in test helpers"
 )]
@@ -29,7 +23,6 @@
     clippy::float_cmp,
     reason = "exact float comparison is intentional for semantic equality checks"
 )]
-#![allow(clippy::indexing_slicing, reason = "panics are acceptable in tests")]
 
 mod support;
 

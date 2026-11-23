@@ -5,16 +5,18 @@ edition = "2024"
 license.workspace = true
 description = "A YAML 1.2 parser with error recovery, span tracking, and multiple error collection"
 readme = "README.md"
+rust-version.workspace = true
 
 [dependencies]
 schema-data = { path = "../schema-data", optional = true }
 derive_more = { workspace = true, features = ["display"] }
 serde = { workspace = true, optional = true }
+self_cell = { workspace = true }
 
 [dev-dependencies]
 avdschema = { path = "../avdschema" }
 criterion = "=0.8.2" # Used for benchmarking
-saphyr = "=0.3.3"   # Used for benchmarking
+saphyr = "=0.3.4"   # Used for benchmarking
 yaml_serde = { workspace = true } # Reference backend for compatibility tests and benchmarks
 
 [features]

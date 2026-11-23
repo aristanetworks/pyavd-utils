@@ -1,6 +1,7 @@
 [workspace]
 package.version = "0.0.14"
 package.license = "Apache-2.0"
+package.rust-version = "1.95"
 
 members = ["rust/*"]
 exclude = ["rust/test_schema_store"]
