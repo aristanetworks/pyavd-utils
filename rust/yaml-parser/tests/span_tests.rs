@@ -947,6 +947,6 @@ fn parsed_nodes_share_source_through_aliases_and_ownership_conversion() {
         assert_source(&document.clone().into_owned(), &source);
     }
     let (default_documents, default_errors) = parse("key: value");
-    assert!(default_errors.is_empty());
+    assert_eq!(default_errors.as_slice(), []);
     assert!(default_documents[0].source.is_none());
 }
