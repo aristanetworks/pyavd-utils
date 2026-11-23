@@ -31,16 +31,7 @@ impl From<serde_json::Value> for Value {
             }
             serde_json::Value::Null => Self::Null(),
             serde_json::Value::Bool(value) => Self::Bool(value),
-            serde_json::Value::Number(number) => {
-                if let Some(integer) = number.as_i64() {
-                    Self::Int(integer)
-                } else if let Some(float) = number.as_f64() {
-                    Self::Float(float)
-                } else {
-                    // Falling back to str
-                    Self::Str(number.as_str().to_owned())
-                }
-            }
+            serde_json::Value::Number(number) => json_number_to_feedback(&number),
             serde_json::Value::Object(value) => Self::Dict(
                 // By using hashmap we accept that keys may be reordered here.
                 value
@@ -52,6 +43,34 @@ impl From<serde_json::Value> for Value {
         }
     }
 }
+impl From<&serde_json::Value> for Value {
+    fn from(value: &serde_json::Value) -> Self {
+        match value {
+            serde_json::Value::Array(values) => Self::List(values.iter().map(Self::from).collect()),
+            serde_json::Value::Null => Self::Null(),
+            serde_json::Value::Bool(value) => Self::Bool(*value),
+            serde_json::Value::Number(number) => json_number_to_feedback(number),
+            serde_json::Value::Object(values) => Self::Dict(
+                values
+                    .iter()
+                    .map(|(key, child)| (key.clone(), Self::from(child)))
+                    .collect(),
+            ),
+            serde_json::Value::String(value) => Self::Str(value.clone()),
+        }
+    }
+}
+
+fn json_number_to_feedback(number: &serde_json::Number) -> Value {
+    if let Some(integer) = number.as_i64() {
+        Value::Int(integer)
+    } else if let Some(float) = number.as_f64() {
+        Value::Float(float)
+    } else {
+        Value::Str(number.as_str().to_owned())
+    }
+}
+
 impl From<&str> for Value {
     fn from(value: &str) -> Self {
         Self::Str(value.to_owned())
@@ -608,6 +627,22 @@ mod tests {
             Value::from(serde_json::json!(["item", 123])),
             Value::List([Value::Str("item".to_owned()), Value::Int(123)].into())
         );
+    }
+
+    #[test]
+    fn value_from_borrowed_json_matches_consuming_conversion() {
+        for input in [
+            serde_json::json!(null),
+            serde_json::json!(true),
+            serde_json::json!(i64::MIN),
+            serde_json::json!(u64::MAX),
+            serde_json::json!(1.5),
+            serde_json::json!("text"),
+            serde_json::json!({"nested": [null, true, -42, 1.5, "text", {"empty": []}]}),
+            serde_json::from_str("1e400").expect("arbitrary-precision JSON number"),
+        ] {
+            assert_eq!(Value::from(&input), Value::from(input));
+        }
     }
 
     #[test]
