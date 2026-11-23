@@ -755,6 +755,6 @@ mod tests {
             diagnostic.to_source_span(input),
             SourceSpan { start: 6, end: 6 }
         );
-        assert!(!diagnostic.message.is_empty());
+        assert_ne!(diagnostic.message, "");
     }
 }

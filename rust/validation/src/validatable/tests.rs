@@ -112,7 +112,7 @@ fn test_serde_json_sequence() {
 
     let seq = value.as_sequence().expect("should be a sequence");
     assert_eq!(seq.len(), 3);
-    assert!(!seq.is_empty());
+    assert!(!seq.is_empty(), "expected a nonempty sequence, got {seq:?}");
 
     let items: Vec<i64> = seq.iter().filter_map(serde_json::Value::as_i64).collect();
     assert_eq!(items, vec![1, 2, 3]);
@@ -145,6 +145,5 @@ fn test_serde_json_empty_mapping() {
 fn test_serde_json_empty_sequence() {
     let value = json!([]);
     let seq = value.as_sequence().expect("should be a sequence");
-    assert!(seq.is_empty());
-    assert_eq!(seq.len(), 0);
+    assert!(seq.is_empty(), "expected an empty sequence, got {seq:?}");
 }

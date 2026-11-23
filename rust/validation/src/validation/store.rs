@@ -234,9 +234,9 @@ mod tests {
         let result = store.validate_yaml(input, "avd_design", None);
         assert!(result.is_ok());
         let output = result.unwrap();
-        assert!(output.input_diagnostics.is_empty());
+        assert_eq!(output.input_diagnostics.as_slice(), []);
         assert_eq!(output.documents.len(), 1);
-        assert!(output.documents[0].result.infos.is_empty());
+        assert_eq!(output.documents[0].result.infos.as_slice(), []);
         assert_eq!(
             output.documents[0].result.errors,
             vec![Feedback {
@@ -318,7 +318,7 @@ mod tests {
         assert!(result.is_ok());
         let output = result.unwrap();
         assert_eq!(output.documents.len(), 2);
-        assert!(output.documents[0].result.errors.is_empty());
+        assert_eq!(output.documents[0].result.errors.as_slice(), []);
         assert_eq!(
             output.documents[1].result.errors,
             vec![Feedback {
@@ -347,9 +347,9 @@ mod tests {
             .validate_yaml(input, "avd_design", Some(&configuration))
             .unwrap();
 
-        assert!(result.input_diagnostics.is_empty());
+        assert_eq!(result.input_diagnostics.as_slice(), []);
         assert_eq!(result.documents.len(), 2);
-        assert!(result.documents[0].result.errors.is_empty());
+        assert_eq!(result.documents[0].result.errors.as_slice(), []);
         assert_eq!(
             result.documents[0]
                 .coerced
@@ -361,7 +361,7 @@ mod tests {
                 None
             ))
         );
-        assert!(result.documents[1].result.errors.is_empty());
+        assert_eq!(result.documents[1].result.errors.as_slice(), []);
         assert_eq!(
             result.documents[1]
                 .coerced
@@ -402,8 +402,8 @@ mod tests {
             .validate_json(input, "avd_design", Some(&configuration))
             .unwrap();
 
-        assert!(result.input_diagnostics.is_empty());
-        assert!(result.document.result.errors.is_empty());
+        assert_eq!(result.input_diagnostics.as_slice(), []);
+        assert_eq!(result.document.result.errors.as_slice(), []);
         assert_eq!(
             result.document.coerced,
             Some(serde_json::json!({ "key3": "123" }))
@@ -415,9 +415,9 @@ mod tests {
         let input = "{\"foo\":";
         let store = get_test_archive();
         let result = store.validate_json(input, "avd_design", None).unwrap();
-        assert!(result.document.result.errors.is_empty());
-        assert!(result.document.result.warnings.is_empty());
-        assert!(result.document.result.infos.is_empty());
+        assert_eq!(result.document.result.errors.as_slice(), []);
+        assert_eq!(result.document.result.warnings.as_slice(), []);
+        assert_eq!(result.document.result.infos.as_slice(), []);
         assert!(matches!(
             result.input_diagnostics.as_slice(),
             [InputDiagnostic::ParseDiagnostic(parse_diagnostic)]
@@ -454,7 +454,7 @@ mod tests {
             .validate_value(&input, "avd_design", Some(&configuration))
             .unwrap();
 
-        assert!(result.result.errors.is_empty());
+        assert_eq!(result.result.errors.as_slice(), []);
         assert_eq!(result.coerced, Some(serde_json::json!({ "key3": "123" })));
     }
 
@@ -476,7 +476,7 @@ mod tests {
         let allowed = store
             .validate_value(&input, "test", Some(&allow_nulls))
             .unwrap();
-        assert!(allowed.result.errors.is_empty());
+        assert_eq!(allowed.result.errors.as_slice(), []);
         assert_eq!(allowed.coerced, Some(input.clone()));
 
         let restrict_nulls = Configuration {
@@ -585,7 +585,7 @@ mod tests {
             "number: nope\nold: value\ngone: value\nunexpected: value\n",
             Some("container-fixture".into()),
         );
-        assert!(errors.is_empty());
+        assert_eq!(errors.as_slice(), []);
         let document = &mut documents[0];
         let yaml_parser::Value::Mapping(pairs) = &mut document.value else {
             panic!("expected mapping");
@@ -662,7 +662,7 @@ mod tests {
         let json = store
             .validate_json(r#"{"key3": {}}"#, "avd_design", None)
             .unwrap();
-        assert!(!json.document.result.errors.is_empty());
+        assert_ne!(json.document.result.errors.as_slice(), []);
         for feedback in json.document.result.errors {
             assert!(feedback.source.is_none());
             assert!(feedback.span.is_none());
@@ -675,7 +675,7 @@ mod tests {
             Store::from_json(r#"{"test": {"type": "dict", "keys": {"number": {"type": "int"}}}}"#)
                 .unwrap();
         let (mut documents, errors) = yaml_parser::parse("number: 1\nnumber: 2\n");
-        assert!(errors.is_empty());
+        assert_eq!(errors.as_slice(), []);
         let document = &mut documents[0];
         let yaml_parser::Value::Mapping(pairs) = &mut document.value else {
             panic!("expected mapping");
@@ -707,7 +707,7 @@ mod tests {
             "items: [{name: same}, {name: same}]",
             Some("fixture-a".into()),
         );
-        assert!(errors.is_empty());
+        assert_eq!(errors.as_slice(), []);
         let document = &mut documents[0];
         let yaml_parser::Value::Mapping(root) = &mut document.value else {
             panic!("expected mapping");

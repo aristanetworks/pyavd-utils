@@ -49,7 +49,7 @@ mod tests {
         let input = serde_json::json!([]);
         let mut ctx = Context::new(None);
         let _ = schema.validate(&input, &mut ctx);
-        assert!(ctx.result.infos.is_empty());
+        assert_eq!(ctx.result.infos.as_slice(), []);
         assert_eq!(
             ctx.result.errors,
             vec![Feedback {

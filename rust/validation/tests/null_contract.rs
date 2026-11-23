@@ -59,12 +59,12 @@ mod tests {
             let yaml = store
                 .validate_yaml(&serialized, "test", Some(&configuration))
                 .expect("JSON-compatible YAML input should be accepted by the adapter");
-            assert!(json.input_diagnostics.is_empty());
-            assert!(yaml.input_diagnostics.is_empty());
+            assert_eq!(json.input_diagnostics.as_slice(), []);
+            assert_eq!(yaml.input_diagnostics.as_slice(), []);
             assert_eq!(yaml.documents.len(), 1);
             for result in [&json.document.result, &yaml.documents[0].result] {
-                assert!(result.warnings.is_empty());
-                assert!(result.infos.is_empty());
+                assert_eq!(result.warnings.as_slice(), []);
+                assert_eq!(result.infos.as_slice(), []);
                 assert_eq!(
                     result.errors.len(),
                     expected.len(),
@@ -241,8 +241,8 @@ mod tests {
         let yaml = store
             .validate_yaml("null", "test", Some(&configuration))
             .expect("valid YAML input should be accepted by the adapter");
-        assert!(json.input_diagnostics.is_empty());
-        assert!(yaml.input_diagnostics.is_empty());
+        assert_eq!(json.input_diagnostics.as_slice(), []);
+        assert_eq!(yaml.input_diagnostics.as_slice(), []);
         assert_eq!(yaml.documents.len(), 1);
         for result in [&json.document.result, &yaml.documents[0].result] {
             assert_eq!(result.errors.len(), 1);

@@ -195,7 +195,7 @@ mod tests {
         let input: Value = true.into();
         let mut ctx = Context::new(None);
         let _ = schema.validate(&input, &mut ctx);
-        assert!(ctx.result.infos.is_empty());
+        assert_eq!(ctx.result.infos.as_slice(), []);
         assert_eq!(
             ctx.result.errors,
             vec![Feedback {
@@ -232,7 +232,7 @@ mod tests {
         let input = serde_json::json!([{}, {}]);
         let mut ctx = Context::new(None);
         let _ = schema.validate(&input, &mut ctx);
-        assert!(ctx.result.infos.is_empty());
+        assert_eq!(ctx.result.infos.as_slice(), []);
         assert_eq!(
             ctx.result.errors,
             vec![
@@ -327,7 +327,7 @@ mod tests {
         let input = serde_json::json!(["foo", "bar"]);
         let mut ctx = Context::new(None);
         let _ = schema.validate(&input, &mut ctx);
-        assert!(ctx.result.infos.is_empty());
+        assert_eq!(ctx.result.infos.as_slice(), []);
         assert_eq!(
             ctx.result.errors,
             vec![Feedback {
@@ -364,7 +364,7 @@ mod tests {
         let input = serde_json::json!(["foo", "bar", "baz"]);
         let mut ctx = Context::new(None);
         let _ = schema.validate(&input, &mut ctx);
-        assert!(ctx.result.infos.is_empty());
+        assert_eq!(ctx.result.infos.as_slice(), []);
         assert_eq!(
             ctx.result.errors,
             vec![Feedback {
@@ -421,7 +421,7 @@ mod tests {
         let input = serde_json::json!([{ "foo": null }, { "foo": "v1" }]);
         let mut ctx = Context::new(None);
         let _ = schema.validate(&input, &mut ctx);
-        assert!(ctx.result.infos.is_empty());
+        assert_eq!(ctx.result.infos.as_slice(), []);
         assert_eq!(
             ctx.result.errors,
             vec![Feedback {
@@ -452,7 +452,7 @@ mod tests {
         let input = serde_json::json!([{ "foo": "111" }, { "foo": "222" }, { "foo": "111" }]);
         let mut ctx = Context::new(None);
         let _ = schema.validate(&input, &mut ctx);
-        assert!(ctx.result.infos.is_empty());
+        assert_eq!(ctx.result.infos.as_slice(), []);
         assert_eq!(
             ctx.result.errors,
             vec![
@@ -502,8 +502,8 @@ mod tests {
         let input = serde_json::json!([{ "foo": "111" }, { "foo": "222" }, { "foo": "111" }]);
         let mut ctx = Context::new(None);
         let _ = schema.validate(&input, &mut ctx);
-        assert!(ctx.result.infos.is_empty());
-        assert!(ctx.result.errors.is_empty());
+        assert_eq!(ctx.result.infos.as_slice(), []);
+        assert_eq!(ctx.result.errors.as_slice(), []);
     }
 
     #[test]
