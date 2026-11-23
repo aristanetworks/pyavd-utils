@@ -146,5 +146,4 @@ fn test_serde_json_empty_sequence() {
     let value = json!([]);
     let seq = value.as_sequence().expect("should be a sequence");
     assert!(seq.is_empty(), "expected an empty sequence, got {seq:?}");
-    assert_eq!(seq.len(), 0);
 }
