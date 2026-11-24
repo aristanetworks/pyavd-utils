@@ -322,8 +322,18 @@ fn merge_value<V: MergeableValue, S: MergeSchema>(
             *base = next;
             return Ok(());
         }
+        let primary_key = schema
+            .map_or(Ok(None), |schema| schema.primary_key(path))
+            .map_err(|source| MergeError::Schema {
+                path: path.clone(),
+                source,
+            })?;
+        if options.list_merge == ListMerge::Keep && primary_key.is_none() {
+            return Ok(());
+        }
         if let (Some(base_items), Some(next_items)) = (base.take_sequence(), next.take_sequence()) {
-            let items = merge_sequence::<V, S>(base_items, next_items, schema, options, path)?;
+            let items =
+                merge_sequence::<V, S>(base_items, next_items, primary_key, schema, options, path)?;
             base.set_sequence(items);
         }
         return Ok(());
@@ -392,16 +402,11 @@ fn merge_mapping<V: MergeableValue, S: MergeSchema>(
 fn merge_sequence<V: MergeableValue, S: MergeSchema>(
     mut base: Vec<V::Item>,
     next: Vec<V::Item>,
+    primary_key: Option<&str>,
     schema: Option<&S>,
     options: MergeOptions,
     path: &mut Vec<String>,
 ) -> Result<Vec<V::Item>, MergeError> {
-    let primary_key = schema
-        .map_or(Ok(None), |schema| schema.primary_key(path))
-        .map_err(|source| MergeError::Schema {
-            path: path.clone(),
-            source,
-        })?;
     let mut unmatched = Vec::with_capacity(next.len());
     if let Some(primary_key) = primary_key {
         let mut indexes: HashMap<_, Vec<usize>> = HashMap::new();

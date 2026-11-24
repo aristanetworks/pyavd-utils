@@ -98,20 +98,24 @@ mod tests {
             .enumerate()
             .map(|(index, value)| yaml(&value.to_string(), &format!("fragment-{index}")))
             .collect();
-        let expected = json!({"nested": {"replacement": 3, "last": 4}, "list": [4]});
-        let owned = merge_inputs(
-            inputs[0].clone(),
+        let incoming = |count| {
             inputs
                 .iter()
                 .zip(options)
+                .take(count)
                 .skip(1)
                 .map(|(value, options)| MergeInput {
                     value: value.clone(),
                     options,
-                }),
-            &NoSchema,
-        )
-        .unwrap();
+                })
+        };
+        let prefix = merge_inputs(inputs[0].clone(), incoming(2), &NoSchema).unwrap();
+        assert_eq!(
+            prefix,
+            json!({"nested": {"old": 1, "site": 2}, "list": [1, 2]})
+        );
+        let expected = json!({"nested": {"replacement": 3, "last": 4}, "list": [4]});
+        let owned = merge_inputs(inputs[0].clone(), incoming(inputs.len()), &NoSchema).unwrap();
         assert_eq!(owned, expected);
         let owned_yaml = merge_inputs(
             yaml_inputs[0].clone(),
@@ -416,6 +420,47 @@ mod tests {
             .unwrap(),
             json!([2])
         );
+    }
+
+    #[test]
+    fn keep_without_primary_key_preserves_borrowed_and_shared_lists() {
+        struct FailingSchema;
+        impl schema_merge::MergeSchema for FailingSchema {
+            fn primary_key(
+                &self,
+                _path: &[String],
+            ) -> Result<Option<&str>, avdschema::SchemaPathError> {
+                Err(avdschema::SchemaPathError::InvalidTraversal)
+            }
+        }
+        let base = yaml("- # original item\n  1\n", "base");
+        let next = yaml("- 2\n", "next");
+        let options = MergeOptions {
+            list_merge: ListMerge::Keep,
+            ..MergeOptions::default()
+        };
+        let borrowed = merge_borrowed(&base, [&next], &NoSchema, options).unwrap();
+        assert!(std::ptr::eq(
+            borrowed.as_original().unwrap(),
+            &raw const base
+        ));
+
+        let shared = merge_borrowed(&base, [&next], &NoSchema, MergeOptions::default()).unwrap();
+        let retained = shared.clone();
+        let kept = merge(shared, [MergedValue::new(&next)], &NoSchema, options).unwrap();
+        let schema_merge::MergedSequence::Expanded(before) = retained.as_sequence().unwrap() else {
+            panic!("expected expanded sequence");
+        };
+        let schema_merge::MergedSequence::Expanded(after) = kept.as_sequence().unwrap() else {
+            panic!("expected expanded sequence");
+        };
+        assert!(std::ptr::eq(before, after));
+        assert_eq!(kept.identity(), retained.identity());
+        assert_eq!(kept.source(), retained.source());
+        assert_eq!(kept.source_span(), retained.source_span());
+
+        let error = merge_borrowed(&base, [&next], &FailingSchema, options).unwrap_err();
+        assert!(matches!(error, MergeError::Schema { path, .. } if path.is_empty()));
     }
 
     #[test]
@@ -1001,8 +1046,8 @@ mod tests {
                 .as_ref()
                 .map(schema_merge::MergeableValue::identity)
         );
-        assert!(!result.result.warnings.is_empty());
-        assert!(!result.result.errors.is_empty());
+        assert_ne!(result.result.warnings, []);
+        assert_ne!(result.result.errors, []);
         assert!(
             result
                 .result
@@ -1107,7 +1152,7 @@ mod tests {
                 .unwrap()
         };
         // The result borrows fragment storage, never the temporary merged wrappers.
-        assert!(result.result.errors.is_empty());
+        assert_eq!(result.result.errors, []);
         assert_eq!(result.result.infos.len(), 5);
         assert!(
             result
@@ -1157,7 +1202,7 @@ mod tests {
             let json_result = store
                 .validate_value(&merged, "test", Some(&config))
                 .unwrap();
-            assert!(json_result.result.errors.is_empty());
+            assert_eq!(json_result.result.errors, []);
             json_result.coerced.unwrap()
         };
         assert_eq!(
