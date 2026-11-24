@@ -1,0 +1,8 @@
+[registry]
+# Quarantine new registry releases, including transitive lockfile updates (Cargo 1.100+).
+global-min-publish-age = "7 days"
+
+[resolver]
+incompatible-publish-age = "deny"
+# The development lockfile may use newer dependencies than the library's MSRV.
+incompatible-rust-versions = "allow"
