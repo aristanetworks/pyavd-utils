@@ -110,8 +110,9 @@
       "rangeStrategy": "bump"
     },
     {
-      "description": "Let uv enforce release age during lockfile maintenance",
+      "description": "Let Cargo and uv enforce release age during lockfile maintenance",
       "matchManagers": [
+        "cargo",
         "pep621"
       ],
       "matchUpdateTypes": [
