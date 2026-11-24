@@ -209,7 +209,7 @@ fn test_url_in_flow() {
 fn test_simple_mapping_tokens() {
     // Test token stream for simple mapping
     let (tokens, errors) = tokenize_document("key: value");
-    assert!(errors.is_empty());
+    assert_eq!(errors.as_slice(), []);
 
     // Should have 5 tokens: LineStart(0), "key", ":", Whitespace, "value"
     assert_eq!(tokens.len(), 5);
@@ -230,7 +230,7 @@ fn test_simple_mapping_tokens() {
 fn test_comment_as_token() {
     // Test that comments are real tokens
     let (tokens, errors) = tokenize_document("key: value # this is a comment");
-    assert!(errors.is_empty());
+    assert_eq!(errors.as_slice(), []);
 
     assert!(matches!(
         tokens
@@ -254,7 +254,7 @@ fn test_multiline_with_comments() {
     // Test multiline document with comments
     let input = "# header comment\nkey: value";
     let (tokens, errors) = tokenize_document(input);
-    assert!(errors.is_empty());
+    assert_eq!(errors.as_slice(), []);
 
     // First token is LineStart(0)
     assert!(matches!(tokens[0].token, Token::LineStart(0)));
@@ -269,7 +269,7 @@ fn test_multiline_with_comments() {
 #[test]
 fn test_empty_input() {
     let (tokens, errors) = tokenize_document("");
-    assert!(errors.is_empty());
+    assert_eq!(errors.as_slice(), []);
     // Empty input still gets initial LineStart(0) token
     assert_eq!(tokens.len(), 1);
     assert!(matches!(tokens[0].token, Token::LineStart(0)));
@@ -279,7 +279,7 @@ fn test_empty_input() {
 fn test_comment_only() {
     // Only comments
     let (tokens, errors) = tokenize_document("# just a comment");
-    assert!(errors.is_empty());
+    assert_eq!(errors.as_slice(), []);
     // LineStart(0) and Comment are separate tokens
     assert_eq!(tokens.len(), 2);
     assert!(matches!(tokens[0].token, Token::LineStart(0)));
@@ -291,7 +291,7 @@ fn test_tab_as_whitespace_with_tabs_token() {
     // Test that tabs are WhitespaceWithTabs tokens (for error detection)
     let input = "key:\n\tvalue";
     let (tokens, errors) = tokenize_document(input);
-    assert!(errors.is_empty());
+    assert_eq!(errors.as_slice(), []);
 
     // WhitespaceWithTabs should be a real token
     let tab_token = tokens
