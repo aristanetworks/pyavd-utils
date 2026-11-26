@@ -157,7 +157,8 @@ jobs:
   codspeed:
     name: Run Rust benchmarks
     needs: cargo_build_and_test
-    if: github.repository == 'aristanetworks/pyavd-utils'
+    # CodSpeed does not support merge_group events; PRs and main pushes provide measurements.
+    if: github.repository == 'aristanetworks/pyavd-utils' && github.event_name != 'merge_group'
     permissions:
       contents: read
       id-token: write
