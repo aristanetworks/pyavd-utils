@@ -2,6 +2,7 @@
 # Use of this source code is governed by the Apache License 2.0
 # that can be found in the LICENSE file.
 from json import dumps
+from typing import Literal
 
 import pytest
 
@@ -17,7 +18,7 @@ from pyavd_utils.validation import validate_json, validate_json_with_adhoc_schem
         ("avd_design", "custom_structured_configuration_ethernet_interfaces", ["custom_", "custom_structured_configuration_"]),
     ],
 )
-def test_validate_json(schema_name: str, key: str, prefixes: list[str] | None) -> None:
+def test_validate_json(schema_name: Literal["eos_config", "avd_design"], key: str, prefixes: list[str] | None) -> None:
     expected_violations: list[tuple[list[str], str]] = [
         ([key, "2"], "Missing the required key 'name'."),
         ([key, "0", "name"], f"The value is not unique among similar items. Conflicting item: {key}[1].name"),
