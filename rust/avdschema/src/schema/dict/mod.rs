@@ -3,6 +3,8 @@
 // that can be found in the LICENSE file.
 
 pub mod dynamic_keys;
+mod prefix_keys;
+pub use prefix_keys::SourcePrefixKey;
 pub(crate) mod root;
 
 pub use dynamic_keys::DynamicKeyOverrides;

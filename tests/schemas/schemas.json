@@ -260,8 +260,25 @@
             }
           }
         }
+      },
+      "custom_structured_configuration_prefix": {
+        "type": "list",
+        "items": {
+          "type": "str"
+        },
+        "default": [
+          "custom_structured_configuration_"
+        ]
       }
-    }
+    },
+    "prefix_keys": [
+      {
+        "prefixes_key": "custom_structured_configuration_prefix",
+        "include_suffix_in_data": true,
+        "relaxed_validation": true,
+        "schema_ref": "eos_config#"
+      }
+    ]
   },
   "eos_config": {
     "type": "dict",

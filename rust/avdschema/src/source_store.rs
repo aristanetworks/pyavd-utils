@@ -223,6 +223,7 @@ mod tests {
                 "dynamic_keys",
                 serde_json::json!({"node_type_keys.key": {"type": "str"}}),
             ),
+            ("prefix_keys", serde_json::json!([])),
             ("$defs", serde_json::json!({"shared": {"type": "str"}})),
             ("$id", serde_json::json!("nested")),
             ("$schema", serde_json::json!("avd_meta_schema")),

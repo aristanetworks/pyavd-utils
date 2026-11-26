@@ -2,7 +2,7 @@
 // Use of this source code is governed by the Apache License 2.0
 // that can be found in the LICENSE file.
 
-//! Data-path traversal and dynamic-key resolution over compiled schema views.
+//! Data-path traversal and dynamic- and prefix-key resolution over compiled schema views.
 //!
 //! Static keys and list items can be followed without input data. Dynamic dictionary keys are
 //! different: their concrete names come from values elsewhere in the input document, schema
@@ -17,6 +17,7 @@ use schema_data::SchemaDataValue;
 use crate::DeprecationView;
 use crate::DictView;
 use crate::DynamicKeyOverrides;
+use crate::PrefixKeyView;
 use crate::SchemaView;
 use crate::Store;
 
@@ -70,8 +71,8 @@ impl Store {
 
     /// Return the effective schema covering a data path.
     ///
-    /// Dynamic keys are resolved at the root dictionary from the supplied
-    /// data and optional caller overrides. Nested dynamic keys are not
+    /// Dynamic and prefix keys are resolved at the root dictionary from the supplied
+    /// data and optional dynamic-key overrides. Nested dynamic and prefix keys are not
     /// supported, matching the existing path-helper contract.
     pub fn get_schema_from_path<'store, 'input, V>(
         &'store self,
@@ -100,10 +101,15 @@ impl Store {
             static_schema
         } else {
             let dynamic_keys = resolve_dynamic_keys(root_schema, input, dynamic_key_overrides);
-            let Some(dynamic_schema) = dynamic_keys.get(root_key).copied() else {
+            if let Some(dynamic_schema) = dynamic_keys.get(root_key).copied() {
+                dynamic_schema
+            } else if let Some(PrefixKeyResolution::Schema { schema, .. }) =
+                resolve_prefix_key(root_schema, input, root_key)
+            {
+                schema
+            } else {
                 return Ok(None);
-            };
-            dynamic_schema
+            }
         };
 
         for component in path {
@@ -193,6 +199,113 @@ where
     resolved
 }
 
+/// Result of matching one concrete input key against a dictionary's prefix-key configurations.
+#[derive(Clone, Copy, Debug)]
+pub enum PrefixKeyResolution<'store> {
+    /// The input key matched a schema that should validate its value.
+    Schema {
+        /// Effective schema used to validate the matching value.
+        schema: SchemaView<'store>,
+        /// Whether required-key checks are disabled below this value.
+        relaxed_validation: bool,
+    },
+    /// A prefix matched, but its suffix is not declared by the target dictionary.
+    InvalidSuffix,
+    /// A prefix matched and the target dictionary permits undeclared suffixes.
+    AllowedOtherSuffix,
+}
+
+/// Resolve one concrete input key against an effective dictionary's prefix-key configurations.
+///
+/// A schema match from any configuration takes precedence over an invalid or permitted suffix
+/// result from an earlier configuration. Static prefixes take precedence over prefixes read from
+/// input data, and input data takes precedence over schema defaults.
+pub fn resolve_prefix_key<'store, 'input, M>(
+    schema: DictView<'store>,
+    input: M,
+    key: &str,
+) -> Option<PrefixKeyResolution<'store>>
+where
+    M: SchemaDataMapping<'input>,
+{
+    let mut fallback = None;
+    for config in schema.prefix_keys() {
+        if config.prefixes_key() == Some(key) {
+            continue;
+        }
+        for suffix in matching_suffixes(config, input, key) {
+            let resolution = if config.include_suffix_in_data() {
+                match config.schema() {
+                    SchemaView::Dict(target) => target.key(suffix).map_or_else(
+                        || {
+                            if target.allow_other_keys() {
+                                PrefixKeyResolution::AllowedOtherSuffix
+                            } else {
+                                PrefixKeyResolution::InvalidSuffix
+                            }
+                        },
+                        |child_schema| PrefixKeyResolution::Schema {
+                            schema: child_schema,
+                            relaxed_validation: config.relaxed_validation(),
+                        },
+                    ),
+                    SchemaView::Bool(_)
+                    | SchemaView::Int(_)
+                    | SchemaView::Str(_)
+                    | SchemaView::List(_) => PrefixKeyResolution::InvalidSuffix,
+                }
+            } else {
+                PrefixKeyResolution::Schema {
+                    schema: config.schema(),
+                    relaxed_validation: config.relaxed_validation(),
+                }
+            };
+            if matches!(resolution, PrefixKeyResolution::Schema { .. }) {
+                return Some(resolution);
+            }
+            fallback.get_or_insert(resolution);
+        }
+    }
+    fallback
+}
+
+fn matching_suffixes<'store, 'input, 'key, M>(
+    config: PrefixKeyView<'store>,
+    input: M,
+    key: &'key str,
+) -> impl Iterator<Item = &'key str>
+where
+    M: SchemaDataMapping<'input>,
+{
+    let static_prefixes = config.prefixes();
+    let input_prefixes = if static_prefixes.is_none() {
+        config
+            .prefixes_key()
+            .and_then(|prefixes_key| input.get(prefixes_key))
+    } else {
+        None
+    };
+    let use_defaults = static_prefixes.is_none() && input_prefixes.is_none();
+    static_prefixes
+        .into_iter()
+        .flatten()
+        .filter_map(move |prefix| key.strip_prefix(prefix))
+        .chain(
+            input_prefixes
+                .and_then(SchemaDataValue::as_sequence)
+                .into_iter()
+                .flat_map(|sequence| sequence.iter())
+                .filter_map(SchemaDataValue::as_str)
+                .filter_map(move |prefix| key.strip_prefix(prefix)),
+        )
+        .chain(
+            config
+                .default_prefixes()
+                .filter(move |_| use_defaults)
+                .filter_map(move |prefix| key.strip_prefix(prefix)),
+        )
+}
+
 fn dynamic_values_at_path<'input, M>(key_path: &str, input: M) -> Option<Vec<String>>
 where
     M: SchemaDataMapping<'input>,
@@ -234,7 +347,9 @@ mod tests {
                 "test": {
                     "type": "dict",
                     "keys": {"name": {"type": "str"}},
-                    "dynamic_keys": {"network_services_keys.name": {"type": "bool"}}
+                    "dynamic_keys": {"network_services_keys.name": {"type": "bool"}},
+                    "$defs": {"number": {"type": "int"}},
+                    "prefix_keys": [{"prefixes": [""], "include_suffix_in_data": false, "schema_ref": "test#/$defs/number"}]
                 }
             })
             .to_string(),
@@ -411,7 +526,7 @@ mod tests {
     }
 
     #[test]
-    fn path_navigation_resolves_dynamic_keys_and_static_precedence() {
+    fn path_navigation_resolves_keys_in_static_dynamic_prefix_order() {
         let store = navigation_store();
         let data = json!({
             "network_services_keys": [{"name": "dynamic_name"}],
@@ -438,6 +553,23 @@ mod tests {
                 .get_schema_from_path("test", &["forced".into()], &data, Some(&overrides))
                 .unwrap(),
             Some(SchemaView::Bool(_))
+        ));
+    }
+
+    #[test]
+    fn path_navigation_prefers_a_valid_prefix_configuration() {
+        let store = Store::from_json(&json!({"test": {
+            "type": "dict", "keys": {"suffixes": {"type": "dict", "keys": {"name": {"type": "str"}}}, "number": {"type": "int"}},
+            "prefix_keys": [
+                {"prefixes": ["shared_"], "include_suffix_in_data": true, "schema_ref": "test#/keys/suffixes"},
+                {"prefixes": ["shared_"], "include_suffix_in_data": false, "schema_ref": "test#/keys/number"}
+            ]
+        }}).to_string()).unwrap();
+        assert!(matches!(
+            store
+                .get_schema_from_path("test", &["shared_unknown".into()], &json!({}), None)
+                .unwrap(),
+            Some(SchemaView::Int(_))
         ));
     }
 
@@ -534,5 +666,84 @@ mod tests {
             resolved.keys().map(String::as_str).collect::<Vec<_>>(),
             ["live", "forced"]
         );
+    }
+
+    #[test]
+    fn overlapping_prefixes_consider_all_suffixes_from_every_source() {
+        for source in ["static", "input", "default"] {
+            let mut config = json!({"prefixes_key": "prefixes", "include_suffix_in_data": true, "schema_ref": "target#"});
+            if source == "static" {
+                config["prefixes"] = json!(["custom_", "custom_long_"]);
+            }
+            let store = Store::from_json(&json!({
+                "test": {"type": "dict", "keys": {"prefixes": {"type": "list", "items": {"type": "str"}, "default": ["custom_", "custom_long_"]}}, "prefix_keys": [config]},
+                "target": {"type": "dict", "keys": {"number": {"type": "int"}}}
+            }).to_string()).unwrap();
+            let data = if source == "static" {
+                json!({"prefixes": ["input_"]})
+            } else if source == "input" {
+                json!({"prefixes": ["custom_", "custom_long_"]})
+            } else {
+                json!({})
+            };
+            assert!(
+                matches!(
+                    store
+                        .get_schema_from_path("test", &["custom_long_number".into()], &data, None)
+                        .unwrap(),
+                    Some(SchemaView::Int(_))
+                ),
+                "{source}"
+            );
+            if source == "static" {
+                assert!(
+                    store
+                        .get_schema_from_path("test", &["input_number".into()], &data, None)
+                        .unwrap()
+                        .is_none()
+                );
+            } else {
+                for prefixes in [json!([]), json!(null), json!("custom_")] {
+                    assert!(
+                        store
+                            .get_schema_from_path(
+                                "test",
+                                &["custom_long_number".into()],
+                                &json!({"prefixes": prefixes}),
+                                None
+                            )
+                            .unwrap()
+                            .is_none()
+                    );
+                }
+            }
+            assert!(
+                store
+                    .get_schema_from_path("test", &["custom_".into()], &json!({}), None)
+                    .unwrap()
+                    .is_none()
+            );
+        }
+    }
+
+    #[test]
+    fn prefix_defaults_follow_references_and_static_keys_take_precedence() {
+        let store = Store::from_json(&json!({"test": {
+            "type": "dict", "$defs": {"prefixes": {"type": "list", "items": {"type": "str"}, "default": ["custom_"]}},
+            "keys": {"prefixes": {"type": "list", "$ref": "test#/$defs/prefixes"}, "custom_name": {"type": "str"}, "number": {"type": "int"}},
+            "prefix_keys": [{"prefixes_key": "prefixes", "include_suffix_in_data": false, "schema_ref": "test#/keys/number"}]
+        }}).to_string()).unwrap();
+        assert!(matches!(
+            store
+                .get_schema_from_path("test", &["custom_name".into()], &json!({}), None)
+                .unwrap(),
+            Some(SchemaView::Str(_))
+        ));
+        assert!(matches!(
+            store
+                .get_schema_from_path("test", &["custom_other".into()], &json!({}), None)
+                .unwrap(),
+            Some(SchemaView::Int(_))
+        ));
     }
 }

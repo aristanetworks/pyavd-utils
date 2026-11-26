@@ -626,46 +626,57 @@ mod tests {
             return_coercion_infos: true,
             ..Default::default()
         };
-        let store = get_test_archive();
-        let result = store
-            .validate_yaml_with_source(
-                "key3: 123",
-                Some(source.clone()),
-                "avd_design",
-                Some(&config),
-            )
-            .unwrap();
-        let document = &result.documents[0];
-        assert_eq!(document.result.infos.len(), 1);
-        assert_eq!(
-            document.result.infos[0].source.as_deref(),
-            Some("fixture-a")
-        );
-        assert!(document.result.infos[0].span.is_some());
-        let coerced = document.coerced.as_ref().unwrap();
-        assert!(std::sync::Arc::ptr_eq(
-            coerced.source.as_ref().unwrap(),
-            &source
-        ));
-        let yaml_parser::Value::Mapping(pairs) = &coerced.value else {
-            panic!("expected mapping");
-        };
-        assert!(std::sync::Arc::ptr_eq(
-            pairs[0].key.source.as_ref().unwrap(),
-            &source
-        ));
-        assert!(std::sync::Arc::ptr_eq(
-            pairs[0].value.source.as_ref().unwrap(),
-            &source
-        ));
+        let store = Store::from_json(
+            r#"{
+            "base": {"type": "dict", "keys": {"key3": {"type": "str"}}},
+            "avd_design": {"type": "dict", "$ref": "base#", "prefix_keys": [
+                {"prefixes": ["custom_"], "include_suffix_in_data": true, "schema_ref": "base#"}
+            ]}
+        }"#,
+        )
+        .unwrap();
+        for key in ["key3", "custom_key3"] {
+            let result = store
+                .validate_yaml_with_source(
+                    &format!("{key}: 123"),
+                    Some(source.clone()),
+                    "avd_design",
+                    Some(&config),
+                )
+                .unwrap();
+            let document = &result.documents[0];
+            assert_eq!(document.result.infos.len(), 1);
+            assert_eq!(
+                document.result.infos[0].source.as_deref(),
+                Some("fixture-a")
+            );
+            assert!(document.result.infos[0].span.is_some());
+            let coerced = document.coerced.as_ref().unwrap();
+            assert!(std::sync::Arc::ptr_eq(
+                coerced.source.as_ref().unwrap(),
+                &source
+            ));
+            let yaml_parser::Value::Mapping(pairs) = &coerced.value else {
+                panic!("expected mapping");
+            };
+            assert!(std::sync::Arc::ptr_eq(
+                pairs[0].key.source.as_ref().unwrap(),
+                &source
+            ));
+            assert!(std::sync::Arc::ptr_eq(
+                pairs[0].value.source.as_ref().unwrap(),
+                &source
+            ));
+            assert_eq!(pairs[0].key.value, yaml_parser::Value::String(key.into()));
 
-        let json = store
-            .validate_json(r#"{"key3": {}}"#, "avd_design", None)
-            .unwrap();
-        assert_ne!(json.document.result.errors.as_slice(), []);
-        for feedback in json.document.result.errors {
-            assert!(feedback.source.is_none());
-            assert!(feedback.span.is_none());
+            let json = store
+                .validate_json(&format!(r#"{{"{key}": {{}}}}"#), "avd_design", None)
+                .unwrap();
+            assert_ne!(json.document.result.errors.as_slice(), []);
+            for feedback in json.document.result.errors {
+                assert!(feedback.source.is_none());
+                assert!(feedback.span.is_none());
+            }
         }
     }
 
@@ -700,45 +711,52 @@ mod tests {
             "items": {"type": "list", "primary_key": "name", "items": {
                 "type": "dict", "keys": {"name": {"type": "str"}}
             }}
-        }}}"#,
+        }, "prefix_keys": [{"prefixes": ["custom_"], "include_suffix_in_data": false, "schema_ref": "test#/keys/items"}]}}"#,
         )
         .unwrap();
-        let (mut documents, errors) = parse_with_source(
-            "items: [{name: same}, {name: same}]",
-            Some("fixture-a".into()),
-        );
-        assert_eq!(errors.as_slice(), []);
-        let document = &mut documents[0];
-        let yaml_parser::Value::Mapping(root) = &mut document.value else {
-            panic!("expected mapping");
-        };
-        let yaml_parser::Value::Sequence(items) = &mut root[0].value.value else {
-            panic!("expected sequence");
-        };
-        let yaml_parser::Value::Mapping(second) = &mut items[1].node.value else {
-            panic!("expected mapping");
-        };
-        second[0].value.source = Some("fixture-b".into());
-        let output = store.validate_value(document, "test", None).unwrap();
-        assert_eq!(output.result.errors.len(), 2);
-        for (feedback, (source, other)) in output
-            .result
-            .errors
-            .iter()
-            .zip([("fixture-a", "fixture-b"), ("fixture-b", "fixture-a")])
-        {
-            assert_eq!(feedback.source.as_deref(), Some(source));
-            let crate::feedback::ErrorIssue::Violation(Violation::ValueNotUnique {
-                other_source,
-                other_span,
-                ..
-            }) = &feedback.issue
-            else {
-                panic!("expected uniqueness violation");
+        for key in ["items", "custom_items"] {
+            let (mut documents, errors) = parse_with_source(
+                &format!("{key}: [{{name: same}}, {{name: same}}]"),
+                Some("fixture-a".into()),
+            );
+            assert_eq!(errors.as_slice(), []);
+            let document = &mut documents[0];
+            let yaml_parser::Value::Mapping(root) = &mut document.value else {
+                panic!("expected mapping");
             };
-            assert_eq!(other_source.as_deref(), Some(other));
-            assert!(feedback.span.is_some());
-            assert!(other_span.is_some());
+            let yaml_parser::Value::Sequence(items) = &mut root[0].value.value else {
+                panic!("expected sequence");
+            };
+            let yaml_parser::Value::Mapping(second) = &mut items[1].node.value else {
+                panic!("expected mapping");
+            };
+            second[0].value.source = Some("fixture-b".into());
+            let output = store.validate_value(document, "test", None).unwrap();
+            assert_eq!(output.result.errors.len(), 2);
+            for (index, (feedback, (source, other))) in output
+                .result
+                .errors
+                .iter()
+                .zip([("fixture-a", "fixture-b"), ("fixture-b", "fixture-a")])
+                .enumerate()
+            {
+                assert_eq!(
+                    feedback.path,
+                    vec![key.to_owned(), index.to_string(), "name".into()].into()
+                );
+                assert_eq!(feedback.source.as_deref(), Some(source));
+                let crate::feedback::ErrorIssue::Violation(Violation::ValueNotUnique {
+                    other_source,
+                    other_span,
+                    ..
+                }) = &feedback.issue
+                else {
+                    panic!("expected uniqueness violation");
+                };
+                assert_eq!(other_source.as_deref(), Some(other));
+                assert!(feedback.span.is_some());
+                assert!(other_span.is_some());
+            }
         }
     }
 }

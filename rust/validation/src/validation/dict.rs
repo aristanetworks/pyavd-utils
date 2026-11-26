@@ -210,6 +210,7 @@ mod tests {
     use crate::feedback::Feedback;
     use crate::feedback::SourceSpan;
     use crate::feedback::WarningIssue;
+    use crate::validation::store::StoreValidate as _;
     use crate::validation::test_utils::TestValidate as _;
     use crate::validation::test_utils::get_test_store;
 
@@ -1825,6 +1826,186 @@ mod tests {
                     url: None.into(),
                 })
             }]
+        );
+    }
+    fn prefix_validation_store() -> avdschema::Store {
+        avdschema::Store::from_json(
+            r#"{
+                "test": {
+                    "type": "dict",
+                    "keys": {
+                        "prefixes": {
+                            "type": "list",
+                            "items": {"type": "str"},
+                            "default": ["default_"]
+                        },
+                        "number": {"type": "int", "max": 100},
+                        "closed_suffixes": {
+                            "type": "dict",
+                            "keys": {"name": {"type": "str", "required": true}}
+                        },
+                        "open_suffixes": {"type": "dict", "allow_other_keys": true}
+                    },
+                    "prefix_keys": [
+                        {"prefixes": ["patch_"], "include_suffix_in_data": false, "relaxed_validation": true, "schema_ref": "test#/keys/closed_suffixes"},
+                        {"prefixes": ["strict_"], "include_suffix_in_data": false, "schema_ref": "test#/keys/closed_suffixes"},
+                        {
+                            "prefixes_key": "prefixes",
+                            "include_suffix_in_data": false,
+                            "schema_ref": "test#/keys/number"
+                        },
+                        {
+                            "prefixes": ["closed_"],
+                            "include_suffix_in_data": true,
+                            "schema_ref": "test#/keys/closed_suffixes"
+                        },
+                        {
+                            "prefixes": ["open_"],
+                            "include_suffix_in_data": true,
+                            "schema_ref": "test#/keys/open_suffixes"
+                        }
+                    ],
+                    "allow_other_keys": false
+                }
+            }"#,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn validate_prefix_keys_from_input_and_defaults() {
+        let store = prefix_validation_store();
+        let input = serde_json::json!({
+            "prefixes": ["custom_"],
+            "custom_high": 101,
+            "custom_wrong": "not an integer",
+            "custom_coerced": "42"
+        });
+        let configuration = Configuration {
+            return_coerced_data: true,
+            return_coercion_infos: true,
+            ..Default::default()
+        };
+        let result = store
+            .validate_value(&input, "test", Some(&configuration))
+            .unwrap();
+        let mut expected = input;
+        expected["custom_coerced"] = 42.into();
+        assert_eq!(result.coerced, Some(expected));
+        assert_eq!(result.result.infos.len(), 1);
+
+        assert_eq!(
+            result.result.errors,
+            vec![
+                Feedback {
+                    path: vec!["custom_high".into()].into(),
+                    span: None,
+                    source: None,
+                    issue: Violation::ValueAboveMaximum {
+                        maximum: 100,
+                        found: 101,
+                    }
+                    .into(),
+                },
+                Feedback {
+                    path: vec!["custom_wrong".into()].into(),
+                    span: None,
+                    source: None,
+                    issue: Violation::InvalidType {
+                        expected: Type::Int,
+                        found: Type::Str,
+                    }
+                    .into(),
+                },
+            ]
+        );
+
+        let default_input = serde_json::json!({"default_value": 101});
+        let default_result = store.validate_value(&default_input, "test", None).unwrap();
+        assert_eq!(
+            default_result.result.errors,
+            vec![Feedback {
+                path: vec!["default_value".into()].into(),
+                span: None,
+                source: None,
+                issue: Violation::ValueAboveMaximum {
+                    maximum: 100,
+                    found: 101,
+                }
+                .into(),
+            }]
+        );
+    }
+
+    #[test]
+    fn validate_prefix_key_suffix_contract() {
+        let store = prefix_validation_store();
+        let invalid_value = serde_json::json!({"closed_name": []});
+        let invalid_value_result = store.validate_value(&invalid_value, "test", None).unwrap();
+        assert_eq!(
+            invalid_value_result.result.errors,
+            vec![Feedback {
+                path: vec!["closed_name".into()].into(),
+                span: None,
+                source: None,
+                issue: Violation::InvalidType {
+                    expected: Type::Str,
+                    found: Type::List,
+                }
+                .into(),
+            }]
+        );
+
+        let invalid_suffix = serde_json::json!({"closed_unknown": "value"});
+        let invalid_suffix_result = store.validate_value(&invalid_suffix, "test", None).unwrap();
+        assert_eq!(
+            invalid_suffix_result.result.errors,
+            vec![Feedback {
+                path: vec!["closed_unknown".into()].into(),
+                span: None,
+                source: None,
+                issue: Violation::UnexpectedKey().into(),
+            }]
+        );
+
+        let allowed_suffix = serde_json::json!({"open_unknown": "value"});
+        let allowed_suffix_result = store.validate_value(&allowed_suffix, "test", None).unwrap();
+        assert_eq!(allowed_suffix_result.result.errors.as_slice(), []);
+    }
+
+    #[test]
+    fn prefix_relaxed_validation_is_scoped_and_preserves_type_checks() {
+        let store = prefix_validation_store();
+        let input = serde_json::json!({
+            "patch_missing": {}, "patch_value": {"name": []}, "closed_suffixes": {}, "strict_value": {}
+        });
+        let result = store.validate_value(&input, "test", None).unwrap();
+        assert_eq!(
+            result.result.errors,
+            vec![
+                Feedback {
+                    path: vec!["patch_value".into(), "name".into()].into(),
+                    span: None,
+                    source: None,
+                    issue: Violation::InvalidType {
+                        expected: Type::Str,
+                        found: Type::List
+                    }
+                    .into()
+                },
+                Feedback {
+                    path: vec!["closed_suffixes".into()].into(),
+                    span: None,
+                    source: None,
+                    issue: Violation::MissingRequiredKey { key: "name".into() }.into()
+                },
+                Feedback {
+                    path: vec!["strict_value".into()].into(),
+                    span: None,
+                    source: None,
+                    issue: Violation::MissingRequiredKey { key: "name".into() }.into()
+                },
+            ]
         );
     }
 }

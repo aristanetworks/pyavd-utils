@@ -66,7 +66,13 @@ def test_generate_metaschema(tmp_path: Path) -> None:
     assert "required" not in _variant(schema, "dict")["required"]
 
     recursive_dict_properties = _variant(recursive_schema, "dict")["properties"]
-    assert {"dynamic_keys", "$defs", "$id", "$schema"}.isdisjoint(recursive_dict_properties)
+    assert {"dynamic_keys", "prefix_keys", "$defs", "$id", "$schema"}.isdisjoint(recursive_dict_properties)
+    assert root_dict_properties["prefix_keys"]["type"] == "array"
+    prefix_key = schema["$defs"]["SourcePrefixKey"]
+    assert prefix_key["properties"]["schema_ref"]["pattern"] == root_dict_properties["$ref"]["pattern"]
+    assert prefix_key["anyOf"] == [{"required": ["prefixes"]}, {"required": ["prefixes_key"]}]
+    assert prefix_key["additionalProperties"] is False
+    assert prefix_key["properties"]["relaxed_validation"]["default"] is False
 
     deprecation = schema["$defs"]["Deprecation"]
     assert deprecation["properties"]["upgrade_handler"]["type"] == "string"

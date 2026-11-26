@@ -68,7 +68,9 @@ pub struct SourceRootDict {
         schemars(with = "Option<std::collections::BTreeMap<DynamicKeySource, SourceSchema>>")
     )]
     pub dynamic_keys: Option<OrderMap<DynamicKeySource, SourceSchema>>,
-    /// Whether input keys absent from `keys` and resolved `dynamic_keys` are accepted.
+    /// Prefix-based root keys, selected by static prefixes or a sibling list of strings.
+    pub prefix_keys: Option<Vec<super::SourcePrefixKey>>,
+    /// Whether input keys absent from `keys`, resolved `dynamic_keys`, and `prefix_keys` are accepted.
     /// Default is false.
     pub allow_other_keys: Option<bool>,
     /// Whether required-key validation is disabled for descendants.

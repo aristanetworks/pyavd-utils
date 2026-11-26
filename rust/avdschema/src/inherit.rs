@@ -116,6 +116,7 @@ impl Inherit for SourceDict {
 }
 impl Inherit for SourceRootDict {
     fn inherit(&mut self, other: &Self) {
+        self.prefix_keys.inherit(&other.prefix_keys);
         // Root schema fragments merge their child mappings recursively while scalar settings use
         // the first fragment defining them.
         if let (Some(keys), Some(other_keys)) = (self.keys.as_mut(), other.keys.as_ref()) {
@@ -333,6 +334,7 @@ mod tests {
             "$schema": "avd_meta_schema",
             "keys": {"static_value": {"type": "str"}},
             "dynamic_keys": {"node_type_keys.key": {"type": "int"}},
+            "prefix_keys": [{"prefixes": ["custom_"], "include_suffix_in_data": false, "schema_ref": "test#/$defs/shared"}],
             "$defs": {"shared": {"type": "bool"}}
         }))
         .unwrap();
