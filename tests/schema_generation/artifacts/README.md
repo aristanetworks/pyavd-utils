@@ -21,6 +21,7 @@ discovery because `pyavd` is intentionally not a dependency of pyavd-utils.
 ## Schema Explorer
 
 `schema_explorer_fixture.json` exercises occurrence-based JSONL export: reference
-overrides, hidden dictionaries and reference links, list primary keys, dictionary
-item tables, defaults, deprecation, and dynamic-key paths. Tests inspect the JSONL
-contract directly; SQLite persistence and browser integration belong to AVD.
+overrides, expanded hidden dictionaries and hidden cross-schema reference links,
+list primary keys, dictionary item tables, defaults, deprecation, and dynamic-key
+paths. Tests inspect the JSONL contract directly; SQLite persistence and browser
+integration belong to AVD.

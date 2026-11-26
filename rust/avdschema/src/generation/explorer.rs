@@ -6,8 +6,9 @@
 //!
 //! Each use-site receives its own row, even when effective schemas are interned
 //! together. Dictionary list items supply path, primary-key, and table context
-//! without producing rows themselves. Hidden dictionaries remain visible as
-//! leaves, with cross-schema reference links retained from source provenance.
+//! without producing rows themselves. Hidden cross-schema references remain
+//! leaves with links retained from source provenance. Other hidden schemas are
+//! expanded, matching the original AVD Explorer generator.
 //! Removed fields remain discoverable; consumers can exclude them from examples.
 //! Consumers own persistence, including `SQLite` layout and indexes. The Python
 //! generation bindings export these rows as JSON Lines without a `SQLite` dependency.
@@ -102,7 +103,7 @@ pub fn generate_schema_explorer_rows(
         traverser.traverse(
             &mut projection,
             TraversalConfig {
-                hidden_keys: HiddenKeysPolicy::Prune,
+                hidden_keys: HiddenKeysPolicy::PruneCrossSchemaReferences,
                 include_removed: true,
             },
         )?;

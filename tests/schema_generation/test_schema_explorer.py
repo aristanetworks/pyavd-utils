@@ -113,13 +113,16 @@ def test_occurrence_order_and_anonymous_items(rows: dict[str, dict]) -> None:
         "visible.name",
         "hidden",
         "hidden_same",
+        "hidden_same.secret",
         "plain_hidden",
+        "plain_hidden.secret",
         "entries",
         "entries[].name",
         "entries[].enabled",
         "duplicates",
         "duplicates[].name",
         "hidden_items",
+        "hidden_items[].secret",
         "deprecated",
         "removed",
         "removed.child",
@@ -145,9 +148,58 @@ def test_effective_reference_properties_and_hidden_links(rows: dict[str, dict]) 
     assert rows["visible"]["cross_ref"] is None
     assert rows["hidden_same"]["cross_ref"] is None
     assert "hidden.name" not in rows
-    assert "hidden_same.secret" not in rows
-    assert "plain_hidden.secret" not in rows
-    assert "hidden_items[].secret" not in rows
+    assert rows["hidden_same.secret"]["var_type"] == "str"
+    assert rows["plain_hidden.secret"]["parent_path"] == "plain_hidden"
+    assert rows["hidden_items[].secret"]["parent_path"] == "hidden_items"
+
+
+@pytest.mark.parametrize("location", ["root", "key", "items", "dynamic_key"])
+@pytest.mark.parametrize("reference_kind", ["inline", "same_schema", "cross_schema"])
+def test_hidden_keys_only_prune_cross_schema_references(tmp_path: Path, location: str, reference_kind: str) -> None:
+    """Preserve the original Explorer expansion rule, including anonymous list items."""
+    hidden = {
+        "type": "dict",
+        "documentation_options": {"hide_keys": True},
+        "keys": {"name": {"type": "str", "required": True}},
+    }
+    schemas: dict = {"shared": hidden}
+    if reference_kind == "inline":
+        field = hidden
+    else:
+        target = "model#/$defs/hidden" if reference_kind == "same_schema" else "shared#"
+        field = {"type": "dict", "$ref": target, "documentation_options": {"hide_keys": True}}
+    if location == "root":
+        model = {**field}
+        expected_paths = ["name"]
+    elif location == "items":
+        model = {"type": "dict", "keys": {"entries": {"type": "list", "primary_key": "name", "items": field}}}
+        expected_paths = ["entries", "entries[].name"]
+    elif location == "dynamic_key":
+        model = {"type": "dict", "dynamic_keys": {"node_type_keys.key": field}}
+        expected_paths = ["<node_type_keys.key>", "<node_type_keys.key>.name"]
+    else:
+        model = {"type": "dict", "keys": {"hidden": field}}
+        expected_paths = ["hidden", "hidden.name"]
+    model["$defs"] = {"hidden": hidden}
+    schemas["model"] = model
+    source = tmp_path / "schemas.json"
+    source.write_text(json.dumps(schemas), encoding="UTF-8")
+    output = tmp_path / "schema.jsonl"
+    generate_schema_explorer_jsonl(source, ["model"], output)
+    result = [json.loads(line) for line in output.read_text(encoding="UTF-8").splitlines()]
+
+    if reference_kind == "cross_schema":
+        assert [row["key_path"] for row in result] == expected_paths[:-1]
+        if location in {"key", "dynamic_key"}:
+            assert result[0]["cross_ref"] == "shared#"
+    else:
+        assert [row["key_path"] for row in result] == expected_paths
+        assert result[-1]["var_type"] == "str"
+        assert result[-1]["required"] is True
+        assert all(row["cross_ref"] is None for row in result)
+        if location == "items":
+            assert result[-1]["primary_key"] is True
+            assert result[-1]["parent_path"] == "entries"
 
 
 def test_list_context_and_item_table(rows: dict[str, dict]) -> None:
@@ -198,9 +250,9 @@ def test_named_paths_and_store_have_identical_jsonl(tmp_path: Path) -> None:
     assert generate_schema_explorer_jsonl(SOURCE, names, from_store) == generate_schema_explorer_jsonl_from_paths(sources, names, from_paths)
     assert from_store.read_bytes() == from_paths.read_bytes()
     counts = generate_schema_explorer_jsonl(SOURCE, names, from_store)
-    assert counts == {"model": 18, "empty": 0, "shared": 3}
+    assert counts == {"model": 21, "empty": 0, "shared": 3}
     modules = [json.loads(line)["module"] for line in from_store.read_text(encoding="UTF-8").splitlines()]
-    assert modules == ["model"] * 18 + ["shared"] * 3
+    assert modules == ["model"] * 21 + ["shared"] * 3
 
 
 @pytest.mark.parametrize(

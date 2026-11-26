@@ -52,8 +52,8 @@ pub(crate) enum TraversalControl {
 pub(crate) enum HiddenKeysPolicy {
     /// Visit children regardless of dictionary documentation settings.
     Expand,
-    /// Visit the dictionary itself, but not children when `hide_keys` is set.
-    Prune,
+    /// Prune hidden cross-schema references while expanding other hidden schemas.
+    PruneCrossSchemaReferences,
     /// Preserve Markdown's direct rendering of nonempty dictionary item keys.
     PruneExceptDictionaryItems,
 }
@@ -87,7 +87,9 @@ impl TraversalConfig {
         }
         match self.hidden_keys {
             HiddenKeysPolicy::Expand => true,
-            HiddenKeysPolicy::Prune => false,
+            HiddenKeysPolicy::PruneCrossSchemaReferences => !occurrence
+                .references()
+                .any(|reference| reference.schema_name() != occurrence.path().schema_name()),
             HiddenKeysPolicy::PruneExceptDictionaryItems => {
                 occurrence.relation() == Some(&SchemaPathElement::Items)
                     && occurrence.dict().is_some_and(|dict| !dict.keys.is_empty())
