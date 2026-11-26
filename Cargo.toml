@@ -8,6 +8,7 @@ exclude = ["rust/test_schema_store"]
 resolver = "2"
 
 [workspace.dependencies]
+criterion = { package = "codspeed-criterion-compat", version = "6.1.0" }
 derive_more = { version = "2.0.1" }
 log = { version = "0.4.26" }
 mmap-guard = { version = "0.2.2" }
@@ -36,6 +37,7 @@ lto = true
 unsafe_code = "forbid"
 missing_docs = "deny"
 missing_debug_implementations = "deny"
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(codspeed)"] }
 unreachable_pub = "deny"
 unused_qualifications = "deny"
 deprecated = "deny"

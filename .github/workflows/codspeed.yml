@@ -1,0 +1,61 @@
+---
+name: Run CodSpeed benchmarks
+
+"on":
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  CARGO_TERM_COLOR: always
+  # renovate: datasource=crate depName=cargo-codspeed
+  CARGO_CODSPEED_VERSION: "6.1.0"
+
+jobs:
+  benchmarks:
+    name: Rust ${{ matrix.mode }} benchmarks
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [simulation, memory]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - name: Install Rust toolchain from rust-toolchain.toml
+        run: rustup show
+      - name: Cache Cargo dependencies
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+      - name: Cache benchmark builds and cargo-codspeed
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: target
+          key: ${{ runner.os }}-codspeed-${{ matrix.mode }}-${{ hashFiles('rust-toolchain.toml') }}-${{ env.CARGO_CODSPEED_VERSION }}-${{ hashFiles('Cargo.lock') }}-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-codspeed-${{ matrix.mode }}-${{ hashFiles('rust-toolchain.toml') }}-${{ env.CARGO_CODSPEED_VERSION }}-${{ hashFiles('Cargo.lock') }}-
+      - name: Install cargo-codspeed
+        run: |
+          cargo install cargo-codspeed --version "$CARGO_CODSPEED_VERSION" --locked --root "$PWD/target/codspeed-cli"
+          echo "$PWD/target/codspeed-cli/bin" >> "$GITHUB_PATH"
+      - name: Build benchmarks
+        env:
+          MEASUREMENT_MODE: ${{ matrix.mode }}
+        run: cargo codspeed build --locked --workspace --all-features --measurement-mode "$MEASUREMENT_MODE"
+      - name: Run benchmarks
+        uses: CodSpeedHQ/action@af75f77f17a054769abefaa42fe8dc2975469b5f # v5.6.3
+        with:
+          mode: ${{ matrix.mode }}
+          run: cargo codspeed run --workspace --measurement-mode ${{ matrix.mode }}
