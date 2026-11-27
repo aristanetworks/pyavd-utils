@@ -75,6 +75,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f2032f911046de80f0a198e0901378627c33f59ea0ac00e363d481118bd70a53"
 
 [[package]]
+name = "avd-inventory"
+version = "0.0.14"
+dependencies = [
+ "avdschema",
+ "indexmap 2.14.2",
+ "rayon",
+ "schema-merge",
+ "serde",
+ "serde_json",
+ "validation",
+ "yaml-parser",
+]
+
+[[package]]
 name = "avd-lsp-support"
 version = "0.0.14"
 dependencies = [
@@ -1507,6 +1521,18 @@ version = "0.0.14"
 dependencies = [
  "ordermap",
  "serde_json",
+]
+
+[[package]]
+name = "schema-merge"
+version = "0.0.14"
+dependencies = [
+ "avdschema",
+ "criterion",
+ "schema-data",
+ "serde_json",
+ "validation",
+ "yaml-parser",
 ]
 
 [[package]]
