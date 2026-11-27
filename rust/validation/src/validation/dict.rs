@@ -232,6 +232,7 @@ mod tests {
         assert_eq!(
             ctx.result.errors,
             vec![Feedback {
+                contributing_locations: Vec::new(),
                 source: None,
                 path: vec![].into(),
                 span: None,
@@ -276,6 +277,7 @@ mod tests {
             ctx.result.errors,
             vec![
                 Feedback {
+                    contributing_locations: Vec::new(),
                     source: None,
                     path: vec!["foo".into()].into(),
                     span: None,
@@ -286,6 +288,7 @@ mod tests {
                     .into()
                 },
                 Feedback {
+                    contributing_locations: Vec::new(),
                     source: None,
                     path: vec!["bar".into()].into(),
                     span: None,
@@ -321,6 +324,7 @@ mod tests {
             ctx.result.infos,
             vec![
                 Feedback {
+                    contributing_locations: Vec::new(),
                     source: None,
                     path: vec!["foo".into()].into(),
                     span: None,
@@ -331,6 +335,7 @@ mod tests {
                     .into()
                 },
                 Feedback {
+                    contributing_locations: Vec::new(),
                     source: None,
                     path: vec!["bar".into()].into(),
                     span: None,
@@ -370,6 +375,7 @@ mod tests {
         assert_eq!(
             ctx.result.infos,
             vec![Feedback {
+                contributing_locations: Vec::new(),
                 source: None,
                 path: vec!["key1".into()].into(),
                 span: None,
@@ -462,6 +468,7 @@ mod tests {
             ctx.result.errors,
             vec![
                 Feedback {
+                    contributing_locations: Vec::new(),
                     source: None,
                     path: vec!["dynkey1".into()].into(),
                     span: None,
@@ -472,6 +479,7 @@ mod tests {
                     .into()
                 },
                 Feedback {
+                    contributing_locations: Vec::new(),
                     source: None,
                     path: vec!["dynkey2".into()].into(),
                     span: None,
@@ -645,6 +653,7 @@ mod tests {
             ctx.result.errors,
             vec![
                 Feedback {
+                    contributing_locations: Vec::new(),
                     source: None,
                     path: vec!["dynkey1".into(), "sub_key".into()].into(),
                     span: None,
@@ -655,12 +664,14 @@ mod tests {
                     .into()
                 },
                 Feedback {
+                    contributing_locations: Vec::new(),
                     source: None,
                     path: vec!["dynkey1".into(), "bad_key".into()].into(),
                     span: None,
                     issue: Violation::UnexpectedKey {}.into()
                 },
                 Feedback {
+                    contributing_locations: Vec::new(),
                     source: None,
                     path: vec!["dynkey2".into()].into(),
                     span: None,
@@ -706,6 +717,7 @@ mod tests {
         assert_eq!(
             ctx.result.errors,
             vec![Feedback {
+                contributing_locations: Vec::new(),
                 source: None,
                 path: vec!["foo1".into()].into(),
                 span: None,
@@ -733,6 +745,7 @@ mod tests {
         assert_eq!(
             ctx.result.errors,
             vec![Feedback {
+                contributing_locations: Vec::new(),
                 source: None,
                 path: vec!["bar".into()].into(),
                 span: Some(SourceSpan { start: 0, end: 3 }),
@@ -761,12 +774,14 @@ mod tests {
             ctx.result.errors,
             vec![
                 Feedback {
+                    contributing_locations: Vec::new(),
                     source: None,
                     path: vec!["foo".into()].into(),
                     span: Some(SourceSpan { start: 0, end: 3 }),
                     issue: Violation::DuplicateKey().into()
                 },
                 Feedback {
+                    contributing_locations: Vec::new(),
                     source: None,
                     path: vec!["foo".into()].into(),
                     span: Some(SourceSpan { start: 9, end: 12 }),
@@ -803,12 +818,14 @@ mod tests {
             ctx.result.errors,
             vec![
                 Feedback {
+                    contributing_locations: Vec::new(),
                     source: None,
                     path: vec!["outer".into(), "inner".into()].into(),
                     span: Some(SourceSpan { start: 9, end: 14 }),
                     issue: Violation::DuplicateKey().into()
                 },
                 Feedback {
+                    contributing_locations: Vec::new(),
                     source: None,
                     path: vec!["outer".into(), "inner".into()].into(),
                     span: Some(SourceSpan { start: 22, end: 27 }),
@@ -838,30 +855,35 @@ mod tests {
             ctx.result.errors,
             vec![
                 Feedback {
+                    contributing_locations: Vec::new(),
                     source: None,
                     path: vec!["foo".into()].into(),
                     span: Some(SourceSpan { start: 0, end: 3 }),
                     issue: Violation::DuplicateKey().into()
                 },
                 Feedback {
+                    contributing_locations: Vec::new(),
                     source: None,
                     path: vec!["foo".into()].into(),
                     span: Some(SourceSpan { start: 9, end: 12 }),
                     issue: Violation::DuplicateKey().into()
                 },
                 Feedback {
+                    contributing_locations: Vec::new(),
                     source: None,
                     path: vec!["baz".into()].into(),
                     span: Some(SourceSpan { start: 18, end: 21 }),
                     issue: Violation::DuplicateKey().into()
                 },
                 Feedback {
+                    contributing_locations: Vec::new(),
                     source: None,
                     path: vec!["baz".into()].into(),
                     span: Some(SourceSpan { start: 27, end: 30 }),
                     issue: Violation::DuplicateKey().into()
                 },
                 Feedback {
+                    contributing_locations: Vec::new(),
                     source: None,
                     path: vec!["bar".into()].into(),
                     span: Some(SourceSpan { start: 36, end: 39 }),
@@ -890,6 +912,7 @@ mod tests {
         assert_eq!(
             ctx.result.errors,
             vec![Feedback {
+                contributing_locations: Vec::new(),
                 source: None,
                 path: vec!["123".into()].into(),
                 span: Some(SourceSpan { start: 0, end: 3 }),
@@ -988,6 +1011,7 @@ mod tests {
         assert_eq!(
             ctx.result.warnings,
             vec![Feedback {
+                contributing_locations: Vec::new(),
                 source: None,
                 path: vec!["foo".into()].into(),
                 span: None,
@@ -1004,6 +1028,7 @@ mod tests {
         assert_eq!(
             ctx.result.errors,
             vec![Feedback {
+                contributing_locations: Vec::new(),
                 source: None,
                 path: vec!["foo".into()].into(),
                 span: None,
@@ -1040,6 +1065,7 @@ mod tests {
         assert_eq!(
             ctx.result.warnings,
             vec![Feedback {
+                contributing_locations: Vec::new(),
                 source: None,
                 path: vec!["foo".into()].into(),
                 span: Some(SourceSpan { start: 0, end: 3 }),
@@ -1082,6 +1108,7 @@ mod tests {
         assert_eq!(
             ctx.result.errors,
             vec![Feedback {
+                contributing_locations: Vec::new(),
                 source: None,
                 path: vec!["foo".into()].into(),
                 span: None,
@@ -1212,6 +1239,7 @@ mod tests {
                     .into_iter()
                     .filter(|_| allow_with_new_key != Some(true))
                     .map(|other_path| Feedback {
+                        contributing_locations: Vec::new(),
                         source: None,
                         path: vec!["old_key".into()].into(),
                         span: None,
@@ -1247,6 +1275,7 @@ mod tests {
             ctx.result.errors,
             vec![
                 Feedback {
+                    contributing_locations: Vec::new(),
                     source: None,
                     path: vec!["old_key".into()].into(),
                     span: Some(SourceSpan { start: 0, end: 7 }),
@@ -1257,6 +1286,7 @@ mod tests {
                     .into(),
                 },
                 Feedback {
+                    contributing_locations: Vec::new(),
                     source: None,
                     path: vec!["old_key".into()].into(),
                     span: Some(SourceSpan { start: 9, end: 12 }),
@@ -1299,6 +1329,7 @@ mod tests {
         assert_eq!(
             ctx.result.warnings,
             vec![Feedback {
+                contributing_locations: Vec::new(),
                 source: None,
                 path: vec!["old_key".into()].into(),
                 span: None,
@@ -1343,6 +1374,7 @@ mod tests {
         assert_eq!(
             ctx.result.warnings,
             vec![Feedback {
+                contributing_locations: Vec::new(),
                 source: None,
                 path: vec!["old_key".into()].into(),
                 span: None,
@@ -1358,6 +1390,7 @@ mod tests {
         assert_eq!(
             ctx.result.errors,
             vec![Feedback {
+                contributing_locations: Vec::new(),
                 source: None,
                 path: vec!["old_key".into()].into(),
                 span: None,
@@ -1399,6 +1432,7 @@ mod tests {
         assert_eq!(
             ctx.result.warnings,
             vec![Feedback {
+                contributing_locations: Vec::new(),
                 source: None,
                 path: vec!["old_key".into()].into(),
                 span: None,
@@ -1414,6 +1448,7 @@ mod tests {
         assert_eq!(
             ctx.result.errors,
             vec![Feedback {
+                contributing_locations: Vec::new(),
                 source: None,
                 path: vec!["old_key".into()].into(),
                 span: None,
@@ -1462,6 +1497,7 @@ mod tests {
         assert_eq!(
             ctx.result.warnings,
             vec![Feedback {
+                contributing_locations: Vec::new(),
                 source: None,
                 path: vec!["old_key".into()].into(),
                 span: None,
@@ -1476,6 +1512,7 @@ mod tests {
         assert_eq!(
             ctx.result.errors,
             vec![Feedback {
+                contributing_locations: Vec::new(),
                 source: None,
                 path: vec!["old_key".into()].into(),
                 span: None,
@@ -1517,6 +1554,7 @@ mod tests {
         assert_eq!(
             ctx.result.infos,
             vec![Feedback {
+                contributing_locations: Vec::new(),
                 source: None,
                 path: vec!["foo".into()].into(),
                 span: None,
@@ -1553,6 +1591,7 @@ mod tests {
         assert_eq!(
             ctx.result.errors,
             vec![Feedback {
+                contributing_locations: Vec::new(),
                 source: None,
                 path: vec![].into(),
                 span: None,
@@ -1622,6 +1661,7 @@ mod tests {
         assert_eq!(
             ctx.result.errors,
             vec![Feedback {
+                contributing_locations: Vec::new(),
                 source: None,
                 path: vec!["deeper".into()].into(),
                 span: None,
@@ -1815,6 +1855,7 @@ mod tests {
         assert_eq!(
             ctx.result.warnings,
             vec![Feedback {
+                contributing_locations: Vec::new(),
                 source: None,
                 path: vec!["dynkey1".into()].into(),
                 span: None,

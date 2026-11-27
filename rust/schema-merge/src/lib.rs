@@ -1,0 +1,503 @@
+// Copyright (c) 2026 Arista Networks, Inc.
+// Use of this source code is governed by the Apache License 2.0
+// that can be found in the LICENSE file.
+
+//! Shallow and schema-guided deep merging for JSON values and YAML nodes.
+//!
+//! Inputs can be consumed or borrowed through [`MergedValue`]. YAML replacements keep incoming metadata;
+//! partially merged containers keep their original metadata, while their children retain
+//! their individual provenance. A container's original span does not describe all contributors.
+//!
+//! Schema lookup uses [`Store::get_schema_info`], matching the Python AVD merger. Data-dependent
+//! dynamic keys are not supported. Unknown paths use ordinary list merging.
+
+#![doc = include_str!("../README.md")]
+
+mod identity;
+mod json;
+mod merged;
+mod yaml;
+
+use std::collections::HashMap;
+use std::collections::HashSet;
+use std::hash::Hash;
+
+use avdschema::SchemaPathError;
+use avdschema::Store;
+pub use identity::SemanticValue;
+pub use merged::DataIter;
+pub use merged::DataKeys;
+pub use merged::DataMapping;
+pub use merged::DataSequence;
+pub use merged::DataValue;
+pub use merged::Entry as MergedEntry;
+pub use merged::Item as MergedItem;
+pub use merged::Mapping as MergedMapping;
+pub use merged::MappingIter as MergedMappingIter;
+pub use merged::MergeBackend;
+pub use merged::MergedValue;
+pub use merged::Pair as MergedPair;
+pub use merged::Sequence as MergedSequence;
+pub use merged::SequenceItem as MergedSequenceItem;
+pub use merged::SequenceIter as MergedSequenceIter;
+pub use merged::View as MergedView;
+pub use merged::merge_borrowed;
+
+/// A tree that supports merging without discarding backend metadata.
+pub trait MergeableValue: Clone + Sized {
+    /// Mapping entry, including any key and structural metadata.
+    type Entry: MergeableEntry<Value = Self>;
+    /// Sequence entry, including any structural metadata.
+    type Item: MergeableItem<Value = Self>;
+    /// Semantic identity, excluding source locations, comments, anchors, and other metadata.
+    type Identity: Eq + Hash;
+
+    /// Remove a mapping's entries, leaving an empty mapping with the same metadata.
+    fn take_mapping(&mut self) -> Option<Vec<Self::Entry>>;
+    /// Set the entries on an existing mapping, preserving its metadata.
+    fn set_mapping(&mut self, entries: Vec<Self::Entry>);
+    /// Remove a sequence's entries, leaving an empty sequence with the same metadata.
+    fn take_sequence(&mut self) -> Option<Vec<Self::Item>>;
+    /// Set the entries on an existing sequence, preserving its metadata.
+    fn set_sequence(&mut self, items: Vec<Self::Item>);
+    /// Whether this value is a mapping, without expanding it.
+    fn is_mapping(&self) -> bool;
+    /// Whether this value is a sequence, without expanding it.
+    fn is_sequence(&self) -> bool;
+    /// Record additional collection declarations used by a partial merge.
+    /// Backends without contribution tracking may leave this as a no-op.
+    fn add_contributing_locations(&mut self, _other: &Self) {}
+    /// Identity of a string-keyed child; explicit null differs from a missing key.
+    fn child_identity(&self, key: &str) -> Option<Self::Identity>;
+    /// Identity used for primary-key indexes and unique-list strategies.
+    fn identity(&self) -> Self::Identity;
+}
+
+/// A mapping entry whose key metadata can be retained independently of its value.
+pub trait MergeableEntry {
+    /// Value stored in this entry.
+    type Value: MergeableValue;
+    /// Key identity, excluding source locations and other metadata.
+    type Key: Eq + Hash;
+
+    /// Return the semantic key identity.
+    fn key(&self) -> Self::Key;
+    /// Return the key name for schema navigation, if it is a string.
+    fn key_name(&self) -> Option<&str>;
+    /// Borrow the value.
+    fn value(&self) -> &Self::Value;
+    /// Borrow the value mutably.
+    fn value_mut(&mut self) -> &mut Self::Value;
+    /// Move out the value, leaving a disposable placeholder.
+    fn take_value(&mut self) -> Self::Value;
+}
+
+/// A sequence entry carrying its backend's structural metadata.
+pub trait MergeableItem {
+    /// Value stored in this entry.
+    type Value: MergeableValue;
+
+    /// Borrow the value.
+    fn value(&self) -> &Self::Value;
+    /// Borrow the value mutably.
+    fn value_mut(&mut self) -> &mut Self::Value;
+    /// Consume the entry and return its value.
+    fn into_value(self) -> Self::Value;
+}
+
+/// Depth at which dictionary values are combined.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum MergeMode {
+    /// Update root keys, replacing the entire value of each incoming key (`dict.update`).
+    Shallow,
+    /// Recursively combine dictionaries and apply the configured list strategy.
+    #[default]
+    Deep,
+}
+
+/// List strategies named after the AVD Python merger's `list_merge` options.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum ListMerge {
+    /// Replace the whole list, bypassing schema primary keys.
+    Replace,
+    /// Keep the complete base list without consulting schema primary keys.
+    Keep,
+    /// Merge matching schema primary keys, retaining base membership and order.
+    KeepMerge,
+    /// Append unmatched incoming items.
+    #[default]
+    Append,
+    /// Prepend unmatched incoming items.
+    Prepend,
+    /// Append incoming items absent from the base (`append_rp`).
+    AppendUnique,
+    /// Prepend incoming items, removing equivalent base items (`prepend_rp`).
+    PrependUnique,
+}
+
+/// Strategy for scalar values and type conflicts during deep merging.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum SameKeyStrategy {
+    /// Prefer the incoming value.
+    #[default]
+    Override,
+    /// Keep the base value, including explicit null.
+    UseExisting,
+    /// Reject semantically different values.
+    MustMatch,
+}
+
+/// Options shared by JSON and YAML merging.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct MergeOptions {
+    /// Shallow root updates or recursive merging.
+    pub mode: MergeMode,
+    /// Strategy for lists, after merging matching schema primary keys.
+    pub list_merge: ListMerge,
+    /// Strategy for scalars and type conflicts.
+    pub same_key_strategy: SameKeyStrategy,
+}
+
+/// An incoming value and the options used to merge it into the accumulated result.
+///
+/// Options apply to this input only, including all recursive merges it triggers.
+#[derive(Debug, Clone)]
+pub struct MergeInput<V> {
+    /// Incoming value, which may borrow immutable fragment data through [`MergedValue`].
+    pub value: V,
+    /// Merge behavior for this input.
+    pub options: MergeOptions,
+}
+
+/// Schema metadata provider for a merge operation.
+///
+/// Paths contain dictionary keys and numeric list indexes, as in the existing schema-path helper.
+/// Keeping this separate lets the merger operate without depending on schema views.
+pub trait MergeSchema {
+    /// Return the list primary key at a path, or `None` when no primary key applies.
+    fn primary_key(&self, path: &[String]) -> Result<Option<&str>, SchemaPathError>;
+}
+
+/// Use ordinary list merging without schema primary keys.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct NoSchema;
+
+impl MergeSchema for NoSchema {
+    fn primary_key(&self, _path: &[String]) -> Result<Option<&str>, SchemaPathError> {
+        Ok(None)
+    }
+}
+
+/// Schema-path adapter using the same metadata helper as the Python AVD merger.
+#[derive(Debug, Clone, Copy)]
+pub struct StoreSchema<'a> {
+    store: &'a Store,
+    name: &'a str,
+}
+
+impl<'a> StoreSchema<'a> {
+    /// Select an existing schema. Dynamic-key definitions are not resolved from merge inputs.
+    pub fn new(store: &'a Store, name: &'a str) -> Result<Self, SchemaPathError> {
+        if store.get(name).is_none() {
+            return Err(SchemaPathError::InvalidSchemaName(name.to_owned()));
+        }
+        Ok(Self { store, name })
+    }
+}
+
+impl MergeSchema for StoreSchema<'_> {
+    fn primary_key(&self, path: &[String]) -> Result<Option<&str>, SchemaPathError> {
+        self.store
+            .get_schema_info(self.name, path)
+            .map(|info| info.and_then(|info| info.primary_key))
+    }
+}
+
+/// A merge failure with the data path at which it occurred.
+#[derive(Debug, derive_more::Display)]
+pub enum MergeError {
+    /// A schema path lookup failed.
+    #[display("Unable to resolve schema at {}: {source}", path.join("."))]
+    Schema {
+        /// Data path being resolved.
+        path: Vec<String>,
+        /// Underlying schema-path error.
+        source: SchemaPathError,
+    },
+    /// The `must_match` strategy encountered different values.
+    #[display("Values of {} do not match", path.join("."))]
+    Conflict {
+        /// Data path at which values differ.
+        path: Vec<String>,
+    },
+}
+
+impl std::error::Error for MergeError {}
+
+/// Merge inputs in order into an owned base value.
+///
+/// No whole-document copy or JSON conversion is required. Primary-key indexes cover only the
+/// original base list, so duplicate keys within incoming lists remain available for validation.
+/// Explicit null primary keys match; missing primary keys use the ordinary list strategy.
+/// Duplicate YAML mapping keys are retained rather than silently repaired by merging.
+///
+/// A shallow merge applies the conflict strategy to complete overlapping root values.
+/// Non-mapping roots follow the same conflict strategy. Unlike Python's in-place wrapper, this API
+/// returns the resulting root, including replacements and root lists.
+pub fn merge<V, I, S>(base: V, nexts: I, schema: &S, options: MergeOptions) -> Result<V, MergeError>
+where
+    V: MergeableValue,
+    I: IntoIterator<Item = V>,
+    S: MergeSchema,
+{
+    merge_inputs(
+        base,
+        nexts.into_iter().map(|value| MergeInput { value, options }),
+        schema,
+    )
+}
+
+/// Merge inputs in order, applying each input's own options.
+///
+/// This has the same primary-key, duplicate-key, and provenance semantics as [`merge`].
+/// Options belong to the incoming input: a shallow update can follow a deep merge,
+/// and subsequent inputs can use different list and conflict strategies.
+pub fn merge_inputs<V, I, S>(mut base: V, nexts: I, schema: &S) -> Result<V, MergeError>
+where
+    V: MergeableValue,
+    I: IntoIterator<Item = MergeInput<V>>,
+    S: MergeSchema,
+{
+    for MergeInput { value, options } in nexts {
+        merge_value(
+            &mut base,
+            value,
+            Some(schema),
+            options,
+            &mut Vec::new(),
+            true,
+        )?;
+    }
+    Ok(base)
+}
+
+fn merge_value<V: MergeableValue, S: MergeSchema>(
+    base: &mut V,
+    mut next: V,
+    schema: Option<&S>,
+    options: MergeOptions,
+    path: &mut Vec<String>,
+    root: bool,
+) -> Result<(), MergeError> {
+    if options.mode == MergeMode::Shallow && !root {
+        return merge_conflict(base, next, options.same_key_strategy, path);
+    }
+    if base.is_mapping() && next.is_mapping() {
+        if let (Some(base_entries), Some(next_entries)) = (base.take_mapping(), next.take_mapping())
+        {
+            let contributed = !next_entries.is_empty();
+            let entries = merge_mapping::<V, S>(base_entries, next_entries, schema, options, path)?;
+            base.set_mapping(entries);
+            if contributed {
+                base.add_contributing_locations(&next);
+            }
+        }
+        return Ok(());
+    }
+    if options.mode == MergeMode::Shallow {
+        return merge_conflict(base, next, options.same_key_strategy, path);
+    }
+    if base.is_sequence() && next.is_sequence() {
+        // Replacements must not expand or inspect either list.
+        if options.list_merge == ListMerge::Replace {
+            *base = next;
+            return Ok(());
+        }
+        if options.list_merge == ListMerge::Keep {
+            return Ok(());
+        }
+        let primary_key = schema
+            .map_or(Ok(None), |schema| schema.primary_key(path))
+            .map_err(|source| MergeError::Schema {
+                path: path.clone(),
+                source,
+            })?;
+        if options.list_merge == ListMerge::KeepMerge && primary_key.is_none() {
+            return Ok(());
+        }
+        if let (Some(base_items), Some(next_items)) = (base.take_sequence(), next.take_sequence()) {
+            let (items, contributed) =
+                merge_sequence::<V, S>(base_items, next_items, primary_key, schema, options, path)?;
+            base.set_sequence(items);
+            if contributed {
+                base.add_contributing_locations(&next);
+            }
+        }
+        return Ok(());
+    }
+    merge_conflict(base, next, options.same_key_strategy, path)
+}
+
+fn merge_conflict<V: MergeableValue>(
+    base: &mut V,
+    next: V,
+    strategy: SameKeyStrategy,
+    path: &[String],
+) -> Result<(), MergeError> {
+    // Full replacements transfer the entire node, including its source and span.
+    match strategy {
+        SameKeyStrategy::Override => *base = next,
+        SameKeyStrategy::MustMatch if base.identity() != next.identity() => {
+            return Err(MergeError::Conflict {
+                path: path.to_vec(),
+            });
+        }
+        SameKeyStrategy::UseExisting | SameKeyStrategy::MustMatch => (),
+    }
+    Ok(())
+}
+
+fn merge_mapping<V: MergeableValue, S: MergeSchema>(
+    mut base: Vec<V::Entry>,
+    next: Vec<V::Entry>,
+    schema: Option<&S>,
+    options: MergeOptions,
+    path: &mut Vec<String>,
+) -> Result<Vec<V::Entry>, MergeError> {
+    let mut indexes: HashMap<_, Vec<usize>> = HashMap::new();
+    for (index, entry) in base.iter().enumerate() {
+        indexes.entry(entry.key()).or_default().push(index);
+    }
+    let mut incoming_counts = HashMap::new();
+    for entry in &next {
+        *incoming_counts.entry(entry.key()).or_insert(0_usize) += 1;
+    }
+    for mut entry in next {
+        let key = entry.key();
+        // Preserve ambiguous YAML mappings for validation instead of hiding duplicate keys.
+        let existing = indexes
+            .get(&key)
+            .filter(|positions| positions.len() == 1 && incoming_counts.get(&key) == Some(&1));
+        if let Some(existing) = existing.and_then(|positions| positions.first())
+            && let Some(base_entry) = base.get_mut(*existing)
+        {
+            // Non-string keys have a diagnostic path but no schema path. Disable
+            // schema lookup for their entire subtree, including nested string keys.
+            let child_schema = schema.filter(|_| entry.key_name().is_some());
+            let component = entry.key_name().unwrap_or("<non-string key>").to_owned();
+            path.push(component);
+            let incoming_value = entry.take_value();
+            merge_value(
+                base_entry.value_mut(),
+                incoming_value,
+                child_schema,
+                options,
+                path,
+                false,
+            )?;
+            path.pop();
+            // The incoming key keeps its own provenance even when the merged value contains
+            // children from multiple inputs (or use_existing keeps the old value).
+            std::mem::swap(base_entry.value_mut(), entry.value_mut());
+            *base_entry = entry;
+        } else {
+            base.push(entry);
+        }
+    }
+    Ok(base)
+}
+
+fn merge_sequence<V: MergeableValue, S: MergeSchema>(
+    mut base: Vec<V::Item>,
+    next: Vec<V::Item>,
+    primary_key: Option<&str>,
+    schema: Option<&S>,
+    options: MergeOptions,
+    path: &mut Vec<String>,
+) -> Result<(Vec<V::Item>, bool), MergeError> {
+    let mut contributed = false;
+    let mut unmatched = Vec::with_capacity(next.len());
+    if let Some(primary_key) = primary_key {
+        let mut indexes: HashMap<_, Vec<usize>> = HashMap::new();
+        for (index, item) in base.iter().enumerate() {
+            if let Some(identity) = item.value().child_identity(primary_key) {
+                indexes.entry(identity).or_default().push(index);
+            }
+        }
+        for item in next {
+            let matches = item
+                .value()
+                .child_identity(primary_key)
+                .and_then(|identity| indexes.get(&identity));
+            if let Some(matches) = matches {
+                contributed = true;
+                // Multiple matches indicate invalid duplicate base keys. Keep all entries so
+                // validation can report them, rather than silently collapsing them.
+                let mut incoming = Some(item.into_value());
+                let mut positions = matches.iter().peekable();
+                while let Some(index) = positions.next() {
+                    if let Some(base_item) = base.get_mut(*index) {
+                        let next_value = if positions.peek().is_some() {
+                            incoming.clone()
+                        } else {
+                            incoming.take()
+                        };
+                        if let Some(next_value) = next_value {
+                            path.push(index.to_string());
+                            merge_value(
+                                base_item.value_mut(),
+                                next_value,
+                                schema,
+                                options,
+                                path,
+                                false,
+                            )?;
+                            path.pop();
+                        }
+                    }
+                }
+            } else {
+                unmatched.push(item);
+            }
+        }
+    } else {
+        unmatched = next;
+    }
+    let original_len = base.len();
+    let has_unmatched = !unmatched.is_empty();
+    match options.list_merge {
+        ListMerge::Keep | ListMerge::KeepMerge => (),
+        ListMerge::Append => base.extend(unmatched),
+        ListMerge::Prepend => {
+            unmatched.extend(base);
+            base = unmatched;
+        }
+        ListMerge::AppendUnique => {
+            // AVD's append_rp compares against the original base, retaining repeated next items.
+            let identities: HashSet<_> = base.iter().map(|item| item.value().identity()).collect();
+            base.extend(
+                unmatched
+                    .into_iter()
+                    .filter(|item| !identities.contains(&item.value().identity())),
+            );
+        }
+        ListMerge::PrependUnique => {
+            let identities: HashSet<_> = unmatched
+                .iter()
+                .map(|item| item.value().identity())
+                .collect();
+            unmatched.extend(
+                base.into_iter()
+                    .filter(|item| !identities.contains(&item.value().identity())),
+            );
+            base = unmatched;
+        }
+        ListMerge::Replace => base = unmatched,
+    }
+    contributed |= match options.list_merge {
+        ListMerge::Keep | ListMerge::KeepMerge => false,
+        ListMerge::AppendUnique => base.len() != original_len,
+        _ => has_unmatched,
+    };
+    Ok((base, contributed))
+}

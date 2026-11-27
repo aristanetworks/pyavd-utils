@@ -10,6 +10,7 @@ use crate::feedback::ErrorIssue;
 use crate::feedback::Feedback;
 use crate::feedback::InfoIssue;
 use crate::feedback::Path;
+use crate::feedback::SourceLocation;
 use crate::feedback::SourceSpan;
 use crate::feedback::StringLoweredNote;
 use crate::feedback::Value;
@@ -37,12 +38,13 @@ impl Context {
         value: &V,
         error: impl Into<ErrorIssue>,
     ) {
-        self.add_error_with_span(
-            state,
-            value.source_span(),
-            value.source().map(AsRef::as_ref),
-            error,
-        );
+        self.result.errors.push(Feedback {
+            path: state.path.clone(),
+            span: value.source_span(),
+            source: value.source().map(ToString::to_string),
+            contributing_locations: value.contributing_locations().to_vec(),
+            issue: error.into(),
+        });
     }
 
     pub(crate) fn add_error_with_span(
@@ -53,6 +55,7 @@ impl Context {
         error: impl Into<ErrorIssue>,
     ) {
         self.result.errors.push(Feedback {
+            contributing_locations: Vec::new(),
             path: state.path.clone(),
             span,
             source: source.map(str::to_owned),
@@ -68,6 +71,7 @@ impl Context {
         warning: impl Into<WarningIssue>,
     ) {
         self.result.warnings.push(Feedback {
+            contributing_locations: Vec::new(),
             path: state.path.clone(),
             span,
             source: source.map(str::to_owned),
@@ -82,6 +86,7 @@ impl Context {
         info: impl Into<InfoIssue>,
     ) {
         self.result.infos.push(Feedback {
+            contributing_locations: value.contributing_locations().to_vec(),
             path: state.path.clone(),
             span: value.source_span(),
             source: value.source().map(ToString::to_string),
@@ -134,6 +139,7 @@ impl Context {
     ) {
         for (location, other) in [(location_a, location_b), (location_b, location_a)] {
             self.result.errors.push(Feedback {
+                contributing_locations: location.contributing_locations.clone(),
                 path: state.path.clone_with_slice(&location.trail),
                 span: location.span.clone(),
                 source: location.source.as_deref().map(str::to_owned),
@@ -154,6 +160,7 @@ pub(crate) struct ValueLocation {
     trail: Vec<String>,
     span: Option<SourceSpan>,
     source: Option<Arc<str>>,
+    contributing_locations: Vec<SourceLocation>,
 }
 
 impl ValueLocation {
@@ -162,6 +169,7 @@ impl ValueLocation {
             trail,
             span: value.source_span(),
             source: value.source().cloned(),
+            contributing_locations: value.contributing_locations().to_vec(),
         }
     }
 }

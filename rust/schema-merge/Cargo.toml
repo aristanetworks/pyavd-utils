@@ -1,0 +1,24 @@
+[package]
+name = "schema-merge"
+version.workspace = true
+edition = "2024"
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+derive_more = { workspace = true, features = ["display"] }
+avdschema = { path = "../avdschema", default-features = false }
+schema-data = { path = "../schema-data" }
+serde_json = { workspace = true, features = ["arbitrary_precision", "preserve_order"] }
+validation = { path = "../validation", default-features = false }
+yaml-parser = { path = "../yaml-parser", default-features = false }
+
+[dev-dependencies]
+criterion = "=0.8.2"
+yaml-parser = { path = "../yaml-parser", default-features = false, features = ["serde"] }
+
+[[bench]]
+name = "merge"
+harness = false
