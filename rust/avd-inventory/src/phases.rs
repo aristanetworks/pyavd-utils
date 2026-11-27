@@ -12,11 +12,11 @@ use schema_merge::MergedValue;
 use schema_merge::StoreSchema;
 use validation::StoreValidate as _;
 
-use crate::BuildError;
-use crate::BuildOptions;
 use crate::DeviceOutput;
 use crate::InventoryFragment;
 use crate::StoredFragment;
+use crate::ValidationError;
+use crate::ValidationOptions;
 use crate::graph::MergeGraph;
 use crate::graph::StepId;
 
@@ -47,9 +47,10 @@ impl<F: InventoryFragment> Inputs<F> {
     pub(crate) fn merge(
         &self,
         store: &Store,
-        options: &BuildOptions,
-    ) -> Result<Merged<'_, F>, BuildError> {
-        let schema = StoreSchema::new(store, &options.schema_name).map_err(BuildError::Schema)?;
+        options: &ValidationOptions,
+    ) -> Result<Merged<'_, F>, ValidationError> {
+        let schema =
+            StoreSchema::new(store, &options.schema_name).map_err(ValidationError::Schema)?;
         let mut terminal = vec![false; self.graph.steps.len()];
         for head in self.graph.devices.values() {
             terminal[*head] = true;
@@ -77,7 +78,7 @@ impl<F: InventoryFragment> Inputs<F> {
                     }],
                     &schema,
                 )
-                .map_err(|error| BuildError::Merge {
+                .map_err(|error| ValidationError::Merge {
                     source: fragment.source.clone(),
                     error,
                 })?;
@@ -106,8 +107,8 @@ impl<'input, F: InventoryFragment> Merged<'input, F> {
     pub(crate) fn validate(
         self,
         store: &Store,
-        options: &BuildOptions,
-    ) -> Result<Validated<'input>, BuildError>
+        options: &ValidationOptions,
+    ) -> Result<Validated<'input>, ValidationError>
     where
         MergedValue<'input, F::Value>: Send + Sync,
     {
@@ -116,14 +117,14 @@ impl<'input, F: InventoryFragment> Merged<'input, F> {
         let validate = |(id, value): (StepId, MergedValue<'input, F::Value>)| {
             let output = store
                 .validate_value(&value, &options.schema_name, Some(&configuration))
-                .map_err(BuildError::Validation)?;
+                .map_err(ValidationError::Validation)?;
             let validated_data = if output.result.errors.is_empty() {
                 output
                     .coerced
                     .as_ref()
                     .map(F::encode_json)
                     .transpose()
-                    .map_err(BuildError::Json)?
+                    .map_err(ValidationError::Json)?
             } else {
                 None
             };
@@ -146,7 +147,7 @@ impl<'input, F: InventoryFragment> Merged<'input, F> {
             roots
                 .into_iter()
                 .map(validate)
-                .collect::<Result<_, BuildError>>()?
+                .collect::<Result<_, ValidationError>>()?
         } else {
             let workers = options
                 .validation_threads
@@ -158,12 +159,12 @@ impl<'input, F: InventoryFragment> Merged<'input, F> {
             let pool = rayon::ThreadPoolBuilder::new()
                 .num_threads(workers)
                 .build()
-                .map_err(BuildError::WorkerPool)?;
+                .map_err(ValidationError::WorkerPool)?;
             pool.install(|| {
                 roots
                     .into_par_iter()
                     .map(validate)
-                    .collect::<Result<_, BuildError>>()
+                    .collect::<Result<_, ValidationError>>()
             })?
         };
         Ok(Validated {

@@ -56,12 +56,12 @@ impl Error for AddFragmentError {
     }
 }
 
-/// A failure that prevents completing the inventory build.
+/// A failure that prevents completing inventory merging and validation.
 ///
-/// Input validation findings are returned in [`crate::BuildOutput`], rather than
+/// Input validation findings are returned in [`crate::ValidationOutput`], rather than
 /// being execution failures. Callers must gate the common build on those findings.
 #[derive(Debug)]
-pub enum BuildError {
+pub enum ValidationError {
     /// The requested schema could not be selected for merging.
     Schema(SchemaPathError),
     /// A fragment could not be merged with its preceding inputs.
@@ -79,7 +79,7 @@ pub enum BuildError {
     Json(serde_json::Error),
 }
 
-impl fmt::Display for BuildError {
+impl fmt::Display for ValidationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Schema(error) => write!(f, "{error}"),
@@ -91,7 +91,7 @@ impl fmt::Display for BuildError {
     }
 }
 
-impl Error for BuildError {
+impl Error for ValidationError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Merge { error, .. } => Some(error),

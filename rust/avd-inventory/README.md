@@ -36,11 +36,11 @@ histories creates different merge steps. Later insertions have higher precedence
 under the default merge options. Shallow/deep modes, list strategies, and conflict
 handling are provided by `schema-merge`.
 
-## Build phases
+## Merging and validation
 
-`build_to_json(self, store, options) -> Result<BuildOutput, BuildError>` consumes collection
+`merge_and_validate(self, store, options) -> Result<ValidationOutput, ValidationError>` consumes collection
 and privately seals the inputs, merges, and validates. All devices use the schema
-and validation settings selected by `BuildOptions`; merge behavior belongs to each
+and validation settings selected by `ValidationOptions`; merge behavior belongs to each
 incoming fragment.
 
 Merge steps execute once in dependency order. Expanded containers use the
@@ -51,21 +51,21 @@ Only distinct terminal roots proceed to validation. A device may reference an
 internal graph node while other devices continue into more specific fragments.
 
 The sealed inputs own the parsed values. Merged and coerced roots borrow those
-inputs and stay local to the build function. Validation and JSON encoding run in
-parallel over distinct terminal roots, with one build-local Rayon pool.
-`BuildOptions::validation_threads` accepts a nonzero worker limit, matching the
+inputs and stay local to `merge_and_validate`. Validation and JSON encoding run in
+parallel over distinct terminal roots, with one Rayon pool for this call.
+`ValidationOptions::validation_threads` accepts a nonzero worker limit, matching the
 Python service's validation concurrency setting. The default uses available
 parallelism; the pool never exceeds the number of distinct roots. A limit of one
 runs on the calling thread. Results retain device insertion order regardless of
 scheduling. There is no subtree validation cache.
 
-`BuildOutput::devices` maps each device to an `Arc<DeviceOutput>` containing
+`ValidationOutput::devices` maps each device to an `Arc<DeviceOutput>` containing
 validation errors, warnings and infos, plus `validated_data: Option<String>`.
 Identical histories share their validation and JSON result. Invalid roots have
-no JSON output. Call `BuildOutput::has_errors()` to gate the common build stage:
+no JSON output. Call `ValidationOutput::has_errors()` to gate the common build stage:
 any device's validation errors prevent the caller from continuing the build.
 Findings remain structured data; schema, merge, worker-pool and encoding failures
-are returned as build errors.
+are returned as execution errors.
 
 The returned JSON and diagnostics own their data and outlive all parsed inputs.
 YAML diagnostic sources and byte spans still refer to the original uncompressed
@@ -75,9 +75,9 @@ or adding serialization to `MergedValue`. Arbitrary-size integers retain numeric
 precision. Non-string YAML keys and non-finite floats cannot be represented by
 this JSON boundary and produce explicit encoding errors.
 
-A Python binding can release the GIL around the complete consuming build, letting
-Rust perform the parallel validation, and feed returned JSON into the existing
-Python loader. Python bindings, service integration, arena construction,
+A Python binding can release the GIL around the complete merge and validation
+operation, letting Rust perform the parallel validation, and feed returned JSON
+into the existing Python loader. Python bindings, service integration, arena construction,
 rkyv/mmap publication, and validation caching are separate work.
 Data-dependent dynamic-key merging retains the merger's existing
 unsupported status. Ordinary validation can resolve dynamic definitions from an
@@ -94,5 +94,5 @@ cargo clippy --locked -p avd-inventory --all-targets -- -D warnings
 Tests exercise incremental graph sharing, divergent histories, per-device merge
 equivalence in both formats, shared Arc subtrees, input rejection, coercion and
 feedback provenance, per-fragment merge options, parallel/serial equivalence,
-worker limits, JSON numeric precision, shared output, and the owning result boundary. Doctests verify the public build
-and reject mixed formats and additions after build at compile time.
+worker limits, JSON numeric precision, shared output, and the owning result boundary. Doctests verify the public API
+and reject mixed formats and additions after merging and validation at compile time.

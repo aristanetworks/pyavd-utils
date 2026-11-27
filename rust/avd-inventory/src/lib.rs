@@ -4,13 +4,13 @@
 
 //! Typed fragment collection with shared merging and validation.
 //!
-//! Adding a fragment decodes it once and extends the merge graph. Building consumes
+//! Adding a fragment decodes it once and extends the merge graph. Calling `merge_and_validate` consumes
 //! the inventory, merges common fragment histories once, and validates each distinct
 //! device root in parallel. Results own JSON output and diagnostics carrying original
 //! sources and spans, independent of the parsed fragments.
 //!
 //! ```
-//! use avd_inventory::{BuildOptions, Inventory, YamlFragment};
+//! use avd_inventory::{Inventory, ValidationOptions, YamlFragment};
 //! use avdschema::Store;
 //!
 //! let schema = Store::from_json(r#"{"test":{"type":"dict","keys":{
@@ -23,7 +23,7 @@
 //!     devices: vec!["leaf1".into(), "leaf2".into()],
 //!     merge: Default::default(),
 //! })?;
-//! let output = inventory.build_to_json(&schema, &BuildOptions::new("test"))?;
+//! let output = inventory.merge_and_validate(&schema, &ValidationOptions::new("test"))?;
 //! assert!(!output.has_errors());
 //! assert_eq!(output.devices["leaf1"].validated_data.as_deref(), Some(r#"{"mtu":1500}"#));
 //! # Ok::<(), Box<dyn std::error::Error>>(())
@@ -51,8 +51,8 @@ use std::sync::Arc;
 
 use avdschema::Store;
 pub use errors::AddFragmentError;
-pub use errors::BuildError;
 pub use errors::FragmentErrorKind;
+pub use errors::ValidationError;
 pub use fragments::InventoryFragment;
 pub use fragments::JsonFragment;
 pub use fragments::ParsedFragment;
@@ -71,21 +71,21 @@ use validation::ValidationResult;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct FragmentId(usize);
 
-/// Build-wide schema and validation settings.
+/// Inventory-wide schema and validation settings.
 #[derive(Debug, Clone)]
-pub struct BuildOptions {
+pub struct ValidationOptions {
     /// Schema selected from the supplied schema store.
     pub schema_name: String,
     /// Validation behavior. Coerced output is always enabled internally.
     pub validation: Configuration,
-    /// Maximum validation workers for this build. `None` uses available parallelism.
+    /// Maximum validation workers for this operation. `None` uses available parallelism.
     ///
     /// Set this to the Python service's validation worker limit. A value of one
     /// runs validation on the calling thread without creating a pool.
     pub validation_threads: Option<NonZeroUsize>,
 }
 
-impl BuildOptions {
+impl ValidationOptions {
     /// Select a schema with default validation behavior and available parallelism.
     pub fn new(schema_name: &str) -> Self {
         Self {
@@ -96,14 +96,14 @@ impl BuildOptions {
     }
 }
 
-/// Owned results of an inventory build, safe to return after parsed inputs are dropped.
+/// Owned merge and validation results, safe to return after parsed inputs are dropped.
 #[derive(Debug)]
-pub struct BuildOutput {
+pub struct ValidationOutput {
     /// Per-device results. Devices with identical fragment histories share one result.
     pub devices: IndexMap<String, Arc<DeviceOutput>>,
 }
 
-impl BuildOutput {
+impl ValidationOutput {
     /// Whether any device has input validation errors.
     ///
     /// Callers must gate their common build stage on this inventory-wide result.
@@ -125,8 +125,8 @@ pub struct DeviceOutput {
 
 /// A collecting inventory accepting only one fragment format.
 ///
-/// `build_to_json` consumes the inventory. Merge and validation phases remain private;
-/// no self-referential owner is needed because the parsed inputs stay local to `build_to_json`.
+/// `merge_and_validate` consumes the inventory. Merge and validation phases remain private;
+/// no self-referential owner is needed because the parsed inputs stay local to `merge_and_validate`.
 #[derive(Debug)]
 pub struct Inventory<F: InventoryFragment> {
     inputs: Inputs<F>,
@@ -174,26 +174,26 @@ impl<F: InventoryFragment> Inventory<F> {
 
     /// Consume the inventory, merge and validate device variables, and encode JSON.
     ///
-    /// Distinct roots are validated and encoded in parallel with a build-local
+    /// Distinct roots are validated and encoded in parallel with a dedicated
     /// worker pool. Findings remain structured output; schema, execution and JSON
-    /// encoding failures are build errors. Call [`BuildOutput::has_errors`] before
+    /// encoding failures are execution errors. Call [`ValidationOutput::has_errors`] before
     /// continuing with a common build stage. No archive is published.
     /// Inputs cannot be added after this call because it consumes `self`.
     ///
     /// ```compile_fail,E0382
-    /// # use avd_inventory::{BuildOptions, Inventory, YamlFragment};
+    /// # use avd_inventory::{Inventory, ValidationOptions, YamlFragment};
     /// # use avdschema::Store;
     /// # fn example(store: &Store, fragment: YamlFragment) {
     /// let mut inventory = Inventory::<YamlFragment>::new();
-    /// let _ = inventory.build_to_json(store, &BuildOptions::new("test"));
+    /// let _ = inventory.merge_and_validate(store, &ValidationOptions::new("test"));
     /// inventory.add_fragment(fragment);
     /// # }
     /// ```
-    pub fn build_to_json(
+    pub fn merge_and_validate(
         self,
         store: &Store,
-        options: &BuildOptions,
-    ) -> Result<BuildOutput, BuildError>
+        options: &ValidationOptions,
+    ) -> Result<ValidationOutput, ValidationError>
     where
         for<'a> MergedValue<'a, F::Value>: Send + Sync,
     {
@@ -211,7 +211,7 @@ impl<F: InventoryFragment> Inventory<F> {
                 (device.clone(), Arc::clone(&roots[root]))
             })
             .collect();
-        Ok(BuildOutput { devices })
+        Ok(ValidationOutput { devices })
     }
 
     fn seal(self) -> Inputs<F> {
