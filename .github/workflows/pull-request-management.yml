@@ -27,10 +27,38 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  benchmark_changes:
+    name: Detect benchmark changes
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      benchmarks: ${{ steps.filter.outputs.benchmarks }}
+    steps:
+      # PR file detection uses the GitHub API; no checkout or PR code execution is needed.
+      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        id: filter
+        if: github.event_name == 'pull_request'
+        with:
+          filters: |
+            benchmarks:
+              - 'rust/**/src/**'
+              - 'rust/**/benches/**'
+              - 'rust/**/build.rs'
+              - '**/Cargo.toml'
+              - 'Cargo.lock'
+              - 'rust-toolchain.toml'
+              - '.cargo/**'
+              - 'tests/schemas/schemas.json'
+              - '.github/workflows/codspeed.yml'
+              - '.github/workflows/pull-request-management.yml'
+
   required-checks:
     # Required in branch protection. Keep this name stable.
     name: required-checks
     needs:
+      - benchmark_changes
       - python_coverage
       - cargo_build_and_test
       - cargo_wasm
@@ -156,9 +184,12 @@ jobs:
 
   codspeed:
     name: Run Rust benchmarks
-    needs: cargo_build_and_test
-    # CodSpeed does not support merge_group events; PRs and main pushes provide measurements.
-    if: github.repository == 'aristanetworks/pyavd-utils' && github.event_name != 'merge_group'
+    needs: [benchmark_changes, cargo_build_and_test]
+    # Keep main baselines; filter PRs and exclude unsupported merge_group events.
+    if: >-
+      github.repository == 'aristanetworks/pyavd-utils'
+      && (github.event_name == 'push'
+          || (github.event_name == 'pull_request' && needs.benchmark_changes.outputs.benchmarks == 'true'))
     permissions:
       contents: read
       id-token: write
