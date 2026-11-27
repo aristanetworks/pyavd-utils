@@ -5,6 +5,7 @@
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::fmt::Display;
+use std::sync::Arc;
 
 use serde::Serialize;
 
@@ -143,6 +144,10 @@ pub struct Feedback<T: Clone + Debug + PartialEq + Serialize + Display> {
     /// Opaque identifier of the input source, if available.
     pub source: Option<String>,
     pub span: Option<SourceSpan>,
+    /// Additional collection declarations participating in a partial merge.
+    /// The primary source/span remains above. These locations are context, not exact blame.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub contributing_locations: Vec<SourceLocation>,
     pub issue: T,
 }
 
@@ -197,6 +202,13 @@ pub struct CoercionNote {
 pub struct StringLoweredNote {
     pub found: String,
     pub made: String,
+}
+
+/// A declaration in an original input, with a shared opaque source identifier.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct SourceLocation {
+    pub source: Option<Arc<str>>,
+    pub span: Option<SourceSpan>,
 }
 
 /// Absolute byte range within the original source input.

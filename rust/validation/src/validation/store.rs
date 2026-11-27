@@ -240,6 +240,7 @@ mod tests {
         assert_eq!(
             output.documents[0].result.errors,
             vec![Feedback {
+                contributing_locations: Vec::new(),
                 source: None,
                 path: vec!["key3".into()].into(),
                 span: Some(SourceSpan { start: 8, end: 28 }),
@@ -322,6 +323,7 @@ mod tests {
         assert_eq!(
             output.documents[1].result.errors,
             vec![Feedback {
+                contributing_locations: Vec::new(),
                 source: None,
                 path: vec!["key3".into()].into(),
                 span: Some(SourceSpan { start: 21, end: 41 }),
@@ -548,6 +550,7 @@ mod tests {
         assert_eq!(
             output.result.errors,
             vec![Feedback {
+                contributing_locations: Vec::new(),
                 source: None,
                 path: "strict".into(),
                 span: None,

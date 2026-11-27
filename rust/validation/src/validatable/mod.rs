@@ -22,6 +22,7 @@ use std::sync::Arc;
 
 use schema_data::SchemaDataMapping;
 
+use crate::feedback::SourceLocation;
 use crate::feedback::SourceSpan;
 use crate::feedback::Type;
 
@@ -160,6 +161,13 @@ pub trait ValidatableValue: Sized {
     /// Get the source span for this value, if available.
     fn source_span(&self) -> Option<SourceSpan> {
         None
+    }
+
+    /// Additional declarations participating in a merged mapping or sequence.
+    /// Scalars and unmerged backends return an empty slice. The primary location
+    /// is exposed separately by `source` and `source_span`.
+    fn contributing_locations(&self) -> &[SourceLocation] {
+        &[]
     }
 
     // === Path navigation ===

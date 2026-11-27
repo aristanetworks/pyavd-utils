@@ -25,6 +25,7 @@ use std::fmt::Debug;
 use std::sync::Arc;
 
 use validation::ValidatableValue;
+use validation::feedback::SourceLocation;
 use validation::feedback::SourceSpan;
 
 use crate::MergeError;
@@ -54,6 +55,11 @@ pub trait MergeBackend:
     type Elements<'a>: Iterator<Item = (&'a Self::Element, &'a Self)>
     where
         Self: 'a;
+
+    /// Borrow the text of a string value for schema navigation.
+    /// Must return `Some` for every value whose `is_str()` is true, even when
+    /// `ValidatableValue::as_str` returns an owned string. Non-strings return `None`.
+    fn borrowed_str(&self) -> Option<&str>;
 
     /// Borrow mapping entries; callers first check the value's type.
     fn entries(&self) -> Self::Entries<'_>;
@@ -121,12 +127,14 @@ enum Repr<'input, V: MergeBackend> {
 #[derive(Debug, Clone)]
 struct MappingData<'input, V: MergeBackend> {
     original: Origin<'input, V>,
+    contributing_locations: Option<Arc<Vec<SourceLocation>>>,
     entries: Vec<Entry<'input, V>>,
 }
 
 #[derive(Debug, Clone)]
 struct SequenceData<'input, V: MergeBackend> {
     original: Origin<'input, V>,
+    contributing_locations: Option<Arc<Vec<SourceLocation>>>,
     items: Vec<Item<'input, V>>,
 }
 
@@ -248,6 +256,14 @@ impl<'input, V: MergeBackend> MergedValue<'input, V> {
         }
     }
 
+    fn shared_contributing_locations(&self) -> Option<Arc<Vec<SourceLocation>>> {
+        match &self.inner {
+            Repr::Mapping(data) => data.contributing_locations.clone(),
+            Repr::Sequence(data) => data.contributing_locations.clone(),
+            _ => None,
+        }
+    }
+
     fn original(&self) -> &V {
         match &self.inner {
             Repr::Borrowed(value) => value,
@@ -325,6 +341,7 @@ impl<'input, V: MergeBackend> MergeableValue for MergedValue<'input, V> {
                 .collect();
             self.inner = Repr::Mapping(Arc::new(MappingData {
                 original: Origin::Borrowed(original),
+                contributing_locations: None,
                 entries: Vec::new(),
             }));
             return Some(entries);
@@ -342,6 +359,7 @@ impl<'input, V: MergeBackend> MergeableValue for MergedValue<'input, V> {
                 } else {
                     *data = Arc::new(MappingData {
                         original: data.original.clone(),
+                        contributing_locations: data.contributing_locations.clone(),
                         entries,
                     });
                 }
@@ -349,6 +367,7 @@ impl<'input, V: MergeBackend> MergeableValue for MergedValue<'input, V> {
             Repr::Borrowed(original) if original.is_mapping() => {
                 self.inner = Repr::Mapping(Arc::new(MappingData {
                     original: Origin::Borrowed(original),
+                    contributing_locations: None,
                     entries,
                 }));
             }
@@ -369,6 +388,7 @@ impl<'input, V: MergeBackend> MergeableValue for MergedValue<'input, V> {
                 .collect();
             self.inner = Repr::Sequence(Arc::new(SequenceData {
                 original: Origin::Borrowed(original),
+                contributing_locations: None,
                 items: Vec::new(),
             }));
             return Some(items);
@@ -386,6 +406,7 @@ impl<'input, V: MergeBackend> MergeableValue for MergedValue<'input, V> {
                 } else {
                     *data = Arc::new(SequenceData {
                         original: data.original.clone(),
+                        contributing_locations: data.contributing_locations.clone(),
                         items,
                     });
                 }
@@ -393,12 +414,39 @@ impl<'input, V: MergeBackend> MergeableValue for MergedValue<'input, V> {
             Repr::Borrowed(original) if original.is_sequence() => {
                 self.inner = Repr::Sequence(Arc::new(SequenceData {
                     original: Origin::Borrowed(original),
+                    contributing_locations: None,
                     items,
                 }));
             }
             _ => (),
         }
     }
+    fn add_contributing_locations(&mut self, other: &Self) {
+        let primary = SourceLocation {
+            source: self.source().cloned(),
+            span: self.source_span(),
+        };
+        let incoming = SourceLocation {
+            source: other.source().cloned(),
+            span: other.source_span(),
+        };
+        for location in std::iter::once(&incoming).chain(other.contributing_locations()) {
+            if (location.source.is_none() && location.span.is_none())
+                || *location == primary
+                || self.contributing_locations().contains(location)
+            {
+                continue;
+            }
+            let locations = match &mut self.inner {
+                Repr::Mapping(data) => &mut Arc::make_mut(data).contributing_locations,
+                Repr::Sequence(data) => &mut Arc::make_mut(data).contributing_locations,
+                _ => return,
+            };
+            Arc::make_mut(locations.get_or_insert_with(|| Arc::new(Vec::new())))
+                .push(location.clone());
+        }
+    }
+
     fn child_identity(&self, key: &str) -> Option<Self::Identity> {
         ValidatableValue::get(self, key).map(|view| Borrow::<Self>::borrow(&view).identity())
     }

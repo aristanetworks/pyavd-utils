@@ -21,15 +21,15 @@ use yaml_parser::parse_with_source;
 let store = Store::from_json(r#"{"eos_config":{"type":"dict","keys":{
     "interfaces":{"type":"list","primary_key":"name","items":{"type":"dict"}}
 }}}"#).expect("schema should compile");
-let (mut base, base_errors) = parse_with_source(
+let (mut base_documents, base_errors) = parse_with_source(
     "interfaces: [{name: Ethernet1, mtu: 1500}]", Some("fixture-a".into()),
 );
-let (mut next, next_errors) = parse_with_source(
+let (mut next_documents, next_errors) = parse_with_source(
     "interfaces: [{name: Ethernet1, description: uplink}]", Some("fixture-b".into()),
 );
 assert!(base_errors.is_empty() && next_errors.is_empty());
-let base = base.remove(0);
-let next = next.remove(0);
+let base = base_documents.remove(0);
+let next = next_documents.remove(0);
 let merged = merge_borrowed(
     &base,
     [&next],
@@ -59,23 +59,29 @@ only, including recursive calls. The value may be an owned backend tree or a
 
 ## Behavior
 
-- `MergeMode::Shallow` updates root keys like pipeline `dict.update()`: each incoming
-  value replaces the complete previous value. Non-mapping roots are replaced.
+- `MergeMode::Shallow` combines root keys without descending into their values.
+  Overlapping keys and non-mapping roots follow `SameKeyStrategy`: `Override`
+  replaces the complete value (like `dict.update()`), `UseExisting` retains it,
+  and `MustMatch` rejects unequal complete values.
 - `MergeMode::Deep` recursively combines dictionaries. Scalars and type changes
   follow `SameKeyStrategy::{Override, UseExisting, MustMatch}`. `UseExisting` retains
   explicit null values as well.
 - `ListMerge::Replace` replaces the complete list and bypasses primary keys.
+- `ListMerge::Keep` retains the complete base list and bypasses primary keys,
+  matching the typed AVD model's `_deepmerge(list_merge="keep")` behavior.
 - Other list strategies first merge matching schema primary keys recursively,
   retaining the base item's position. Remaining incoming items follow the list strategy.
-  This also applies to `Keep`, matching AVD Python behavior.
+- `ListMerge::KeepMerge` merges matching primary keys but ignores unmatched incoming
+  items. This matches the raw-data AVD Python merger's `list_merge="keep"` with a
+  schema. Without a primary key it retains the complete base list.
 - `Append` / `Prepend` retain all unmatched items. `AppendUnique` (`append_rp`)
   appends incoming items absent from the base. `PrependUnique` (`prepend_rp`)
   prepends incoming items and removes equivalent base items. Duplicates within
   the incoming list remain, matching Python's strategies.
 - Present null primary keys match; missing primary keys use the ordinary list strategy.
-  Incoming items match only the original base list, preserving unmatched duplicate
-  primary keys for validation. `allow_duplicate_primary_key` does not disable merging,
-  matching AVD's Python merger.
+- Incoming items match only the original base list, preserving unmatched duplicate
+  primary keys for validation.
+- `allow_duplicate_primary_key` does not disable merging, matching AVD's Python merger.
 - `merge_borrowed` retains immutable inputs. `merge` consumes its inputs and returns
   the resulting root, including scalar replacements and root lists. Both use the
   same merge algorithm.
@@ -98,6 +104,12 @@ merges leave the original result unchanged. `merge` can continue merging
 `MergedValue` inputs without materializing a backend tree. `from_scalar` supports
 owned generated scalars; its private representation excludes owned backend containers
 whose children could not satisfy the fragment lifetime.
+
+`MergeableValue` is independent of validation. The borrowed representation's
+`MergeBackend` additionally requires `ValidatableValue` to reuse scalar access,
+provenance, and coercion construction. Custom backends must implement `borrowed_str`
+for every actual string value, including when their validation accessor returns
+`Cow::Owned`; schema navigation must borrow text from stable backend storage.
 
 `ValidatableValue`, mapping/sequence adapters, and schema-data adapters support direct
 validation and navigation. Child views borrow existing wrappers or own a temporary
@@ -131,6 +143,24 @@ A full replacement uses the incoming node's metadata. A partially merged diction
 or list retains the base container's original source and span; its children keep
 metadata from the nodes they came from. The container span therefore describes its
 original declaration, not a combined range across files.
+
+Expanded mappings and sequences also carry `contributing_locations`, an ordered,
+deduplicated list of additional source/span pairs participating in partial merges.
+The primary location is not repeated. Locations with the same source identifier
+but different spans remain distinct. Contributions describe collection merge
+context rather than the exact cause of a constraint violation; later edits within
+that collection do not erase its merge history. An ignored list input adds no
+location. Full replacements adopt only the incoming value's provenance, including
+any collection contributions it already carries. Scalars have no contributions.
+
+Contribution storage is shared across result clones and coercion. The default
+`ValidatableValue::contributing_locations` accessor is empty for ordinary JSON/YAML
+values. Collection diagnostics expose the additional locations in the matching
+`Feedback::contributing_locations` field, while scalar diagnostics remain local
+to the scalar. Empty contribution fields are omitted from serialized feedback.
+For example, a maximum-length failure after appending `[3, 4]` from `next.yml`
+to `[1, 2]` from `base.yml` keeps the base list as its primary location and includes
+the incoming list as a contributing location.
 
 Incoming mapping keys and their structural pair metadata are retained when the key
 already exists, independently of the merged value's metadata. Matched primary-key

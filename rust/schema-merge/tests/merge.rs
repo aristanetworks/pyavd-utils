@@ -256,6 +256,7 @@ mod tests {
         for (strategy, expected) in [
             (ListMerge::Replace, json!([2, 3, 3])),
             (ListMerge::Keep, json!([1, 2, 2])),
+            (ListMerge::KeepMerge, json!([1, 2, 2])),
             (ListMerge::Append, json!([1, 2, 2, 2, 3, 3])),
             (ListMerge::Prepend, json!([2, 3, 3, 1, 2, 2])),
             (ListMerge::AppendUnique, json!([1, 2, 2, 3, 3])),
@@ -274,13 +275,14 @@ mod tests {
     }
 
     #[test]
-    fn primary_keys_are_merged_before_each_list_strategy_except_replace() {
+    fn primary_keys_are_merged_except_for_complete_replace_and_keep() {
         let base = json!({"items": [{"name": "a", "old": true}, {"name": "b"}]});
         let next = json!({"items": [{"name": "a", "new": true}, {"name": "c"}]});
         for (strategy, expected) in [
             (ListMerge::Replace, next.clone()),
+            (ListMerge::Keep, base.clone()),
             (
-                ListMerge::Keep,
+                ListMerge::KeepMerge,
                 json!({"items": [{"name": "a", "old": true, "new": true}, {"name": "b"}]}),
             ),
             (
@@ -436,7 +438,7 @@ mod tests {
         let base = yaml("- # original item\n  1\n", "base");
         let next = yaml("- 2\n", "next");
         let options = MergeOptions {
-            list_merge: ListMerge::Keep,
+            list_merge: ListMerge::KeepMerge,
             ..MergeOptions::default()
         };
         let borrowed = merge_borrowed(&base, [&next], &NoSchema, options).unwrap();
@@ -459,6 +461,20 @@ mod tests {
         assert_eq!(kept.source(), retained.source());
         assert_eq!(kept.source_span(), retained.source_span());
 
+        let unchanged = merge_borrowed(
+            &base,
+            [&next],
+            &FailingSchema,
+            MergeOptions {
+                list_merge: ListMerge::Keep,
+                ..options
+            },
+        )
+        .unwrap();
+        assert!(std::ptr::eq(
+            unchanged.as_original().unwrap(),
+            &raw const base
+        ));
         let error = merge_borrowed(&base, [&next], &FailingSchema, options).unwrap_err();
         assert!(matches!(error, MergeError::Schema { path, .. } if path.is_empty()));
     }
@@ -1488,5 +1504,279 @@ mod tests {
             panic!("expected rebuilt items")
         };
         assert!(items[0].original().is_none());
+    }
+
+    #[test]
+    fn shallow_conflict_strategies_apply_to_complete_root_values() {
+        let base = json!({"hostname": "leaf1", "mtu": 1500, "nested": {"old": true}});
+        let next = json!({"hostname": "leaf2", "added": true, "nested": {"new": true}});
+        for (strategy, expected) in [
+            (
+                SameKeyStrategy::Override,
+                json!({"hostname": "leaf2", "mtu": 1500, "added": true, "nested": {"new": true}}),
+            ),
+            (
+                SameKeyStrategy::UseExisting,
+                json!({"hostname": "leaf1", "mtu": 1500, "added": true, "nested": {"old": true}}),
+            ),
+        ] {
+            check(
+                base.clone(),
+                next.clone(),
+                MergeOptions {
+                    mode: MergeMode::Shallow,
+                    same_key_strategy: strategy,
+                    ..MergeOptions::default()
+                },
+                expected,
+            );
+        }
+        let options = MergeOptions {
+            mode: MergeMode::Shallow,
+            same_key_strategy: SameKeyStrategy::MustMatch,
+            ..MergeOptions::default()
+        };
+        let error = merge(base.clone(), [next], &NoSchema, options).unwrap_err();
+        assert!(matches!(error, MergeError::Conflict { path } if path == ["hostname"]));
+        let same = json!({"hostname": "leaf1", "added": true});
+        let expected =
+            json!({"hostname": "leaf1", "mtu": 1500, "nested": {"old": true}, "added": true});
+        check(base, same, options, expected);
+        assert!(
+            matches!(merge(json!([1]), [json!([2])], &NoSchema, options), Err(MergeError::Conflict { path }) if path.is_empty())
+        );
+    }
+
+    #[test]
+    fn collection_contributions_reach_validation_and_survive_coercion() {
+        use validation::StoreValidate as _;
+        use validation::feedback::SourceLocation;
+        let store = Store::from_json(&json!({"test": {"type": "dict", "keys": {
+            "items": {"type": "list", "max_length": 3, "items": {"type": "int"}},
+            "settings": {"type": "dict", "keys": {"required": {"type": "str", "required": true}}}
+        }}}).to_string()).unwrap();
+        let base = yaml("items: [1, 2]\nsettings: {old: 1}\n", "base");
+        let next = yaml("items: ['3', 4]\nsettings: {new: 2}\n", "next");
+        let schema = StoreSchema::new(&store, "test").unwrap();
+        let merged = merge_borrowed(&base, [&next], &schema, MergeOptions::default()).unwrap();
+        let location = |node: &Node<'_>| SourceLocation {
+            source: node.source.clone(),
+            span: node.source_span(),
+        };
+        for key in ["items", "settings"] {
+            let value = merged.get(key).unwrap();
+            assert_eq!(value.source_span(), base.get(key).unwrap().source_span());
+            assert_eq!(value.source().unwrap().as_ref(), "base");
+            assert_eq!(
+                value.contributing_locations(),
+                &[location(next.get(key).unwrap())]
+            );
+        }
+        let result = store
+            .validate_value(
+                &merged,
+                "test",
+                Some(&validation::Configuration {
+                    return_coerced_data: true,
+                    ..Default::default()
+                }),
+            )
+            .unwrap();
+        for path in ["items", "settings"] {
+            let error = result
+                .result
+                .errors
+                .iter()
+                .find(|error| error.path.to_string() == path)
+                .unwrap();
+            assert_eq!(error.source.as_deref(), Some("base"));
+            assert_eq!(error.span, base.get(path).unwrap().source_span());
+            assert_eq!(
+                error.contributing_locations,
+                [location(next.get(path).unwrap())]
+            );
+        }
+        let coerced = result.coerced.unwrap();
+        for key in ["items", "settings"] {
+            let before = merged.get(key).unwrap();
+            let after = coerced.get(key).unwrap();
+            assert!(std::ptr::eq(
+                before.contributing_locations(),
+                after.contributing_locations()
+            ));
+        }
+        let items = coerced.get("items").unwrap();
+        let scalar = items.as_sequence().unwrap().iter().nth(2).unwrap().value();
+        assert_eq!(scalar.as_i64(), Some(3));
+        assert_eq!(scalar.source().unwrap().as_ref(), "next");
+        assert_eq!(scalar.contributing_locations(), []);
+        let json = serde_json::to_value(&result.result.errors).unwrap();
+        assert_eq!(json[0]["contributing_locations"][0]["source"], "next");
+    }
+
+    #[test]
+    fn contribution_locations_accumulate_deduplicate_and_reset_on_replacement() {
+        let base = yaml("items: [1]\n", "base");
+        let next = yaml("items: [2]\n", "same-source");
+        let last = yaml("# different declaration\nitems: [3]\n", "same-source");
+        let incoming = merge_borrowed(&next, [&last], &NoSchema, MergeOptions::default()).unwrap();
+        let merged = merge(
+            MergedValue::new(&base),
+            [incoming],
+            &NoSchema,
+            MergeOptions::default(),
+        )
+        .unwrap();
+        let retained = merged.clone();
+        let again = merge(
+            merged,
+            [MergedValue::new(&next)],
+            &NoSchema,
+            MergeOptions::default(),
+        )
+        .unwrap();
+        for root in [&retained, &again] {
+            let items = root.get("items").unwrap();
+            let locations = items.contributing_locations();
+            assert_eq!(locations.len(), 2);
+            assert_eq!(locations[0].source.as_deref(), Some("same-source"));
+            assert_eq!(locations[1].source.as_deref(), Some("same-source"));
+            assert_ne!(locations[0].span, locations[1].span);
+            assert!(Arc::ptr_eq(
+                locations[0].source.as_ref().unwrap(),
+                next.source.as_ref().unwrap()
+            ));
+        }
+        for strategy in [ListMerge::Keep, ListMerge::KeepMerge] {
+            let kept = merge(
+                again.clone(),
+                [MergedValue::new(&last)],
+                &NoSchema,
+                MergeOptions {
+                    list_merge: strategy,
+                    ..MergeOptions::default()
+                },
+            )
+            .unwrap();
+            assert_eq!(
+                kept.get("items").unwrap().contributing_locations(),
+                again.get("items").unwrap().contributing_locations()
+            );
+        }
+        for options in [
+            MergeOptions {
+                list_merge: ListMerge::Replace,
+                ..MergeOptions::default()
+            },
+            MergeOptions {
+                mode: MergeMode::Shallow,
+                ..MergeOptions::default()
+            },
+        ] {
+            let replaced =
+                merge(again.clone(), [MergedValue::new(&last)], &NoSchema, options).unwrap();
+            let items = replaced.get("items").unwrap();
+            assert_eq!(items.contributing_locations(), []);
+            assert_eq!(
+                items.source_span(),
+                last.get("items").unwrap().source_span()
+            );
+        }
+        let scalar = yaml("items: replaced", "scalar");
+        let replaced = merge(
+            again,
+            [MergedValue::new(&scalar)],
+            &NoSchema,
+            MergeOptions::default(),
+        )
+        .unwrap();
+        assert_eq!(replaced.get("items").unwrap().contributing_locations(), []);
+    }
+
+    #[test]
+    fn scalar_errors_do_not_inherit_collection_contributions() {
+        use validation::StoreValidate as _;
+        let store = Store::from_json(
+            &json!({"test": {"type": "dict", "keys": {
+                "items": {"type": "list", "items": {"type": "int"}}
+            }}})
+            .to_string(),
+        )
+        .unwrap();
+        let base = yaml("items: [1]\n", "base");
+        let next = yaml("items: [invalid]\n", "next");
+        let merged = merge_borrowed(&base, [&next], &NoSchema, MergeOptions::default()).unwrap();
+        let result = store.validate_value(&merged, "test", None).unwrap();
+        assert_eq!(result.result.errors.len(), 1);
+        let error = &result.result.errors[0];
+        assert_eq!(error.source.as_deref(), Some("next"));
+        assert_eq!(error.path.to_string(), "items[1]");
+        assert_eq!(error.contributing_locations, []);
+        assert!(
+            serde_json::to_value(error)
+                .unwrap()
+                .get("contributing_locations")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn schema_navigation_borrows_original_and_generated_string_storage() {
+        use schema_data::SchemaDataValue as _;
+        let input = yaml("'leaf'", "base");
+        let original = schema_merge::DataValue::Original(&input);
+        assert_eq!(original.as_str(), Some("leaf"));
+        let value = MergedValue::new(&input).coerce_str("spine".into());
+        assert_eq!(
+            schema_merge::DataValue::Merged(&value).as_str(),
+            Some("spine")
+        );
+        let integer = yaml("12", "base");
+        assert!(
+            schema_merge::DataValue::Original(&integer)
+                .as_str()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn ignored_list_inputs_add_no_contribution_but_keyed_matches_do() {
+        let base = yaml("items: [{name: a, old: true}]\n", "base");
+        let unmatched = yaml("items: [{name: b, new: true}]\n", "unmatched");
+        let matched = yaml("items: [{name: a, new: true}]\n", "matched");
+        let store = store();
+        let schema = StoreSchema::new(&store, "test").unwrap();
+        let options = MergeOptions {
+            list_merge: ListMerge::KeepMerge,
+            ..MergeOptions::default()
+        };
+        let ignored = merge_borrowed(&base, [&unmatched], &schema, options).unwrap();
+        assert_eq!(ignored.get("items").unwrap().contributing_locations(), []);
+        let merged = merge_borrowed(&base, [&matched], &schema, options).unwrap();
+        let items = merged.get("items").unwrap();
+        assert_eq!(items.contributing_locations().len(), 1);
+        assert_eq!(
+            items.contributing_locations()[0].source.as_deref(),
+            Some("matched")
+        );
+        let item = items.as_sequence().unwrap().iter().next().unwrap().value();
+        assert_eq!(item.contributing_locations().len(), 1);
+        assert_eq!(
+            item.contributing_locations()[0].source.as_deref(),
+            Some("matched")
+        );
+
+        let identical = yaml("items: [{name: a, old: true}]\n", "identical");
+        let duplicate = merge_borrowed(
+            &base,
+            [&identical],
+            &NoSchema,
+            MergeOptions {
+                list_merge: ListMerge::AppendUnique,
+                ..MergeOptions::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(duplicate.get("items").unwrap().contributing_locations(), []);
     }
 }

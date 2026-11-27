@@ -199,6 +199,7 @@ mod tests {
         assert_eq!(
             ctx.result.errors,
             vec![Feedback {
+                contributing_locations: Vec::new(),
                 source: None,
                 path: vec![].into(),
                 span: None,
@@ -237,6 +238,7 @@ mod tests {
             ctx.result.errors,
             vec![
                 Feedback {
+                    contributing_locations: Vec::new(),
                     source: None,
                     path: vec!["0".into()].into(),
                     span: None,
@@ -247,6 +249,7 @@ mod tests {
                     .into()
                 },
                 Feedback {
+                    contributing_locations: Vec::new(),
                     source: None,
                     path: vec!["1".into()].into(),
                     span: None,
@@ -278,6 +281,7 @@ mod tests {
         assert_eq!(
             ctx.result.infos,
             vec![Feedback {
+                contributing_locations: Vec::new(),
                 source: None,
                 path: vec!["0".into()].into(),
                 span: None,
@@ -292,6 +296,7 @@ mod tests {
         assert_eq!(
             ctx.result.errors,
             vec![Feedback {
+                contributing_locations: Vec::new(),
                 source: None,
                 path: vec!["1".into()].into(),
                 span: None,
@@ -331,6 +336,7 @@ mod tests {
         assert_eq!(
             ctx.result.errors,
             vec![Feedback {
+                contributing_locations: Vec::new(),
                 source: None,
                 path: vec![].into(),
                 span: None,
@@ -368,6 +374,7 @@ mod tests {
         assert_eq!(
             ctx.result.errors,
             vec![Feedback {
+                contributing_locations: Vec::new(),
                 source: None,
                 path: vec![].into(),
                 span: None,
@@ -425,6 +432,7 @@ mod tests {
         assert_eq!(
             ctx.result.errors,
             vec![Feedback {
+                contributing_locations: Vec::new(),
                 source: None,
                 path: vec!["0".into()].into(),
                 span: None,
@@ -457,6 +465,7 @@ mod tests {
             ctx.result.errors,
             vec![
                 Feedback {
+                    contributing_locations: Vec::new(),
                     source: None,
                     path: vec!["0".into(), "foo".into()].into(),
                     span: None,
@@ -468,6 +477,7 @@ mod tests {
                     .into()
                 },
                 Feedback {
+                    contributing_locations: Vec::new(),
                     source: None,
                     path: vec!["2".into(), "foo".into()].into(),
                     span: None,
@@ -546,6 +556,7 @@ mod tests {
             ctx.result.errors,
             vec![
                 Feedback {
+                    contributing_locations: Vec::new(),
                     source: None,
                     path: vec!["0".into(), "aliases".into(), "0".into(), "name".into()].into(),
                     span: None,
@@ -558,6 +569,7 @@ mod tests {
                     .into()
                 },
                 Feedback {
+                    contributing_locations: Vec::new(),
                     source: None,
                     path: vec!["1".into(), "aliases".into(), "0".into(), "name".into()].into(),
                     span: None,

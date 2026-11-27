@@ -20,7 +20,6 @@ mod yaml;
 
 use std::collections::HashMap;
 use std::collections::HashSet;
-use std::fmt;
 use std::hash::Hash;
 
 use avdschema::SchemaPathError;
@@ -65,6 +64,9 @@ pub trait MergeableValue: Clone + Sized {
     fn is_mapping(&self) -> bool;
     /// Whether this value is a sequence, without expanding it.
     fn is_sequence(&self) -> bool;
+    /// Record additional collection declarations used by a partial merge.
+    /// Backends without contribution tracking may leave this as a no-op.
+    fn add_contributing_locations(&mut self, _other: &Self) {}
     /// Identity of a string-keyed child; explicit null differs from a missing key.
     fn child_identity(&self, key: &str) -> Option<Self::Identity>;
     /// Identity used for primary-key indexes and unique-list strategies.
@@ -118,8 +120,10 @@ pub enum MergeMode {
 pub enum ListMerge {
     /// Replace the whole list, bypassing schema primary keys.
     Replace,
-    /// Keep the base list, but still merge items with matching schema primary keys.
+    /// Keep the complete base list without consulting schema primary keys.
     Keep,
+    /// Merge matching schema primary keys, retaining base membership and order.
+    KeepMerge,
     /// Append unmatched incoming items.
     #[default]
     Append,
@@ -210,9 +214,10 @@ impl MergeSchema for StoreSchema<'_> {
 }
 
 /// A merge failure with the data path at which it occurred.
-#[derive(Debug)]
+#[derive(Debug, derive_more::Display)]
 pub enum MergeError {
     /// A schema path lookup failed.
+    #[display("Unable to resolve schema at {}: {source}", path.join("."))]
     Schema {
         /// Data path being resolved.
         path: Vec<String>,
@@ -220,27 +225,11 @@ pub enum MergeError {
         source: SchemaPathError,
     },
     /// The `must_match` strategy encountered different values.
+    #[display("Values of {} do not match", path.join("."))]
     Conflict {
         /// Data path at which values differ.
         path: Vec<String>,
     },
-}
-
-impl fmt::Display for MergeError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Schema { path, source } => {
-                write!(
-                    f,
-                    "Unable to resolve schema at {}: {source}",
-                    path.join(".")
-                )
-            }
-            Self::Conflict { path } => {
-                write!(f, "Values of {} do not match", path.join("."))
-            }
-        }
-    }
 }
 
 impl std::error::Error for MergeError {}
@@ -252,8 +241,8 @@ impl std::error::Error for MergeError {}
 /// Explicit null primary keys match; missing primary keys use the ordinary list strategy.
 /// Duplicate YAML mapping keys are retained rather than silently repaired by merging.
 ///
-/// A shallow merge updates root mapping keys regardless of the deep-merge conflict strategy.
-/// Non-mapping roots are replaced in shallow mode. Unlike Python's in-place wrapper, this API
+/// A shallow merge applies the conflict strategy to complete overlapping root values.
+/// Non-mapping roots follow the same conflict strategy. Unlike Python's in-place wrapper, this API
 /// returns the resulting root, including replacements and root lists.
 pub fn merge<V, I, S>(base: V, nexts: I, schema: &S, options: MergeOptions) -> Result<V, MergeError>
 where
@@ -301,25 +290,30 @@ fn merge_value<V: MergeableValue, S: MergeSchema>(
     root: bool,
 ) -> Result<(), MergeError> {
     if options.mode == MergeMode::Shallow && !root {
-        *base = next;
-        return Ok(());
+        return merge_conflict(base, next, options.same_key_strategy, path);
     }
     if base.is_mapping() && next.is_mapping() {
         if let (Some(base_entries), Some(next_entries)) = (base.take_mapping(), next.take_mapping())
         {
+            let contributed = !next_entries.is_empty();
             let entries = merge_mapping::<V, S>(base_entries, next_entries, schema, options, path)?;
             base.set_mapping(entries);
+            if contributed {
+                base.add_contributing_locations(&next);
+            }
         }
         return Ok(());
     }
     if options.mode == MergeMode::Shallow {
-        *base = next;
-        return Ok(());
+        return merge_conflict(base, next, options.same_key_strategy, path);
     }
     if base.is_sequence() && next.is_sequence() {
         // Replacements must not expand or inspect either list.
         if options.list_merge == ListMerge::Replace {
             *base = next;
+            return Ok(());
+        }
+        if options.list_merge == ListMerge::Keep {
             return Ok(());
         }
         let primary_key = schema
@@ -328,21 +322,35 @@ fn merge_value<V: MergeableValue, S: MergeSchema>(
                 path: path.clone(),
                 source,
             })?;
-        if options.list_merge == ListMerge::Keep && primary_key.is_none() {
+        if options.list_merge == ListMerge::KeepMerge && primary_key.is_none() {
             return Ok(());
         }
         if let (Some(base_items), Some(next_items)) = (base.take_sequence(), next.take_sequence()) {
-            let items =
+            let (items, contributed) =
                 merge_sequence::<V, S>(base_items, next_items, primary_key, schema, options, path)?;
             base.set_sequence(items);
+            if contributed {
+                base.add_contributing_locations(&next);
+            }
         }
         return Ok(());
     }
+    merge_conflict(base, next, options.same_key_strategy, path)
+}
+
+fn merge_conflict<V: MergeableValue>(
+    base: &mut V,
+    next: V,
+    strategy: SameKeyStrategy,
+    path: &[String],
+) -> Result<(), MergeError> {
     // Full replacements transfer the entire node, including its source and span.
-    match options.same_key_strategy {
+    match strategy {
         SameKeyStrategy::Override => *base = next,
         SameKeyStrategy::MustMatch if base.identity() != next.identity() => {
-            return Err(MergeError::Conflict { path: path.clone() });
+            return Err(MergeError::Conflict {
+                path: path.to_vec(),
+            });
         }
         SameKeyStrategy::UseExisting | SameKeyStrategy::MustMatch => (),
     }
@@ -406,7 +414,8 @@ fn merge_sequence<V: MergeableValue, S: MergeSchema>(
     schema: Option<&S>,
     options: MergeOptions,
     path: &mut Vec<String>,
-) -> Result<Vec<V::Item>, MergeError> {
+) -> Result<(Vec<V::Item>, bool), MergeError> {
+    let mut contributed = false;
     let mut unmatched = Vec::with_capacity(next.len());
     if let Some(primary_key) = primary_key {
         let mut indexes: HashMap<_, Vec<usize>> = HashMap::new();
@@ -421,6 +430,7 @@ fn merge_sequence<V: MergeableValue, S: MergeSchema>(
                 .child_identity(primary_key)
                 .and_then(|identity| indexes.get(&identity));
             if let Some(matches) = matches {
+                contributed = true;
                 // Multiple matches indicate invalid duplicate base keys. Keep all entries so
                 // validation can report them, rather than silently collapsing them.
                 let mut incoming = Some(item.into_value());
@@ -453,8 +463,10 @@ fn merge_sequence<V: MergeableValue, S: MergeSchema>(
     } else {
         unmatched = next;
     }
+    let original_len = base.len();
+    let has_unmatched = !unmatched.is_empty();
     match options.list_merge {
-        ListMerge::Keep => (),
+        ListMerge::Keep | ListMerge::KeepMerge => (),
         ListMerge::Append => base.extend(unmatched),
         ListMerge::Prepend => {
             unmatched.extend(base);
@@ -482,5 +494,10 @@ fn merge_sequence<V: MergeableValue, S: MergeSchema>(
         }
         ListMerge::Replace => base = unmatched,
     }
-    Ok(base)
+    contributed |= match options.list_merge {
+        ListMerge::Keep | ListMerge::KeepMerge => false,
+        ListMerge::AppendUnique => base.len() != original_len,
+        _ => has_unmatched,
+    };
+    Ok((base, contributed))
 }

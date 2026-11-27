@@ -8,6 +8,7 @@ license.workspace = true
 workspace = true
 
 [dependencies]
+derive_more = { workspace = true, features = ["display"] }
 avdschema = { path = "../avdschema", default-features = false }
 schema-data = { path = "../schema-data" }
 serde_json = { workspace = true, features = ["arbitrary_precision", "preserve_order"] }

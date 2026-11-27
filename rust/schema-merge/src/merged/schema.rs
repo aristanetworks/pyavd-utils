@@ -91,14 +91,9 @@ impl<'a, 'input: 'a, V: MergeBackend + 'input> SchemaDataValue<'a> for DataValue
         }
     }
     fn as_str(self) -> Option<&'a str> {
-        let string = match self {
-            Self::Original(value) if value.is_str() => value.as_str(),
-            Self::Merged(value) if value.is_str() => value.as_str(),
-            Self::Original(_) | Self::Merged(_) => None,
-        }?;
-        match string {
-            Cow::Borrowed(value) => Some(value),
-            Cow::Owned(_) => None,
+        match self {
+            Self::Original(value) => value.borrowed_str(),
+            Self::Merged(value) => value.original().borrowed_str(),
         }
     }
 }

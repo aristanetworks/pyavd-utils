@@ -26,6 +26,12 @@ impl MergeBackend for Value {
     type Elements<'a> =
         std::iter::Map<std::slice::Iter<'a, Self>, fn(&'a Self) -> (&'a Self, &'a Self)>;
 
+    fn borrowed_str(&self) -> Option<&str> {
+        match self {
+            Self::String(value) => Some(value),
+            _ => None,
+        }
+    }
     fn entries(&self) -> Self::Entries<'_> {
         self.as_object()
             .into_iter()
@@ -94,6 +100,12 @@ impl<'input> MergeBackend for Node<'input> {
     where
         Self: 'a;
 
+    fn borrowed_str(&self) -> Option<&str> {
+        match &self.value {
+            YamlValue::String(value) => Some(value),
+            _ => None,
+        }
+    }
     fn entries(&self) -> Self::Entries<'_> {
         let pairs = match &self.value {
             YamlValue::Mapping(pairs) => pairs.as_slice(),

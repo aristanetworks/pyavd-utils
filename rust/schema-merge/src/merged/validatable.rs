@@ -12,6 +12,7 @@ use validation::ValidatableMappingPair;
 use validation::ValidatableSequence;
 use validation::ValidatableSequenceItem;
 use validation::ValidatableValue;
+use validation::feedback::SourceLocation;
 use validation::feedback::SourceSpan;
 use validation::feedback::Type;
 use validation::feedback::Value as FeedbackValue;
@@ -75,6 +76,23 @@ impl<'input, V: MergeBackend> ValidatableValue for MergedValue<'input, V> {
     }
     fn source_span(&self) -> Option<SourceSpan> {
         self.original().source_span()
+    }
+
+    fn contributing_locations(&self) -> &[SourceLocation] {
+        match &self.inner {
+            Repr::Mapping(data) => data
+                .contributing_locations
+                .as_deref()
+                .map_or(&[], Vec::as_slice),
+            Repr::Sequence(data) => data
+                .contributing_locations
+                .as_deref()
+                .map_or(&[], Vec::as_slice),
+            Repr::Borrowed(value) if value.is_mapping() || value.is_sequence() => {
+                value.contributing_locations()
+            }
+            _ => &[],
+        }
     }
 
     fn as_mapping(&self) -> Option<Self::Mapping<'_>> {
@@ -157,6 +175,7 @@ impl<'input, V: MergeBackend> ValidatableValue for MergedValue<'input, V> {
         Self {
             inner: Repr::Sequence(Arc::new(SequenceData {
                 original: self.sequence_origin(),
+                contributing_locations: self.shared_contributing_locations(),
                 items,
             })),
         }
@@ -165,6 +184,7 @@ impl<'input, V: MergeBackend> ValidatableValue for MergedValue<'input, V> {
         Self {
             inner: Repr::Mapping(Arc::new(MappingData {
                 original: self.mapping_origin(),
+                contributing_locations: self.shared_contributing_locations(),
                 entries: items,
             })),
         }

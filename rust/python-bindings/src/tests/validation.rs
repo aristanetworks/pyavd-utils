@@ -13,6 +13,7 @@ use crate::validation::first_input_diagnostic_as_pyerr;
 fn validation_result_from_validation_result_maps_violation() {
     let result = ::validation::ValidationResult {
         errors: vec![::validation::feedback::Feedback {
+            contributing_locations: Vec::new(),
             source: Some("fixture-a".into()),
             path: vec!["foo".into()].into(),
             span: Some(::validation::feedback::SourceSpan { start: 3, end: 9 }),
@@ -40,6 +41,7 @@ fn validation_result_from_validation_result_maps_removal_to_violation_and_deprec
     let result = ::validation::ValidationResult {
         errors: vec![
             ::validation::feedback::Feedback {
+                contributing_locations: Vec::new(),
                 source: Some("fixture-a".into()),
                 path: vec!["old_key".into()].into(),
                 span: Some(::validation::feedback::SourceSpan { start: 0, end: 7 }),
@@ -55,6 +57,7 @@ fn validation_result_from_validation_result_maps_removal_to_violation_and_deprec
                 .into(),
             },
             ::validation::feedback::Feedback {
+                contributing_locations: Vec::new(),
                 source: None,
                 path: vec!["old_key_without_metadata".into()].into(),
                 span: None,
@@ -71,6 +74,7 @@ fn validation_result_from_validation_result_maps_removal_to_violation_and_deprec
             },
         ],
         warnings: vec![::validation::feedback::Feedback {
+            contributing_locations: Vec::new(),
             source: Some("fixture-b".into()),
             path: vec!["deprecated_key".into()].into(),
             span: Some(::validation::feedback::SourceSpan { start: 8, end: 22 }),
@@ -121,6 +125,7 @@ fn validation_result_from_validation_result_maps_removal_to_violation_and_deprec
 fn ignored_key_response_preserves_source_and_span() {
     let result = ::validation::ValidationResult {
         warnings: vec![::validation::feedback::Feedback {
+            contributing_locations: Vec::new(),
             source: Some("fixture-a".into()),
             path: vec!["ignored".into()].into(),
             span: Some(::validation::feedback::SourceSpan { start: 0, end: 7 }),
@@ -140,6 +145,7 @@ fn validation_result_from_validation_result_internal_error_returns_pyerr() {
     setup();
     let result = ::validation::ValidationResult {
         errors: vec![::validation::feedback::Feedback {
+            contributing_locations: Vec::new(),
             source: None,
             path: vec![].into(),
             span: None,
