@@ -36,6 +36,7 @@ use crate::any::SourceLayer;
 use crate::any::SourceSchema;
 use crate::any::SourceType;
 use crate::base::Deprecation;
+use crate::resolve::resolve_ref::resolve_ref;
 use crate::source_layers::expand_layers;
 use crate::str::Format;
 
@@ -46,7 +47,7 @@ pub(crate) const ARCHIVE_MAGIC: &[u8; 8] = b"AVDSCHM\0";
 /// Increment this whenever a previously generated archive cannot be read with exactly the same
 /// semantics. The version is deliberately independent of the crate version; archives are not
 /// otherwise promised to be portable between arbitrary pyavd-utils releases.
-pub(crate) const ARCHIVE_FORMAT_VERSION: u32 = 1;
+pub(crate) const ARCHIVE_FORMAT_VERSION: u32 = 2;
 /// Bytes reserved for magic, version, and future header fields before the rkyv root.
 pub(crate) const ARCHIVE_HEADER_LENGTH: usize = 16;
 
@@ -196,6 +197,17 @@ pub struct ListSchema {
     pub allow_duplicate_primary_key: bool,
 }
 
+#[derive(Archive, Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Hash)]
+#[rkyv(derive(Debug))]
+pub struct PrefixKeySchema {
+    pub prefixes_key: Option<String>,
+    pub prefixes: Option<Vec<String>>,
+    pub default_prefixes: Vec<String>,
+    pub include_suffix_in_data: bool,
+    pub schema: SchemaId,
+    pub relaxed_validation: bool,
+}
+
 #[derive(Archive, Serialize, Deserialize, Clone, Debug)]
 #[rkyv(derive(Debug))]
 pub struct DictSchema {
@@ -203,6 +215,7 @@ pub struct DictSchema {
     pub keys: IndexMap<String, SchemaId>,
     pub dynamic_keys: IndexMap<String, SchemaId>,
     pub default_dynamic_keys: IndexMap<String, Vec<String>>,
+    pub prefix_keys: Vec<PrefixKeySchema>,
     pub allow_other_keys: bool,
     pub begin_relaxed_validation: bool,
 }
@@ -216,6 +229,7 @@ impl PartialEq for DictSchema {
                 .default_dynamic_keys
                 .iter()
                 .eq(other.default_dynamic_keys.iter())
+            && self.prefix_keys == other.prefix_keys
             && self.allow_other_keys == other.allow_other_keys
             && self.begin_relaxed_validation == other.begin_relaxed_validation
     }
@@ -231,6 +245,7 @@ impl Hash for DictSchema {
         self.default_dynamic_keys
             .iter()
             .for_each(|entry| entry.hash(state));
+        self.prefix_keys.hash(state);
         self.allow_other_keys.hash(state);
         self.begin_relaxed_validation.hash(state);
     }
@@ -341,6 +356,15 @@ fn write_atomically(destination: &Path, bytes: &[u8]) -> std::io::Result<()> {
 /// A diagnostic describing an invalid schema encountered during compilation.
 #[derive(Debug)]
 pub enum SchemaDiagnostic {
+    /// Invalid configuration for one prefix-based root-key declaration.
+    InvalidPrefixKey {
+        /// Dictionary containing the declaration.
+        schema_path: SchemaPath,
+        /// Index in the `prefix_keys` list.
+        index: usize,
+        /// Description of the invalid configuration.
+        reason: String,
+    },
     /// A schema reference could not be resolved.
     Reference {
         /// Schema path being compiled.
@@ -383,6 +407,14 @@ pub enum SchemaDiagnostic {
 impl std::fmt::Display for SchemaDiagnostic {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::InvalidPrefixKey {
+                schema_path,
+                index,
+                reason,
+            } => write!(
+                f,
+                "Invalid prefix_keys/{index} while compiling '{schema_path}': {reason}"
+            ),
             Self::Reference {
                 schema_path,
                 reference,
@@ -745,6 +777,23 @@ impl<'a> Compiler<'a> {
             schema_path,
         )?;
         let default_dynamic_keys = default_dynamic_keys(&dynamic_keys, self, layers, schema_path)?;
+        let prefix_keys = layers
+            .iter()
+            .find_map(|layer| match layer {
+                SourceLayer::Root(root) => root.prefix_keys.as_ref(),
+                SourceLayer::Schema(_) => None,
+            })
+            .map(|configs| {
+                configs
+                    .iter()
+                    .enumerate()
+                    .map(|(index, config)| {
+                        self.compile_prefix_key(config, layers, schema_path, index)
+                    })
+                    .collect::<Result<Vec<_>, CompileError>>()
+            })
+            .transpose()?
+            .unwrap_or_default();
         let begin_relaxed_validation = declared.first().is_some_and(|layer| {
             layer.schema_ref().is_some() && dict_relaxed_validation(*layer).unwrap_or_default()
         });
@@ -753,6 +802,7 @@ impl<'a> Compiler<'a> {
             keys,
             dynamic_keys,
             default_dynamic_keys,
+            prefix_keys,
             allow_other_keys: layers
                 .iter()
                 .find_map(|layer| dict_allow_other_keys(*layer))
@@ -789,6 +839,76 @@ impl<'a> Compiler<'a> {
                     .map(|id| (name.to_owned(), id))
             })
             .collect()
+    }
+
+    fn compile_prefix_key(
+        &mut self,
+        config: &'a crate::dict::SourcePrefixKey,
+        layers: &[SourceLayer<'a>],
+        schema_path: &SchemaPath,
+        index: usize,
+    ) -> Result<PrefixKeySchema, CompileError> {
+        let invalid = |reason: String| SchemaDiagnostic::InvalidPrefixKey {
+            schema_path: schema_path.clone(),
+            index,
+            reason,
+        };
+        if config.prefixes.is_none() && config.prefixes_key.is_none() {
+            return Err(
+                invalid("either prefixes or prefixes_key must be configured".to_owned()).into(),
+            );
+        }
+        let referenced = resolve_ref(&config.schema_ref, self.source)
+            .map_err(|error| invalid(error.to_string()))?;
+        if config.include_suffix_in_data && referenced.schema_type() != SourceType::Dict {
+            return Err(
+                invalid("include_suffix_in_data requires a dictionary target".to_owned()).into(),
+            );
+        }
+        let schema = self.compile_layers(&[referenced], schema_path)?;
+        let default_prefixes = if config.prefixes.is_none() {
+            config
+                .prefixes_key
+                .as_ref()
+                .map(|key| {
+                    let child_layers = layers
+                        .iter()
+                        .filter_map(|layer| dict_keys(*layer)?.get(key))
+                        .map(SourceLayer::schema)
+                        .collect::<Vec<_>>();
+                    if child_layers.is_empty() {
+                        return Ok(Vec::new());
+                    }
+                    let child_path = schema_path.child(SchemaPathElement::Key { key: key.clone() });
+                    let expanded = expand_layers(self.source, &child_layers, &child_path)?;
+                    Ok::<_, CompileError>(
+                        expanded
+                            .iter()
+                            .find_map(|layer| schema_default(*layer))
+                            .and_then(|value| {
+                                value.as_array().map(|items| {
+                                    items
+                                        .iter()
+                                        .filter_map(|item| item.as_str().map(ToOwned::to_owned))
+                                        .collect()
+                                })
+                            })
+                            .unwrap_or_default(),
+                    )
+                })
+                .transpose()?
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+        Ok(PrefixKeySchema {
+            prefixes_key: config.prefixes_key.as_ref().map(ToString::to_string),
+            prefixes: config.prefixes.clone(),
+            default_prefixes,
+            include_suffix_in_data: config.include_suffix_in_data,
+            schema,
+            relaxed_validation: config.relaxed_validation,
+        })
     }
 
     fn intern(&mut self, node: NodeKey) -> Result<SchemaId, CompileError> {
@@ -1285,8 +1405,12 @@ mod tests {
                     "keys": {
                         "first": {"type": "str", "default": "value"},
                         "second": {"type": "str", "default": "value"}
-                    }
-                }
+                    },
+                    "prefix_keys": [{"prefixes": ["custom_"], "include_suffix_in_data": false, "schema_ref": "target#/keys/value"}]
+                },
+                "equivalent": {"type": "dict", "$ref": "test#"},
+                "different": {"type": "dict", "$ref": "test#", "prefix_keys": [{"prefixes": ["custom_"], "include_suffix_in_data": false, "relaxed_validation": true, "schema_ref": "target#/keys/value"}]},
+                "target": {"type": "dict", "keys": {"value": {"type": "str", "default": "value"}}}
             }"#,
         )
         .expect("equivalent source schemas should deserialize");
@@ -1301,7 +1425,10 @@ mod tests {
             .get(usize::try_from(*root_index).expect("root index should fit usize"))
             .expect("root dictionary should exist");
 
+        assert_eq!(compiled.roots["test"], compiled.roots["equivalent"]);
+        assert_ne!(compiled.roots["test"], compiled.roots["different"]);
         assert_eq!(root.keys.get("first"), root.keys.get("second"));
+        assert_eq!(root.prefix_keys[0].schema, root.keys["first"]);
         assert_eq!(compiled.strings.len(), 1);
     }
 
@@ -1379,25 +1506,35 @@ mod tests {
             "Schema reference 'a#' forms a cycle while compiling 'a#'"
         );
 
-        let structural_cycle = StoreSource::from_json(
-            r#"{"root":{"type":"dict","keys":{"child":{"type":"dict","$ref":"root#"}}}}"#,
-        )
-        .unwrap();
-        let CompileError::InvalidSchema(structural_cycle_diagnostics) =
-            CompiledStore::compile(&structural_cycle).unwrap_err()
-        else {
-            panic!("structural cycle should return schema diagnostics")
-        };
-        let structural_cycle_diagnostic = structural_cycle_diagnostics.iter().next().unwrap();
-        assert!(matches!(
-            structural_cycle_diagnostic,
-            SchemaDiagnostic::StructuralCycle { schema_path }
-                if schema_path == &SchemaPath::root("root".parse().unwrap()).child(SchemaPathElement::Key { key: "child".parse().unwrap() })
-        ));
-        assert_eq!(
-            structural_cycle_diagnostic.to_string(),
-            "Schema contains a structural cycle while compiling 'root#/keys/child'"
-        );
+        for (json, expected_path) in [
+            (
+                r#"{"root":{"type":"dict","keys":{"child":{"type":"dict","$ref":"root#"}}}}"#,
+                SchemaPath::root("root".parse().unwrap()).child(SchemaPathElement::Key {
+                    key: "child".parse().unwrap(),
+                }),
+            ),
+            (
+                r#"{"root":{"type":"dict","prefix_keys":[{"prefixes":["x_"],"include_suffix_in_data":false,"schema_ref":"root#"}]}}"#,
+                SchemaPath::root("root".parse().unwrap()),
+            ),
+        ] {
+            let structural_cycle = StoreSource::from_json(json).unwrap();
+            let CompileError::InvalidSchema(structural_cycle_diagnostics) =
+                CompiledStore::compile(&structural_cycle).unwrap_err()
+            else {
+                panic!("structural cycle should return schema diagnostics")
+            };
+            let structural_cycle_diagnostic = structural_cycle_diagnostics.iter().next().unwrap();
+            assert!(matches!(
+                structural_cycle_diagnostic,
+                SchemaDiagnostic::StructuralCycle { schema_path }
+                    if schema_path == &expected_path
+            ));
+            assert_eq!(
+                structural_cycle_diagnostic.to_string(),
+                format!("Schema contains a structural cycle while compiling '{expected_path}'")
+            );
+        }
     }
 
     #[test]
@@ -1616,5 +1753,36 @@ mod tests {
                 | std::io::ErrorKind::AlreadyExists
         ));
         assert!(!temporary_exists);
+    }
+
+    #[test]
+    fn invalid_prefix_key_configurations_report_the_declaration_index() {
+        for (config, reason) in [
+            (
+                serde_json::json!({"include_suffix_in_data": false, "schema_ref": "test#"}),
+                "either prefixes or prefixes_key",
+            ),
+            (
+                serde_json::json!({"prefixes": ["x_"], "include_suffix_in_data": false, "schema_ref": "missing#"}),
+                "missing",
+            ),
+            (
+                serde_json::json!({"prefixes": ["x_"], "include_suffix_in_data": true, "schema_ref": "test#/keys/number"}),
+                "dictionary target",
+            ),
+        ] {
+            let source = StoreSource::from_json(
+                &serde_json::json!({"test": {
+                    "type": "dict", "keys": {"number": {"type": "int"}}, "prefix_keys": [config]
+                }})
+                .to_string(),
+            )
+            .unwrap();
+            let error = CompiledStore::compile(&source).unwrap_err().to_string();
+            assert!(
+                error.contains("prefix_keys/0") && error.contains(reason),
+                "{error}"
+            );
+        }
     }
 }

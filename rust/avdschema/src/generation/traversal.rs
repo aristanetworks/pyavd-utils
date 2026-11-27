@@ -420,6 +420,7 @@ fn is_pure_reference(layer: &SourceLayer<'_>) -> bool {
             base_is_pure(&schema.base)
                 && schema.keys.is_none()
                 && schema.dynamic_keys.is_none()
+                && schema.prefix_keys.is_none()
                 && schema.allow_other_keys.is_none()
                 && schema.schema_defs.is_none()
                 && schema.schema_id.is_none()
@@ -530,12 +531,16 @@ mod tests {
                     "type": "dict",
                     "keys": {"value": {"type": "str"}}
                 },
-                "model": {
+                "base": {
                     "type": "dict",
                     "keys": {
                         "first": {"type": "dict", "$ref": "shared#"},
                         "second": {"type": "dict", "$ref": "shared#"}
                     }
+                },
+                "model": {
+                    "type": "dict", "$ref": "base#",
+                    "prefix_keys": [{"prefixes": ["custom_"], "include_suffix_in_data": false, "schema_ref": "shared#/keys/value"}]
                 }
             }"#,
         )

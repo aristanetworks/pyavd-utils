@@ -2,6 +2,7 @@
 # Use of this source code is governed by the Apache License 2.0
 # that can be found in the LICENSE file.
 from json import dumps
+from typing import Literal
 
 import pytest
 
@@ -9,13 +10,26 @@ from pyavd_utils.validation import validate_json, validate_json_with_adhoc_schem
 
 
 @pytest.mark.usefixtures("init_store")
-def test_validate_json() -> None:
+@pytest.mark.parametrize(
+    ("schema_name", "key", "prefixes"),
+    [
+        ("eos_config", "ethernet_interfaces", None),
+        ("avd_design", "custom_structured_configuration_ethernet_interfaces", None),
+        ("avd_design", "custom_structured_configuration_ethernet_interfaces", ["custom_", "custom_structured_configuration_"]),
+    ],
+)
+def test_validate_json(schema_name: Literal["eos_config", "avd_design"], key: str, prefixes: list[str] | None) -> None:
     expected_violations: list[tuple[list[str], str]] = [
-        (["ethernet_interfaces", "2"], "Missing the required key 'name'."),
-        (["ethernet_interfaces", "0", "name"], "The value is not unique among similar items. Conflicting item: ethernet_interfaces[1].name"),
-        (["ethernet_interfaces", "1", "name"], "The value is not unique among similar items. Conflicting item: ethernet_interfaces[0].name"),
+        ([key, "2"], "Missing the required key 'name'."),
+        ([key, "0", "name"], f"The value is not unique among similar items. Conflicting item: {key}[1].name"),
+        ([key, "1", "name"], f"The value is not unique among similar items. Conflicting item: {key}[0].name"),
     ]
-    validation_result = validate_json('{"ethernet_interfaces": [{"name": "Ethernet1", "description": 12345}, {"name": "Ethernet1"}, {}]}', "eos_config")
+    data: dict[str, object] = {key: [{"name": "Ethernet1", "description": 12345}, {"name": "Ethernet1"}, {}]}
+    if schema_name == "avd_design":
+        data["fabric_name"] = "TEST"
+    if prefixes is not None:
+        data["custom_structured_configuration_prefix"] = prefixes
+    validation_result = validate_json(dumps(data), schema_name)
 
     assert len(validation_result.violations) == len(expected_violations)
     for violation in validation_result.violations:

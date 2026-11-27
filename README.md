@@ -46,6 +46,46 @@ We welcome contributions to the `pyavd-utils` project. As this is a performance-
 
 Please refer to the main [AVD GitHub repository](https://github.com/aristanetworks/avd) for general contribution guidelines.
 
+### Prefix-based schema keys
+
+Named schema roots can declare `prefix_keys` so validation and schema navigation recognize
+keys such as `custom_structured_configuration_router_bgp`:
+
+```yaml
+type: dict
+keys:
+  custom_structured_configuration_prefix:
+    type: list
+    items:
+      type: str
+    default: ["custom_structured_configuration_"]
+prefix_keys:
+  - prefixes_key: custom_structured_configuration_prefix
+    include_suffix_in_data: true
+    relaxed_validation: true
+    schema_ref: "eos_config#"
+```
+
+With `include_suffix_in_data: true`, the suffix selects a static key in the referenced
+dictionary, so the example validates the value against `eos_config#/keys/router_bgp`.
+With `false`, the complete value is validated against `schema_ref` directly.
+An empty suffix is treated as an undeclared target key when suffix selection is enabled.
+
+Use `prefixes: ["custom_"]` for static prefixes. Static prefixes take precedence over
+`prefixes_key`; otherwise an explicitly supplied input value overrides the sibling field's
+schema default, including an empty list. At least one prefix source is required.
+Static keys take precedence over dynamic keys, which take precedence over prefix keys.
+All matching prefixes are considered until a declared target key is found, in declaration
+order. An undeclared suffix follows the target dictionary's `allow_other_keys` setting.
+
+`relaxed_validation` defaults to false. Enable it for configuration patches merged into
+existing data: it suppresses required-field checks for the matched value and its descendants,
+while type checks and list primary-key validation still apply. Coerced output retains the
+original prefixed key, and diagnostics point to that key in the input.
+
+AVD must add the declaration to its schema sources and regenerate its metaschema and compiled
+archives to enable this behavior. Compiled archives from before this feature must be rebuilt.
+
 ### Merge queue
 
 Once the merge queue is enabled for `main`, maintainers can enqueue a pull request after its required reviews and checks pass.

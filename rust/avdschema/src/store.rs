@@ -253,6 +253,9 @@ fn validate_integrity(store: &ArchivedCompiledStore) -> Result<(), StoreError> {
         }
     }
     for schema in store.dicts.iter() {
+        for config in schema.prefix_keys.iter() {
+            validate_schema_id(store, config.schema)?;
+        }
         for id in schema.keys.values().chain(schema.dynamic_keys.values()) {
             validate_schema_id(store, *id)?;
         }
@@ -333,6 +336,19 @@ mod tests {
         .unwrap();
         assert!(matches!(
             Store::from_bytes(ArchiveBytes::Owned(invalid)),
+            Err(StoreError::InvalidArchive(_))
+        ));
+
+        let source = StoreSource::from_json(r#"{"test":{"type":"dict","prefix_keys":[{"prefixes":["x_"],"include_suffix_in_data":false,"schema_ref":"target#/keys/number"}]},"target":{"type":"dict","keys":{"number":{"type":"int"}}}}"#).unwrap();
+        let mut compiled = CompiledStore::compile(&source).unwrap();
+        let prefix_dict = compiled
+            .dicts
+            .iter_mut()
+            .find(|dict| !dict.prefix_keys.is_empty())
+            .unwrap();
+        prefix_dict.prefix_keys[0].schema = SchemaId::Int(u32::MAX);
+        assert!(matches!(
+            Store::from_bytes(ArchiveBytes::Owned(compiled.to_bytes().unwrap())),
             Err(StoreError::InvalidArchive(_))
         ));
     }
