@@ -123,43 +123,57 @@ mod tests {
 
         let json_file_path = get_tmp_file("test_dump_avd_store_resolved.json");
         let json_result = store.to_file(Some(&json_file_path));
-        assert!(json_result.is_ok());
+        assert!(json_result.is_ok(), "{json_file_path:?}: {json_result:?}");
 
         // Now dump as compressed file to see the size difference
         let gzip_file_path = get_tmp_file("test_dump_avd_store_resolved.gz");
         let gzip_result = store.to_file(Some(&gzip_file_path));
-        assert!(gzip_result.is_ok());
+        assert!(gzip_result.is_ok(), "{gzip_file_path:?}: {gzip_result:?}");
 
         #[cfg(feature = "xz2")]
         {
             let xz_file_path = get_tmp_file("test_dump_avd_store_resolved.xz2");
             let xz_result = store.to_file(Some(&xz_file_path));
-            assert!(xz_result.is_ok());
+            assert!(xz_result.is_ok(), "{xz_file_path:?}: {xz_result:?}");
         }
     }
 
     #[test]
     #[cfg(feature = "dump_load_files")]
     fn load_avd_store() {
-        dump_avd_store();
         let store = get_avd_store();
 
-        // Now load the previously dumped files and compare
-        let json_file_path = get_tmp_file("test_dump_avd_store_resolved.json");
+        // Write this test's input files, then load and compare them.
+        let json_file_path = get_tmp_file("test_load_avd_store_resolved.json");
+        let json_write_result = store.to_file(Some(&json_file_path));
+        assert!(
+            json_write_result.is_ok(),
+            "{json_file_path:?}: {json_write_result:?}"
+        );
         let json_result = StoreSource::from_file(Some(&json_file_path));
-        assert!(json_result.is_ok());
+        assert!(json_result.is_ok(), "{json_file_path:?}: {json_result:?}");
         assert_eq!(json_result.unwrap(), *store);
 
-        let gzip_file_path = get_tmp_file("test_dump_avd_store_resolved.gz");
+        let gzip_file_path = get_tmp_file("test_load_avd_store_resolved.gz");
+        let gzip_write_result = store.to_file(Some(&gzip_file_path));
+        assert!(
+            gzip_write_result.is_ok(),
+            "{gzip_file_path:?}: {gzip_write_result:?}"
+        );
         let gzip_result = StoreSource::from_file(Some(&gzip_file_path));
-        assert!(gzip_result.is_ok());
+        assert!(gzip_result.is_ok(), "{gzip_file_path:?}: {gzip_result:?}");
         assert_eq!(gzip_result.unwrap(), *store);
 
         #[cfg(feature = "xz2")]
         {
-            let xz_file_path = get_tmp_file("test_dump_avd_store_resolved.xz2");
+            let xz_file_path = get_tmp_file("test_load_avd_store_resolved.xz2");
+            let xz_write_result = store.to_file(Some(&xz_file_path));
+            assert!(
+                xz_write_result.is_ok(),
+                "{xz_file_path:?}: {xz_write_result:?}"
+            );
             let xz_result = StoreSource::from_file(Some(&xz_file_path));
-            assert!(xz_result.is_ok());
+            assert!(xz_result.is_ok(), "{xz_file_path:?}: {xz_result:?}");
             assert_eq!(xz_result.unwrap(), *store);
         }
     }

@@ -135,6 +135,7 @@ pub enum LoadError {
 #[cfg(all(test, feature = "dump_load_files"))]
 mod tests {
     use super::Load as _;
+    use crate::Dump as _;
     use crate::StoreSource;
     use crate::any::SourceSchema;
     use crate::utils::test_utils::get_test_dict_schema;
@@ -143,11 +144,12 @@ mod tests {
 
     #[test]
     fn load_yaml() {
-        crate::utils::dump::tests::dump_yaml();
-        let file_path = get_tmp_file("test_dump.yml");
+        let file_path = get_tmp_file("test_load.yml");
         let schema = get_test_dict_schema();
+        let write_result = schema.to_file(Some(&file_path));
+        assert!(write_result.is_ok(), "{file_path:?}: {write_result:?}");
         let result = SourceSchema::from_file(Some(&file_path));
-        assert!(result.is_ok());
+        assert!(result.is_ok(), "{file_path:?}: {result:?}");
         assert_eq!(result.unwrap(), schema);
     }
 
@@ -213,8 +215,6 @@ mod tests {
 
     #[test]
     fn yaml_dump_roundtrips_empty_defaults() {
-        use crate::Dump as _;
-
         for (name, input) in [
             ("empty_list", r#"{"type":"list","default":[]}"#),
             ("empty_dict", r#"{"type":"dict","default":{}}"#),
@@ -232,39 +232,43 @@ mod tests {
     }
     #[test]
     fn load_json() {
-        crate::utils::dump::tests::dump_json();
-        let file_path = get_tmp_file("test_dump.json");
+        let file_path = get_tmp_file("test_load.json");
         let schema = get_test_dict_schema();
+        let write_result = schema.to_file(Some(&file_path));
+        assert!(write_result.is_ok(), "{file_path:?}: {write_result:?}");
         let result = SourceSchema::from_file(Some(&file_path));
-        assert!(result.is_ok());
+        assert!(result.is_ok(), "{file_path:?}: {result:?}");
         assert_eq!(result.unwrap(), schema);
     }
     #[cfg(feature = "xz2")]
     #[test]
     fn load_xz2() {
-        crate::utils::dump::tests::dump_xz2();
-        let file_path = get_tmp_file("test_dump.xz2");
+        let file_path = get_tmp_file("test_load.xz2");
         let schema = get_test_dict_schema();
+        let write_result = schema.to_file(Some(&file_path));
+        assert!(write_result.is_ok(), "{file_path:?}: {write_result:?}");
         let result = SourceSchema::from_file(Some(&file_path));
-        assert!(result.is_ok());
+        assert!(result.is_ok(), "{file_path:?}: {result:?}");
         assert_eq!(result.unwrap(), schema);
     }
     #[test]
     fn load_gz() {
-        crate::utils::dump::tests::dump_gz();
-        let file_path = get_tmp_file("test_dump.gz");
+        let file_path = get_tmp_file("test_load.gz");
         let schema = get_test_dict_schema();
+        let write_result = schema.to_file(Some(&file_path));
+        assert!(write_result.is_ok(), "{file_path:?}: {write_result:?}");
         let result = SourceSchema::from_file(Some(&file_path));
-        assert!(result.is_ok());
+        assert!(result.is_ok(), "{file_path:?}: {result:?}");
         assert_eq!(result.unwrap(), schema);
     }
     #[test]
     fn load_store_yaml() {
-        crate::utils::dump::tests::dump_store_yaml();
-        let file_path = get_tmp_file("test_dump_store.yml");
+        let file_path = get_tmp_file("test_load_store.yml");
         let store = get_test_store();
+        let write_result = store.to_file(Some(&file_path));
+        assert!(write_result.is_ok(), "{file_path:?}: {write_result:?}");
         let result = StoreSource::from_file(Some(&file_path));
-        assert!(result.is_ok());
+        assert!(result.is_ok(), "{file_path:?}: {result:?}");
         assert_eq!(result.unwrap(), store);
     }
 }
