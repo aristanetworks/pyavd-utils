@@ -16,7 +16,7 @@ self_cell = { workspace = true }
 [dev-dependencies]
 avdschema = { path = "../avdschema" }
 criterion = { workspace = true } # Used for benchmarking
-saphyr = "=0.3.4"   # Used for benchmarking
+saphyr = "=0.4.0"   # Used for benchmarking
 yaml_serde = { workspace = true } # Reference backend for compatibility tests and benchmarks
 
 [features]
