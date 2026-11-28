@@ -62,7 +62,7 @@ pytest = [
     "ruff==0.17.6",
 ]
 coverage = [
-    "coverage[toml]==7.17.3",
+    "coverage[toml]==7.17.4",
 ]
 # group used to build cross platform wheels
 build_wheel = [
